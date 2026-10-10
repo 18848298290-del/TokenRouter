@@ -433,9 +433,10 @@ type prefaceBackend struct {
 // Gemini 使用独立的审核接口实现，按自己的顺序调用。
 type geminiPrefaceBackend struct {
 	GeminiNativeBackend
-	base  *prefaceBackend
-	call  GeminiNativeCall
-	bound int64
+	base    *prefaceBackend
+	request execution.Request
+	output  *MessagesOutput
+	bound   int64
 }
 
 // unifiedRecordFunds 在协议用量测试中通过完成流程调用结算接口。
@@ -2366,7 +2367,10 @@ func (p *geminiPrefaceBackend) Plan(c context.Context, k *apikey.APIKey, m strin
 	return p.base.Plan(c, k, m)
 }
 
-func (p *geminiPrefaceBackend) BindPlan(c *gin.Context, r routing.RoutePlan) { p.base.BindPlan(c, r) }
+func (p *geminiPrefaceBackend) BindPlan(c *gin.Context, r routing.RoutePlan) {
+	p.base.BindPlan(c, r)
+	c.Request = c.Request.WithContext(requeststate.WithRoutePlan(c.Request.Context(), r))
+}
 
 func (p *geminiPrefaceBackend) BindErrors(c *gin.Context) { p.base.BindErrors(c) }
 
@@ -2382,8 +2386,9 @@ func (p *geminiPrefaceBackend) CachedSession(context.Context, *int64, string) (i
 	return p.bound, nil
 }
 
-func (p *geminiPrefaceBackend) Prefetch(_ *gin.Context, _, _ int64) {
+func (p *geminiPrefaceBackend) Prefetch(c *gin.Context, providerID, groupID int64) {
 	p.base.events = append(p.base.events, "prefetch")
+	c.Request = c.Request.WithContext(requeststate.WithPrefetchedStickySession(c.Request.Context(), providerID, groupID))
 }
 
 func (p *geminiPrefaceBackend) DigestChain(*protocolgemini.GeminiRequest) string { return "digest" }
@@ -2411,8 +2416,14 @@ func (p *prefaceBackend) Execute(_ context.Context, in execution.Request, _ upst
 	return execution.ExecutionResult{}, nil
 }
 
-func (p *geminiPrefaceBackend) Execute(_ context.Context, in execution.Request, _ upstreamcore.OutputSink) (execution.ExecutionResult, error) {
-	p.call = GeminiNativeCall{MessagesCall: MessagesCall{Key: in.Funding.Key, Model: in.Model, Stream: in.Stream, HasBoundSession: in.Text.HasBoundSession, BoundProviderID: in.Text.BoundProviderID}, ModelName: in.Text.GeminiModel, SignatureState: in.Text.SignatureState, MatchedDigestChain: in.Text.MatchedDigestChain, SessionUUID: in.Text.SessionUUID, UseDigestFallback: in.Text.UseDigestFallback}
+func (p *geminiPrefaceBackend) Execute(_ context.Context, in execution.Request, out upstreamcore.OutputSink) (execution.ExecutionResult, error) {
+	p.request = in
+	output, ok := out.(*MessagesOutput)
+	if !ok {
+		return execution.ExecutionResult{}, fmt.Errorf("unexpected Gemini output %T", out)
+	}
+	p.output = output
+	p.base.events = append(p.base.events, "execution")
 	return execution.ExecutionResult{}, nil
 }
 

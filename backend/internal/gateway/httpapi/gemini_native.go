@@ -32,17 +32,7 @@ import (
 
 var GeminiCLITmpDirRegex = regexp.MustCompile(`/\.gemini/tmp/([A-Fa-f0-9]{64})`)
 
-type (
-	GeminiNativeOptions struct{ MaxSwitches int }
-	GeminiNativeCall    struct {
-		MessagesCall
-		ModelName, Action                                        string
-		Concurrency                                              *ConcurrencyHelper
-		UseDigestFallback                                        bool
-		DigestChain, PrefixHash, SessionUUID, MatchedDigestChain string
-		SignatureState                                           requeststate.GeminiSignatureState
-	}
-)
+type GeminiNativeOptions struct{ MaxSwitches int }
 
 type GeminiNativeBackend interface {
 	Access(*gin.Context) (*apikey.APIKey, bool)
@@ -101,7 +91,6 @@ func geminiNativeIsolationError(c *gin.Context, err error) bool {
 
 func (e *GeminiPathParseError) Error() string { return e.message }
 
-// @project-doc docs/interfaces/gemini_upstream.md#gemini_protocol_dispatch
 // @project-doc docs/interfaces/gemini_upstream.md#gemini_protocol_dispatch
 func (h *GeminiNativeHandler) GeminiV1BetaModels(c *gin.Context) {
 	done, accepted := h.BeginRequest(c, "google")
@@ -277,16 +266,12 @@ func (h *GeminiNativeHandler) GeminiV1BetaModels(c *gin.Context) {
 				// 生成前缀 hash
 				userAgent := c.GetHeader("User-Agent")
 				clientIP := clientip.GetClientIP(c)
-				platform := ""
-				if apiKey.Group != nil {
-					platform = ""
-				}
 				geminiPrefixHash = h.backend.PrefixHash(
 					authSubject.UserID,
 					apiKey.ID,
 					clientIP,
 					userAgent,
-					platform,
+					"",
 					modelName,
 				)
 
@@ -328,52 +313,44 @@ func (h *GeminiNativeHandler) GeminiV1BetaModels(c *gin.Context) {
 	// 判断是否真的绑定了粘性会话：有 sessionKey 且已经绑定到某个提供商
 	hasBoundSession := sessionKey != "" && sessionBoundProviderID > 0
 
-	call := GeminiNativeCall{
-		MessagesCall: MessagesCall{
-			Key:             apiKey,
-			Subject:         authSubject,
-			Subscription:    subscription,
-			Body:            body,
-			Model:           reqModel,
-			Stream:          stream,
-			HasBoundSession: hasBoundSession,
-			SessionKey:      sessionKey,
-			BoundProviderID: sessionBoundProviderID,
-			StreamStarted:   &streamStarted,
-			Log:             reqLog,
-			Route:           groupMappingRoutePlan,
-			Mapping:         groupMapping,
-		},
-		ModelName:          modelName,
-		Action:             action,
-		Concurrency:        geminiConcurrency,
-		UseDigestFallback:  useDigestFallback,
-		DigestChain:        geminiDigestChain,
-		PrefixHash:         geminiPrefixHash,
-		SessionUUID:        geminiSessionUUID,
-		MatchedDigestChain: matchedDigestChain,
-		SignatureState: requeststate.GeminiSignatureState{
-			BoundProviderID: sessionBoundProviderID,
-		},
-	}
 	request := execution.Request{
 		Hints:       requeststate.ExecutionHintsFromContext(c.Request.Context()),
 		Routing:     requeststate.RoutingStateFromContext(c.Request.Context()),
-		Route:       call.Route,
-		UserID:      call.Subject.UserID,
-		Concurrency: call.Subject.Concurrency,
-		Stream:      call.Stream,
-		Body:        call.Body,
-		Model:       call.Model,
+		Route:       groupMappingRoutePlan,
+		UserID:      authSubject.UserID,
+		Concurrency: authSubject.Concurrency,
+		Stream:      stream,
+		Body:        body,
+		Model:       reqModel,
 		Funding: execution.FundingState{
-			Key:          call.Key,
-			Subscription: call.Subscription,
+			Key:          apiKey,
+			Subscription: subscription,
 		},
-		SessionHash: call.SessionKey,
-
-		Text: execution.TextState{Kind: execution.TextNativeGemini, Platform: call.Platform, BoundProviderID: call.BoundProviderID, HasBoundSession: call.HasBoundSession, GeminiModel: call.ModelName, Action: call.Action, UseDigestFallback: call.UseDigestFallback, DigestChain: call.DigestChain, PrefixHash: call.PrefixHash, SessionUUID: call.SessionUUID, MatchedDigestChain: call.MatchedDigestChain, SignatureState: call.SignatureState, Mapping: call.Mapping},
+		SessionHash: sessionKey,
+		Text: execution.TextState{
+			Kind:               execution.TextNativeGemini,
+			BoundProviderID:    sessionBoundProviderID,
+			HasBoundSession:    hasBoundSession,
+			GeminiModel:        modelName,
+			Action:             action,
+			UseDigestFallback:  useDigestFallback,
+			DigestChain:        geminiDigestChain,
+			PrefixHash:         geminiPrefixHash,
+			SessionUUID:        geminiSessionUUID,
+			MatchedDigestChain: matchedDigestChain,
+			SignatureState: requeststate.GeminiSignatureState{
+				BoundProviderID: sessionBoundProviderID,
+			},
+			Mapping: groupMapping,
+		},
 	}
-	output := &MessagesOutput{ResponseSink: ResponseSink{Writer: c.Writer}, HTTP: c, Log: call.Log, StreamStarted: call.StreamStarted, Concurrency: call.Concurrency}
+	output := &MessagesOutput{
+		ResponseSink:  ResponseSink{Writer: c.Writer},
+		HTTP:          c,
+		Log:           reqLog,
+		StreamStarted: &streamStarted,
+		Concurrency:   geminiConcurrency,
+	}
 	_, _ = h.executor.Execute(c.Request.Context(), request, output)
 }
 

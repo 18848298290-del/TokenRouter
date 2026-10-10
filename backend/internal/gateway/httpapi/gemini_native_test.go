@@ -10,6 +10,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+
+	"github.com/TokenFlux/TokenRouter/internal/billing"
+	"github.com/TokenFlux/TokenRouter/internal/gateway/execution"
+	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
+	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
 func TestExtractGeminiCLISessionHash(t *testing.T) {
@@ -154,29 +160,76 @@ func TestGeminiNativePrefacePreservesModerationBeforeMapping(t *testing.T) {
 }
 
 func TestGeminiNativePrefaceCarriesSignatureAndDigestState(t *testing.T) {
-	for _, bound := range []int64{65, 0} {
-		t.Run(map[bool]string{true: "sticky", false: "digest"}[bound > 0], func(t *testing.T) {
-			base := &prefaceBackend{key: prefaceKey()}
-			p := &geminiPrefaceBackend{base: base, bound: bound}
-			h := NewGeminiNativeHandler(GeminiNativeOptions{}, p, base, prefaceConcurrency(), func() string { t.Fatal("matched session must not create id"); return "" }, p)
-			c, w := prefaceContext(`{"contents":[{"role":"user","parts":[{"text":"/.gemini/tmp/` + strings.Repeat("a", 64) + `"}]}]}`)
-			c.Params = gin.Params{{Key: "modelAction", Value: "/original:streamGenerateContent"}}
-			h.GeminiV1BetaModels(c)
-			require.Equal(t, 200, w.Code, w.Body.String())
-			require.Equal(t, "original", p.call.Model)
-			require.Equal(t, "mapped-model", p.call.ModelName)
-			require.True(t, p.call.Stream)
-			require.True(t, p.call.HasBoundSession)
-			want := bound
-			if want == 0 {
-				want = 87
-				require.Equal(t, "previous", p.call.MatchedDigestChain)
-				require.Equal(t, "session-id", p.call.SessionUUID)
-				require.Contains(t, base.events, "sticky")
-			}
-			require.Equal(t, want, p.call.SignatureState.BoundProviderID)
-			require.Equal(t, want, p.call.BoundProviderID)
-			require.Equal(t, bound == 0, p.call.UseDigestFallback)
-		})
+	for _, action := range []string{"generateContent", "streamGenerateContent"} {
+		for _, bound := range []int64{65, 0} {
+			t.Run(action+"/"+map[bool]string{true: "sticky", false: "digest"}[bound > 0], func(t *testing.T) {
+				base := &prefaceBackend{key: prefaceKey()}
+				p := &geminiPrefaceBackend{base: base, bound: bound}
+				concurrency := prefaceConcurrency()
+				h := NewGeminiNativeHandler(GeminiNativeOptions{}, p, base, concurrency, func() string { t.Fatal("matched session must not create id"); return "" }, p)
+				body := `{"contents":[{"role":"user","parts":[{"text":"/.gemini/tmp/` + strings.Repeat("a", 64) + `"}]}]}`
+				c, w := prefaceContext(body)
+				c.Params = gin.Params{{Key: "modelAction", Value: "/original:" + action}}
+				subscription := &billing.UserSubscription{ID: 12}
+				c.Set(ContextKeySubscription, subscription)
+				c.Request = c.Request.WithContext(requeststate.WithClientProtocol(c.Request.Context(), protocol.ProtocolGeminiGenerateContent))
+
+				h.GeminiV1BetaModels(c)
+
+				require.Equal(t, 200, w.Code, w.Body.String())
+				plan := routing.Plan(routing.PlanInput{RequestedModel: "original", GroupID: base.key.GroupID, GroupMapping: routing.GroupMappingResult{Mapped: true, MappedModel: "mapped-model"}})
+				wantText := execution.TextState{
+					Kind:            execution.TextNativeGemini,
+					BoundProviderID: bound,
+					HasBoundSession: true,
+					GeminiModel:     "mapped-model",
+					Action:          action,
+					SignatureState:  requeststate.GeminiSignatureState{BoundProviderID: bound},
+					Mapping:         plan.Mapping(),
+				}
+				var wantHints requeststate.ExecutionHints
+				wantEvents := []string{"request:original", "endpoint", "prompt:gemini", "moderate:gemini", "plan", "bind", "errors", "eligibility"}
+				if bound == 0 {
+					wantText.BoundProviderID = 87
+					wantText.SignatureState.BoundProviderID = 87
+					wantText.UseDigestFallback = true
+					wantText.DigestChain = "digest"
+					wantText.PrefixHash = "prefix"
+					wantText.SessionUUID = "session-id"
+					wantText.MatchedDigestChain = "previous"
+					wantEvents = append(wantEvents, "sticky")
+				} else {
+					wantHints.PrefetchedStickyProviderID = requeststate.Hint[int64]{Value: bound, Set: true}
+					wantHints.PrefetchedStickyGroupID = requeststate.Hint[int64]{Value: *base.key.GroupID, Set: true}
+					wantEvents = append(wantEvents, "prefetch")
+				}
+				wantEvents = append(wantEvents, "execution")
+				wantRouting := requeststate.WithRoutePlan(requeststate.WithClientProtocol(c.Request.Context(), protocol.ProtocolGeminiGenerateContent), plan)
+				require.Equal(t, execution.Request{
+					Hints:       wantHints,
+					Routing:     requeststate.RoutingStateFromContext(wantRouting),
+					Route:       plan,
+					UserID:      42,
+					Stream:      action == "streamGenerateContent",
+					Body:        []byte(body),
+					Model:       "original",
+					Funding:     execution.FundingState{Key: base.key, Subscription: subscription},
+					SessionHash: "gemini:" + strings.Repeat("a", 64),
+					Text:        wantText,
+				}, p.request)
+				require.Same(t, base.key, p.request.Funding.Key)
+				require.Same(t, subscription, p.request.Funding.Subscription)
+				require.Equal(t, wantEvents, base.events)
+				require.NotNil(t, p.output)
+				require.Same(t, c, p.output.HTTP)
+				require.Same(t, c.Writer, p.output.Writer)
+				require.NotNil(t, p.output.Log)
+				require.NotNil(t, p.output.StreamStarted)
+				require.False(t, *p.output.StreamStarted)
+				require.NotNil(t, p.output.Concurrency)
+				require.NotSame(t, concurrency, p.output.Concurrency)
+				require.Same(t, concurrency.Service(), p.output.Concurrency.Service())
+			})
+		}
 	}
 }
