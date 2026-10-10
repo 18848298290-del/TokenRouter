@@ -87,10 +87,8 @@ func (s *LocalUsageStatistics) AddWindowStats(ctx context.Context, provider *Rec
 
 	// 检查窗口统计缓存（1 分钟）
 	var windowStats *WindowStats
-	if cached, ok := s.cache.LoadWindow(provider.ID); ok {
-		if cache, ok := cached.(*OAuthWindowStatsCache); ok && s.options.Now().Sub(cache.Timestamp) < OAuthUsageWindowStatsCacheTTL {
-			windowStats = cache.Stats
-		}
+	if cache, ok := s.cache.LoadWindow(provider.ID); ok && s.options.Now().Sub(cache.Timestamp) < OAuthUsageWindowStatsCacheTTL {
+		windowStats = cache.Stats
 	}
 
 	// 如果没有缓存，从数据库查询

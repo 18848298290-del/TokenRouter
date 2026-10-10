@@ -28,7 +28,7 @@ type OAuthQoderUsageCache struct {
 	Timestamp time.Time
 }
 
-// OAuthUsageCache 拥有原缓存命名空间与 flight；读写复制展示值；缓存本身不启动后台循环。
+// OAuthUsageCache 按平台保存用量缓存和共享查询，读写时复制展示值。
 type OAuthUsageCache struct {
 	api, windows, antigravity, qoder, openAIProbe, grokProbe sync.Map
 	apiFlight, antigravityFlight, qoderFlight                singleflight.Group
@@ -36,7 +36,7 @@ type OAuthUsageCache struct {
 
 func NewOAuthUsageCache() *OAuthUsageCache { return &OAuthUsageCache{} }
 
-func (c *OAuthUsageCache) LoadAPI(key int64) (any, bool) {
+func (c *OAuthUsageCache) LoadAPI(key int64) (*OAuthAPIUsageCache, bool) {
 	raw, ok := c.api.Load(key)
 	if !ok {
 		return nil, false
@@ -60,7 +60,7 @@ func (c *OAuthUsageCache) StoreAPI(key int64, v *OAuthAPIUsageCache) {
 	c.api.Store(key, &out)
 }
 
-func (c *OAuthUsageCache) LoadWindow(key int64) (any, bool) {
+func (c *OAuthUsageCache) LoadWindow(key int64) (*OAuthWindowStatsCache, bool) {
 	raw, ok := c.windows.Load(key)
 	if !ok {
 		return nil, false
@@ -84,7 +84,7 @@ func (c *OAuthUsageCache) StoreWindow(key int64, v *OAuthWindowStatsCache) {
 	c.windows.Store(key, &out)
 }
 
-func (c *OAuthUsageCache) LoadAntigravity(key int64) (any, bool) {
+func (c *OAuthUsageCache) LoadAntigravity(key int64) (*OAuthAntigravityUsageCache, bool) {
 	raw, ok := c.antigravity.Load(key)
 	if !ok {
 		return nil, false
@@ -108,7 +108,7 @@ func (c *OAuthUsageCache) StoreAntigravity(key int64, v *OAuthAntigravityUsageCa
 	c.antigravity.Store(key, &out)
 }
 
-func (c *OAuthUsageCache) LoadQoder(key int64) (any, bool) {
+func (c *OAuthUsageCache) LoadQoder(key int64) (*OAuthQoderUsageCache, bool) {
 	raw, ok := c.qoder.Load(key)
 	if !ok {
 		return nil, false

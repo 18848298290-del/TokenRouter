@@ -35,10 +35,8 @@ func (s *OAuthUsageService) GetQoderUsage(ctx context.Context, provider *Record,
 	}
 
 	if !force {
-		if cached, ok := s.cache.LoadQoder(provider.ID); ok {
-			if cache, ok := cached.(*OAuthQoderUsageCache); ok && QoderUsageCacheUsable(provider, cache, s.options.Now()) {
-				return CloneUsageInfo(cache.UsageInfo), nil
-			}
+		if cache, ok := s.cache.LoadQoder(provider.ID); ok && QoderUsageCacheUsable(provider, cache, s.options.Now()) {
+			return cache.UsageInfo, nil
 		}
 	}
 
@@ -46,10 +44,8 @@ func (s *OAuthUsageService) GetQoderUsage(ctx context.Context, provider *Record,
 	flightKey := fmt.Sprintf("qoder-usage:%d", provider.ID)
 	result, flightErr, _ := s.cache.DoQoder(flightKey, func() (any, error) {
 		if !force {
-			if cached, ok := s.cache.LoadQoder(provider.ID); ok {
-				if cache, ok := cached.(*OAuthQoderUsageCache); ok && QoderUsageCacheUsable(provider, cache, s.options.Now()) {
-					return qoderUsageFlightResult{CloneUsageInfo(cache.UsageInfo), cache.Identity}, nil
-				}
+			if cache, ok := s.cache.LoadQoder(provider.ID); ok && QoderUsageCacheUsable(provider, cache, s.options.Now()) {
+				return qoderUsageFlightResult{cache.UsageInfo, cache.Identity}, nil
 			}
 		}
 

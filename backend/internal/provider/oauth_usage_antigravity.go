@@ -29,16 +29,14 @@ func (s *OAuthUsageService) GetAntigravityUsage(ctx context.Context, provider *R
 
 	identity := UsageCacheIdentity(provider)
 	// 1. 检查缓存
-	if cached, ok := s.cache.LoadAntigravity(provider.ID); ok {
-		if cache, ok := cached.(*OAuthAntigravityUsageCache); ok && cache != nil && cache.Identity == identity {
-			ttl := AntigravityCacheTTL(cache.UsageInfo)
-			if s.options.Now().Sub(cache.Timestamp) < ttl {
-				usage := CloneUsageInfo(cache.UsageInfo)
-				if usage.FiveHour != nil && usage.FiveHour.ResetsAt != nil {
-					usage.FiveHour.RemainingSeconds = int(usage.FiveHour.ResetsAt.Sub(s.options.Now()).Seconds())
-				}
-				return CloneUsageInfo(usage), nil
+	if cache, ok := s.cache.LoadAntigravity(provider.ID); ok && cache.Identity == identity {
+		ttl := AntigravityCacheTTL(cache.UsageInfo)
+		if s.options.Now().Sub(cache.Timestamp) < ttl {
+			usage := cache.UsageInfo
+			if usage.FiveHour != nil && usage.FiveHour.ResetsAt != nil {
+				usage.FiveHour.RemainingSeconds = int(usage.FiveHour.ResetsAt.Sub(s.options.Now()).Seconds())
 			}
+			return usage, nil
 		}
 	}
 
@@ -46,15 +44,13 @@ func (s *OAuthUsageService) GetAntigravityUsage(ctx context.Context, provider *R
 	flightKey := fmt.Sprintf("ag-usage:%d", provider.ID)
 	result, flightErr, _ := s.cache.DoAntigravity(flightKey, func() (any, error) {
 		// 再次检查缓存（等待期间可能已被填充）
-		if cached, ok := s.cache.LoadAntigravity(provider.ID); ok {
-			if cache, ok := cached.(*OAuthAntigravityUsageCache); ok && cache != nil && cache.Identity == identity {
-				ttl := AntigravityCacheTTL(cache.UsageInfo)
-				if s.options.Now().Sub(cache.Timestamp) < ttl {
-					usage := CloneUsageInfo(cache.UsageInfo)
-					// 按当前时间重新计算 RemainingSeconds。
-					RecalcAntigravityRemainingSeconds(usage, s.options.Now)
-					return antigravityUsageFlightResult{CloneUsageInfo(usage), identity}, nil
-				}
+		if cache, ok := s.cache.LoadAntigravity(provider.ID); ok && cache.Identity == identity {
+			ttl := AntigravityCacheTTL(cache.UsageInfo)
+			if s.options.Now().Sub(cache.Timestamp) < ttl {
+				usage := cache.UsageInfo
+				// 按当前时间重新计算 RemainingSeconds。
+				RecalcAntigravityRemainingSeconds(usage, s.options.Now)
+				return antigravityUsageFlightResult{usage, identity}, nil
 			}
 		}
 

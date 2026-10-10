@@ -164,16 +164,14 @@ func (s *OAuthUsageService) GetUsageForProvider(ctx context.Context, provider *R
 		var apiResp *ClaudeUsageResponse
 
 		// 1. 检查缓存（成功响应 3 分钟 / 错误响应 1 分钟）
-		if cached, ok := s.cache.LoadAPI(providerID); ok {
-			if cache, ok := cached.(*OAuthAPIUsageCache); ok && cache != nil && cache.Identity == identity {
-				age := s.options.Now().Sub(cache.Timestamp)
-				if cache.Err != nil && age < OAuthUsageAPIErrorCacheTTL {
-					// 负缓存命中时返回缓存的错误。
-					return nil, cache.Err
-				}
-				if cache.Response != nil && age < OAuthUsageAPICacheTTL {
-					apiResp = cache.Response
-				}
+		if cache, ok := s.cache.LoadAPI(providerID); ok && cache.Identity == identity {
+			age := s.options.Now().Sub(cache.Timestamp)
+			if cache.Err != nil && age < OAuthUsageAPIErrorCacheTTL {
+				// 负缓存命中时返回缓存的错误。
+				return nil, cache.Err
+			}
+			if cache.Response != nil && age < OAuthUsageAPICacheTTL {
+				apiResp = cache.Response
 			}
 		}
 
@@ -191,15 +189,13 @@ func (s *OAuthUsageService) GetUsageForProvider(ctx context.Context, provider *R
 			flightKey := fmt.Sprintf("usage:%d", providerID)
 			result, flightErr, _ := s.cache.DoAPI(flightKey, func() (any, error) {
 				// 再次检查缓存（可能在等待 singleflight 期间被其他请求填充）
-				if cached, ok := s.cache.LoadAPI(providerID); ok {
-					if cache, ok := cached.(*OAuthAPIUsageCache); ok && cache != nil && cache.Identity == identity {
-						age := s.options.Now().Sub(cache.Timestamp)
-						if cache.Err != nil && age < OAuthUsageAPIErrorCacheTTL {
-							return oauthAPIFlightResult{Err: cache.Err, Identity: identity}, nil
-						}
-						if cache.Response != nil && age < OAuthUsageAPICacheTTL {
-							return oauthAPIFlightResult{Response: cache.Response, Identity: identity}, nil
-						}
+				if cache, ok := s.cache.LoadAPI(providerID); ok && cache.Identity == identity {
+					age := s.options.Now().Sub(cache.Timestamp)
+					if cache.Err != nil && age < OAuthUsageAPIErrorCacheTTL {
+						return oauthAPIFlightResult{Err: cache.Err, Identity: identity}, nil
+					}
+					if cache.Response != nil && age < OAuthUsageAPICacheTTL {
+						return oauthAPIFlightResult{Response: cache.Response, Identity: identity}, nil
 					}
 				}
 				resp, fetchErr := s.options.Anthropic(ctx, provider)
