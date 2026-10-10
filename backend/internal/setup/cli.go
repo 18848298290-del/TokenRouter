@@ -3,46 +3,12 @@ package setup
 import (
 	"bufio"
 	"fmt"
-	"net/mail"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 
 	"golang.org/x/term"
 )
-
-// cliValidateHostname 校验命令行主机名的字符和长度，规则与 Web API 一致。
-func cliValidateHostname(host string) bool {
-	validHost := regexp.MustCompile(`^[a-zA-Z0-9.\-:]+$`)
-	return validHost.MatchString(host) && len(host) <= 253
-}
-
-func cliValidateDBName(name string) bool {
-	validName := regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]*$`)
-	return validName.MatchString(name) && len(name) <= 63
-}
-
-func cliValidateUsername(name string) bool {
-	validName := regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
-	return validName.MatchString(name) && len(name) <= 63
-}
-
-func cliValidateEmail(email string) bool {
-	_, err := mail.ParseAddress(email)
-	return err == nil && len(email) <= 254
-}
-
-func cliValidatePort(port int) bool {
-	return port > 0 && port <= 65535
-}
-
-func cliValidateSSLMode(mode string) bool {
-	validModes := map[string]bool{
-		"disable": true, "require": true, "verify-ca": true, "verify-full": true,
-	}
-	return validModes[mode]
-}
 
 // RunCLI runs the CLI setup wizard.
 func RunCLI() error {
@@ -70,7 +36,7 @@ func RunCLI() error {
 
 	for {
 		cfg.Database.Host = promptString(reader, "PostgreSQL Host", "localhost")
-		if cliValidateHostname(cfg.Database.Host) {
+		if validateHostname(cfg.Database.Host) {
 			break
 		}
 		fmt.Println("  Invalid hostname format. Use alphanumeric, dots, hyphens only.")
@@ -78,7 +44,7 @@ func RunCLI() error {
 
 	for {
 		cfg.Database.Port = promptInt(reader, "PostgreSQL Port", 5432)
-		if cliValidatePort(cfg.Database.Port) {
+		if validatePort(cfg.Database.Port) {
 			break
 		}
 		fmt.Println("  Invalid port. Must be between 1 and 65535.")
@@ -86,7 +52,7 @@ func RunCLI() error {
 
 	for {
 		cfg.Database.User = promptString(reader, "PostgreSQL User", "postgres")
-		if cliValidateUsername(cfg.Database.User) {
+		if validateUsername(cfg.Database.User) {
 			break
 		}
 		fmt.Println("  Invalid username. Use alphanumeric and underscores only.")
@@ -96,7 +62,7 @@ func RunCLI() error {
 
 	for {
 		cfg.Database.DBName = promptString(reader, "Database Name", "tokenrouter")
-		if cliValidateDBName(cfg.Database.DBName) {
+		if validateDBName(cfg.Database.DBName) {
 			break
 		}
 		fmt.Println("  Invalid database name. Start with letter, use alphanumeric and underscores.")
@@ -104,7 +70,7 @@ func RunCLI() error {
 
 	for {
 		cfg.Database.SSLMode = promptString(reader, "SSL Mode", "disable")
-		if cliValidateSSLMode(cfg.Database.SSLMode) {
+		if validateSSLMode(cfg.Database.SSLMode) {
 			break
 		}
 		fmt.Println("  Invalid SSL mode. Use: disable, require, verify-ca, or verify-full.")
@@ -124,7 +90,7 @@ func RunCLI() error {
 
 	for {
 		cfg.Redis.Host = promptString(reader, "Redis Host", "localhost")
-		if cliValidateHostname(cfg.Redis.Host) {
+		if validateHostname(cfg.Redis.Host) {
 			break
 		}
 		fmt.Println("  Invalid hostname format. Use alphanumeric, dots, hyphens only.")
@@ -132,7 +98,7 @@ func RunCLI() error {
 
 	for {
 		cfg.Redis.Port = promptInt(reader, "Redis Port", 6379)
-		if cliValidatePort(cfg.Redis.Port) {
+		if validatePort(cfg.Redis.Port) {
 			break
 		}
 		fmt.Println("  Invalid port. Must be between 1 and 65535.")
@@ -164,7 +130,7 @@ func RunCLI() error {
 
 	for {
 		cfg.Admin.Email = promptString(reader, "Admin Email", "admin@example.com")
-		if cliValidateEmail(cfg.Admin.Email) {
+		if validateEmail(cfg.Admin.Email) {
 			break
 		}
 		fmt.Println("  Invalid email format.")
@@ -195,7 +161,7 @@ func RunCLI() error {
 
 	for {
 		cfg.Server.Port = promptInt(reader, "Server Port", 8080)
-		if cliValidatePort(cfg.Server.Port) {
+		if validatePort(cfg.Server.Port) {
 			break
 		}
 		fmt.Println("  Invalid port. Must be between 1 and 65535.")

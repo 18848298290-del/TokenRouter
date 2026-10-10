@@ -3,8 +3,6 @@ package setup
 import (
 	"fmt"
 	"net/http"
-	"net/mail"
-	"regexp"
 	"strings"
 	"sync"
 
@@ -95,33 +93,6 @@ func setupGuard() gin.HandlerFunc {
 	}
 }
 
-// validateHostname checks if a hostname/IP is safe (no injection characters).
-func validateHostname(host string) bool {
-	// Allow only alphanumeric, dots, hyphens, and colons (for IPv6)
-	validHost := regexp.MustCompile(`^[a-zA-Z0-9.\-:]+$`)
-	return validHost.MatchString(host) && len(host) <= 253
-}
-
-// validateDBName checks if database name is safe.
-func validateDBName(name string) bool {
-	// Allow only alphanumeric and underscores, starting with letter
-	validName := regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]*$`)
-	return validName.MatchString(name) && len(name) <= 63
-}
-
-// validateUsername checks if username is safe.
-func validateUsername(name string) bool {
-	// Allow only alphanumeric and underscores
-	validName := regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
-	return validName.MatchString(name) && len(name) <= 63
-}
-
-// validateEmail checks if email format is valid.
-func validateEmail(email string) bool {
-	_, err := mail.ParseAddress(email)
-	return err == nil && len(email) <= 254
-}
-
 // validatePassword checks password strength.
 func validatePassword(password string) error {
 	if len(password) < 8 {
@@ -131,19 +102,6 @@ func validatePassword(password string) error {
 		return fmt.Errorf("password must be at most 128 characters")
 	}
 	return nil
-}
-
-// validatePort checks if port is in valid range.
-func validatePort(port int) bool {
-	return port > 0 && port <= 65535
-}
-
-// validateSSLMode checks if SSL mode is valid.
-func validateSSLMode(mode string) bool {
-	validModes := map[string]bool{
-		"disable": true, "require": true, "verify-ca": true, "verify-full": true,
-	}
-	return validModes[mode]
 }
 
 // testDatabase tests database connection.
