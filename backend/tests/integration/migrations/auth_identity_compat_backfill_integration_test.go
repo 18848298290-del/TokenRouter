@@ -4,28 +4,25 @@ package migrations_test
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
 func TestAuthIdentityCompatBackfillMigration_AllowsLongReportTypes(t *testing.T) {
 	tx := testTx(t)
 	ctx := context.Background()
 
-	migration108Path := filepath.Join("..", "..", "..", "migrations", "108_auth_identity_foundation_core.sql")
-	migration108SQL, err := os.ReadFile(migration108Path)
+	migration108SQL, err := migrations.FS.ReadFile("108_auth_identity_foundation_core.sql")
 	require.NoError(t, err)
 
-	migration108aPath := filepath.Join("..", "..", "..", "migrations", "108a_widen_auth_identity_migration_report_type.sql")
-	migration108aSQL, err := os.ReadFile(migration108aPath)
+	migration108aSQL, err := migrations.FS.ReadFile("108a_widen_auth_identity_migration_report_type.sql")
 	require.NoError(t, err)
 
-	migration109Path := filepath.Join("..", "..", "..", "migrations", "109_auth_identity_compat_backfill.sql")
-	migration109SQL, err := os.ReadFile(migration109Path)
+	migration109SQL, err := migrations.FS.ReadFile("109_auth_identity_compat_backfill.sql")
 	require.NoError(t, err)
 
 	_, err = tx.ExecContext(ctx, `

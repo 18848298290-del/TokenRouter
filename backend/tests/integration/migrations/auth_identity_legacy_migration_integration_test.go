@@ -5,20 +5,19 @@ package migrations_test
 import (
 	"context"
 	"database/sql"
-	"os"
-	"path/filepath"
 	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
 func TestAuthIdentityLegacyExternalBackfillMigration(t *testing.T) {
 	tx := testTx(t)
 	ctx := context.Background()
 
-	migrationPath := filepath.Join("..", "..", "..", "migrations", "115_auth_identity_legacy_external_backfill.sql")
-	migrationSQL, err := os.ReadFile(migrationPath)
+	migrationSQL, err := migrations.FS.ReadFile("115_auth_identity_legacy_external_backfill.sql")
 	require.NoError(t, err)
 
 	prepareLegacyExternalIdentitiesTable(t, tx, ctx)
@@ -162,8 +161,7 @@ func TestAuthIdentityLegacyExternalBackfillMigration_IsSafeWhenLegacyTableMissin
 	tx := testTx(t)
 	ctx := context.Background()
 
-	migrationPath := filepath.Join("..", "..", "..", "migrations", "115_auth_identity_legacy_external_backfill.sql")
-	migrationSQL, err := os.ReadFile(migrationPath)
+	migrationSQL, err := migrations.FS.ReadFile("115_auth_identity_legacy_external_backfill.sql")
 	require.NoError(t, err)
 
 	var beforeCount int
@@ -187,12 +185,10 @@ func TestAuthIdentityLegacyExternalMigrations_ChainHandlesMalformedAndNonObjectM
 	tx := testTx(t)
 	ctx := context.Background()
 
-	migration115Path := filepath.Join("..", "..", "..", "migrations", "115_auth_identity_legacy_external_backfill.sql")
-	migration115SQL, err := os.ReadFile(migration115Path)
+	migration115SQL, err := migrations.FS.ReadFile("115_auth_identity_legacy_external_backfill.sql")
 	require.NoError(t, err)
 
-	migration116Path := filepath.Join("..", "..", "..", "migrations", "116_auth_identity_legacy_external_safety_reports.sql")
-	migration116SQL, err := os.ReadFile(migration116Path)
+	migration116SQL, err := migrations.FS.ReadFile("116_auth_identity_legacy_external_safety_reports.sql")
 	require.NoError(t, err)
 
 	prepareLegacyExternalIdentitiesTable(t, tx, ctx)
@@ -357,8 +353,7 @@ func TestAuthIdentityLegacyExternalSafetyMigration_ReportsConflictsAndDowngrades
 	tx := testTx(t)
 	ctx := context.Background()
 
-	migrationPath := filepath.Join("..", "..", "..", "migrations", "116_auth_identity_legacy_external_safety_reports.sql")
-	migrationSQL, err := os.ReadFile(migrationPath)
+	migrationSQL, err := migrations.FS.ReadFile("116_auth_identity_legacy_external_safety_reports.sql")
 	require.NoError(t, err)
 
 	prepareLegacyExternalIdentitiesTable(t, tx, ctx)
@@ -555,8 +550,7 @@ func TestAuthIdentityLegacyExternalSafetyMigration_IsSafeWhenLegacyTableMissing(
 	tx := testTx(t)
 	ctx := context.Background()
 
-	migrationPath := filepath.Join("..", "..", "..", "migrations", "116_auth_identity_legacy_external_safety_reports.sql")
-	migrationSQL, err := os.ReadFile(migrationPath)
+	migrationSQL, err := migrations.FS.ReadFile("116_auth_identity_legacy_external_safety_reports.sql")
 	require.NoError(t, err)
 
 	var beforeCount int
@@ -580,8 +574,7 @@ func TestAuthIdentityLegacyExternalBackfillMigration_SkipsAmbiguousCanonicalSubj
 	tx := testTx(t)
 	ctx := context.Background()
 
-	migrationPath := filepath.Join("..", "..", "..", "migrations", "115_auth_identity_legacy_external_backfill.sql")
-	migrationSQL, err := os.ReadFile(migrationPath)
+	migrationSQL, err := migrations.FS.ReadFile("115_auth_identity_legacy_external_backfill.sql")
 	require.NoError(t, err)
 
 	prepareLegacyExternalIdentitiesTable(t, tx, ctx)
@@ -702,12 +695,10 @@ func TestAuthIdentityLegacyExternalMigrations_ReportAmbiguousCanonicalSubjectsWi
 	tx := testTx(t)
 	ctx := context.Background()
 
-	migration115Path := filepath.Join("..", "..", "..", "migrations", "115_auth_identity_legacy_external_backfill.sql")
-	migration115SQL, err := os.ReadFile(migration115Path)
+	migration115SQL, err := migrations.FS.ReadFile("115_auth_identity_legacy_external_backfill.sql")
 	require.NoError(t, err)
 
-	migration116Path := filepath.Join("..", "..", "..", "migrations", "116_auth_identity_legacy_external_safety_reports.sql")
-	migration116SQL, err := os.ReadFile(migration116Path)
+	migration116SQL, err := migrations.FS.ReadFile("116_auth_identity_legacy_external_safety_reports.sql")
 	require.NoError(t, err)
 
 	prepareLegacyExternalIdentitiesTable(t, tx, ctx)
@@ -832,16 +823,13 @@ func TestAuthIdentityMigrationReportTypeWideningPreflightKeeps109And116SafeBefor
 	tx := testTx(t)
 	ctx := context.Background()
 
-	migration108aPath := filepath.Join("..", "..", "..", "migrations", "108a_widen_auth_identity_migration_report_type.sql")
-	migration108aSQL, err := os.ReadFile(migration108aPath)
+	migration108aSQL, err := migrations.FS.ReadFile("108a_widen_auth_identity_migration_report_type.sql")
 	require.NoError(t, err)
 
-	migration109Path := filepath.Join("..", "..", "..", "migrations", "109_auth_identity_compat_backfill.sql")
-	migration109SQL, err := os.ReadFile(migration109Path)
+	migration109SQL, err := migrations.FS.ReadFile("109_auth_identity_compat_backfill.sql")
 	require.NoError(t, err)
 
-	migration116Path := filepath.Join("..", "..", "..", "migrations", "116_auth_identity_legacy_external_safety_reports.sql")
-	migration116SQL, err := os.ReadFile(migration116Path)
+	migration116SQL, err := migrations.FS.ReadFile("116_auth_identity_legacy_external_safety_reports.sql")
 	require.NoError(t, err)
 
 	prepareLegacyExternalIdentitiesTable(t, tx, ctx)
