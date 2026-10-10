@@ -74,24 +74,9 @@ func getOrCreateGeneratedSecuritySecret(ctx context.Context, client *ent.Client,
 		return "", false, err
 	}
 
-	if err := client.SecuritySecret.Create().
-		SetKey(key).
-		SetValue(generated).
-		OnConflictColumns(securitysecret.FieldKey).
-		DoNothing().
-		Exec(ctx); err != nil {
-		if !isSQLNoRowsError(err) {
-			return "", false, err
-		}
-	}
-
-	stored, err := querySecuritySecretWithRetry(ctx, client, key)
+	value, err := persistSecuritySecretCandidate(ctx, client, key, generated)
 	if err != nil {
 		return "", false, err
-	}
-	value := strings.TrimSpace(stored.Value)
-	if len([]byte(value)) < 32 {
-		return "", false, fmt.Errorf("stored secret %q must be at least 32 bytes", key)
 	}
 	return value, value == generated, nil
 }
@@ -102,6 +87,11 @@ func createSecuritySecretIfAbsent(ctx context.Context, client *ent.Client, key, 
 		return "", fmt.Errorf("secret %q must be at least 32 bytes", key)
 	}
 
+	return persistSecuritySecretCandidate(ctx, client, key, value)
+}
+
+// persistSecuritySecretCandidate 在并发创建冲突后读取已持久化的密钥。
+func persistSecuritySecretCandidate(ctx context.Context, client *ent.Client, key, value string) (string, error) {
 	if err := client.SecuritySecret.Create().
 		SetKey(key).
 		SetValue(value).
