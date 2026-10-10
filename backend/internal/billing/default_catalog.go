@@ -94,97 +94,96 @@ func (s *Calculator) DefaultModelPrice(model, platform, mode string) pricing.Def
 	}
 	result.PriceStatus = "priced"
 	base = s.applyCatalogTimePricing(base, s.options.Now())
-	// 用一个计费单位复用实际算法，避免展示层重新实现 Fast、缓存和图片 token 回退。
-	// 长上下文报价需先越过阈值门槛才能触发倍率，与真实计费走同一条分支。
-	longGateTokens := 0
-	if base.LongContextInputThreshold > 0 {
-		longGateTokens = base.LongContextInputThreshold
-		if !base.LongContextThresholdInclusive {
-			longGateTokens++
-		}
-	}
-	addTokenPrices := func(prefix, tier string, applyLongCtx bool) {
-		gate := 0
-		if applyLongCtx {
-			gate = longGateTokens
-		}
-		quote := func(tokens UsageTokens) *CostBreakdown {
-			tokens.InputTokens += gate
-			return pricing.ComputeTokenBreakdown(base, tokens, 1, tier, applyLongCtx)
-		}
-		perMTok := func(cost float64, tokens int) float64 {
-			return cost / float64(tokens) * 1e6
-		}
-		addOptional := func(key string, value float64, applicable bool) {
-			if applicable {
-				add(prefix+key, value*1e6, "USD/MTok")
-			} else {
-				result.Prices = append(result.Prices, pricing.DefaultPriceValue{Key: prefix + key, Unit: "USD/MTok"})
-			}
-		}
-		add(prefix+"input", perMTok(quote(UsageTokens{InputTokens: 1}).InputCost, 1+gate), "USD/MTok")
-		add(prefix+"output", quote(UsageTokens{OutputTokens: 1}).OutputCost*1e6, "USD/MTok")
-		readPresent := base.CacheReadPricePerToken > 0 || raw != nil && raw.CacheReadPricePresent
-		writePresent := base.CacheCreationPricePerToken > 0 || base.SupportsCacheBreakdown || raw != nil && raw.CacheCreationPricePresent
-		addOptional("cache_read", quote(UsageTokens{CacheReadTokens: 1}).CacheReadCost, readPresent)
-		addOptional("cache_write", quote(UsageTokens{CacheCreationTokens: 1, CacheCreation5mTokens: 1}).CacheCreationCost, writePresent)
-		addOptional("cache_write_1h", quote(UsageTokens{CacheCreationTokens: 1, CacheCreation1hTokens: 1}).CacheCreationCost, base.SupportsCacheBreakdown)
-		addOptional("image_input", quote(UsageTokens{InputTokens: 1, ImageInputTokens: 1}).ImageInputCost, base.ImageInputPricePerToken > 0 || raw != nil && (raw.SupportsVision || raw.ImageInputPricePresent))
-		addOptional("image_output", quote(UsageTokens{OutputTokens: 1, ImageOutputTokens: 1}).ImageOutputCost, base.ImageOutputPricePerToken > 0 || raw != nil && raw.ImageOutputPricePresent)
-	}
-	addTokenPrices("", "", false)
+	result.Prices = append(result.Prices, defaultTokenPrices(base, raw, "", "", false)...)
 	hasFast := false
 	if _, ok := pricing.FastModeDisplayPricing(base); ok {
-		addTokenPrices("fast_", "priority", false)
+		result.Prices = append(result.Prices, defaultTokenPrices(base, raw, "fast_", "priority", false)...)
 		hasFast = true
 	}
 	hasFlex := base.FlexMultiplier != nil
 	if hasFlex {
-		addTokenPrices("flex_", "flex", false)
+		result.Prices = append(result.Prices, defaultTokenPrices(base, raw, "flex_", "flex", false)...)
 	}
 	if base.MaxReasoningEffortMultiplier != nil {
 		add("max_reasoning", *base.MaxReasoningEffortMultiplier, "multiplier")
 	}
-	// 长上下文价格投影为应用倍率后的绝对单价（含 Fast/Flex 组合），口径与
-	// ShouldApplySessionLongContextPricing 一致：任一倍率大于 1 才存在长上下文阶梯。
+	// 长上下文单价包含 Fast/Flex 倍率。任一长上下文倍率大于 1 才展示阶梯。
 	if base.LongContextInputThreshold > 0 && (base.LongContextInputMultiplier > 1 || base.LongContextOutputMultiplier > 1) {
 		result.LongContextThreshold = base.LongContextInputThreshold
 		result.LongContextThresholdInclusive = base.LongContextThresholdInclusive
-		addTokenPrices("long_", "", true)
+		result.Prices = append(result.Prices, defaultTokenPrices(base, raw, "long_", "", true)...)
 		if hasFast {
-			addTokenPrices("long_fast_", "priority", true)
+			result.Prices = append(result.Prices, defaultTokenPrices(base, raw, "long_fast_", "priority", true)...)
 		}
 		if hasFlex {
-			addTokenPrices("long_flex_", "flex", true)
+			result.Prices = append(result.Prices, defaultTokenPrices(base, raw, "long_flex_", "flex", true)...)
 		}
 	}
 
 	if len(base.ContextPrices) > 0 {
-		root, rootPrices := base, result.Prices
 		start := 0
-		for i := 0; i <= len(root.ContextPrices); i++ {
+		for i := 0; i <= len(base.ContextPrices); i++ {
 			var end *int
-			if i < len(root.ContextPrices) {
-				threshold := root.ContextPrices[i].Threshold
+			if i < len(base.ContextPrices) {
+				threshold := base.ContextPrices[i].Threshold
 				end = &threshold
 			}
+			intervalPricing := base
 			if i > 0 {
-				base = root.ContextPrices[i-1].Pricing
+				intervalPricing = base.ContextPrices[i-1].Pricing
 			}
-			result.Prices = nil
-			addTokenPrices("", "", false)
-			if _, ok := pricing.FastModeDisplayPricing(base); ok {
-				addTokenPrices("fast_", "priority", false)
+			prices := defaultTokenPrices(intervalPricing, raw, "", "", false)
+			if _, ok := pricing.FastModeDisplayPricing(intervalPricing); ok {
+				prices = append(prices, defaultTokenPrices(intervalPricing, raw, "fast_", "priority", false)...)
 			}
-			if base.SupportsServiceTier {
-				addTokenPrices("flex_", "flex", false)
+			if intervalPricing.SupportsServiceTier {
+				prices = append(prices, defaultTokenPrices(intervalPricing, raw, "flex_", "flex", false)...)
 			}
-			result.ContextIntervals = append(result.ContextIntervals, pricing.DefaultPriceInterval{MinTokens: start, MaxTokens: end, Prices: result.Prices})
+			result.ContextIntervals = append(result.ContextIntervals, pricing.DefaultPriceInterval{MinTokens: start, MaxTokens: end, Prices: prices})
 			if end != nil {
 				start = *end
 			}
 		}
-		base, result.Prices = root, rootPrices
 	}
 	return result
+}
+
+// defaultTokenPrices 用一个计费单位计算展示单价，缓存和图片 token 回退由计费算法处理。
+func defaultTokenPrices(base *pricing.ModelPricing, raw *pricing.CatalogModelPricing, prefix, tier string, applyLongCtx bool) []pricing.DefaultPriceValue {
+	prices := make([]pricing.DefaultPriceValue, 0, 7)
+	add := func(key string, value float64, unit string) {
+		prices = append(prices, pricing.DefaultPriceValue{Key: key, Value: &value, Unit: unit})
+	}
+	// 报价用量需达到目录阈值；严格大于阈值的模型额外加一个输入 token。
+	gate := 0
+	if applyLongCtx && base.LongContextInputThreshold > 0 {
+		gate = base.LongContextInputThreshold
+		if !base.LongContextThresholdInclusive {
+			gate++
+		}
+	}
+	quote := func(tokens UsageTokens) *CostBreakdown {
+		tokens.InputTokens += gate
+		return pricing.ComputeTokenBreakdown(base, tokens, 1, tier, applyLongCtx)
+	}
+	perMTok := func(cost float64, tokens int) float64 {
+		return cost / float64(tokens) * 1e6
+	}
+	addOptional := func(key string, value float64, applicable bool) {
+		if applicable {
+			add(prefix+key, value*1e6, "USD/MTok")
+		} else {
+			prices = append(prices, pricing.DefaultPriceValue{Key: prefix + key, Unit: "USD/MTok"})
+		}
+	}
+	add(prefix+"input", perMTok(quote(UsageTokens{InputTokens: 1}).InputCost, 1+gate), "USD/MTok")
+	add(prefix+"output", quote(UsageTokens{OutputTokens: 1}).OutputCost*1e6, "USD/MTok")
+	readPresent := base.CacheReadPricePerToken > 0 || raw != nil && raw.CacheReadPricePresent
+	writePresent := base.CacheCreationPricePerToken > 0 || base.SupportsCacheBreakdown || raw != nil && raw.CacheCreationPricePresent
+	addOptional("cache_read", quote(UsageTokens{CacheReadTokens: 1}).CacheReadCost, readPresent)
+	addOptional("cache_write", quote(UsageTokens{CacheCreationTokens: 1, CacheCreation5mTokens: 1}).CacheCreationCost, writePresent)
+	addOptional("cache_write_1h", quote(UsageTokens{CacheCreationTokens: 1, CacheCreation1hTokens: 1}).CacheCreationCost, base.SupportsCacheBreakdown)
+	addOptional("image_input", quote(UsageTokens{InputTokens: 1, ImageInputTokens: 1}).ImageInputCost, base.ImageInputPricePerToken > 0 || raw != nil && (raw.SupportsVision || raw.ImageInputPricePresent))
+	addOptional("image_output", quote(UsageTokens{OutputTokens: 1, ImageOutputTokens: 1}).ImageOutputCost, base.ImageOutputPricePerToken > 0 || raw != nil && raw.ImageOutputPricePresent)
+	return prices
 }
