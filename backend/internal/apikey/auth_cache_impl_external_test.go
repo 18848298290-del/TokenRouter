@@ -114,6 +114,139 @@ func TestAuthSnapshotGroupOpenAIFastPolicy(t *testing.T) {
 	}
 }
 
+func TestAPIKeyAuthSnapshotGroupFastPolicyByKeyType(t *testing.T) {
+	for _, composite := range []bool{false, true} {
+		name := "ordinary"
+		if composite {
+			name = "composite"
+		}
+		t.Run(name, func(t *testing.T) {
+			group := &routing.Group{
+				ID:               3,
+				OpenAIFastPolicy: "force_off",
+				ForceOpenAIFast:  true,
+			}
+			key := &apikey.APIKey{User: &identity.User{ID: 2}, Group: group}
+			if composite {
+				key.Group = nil
+				key.IsComposite = true
+				key.CompositeGroups = []apikey.APIKeyCompositeGroup{{GroupID: group.ID, Group: group}}
+			}
+			svc := newAPIKeyTestService(apiKeyTestDependencies{})
+			calls := 0
+			svc.SetGroupFastPolicy(func(raw string, force bool) string {
+				calls++
+				require.Equal(t, "force_off", raw)
+				require.True(t, force)
+				return "force_ultrafast"
+			})
+
+			snapshot := svc.KeySnapshotFromAPIKey(context.Background(), key)
+			payload, err := json.Marshal(snapshot)
+			require.NoError(t, err)
+			var decoded apikey.APIKeyAuthSnapshot
+			require.NoError(t, json.Unmarshal(payload, &decoded))
+			restored := svc.KeySnapshotToAPIKey("sk-fast-policy", &decoded)
+			if composite {
+				require.Zero(t, calls)
+				require.Equal(t, "force_off", restored.CompositeGroups[0].Group.OpenAIFastPolicy)
+			} else {
+				require.Equal(t, 1, calls)
+				require.Equal(t, "force_ultrafast", restored.Group.OpenAIFastPolicy)
+			}
+			require.Equal(t, "force_off", group.OpenAIFastPolicy)
+		})
+	}
+}
+
+func TestAPIKeyAuthSnapshotGroupPreservesNilAndEmpty(t *testing.T) {
+	for _, group := range []*routing.Group{
+		nil,
+		{},
+		{
+			AllowedProtocols: []protocol.ProtocolID{},
+			ModelRouting:     map[string][]int64{},
+		},
+	} {
+		svc := newAPIKeyTestService(apiKeyTestDependencies{})
+		key := &apikey.APIKey{User: &identity.User{ID: 2}, Group: group}
+		snapshot := svc.KeySnapshotFromAPIKey(context.Background(), key)
+		restored := svc.KeySnapshotToAPIKey("sk-empty-group", snapshot)
+		if group == nil {
+			require.Nil(t, snapshot.Group)
+			require.Nil(t, restored.Group)
+			continue
+		}
+		require.Equal(t, group.AllowedProtocols, snapshot.Group.AllowedProtocols)
+		require.Equal(t, group.AllowedProtocols, restored.Group.AllowedProtocols)
+		require.Equal(t, group.ModelRouting, snapshot.Group.ModelRouting)
+		require.Equal(t, group.ModelRouting, restored.Group.ModelRouting)
+		require.True(t, restored.Group.Hydrated)
+	}
+}
+
+func TestAPIKeyAuthSnapshotGroupCopiesMutableFields(t *testing.T) {
+	fallbackID := int64(9)
+	topK := 3
+	group := &routing.Group{
+		ID: 3,
+		AdvancedSchedulerOverrides: routing.GroupAdvancedSchedulerOverrides{
+			LBTopK: &topK,
+		},
+		FallbackGroupID:                 &fallbackID,
+		FallbackGroupIDOnInvalidRequest: &fallbackID,
+		UnavailableFallbackGroupID:      &fallbackID,
+		ModelRouting:                    map[string][]int64{"model": {1}},
+		SupportedModelScopes:            []string{"openai"},
+		AllowedProtocols:                []protocol.ProtocolID{protocol.ProtocolOpenAIResponses},
+		ProtocolFallbacks: map[protocol.ProtocolID][]protocol.ProtocolID{
+			protocol.ProtocolOpenAIResponses: {protocol.ProtocolOpenAIChatCompletions},
+		},
+		ModelsListConfig: routing.GroupModelsListConfig{Models: []string{"model"}},
+		ReasoningEffortMappings: []routing.ReasoningEffortMapping{
+			{From: "max", To: "xhigh"},
+		},
+		RoutingPolicy: routing.GroupRoutingPolicy{
+			ModelMapping:  map[string]string{"alias": "model"},
+			AllowedModels: []string{"model"},
+			FeaturesConfig: map[string]any{
+				"feature": map[string]any{"openai": true},
+			},
+		},
+	}
+	key := &apikey.APIKey{
+		User:            &identity.User{ID: 2},
+		Group:           group,
+		IsComposite:     true,
+		CompositeGroups: []apikey.APIKeyCompositeGroup{{GroupID: group.ID, Group: group}},
+	}
+	svc := newAPIKeyTestService(apiKeyTestDependencies{})
+	snapshot := svc.KeySnapshotFromAPIKey(context.Background(), key)
+	before, err := json.Marshal(snapshot)
+	require.NoError(t, err)
+	restored := svc.KeySnapshotToAPIKey("sk-copy-group", snapshot)
+	for _, mutable := range []*routing.Group{group, restored.Group, restored.CompositeGroups[0].Group} {
+		*mutable.AdvancedSchedulerOverrides.LBTopK = 10
+		*mutable.FallbackGroupID = 10
+		*mutable.FallbackGroupIDOnInvalidRequest = 10
+		*mutable.UnavailableFallbackGroupID = 10
+		mutable.ModelRouting["model"][0] = 10
+		mutable.SupportedModelScopes[0] = "changed"
+		mutable.AllowedProtocols[0] = protocol.ProtocolAnthropicMessages
+		mutable.ProtocolFallbacks[protocol.ProtocolOpenAIResponses][0] = protocol.ProtocolAnthropicMessages
+		mutable.ModelsListConfig.Models[0] = "changed"
+		mutable.ReasoningEffortMappings[0].To = "changed"
+		mutable.RoutingPolicy.ModelMapping["alias"] = "changed"
+		mutable.RoutingPolicy.AllowedModels[0] = "changed"
+		feature, ok := mutable.RoutingPolicy.FeaturesConfig["feature"].(map[string]any)
+		require.True(t, ok)
+		feature["openai"] = false
+		after, err := json.Marshal(snapshot)
+		require.NoError(t, err)
+		require.Equal(t, string(before), string(after))
+	}
+}
+
 func TestAPIKeyService_RejectsV13AuthSnapshotWithoutSessionIsolationFlag(t *testing.T) {
 	groupID := int64(9)
 	svc := newAPIKeyTestService(apiKeyTestDependencies{})

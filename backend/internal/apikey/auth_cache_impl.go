@@ -450,41 +450,9 @@ func (s *APIKeyService) KeySnapshotFromAPIKey(ctx context.Context, apiKey *APIKe
 		}
 		// 查询失败或无 override 时留 nil，checkRPM 会回退到 DB 查询
 	}
-	if apiKey.Group != nil {
-		snapshot.Group = &APIKeyAuthGroupSnapshot{
-			ID:   apiKey.Group.ID,
-			Name: apiKey.Group.Name,
-
-			SchedulerType:                   apiKey.Group.SchedulerType,
-			AdvancedSchedulerOverrides:      accessview.CloneGroupAdvancedSchedulerOverrides(apiKey.Group.AdvancedSchedulerOverrides),
-			IsExclusive:                     apiKey.Group.IsExclusive,
-			Status:                          apiKey.Group.Status,
-			RateMultiplier:                  apiKey.Group.RateMultiplier,
-			SessionIsolationEnabled:         apiKey.Group.SessionIsolationEnabled,
-			AllowImageGeneration:            apiKey.Group.AllowImageGeneration,
-			AllowBatchImageGeneration:       apiKey.Group.AllowBatchImageGeneration,
-			RoutingPolicy:                   apiKey.Group.RoutingPolicy.Clone(),
-			ClaudeCodeOnly:                  apiKey.Group.ClaudeCodeOnly,
-			FallbackGroupID:                 clonePointer(apiKey.Group.FallbackGroupID),
-			FallbackGroupIDOnInvalidRequest: clonePointer(apiKey.Group.FallbackGroupIDOnInvalidRequest),
-			UnavailableFallbackGroupID:      clonePointer(apiKey.Group.UnavailableFallbackGroupID),
-			ModelRouting:                    cloneModelRouting(apiKey.Group.ModelRouting),
-			ModelRoutingEnabled:             apiKey.Group.ModelRoutingEnabled,
-			MCPXMLInject:                    apiKey.Group.MCPXMLInject,
-			SupportedModelScopes:            slices.Clone(apiKey.Group.SupportedModelScopes),
-			AllowedProtocols:                cloneGroupClientProtocols(apiKey.Group.AllowedProtocols),
-			ProtocolFallbacks:               protocol.CloneFallbacks(apiKey.Group.ProtocolFallbacks),
-			ResponsesImagePolicy:            apiKey.Group.ResponsesImagePolicy,
-			AllowLive:                       apiKey.Group.AllowLive,
-			ForceOpenAIFast:                 apiKey.Group.ForceOpenAIFast,
-			OpenAIFastPolicy:                s.groupPolicy(apiKey.Group),
-			DefaultMappedModel:              apiKey.Group.DefaultMappedModel,
-			ModelsListConfig:                cloneModelsList(apiKey.Group.ModelsListConfig),
-			RPMLimit:                        apiKey.Group.RPMLimit,
-			MaxReasoningEffort:              apiKey.Group.MaxReasoningEffort,
-			MaxReasoningEffortOverLimit:     apiKey.Group.MaxReasoningEffortOverLimit,
-			ReasoningEffortMappings:         slices.Clone(apiKey.Group.ReasoningEffortMappings),
-		}
+	snapshot.Group = KeyAuthGroupSnapshotFromGroup(apiKey.Group)
+	if snapshot.Group != nil {
+		snapshot.Group.OpenAIFastPolicy = s.groupPolicy(apiKey.Group)
 	}
 	if apiKey.IsComposite {
 		snapshot.CompositeGroups = make([]APIKeyAuthCompositeGroupSnapshot, 0, len(apiKey.CompositeGroups))
@@ -568,43 +536,7 @@ func (s *APIKeyService) KeySnapshotToAPIKey(key string, snapshot *APIKeyAuthSnap
 		apiKey.Team = &Team{ID: snapshot.Team.ID, Name: snapshot.Team.Name, Status: snapshot.Team.Status}
 		apiKey.TeamMembership = cloneMembership(snapshot.TeamMembership)
 	}
-	if snapshot.Group != nil {
-		apiKey.Group = &routing.Group{
-			ID:   snapshot.Group.ID,
-			Name: snapshot.Group.Name,
-
-			SchedulerType:                   snapshot.Group.SchedulerType,
-			AdvancedSchedulerOverrides:      accessview.CloneGroupAdvancedSchedulerOverrides(snapshot.Group.AdvancedSchedulerOverrides),
-			IsExclusive:                     snapshot.Group.IsExclusive,
-			Status:                          snapshot.Group.Status,
-			Hydrated:                        true,
-			RateMultiplier:                  snapshot.Group.RateMultiplier,
-			SessionIsolationEnabled:         snapshot.Group.SessionIsolationEnabled,
-			AllowImageGeneration:            snapshot.Group.AllowImageGeneration,
-			AllowBatchImageGeneration:       snapshot.Group.AllowBatchImageGeneration,
-			RoutingPolicy:                   snapshot.Group.RoutingPolicy.Clone(),
-			ClaudeCodeOnly:                  snapshot.Group.ClaudeCodeOnly,
-			FallbackGroupID:                 clonePointer(snapshot.Group.FallbackGroupID),
-			FallbackGroupIDOnInvalidRequest: clonePointer(snapshot.Group.FallbackGroupIDOnInvalidRequest),
-			UnavailableFallbackGroupID:      clonePointer(snapshot.Group.UnavailableFallbackGroupID),
-			ModelRouting:                    cloneModelRouting(snapshot.Group.ModelRouting),
-			ModelRoutingEnabled:             snapshot.Group.ModelRoutingEnabled,
-			MCPXMLInject:                    snapshot.Group.MCPXMLInject,
-			SupportedModelScopes:            slices.Clone(snapshot.Group.SupportedModelScopes),
-			AllowedProtocols:                cloneGroupClientProtocols(snapshot.Group.AllowedProtocols),
-			ProtocolFallbacks:               protocol.CloneFallbacks(snapshot.Group.ProtocolFallbacks),
-			ResponsesImagePolicy:            snapshot.Group.ResponsesImagePolicy,
-			AllowLive:                       snapshot.Group.AllowLive,
-			ForceOpenAIFast:                 snapshot.Group.ForceOpenAIFast,
-			OpenAIFastPolicy:                snapshot.Group.OpenAIFastPolicy,
-			DefaultMappedModel:              snapshot.Group.DefaultMappedModel,
-			ModelsListConfig:                cloneModelsList(snapshot.Group.ModelsListConfig),
-			RPMLimit:                        snapshot.Group.RPMLimit,
-			MaxReasoningEffort:              snapshot.Group.MaxReasoningEffort,
-			MaxReasoningEffortOverLimit:     snapshot.Group.MaxReasoningEffortOverLimit,
-			ReasoningEffortMappings:         slices.Clone(snapshot.Group.ReasoningEffortMappings),
-		}
-	}
+	apiKey.Group = KeyGroupFromAuthSnapshot(snapshot.Group)
 	if snapshot.IsComposite {
 		apiKey.CompositeGroups = make([]APIKeyCompositeGroup, 0, len(snapshot.CompositeGroups))
 		for _, binding := range snapshot.CompositeGroups {
@@ -624,29 +556,43 @@ func (s *APIKeyService) KeySnapshotToAPIKey(key string, snapshot *APIKeyAuthSnap
 	return apiKey
 }
 
-// KeyAuthGroupSnapshotFromGroup 为认证缓存复制分组，复合映射各自持有可变字段的副本。
+// KeyAuthGroupSnapshotFromGroup 为认证缓存复制分组及其可变字段。
 func KeyAuthGroupSnapshotFromGroup(group *routing.Group) *APIKeyAuthGroupSnapshot {
 	if group == nil {
 		return nil
 	}
 	return &APIKeyAuthGroupSnapshot{
-		ID: group.ID, Name: group.Name, SchedulerType: group.SchedulerType,
-		AdvancedSchedulerOverrides: accessview.CloneGroupAdvancedSchedulerOverrides(group.AdvancedSchedulerOverrides), IsExclusive: group.IsExclusive,
-		Status: group.Status, RateMultiplier: group.RateMultiplier,
-		SessionIsolationEnabled: group.SessionIsolationEnabled, AllowImageGeneration: group.AllowImageGeneration,
-		AllowBatchImageGeneration: group.AllowBatchImageGeneration,
-		RoutingPolicy:             group.RoutingPolicy.Clone(),
-		ClaudeCodeOnly:            group.ClaudeCodeOnly,
-		FallbackGroupID:           clonePointer(group.FallbackGroupID), FallbackGroupIDOnInvalidRequest: clonePointer(group.FallbackGroupIDOnInvalidRequest),
-		UnavailableFallbackGroupID: clonePointer(group.UnavailableFallbackGroupID), ModelRouting: cloneModelRouting(group.ModelRouting),
-		ModelRoutingEnabled: group.ModelRoutingEnabled, MCPXMLInject: group.MCPXMLInject,
-		ProtocolFallbacks: protocol.CloneFallbacks(group.ProtocolFallbacks), ResponsesImagePolicy: group.ResponsesImagePolicy,
-		SupportedModelScopes: slices.Clone(group.SupportedModelScopes), AllowedProtocols: cloneGroupClientProtocols(group.AllowedProtocols),
-		AllowLive: group.AllowLive, ForceOpenAIFast: group.ForceOpenAIFast, OpenAIFastPolicy: group.OpenAIFastPolicy, DefaultMappedModel: group.DefaultMappedModel,
-		ModelsListConfig: cloneModelsList(group.ModelsListConfig),
-		RPMLimit:         group.RPMLimit, MaxReasoningEffort: group.MaxReasoningEffort,
-		MaxReasoningEffortOverLimit: group.MaxReasoningEffortOverLimit,
-		ReasoningEffortMappings:     slices.Clone(group.ReasoningEffortMappings),
+		ID:                              group.ID,
+		Name:                            group.Name,
+		SchedulerType:                   group.SchedulerType,
+		AdvancedSchedulerOverrides:      accessview.CloneGroupAdvancedSchedulerOverrides(group.AdvancedSchedulerOverrides),
+		IsExclusive:                     group.IsExclusive,
+		Status:                          group.Status,
+		RateMultiplier:                  group.RateMultiplier,
+		SessionIsolationEnabled:         group.SessionIsolationEnabled,
+		AllowImageGeneration:            group.AllowImageGeneration,
+		AllowBatchImageGeneration:       group.AllowBatchImageGeneration,
+		RoutingPolicy:                   group.RoutingPolicy.Clone(),
+		ClaudeCodeOnly:                  group.ClaudeCodeOnly,
+		FallbackGroupID:                 clonePointer(group.FallbackGroupID),
+		FallbackGroupIDOnInvalidRequest: clonePointer(group.FallbackGroupIDOnInvalidRequest),
+		UnavailableFallbackGroupID:      clonePointer(group.UnavailableFallbackGroupID),
+		ModelRouting:                    cloneModelRouting(group.ModelRouting),
+		ModelRoutingEnabled:             group.ModelRoutingEnabled,
+		MCPXMLInject:                    group.MCPXMLInject,
+		ProtocolFallbacks:               protocol.CloneFallbacks(group.ProtocolFallbacks),
+		ResponsesImagePolicy:            group.ResponsesImagePolicy,
+		SupportedModelScopes:            slices.Clone(group.SupportedModelScopes),
+		AllowedProtocols:                cloneGroupClientProtocols(group.AllowedProtocols),
+		AllowLive:                       group.AllowLive,
+		ForceOpenAIFast:                 group.ForceOpenAIFast,
+		OpenAIFastPolicy:                group.OpenAIFastPolicy,
+		DefaultMappedModel:              group.DefaultMappedModel,
+		ModelsListConfig:                cloneModelsList(group.ModelsListConfig),
+		RPMLimit:                        group.RPMLimit,
+		MaxReasoningEffort:              group.MaxReasoningEffort,
+		MaxReasoningEffortOverLimit:     group.MaxReasoningEffortOverLimit,
+		ReasoningEffortMappings:         slices.Clone(group.ReasoningEffortMappings),
 	}
 }
 
@@ -656,23 +602,38 @@ func KeyGroupFromAuthSnapshot(snapshot *APIKeyAuthGroupSnapshot) *routing.Group 
 		return nil
 	}
 	return &routing.Group{
-		ID: snapshot.ID, Name: snapshot.Name, SchedulerType: snapshot.SchedulerType,
-		AdvancedSchedulerOverrides: accessview.CloneGroupAdvancedSchedulerOverrides(snapshot.AdvancedSchedulerOverrides), IsExclusive: snapshot.IsExclusive,
-		Status: snapshot.Status, Hydrated: true, RateMultiplier: snapshot.RateMultiplier,
-		SessionIsolationEnabled: snapshot.SessionIsolationEnabled,
-		AllowImageGeneration:    snapshot.AllowImageGeneration, AllowBatchImageGeneration: snapshot.AllowBatchImageGeneration,
-		RoutingPolicy:  snapshot.RoutingPolicy.Clone(),
-		ClaudeCodeOnly: snapshot.ClaudeCodeOnly, FallbackGroupID: clonePointer(snapshot.FallbackGroupID),
+		ID:                              snapshot.ID,
+		Name:                            snapshot.Name,
+		SchedulerType:                   snapshot.SchedulerType,
+		AdvancedSchedulerOverrides:      accessview.CloneGroupAdvancedSchedulerOverrides(snapshot.AdvancedSchedulerOverrides),
+		IsExclusive:                     snapshot.IsExclusive,
+		Status:                          snapshot.Status,
+		Hydrated:                        true,
+		RateMultiplier:                  snapshot.RateMultiplier,
+		SessionIsolationEnabled:         snapshot.SessionIsolationEnabled,
+		AllowImageGeneration:            snapshot.AllowImageGeneration,
+		AllowBatchImageGeneration:       snapshot.AllowBatchImageGeneration,
+		RoutingPolicy:                   snapshot.RoutingPolicy.Clone(),
+		ClaudeCodeOnly:                  snapshot.ClaudeCodeOnly,
+		FallbackGroupID:                 clonePointer(snapshot.FallbackGroupID),
 		FallbackGroupIDOnInvalidRequest: clonePointer(snapshot.FallbackGroupIDOnInvalidRequest),
-		UnavailableFallbackGroupID:      clonePointer(snapshot.UnavailableFallbackGroupID), ModelRouting: cloneModelRouting(snapshot.ModelRouting),
-		ModelRoutingEnabled: snapshot.ModelRoutingEnabled, MCPXMLInject: snapshot.MCPXMLInject,
-		ProtocolFallbacks: protocol.CloneFallbacks(snapshot.ProtocolFallbacks), ResponsesImagePolicy: snapshot.ResponsesImagePolicy,
-		SupportedModelScopes: slices.Clone(snapshot.SupportedModelScopes), AllowedProtocols: cloneGroupClientProtocols(snapshot.AllowedProtocols),
-		AllowLive: snapshot.AllowLive, ForceOpenAIFast: snapshot.ForceOpenAIFast, OpenAIFastPolicy: snapshot.OpenAIFastPolicy, DefaultMappedModel: snapshot.DefaultMappedModel,
-		ModelsListConfig: cloneModelsList(snapshot.ModelsListConfig),
-		RPMLimit:         snapshot.RPMLimit, MaxReasoningEffort: snapshot.MaxReasoningEffort,
-		MaxReasoningEffortOverLimit: snapshot.MaxReasoningEffortOverLimit,
-		ReasoningEffortMappings:     slices.Clone(snapshot.ReasoningEffortMappings),
+		UnavailableFallbackGroupID:      clonePointer(snapshot.UnavailableFallbackGroupID),
+		ModelRouting:                    cloneModelRouting(snapshot.ModelRouting),
+		ModelRoutingEnabled:             snapshot.ModelRoutingEnabled,
+		MCPXMLInject:                    snapshot.MCPXMLInject,
+		ProtocolFallbacks:               protocol.CloneFallbacks(snapshot.ProtocolFallbacks),
+		ResponsesImagePolicy:            snapshot.ResponsesImagePolicy,
+		SupportedModelScopes:            slices.Clone(snapshot.SupportedModelScopes),
+		AllowedProtocols:                cloneGroupClientProtocols(snapshot.AllowedProtocols),
+		AllowLive:                       snapshot.AllowLive,
+		ForceOpenAIFast:                 snapshot.ForceOpenAIFast,
+		OpenAIFastPolicy:                snapshot.OpenAIFastPolicy,
+		DefaultMappedModel:              snapshot.DefaultMappedModel,
+		ModelsListConfig:                cloneModelsList(snapshot.ModelsListConfig),
+		RPMLimit:                        snapshot.RPMLimit,
+		MaxReasoningEffort:              snapshot.MaxReasoningEffort,
+		MaxReasoningEffortOverLimit:     snapshot.MaxReasoningEffortOverLimit,
+		ReasoningEffortMappings:         slices.Clone(snapshot.ReasoningEffortMappings),
 	}
 }
 
