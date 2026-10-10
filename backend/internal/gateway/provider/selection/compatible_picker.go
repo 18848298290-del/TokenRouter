@@ -535,32 +535,6 @@ func (s *Compatible) selectProviderWithSchedulerForRoutingOnce(
 		if preserveGuardianParentBinding {
 			legacySessionHash = ""
 		}
-		if requiredTransport == egress.OpenAIUpstreamTransportAny || requiredTransport == egress.OpenAIUpstreamTransportHTTPSSE {
-			effectiveExcludedIDs := cloneExcludedProviderIDs(excludedIDs)
-			for {
-				selection, err := s.selectProviderWithLoadAwarenessForRouting(ctx, groupID, platform, legacySessionHash, requestedModel, routingModel, effectiveExcludedIDs, requireCompact, requiredCapability)
-				if err != nil {
-					return nil, decision, err
-				}
-				if selection == nil || selection.Provider == nil {
-					return selection, decision, nil
-				}
-				if providerSupportsOpenAICapabilities(ctx, selection.Provider, requiredCapability, requiredImageCapability) {
-					return selection, decision, nil
-				}
-				if selection.ReleaseFunc != nil {
-					selection.ReleaseFunc()
-				}
-				if effectiveExcludedIDs == nil {
-					effectiveExcludedIDs = make(map[int64]struct{})
-				}
-				if _, exists := effectiveExcludedIDs[selection.Provider.Record.ID]; exists {
-					return nil, decision, schedulercore.ErrNoAvailableProviders
-				}
-				effectiveExcludedIDs[selection.Provider.Record.ID] = struct{}{}
-			}
-		}
-
 		effectiveExcludedIDs := cloneExcludedProviderIDs(excludedIDs)
 		for {
 			selection, err := s.selectProviderWithLoadAwarenessForRouting(ctx, groupID, platform, legacySessionHash, requestedModel, routingModel, effectiveExcludedIDs, requireCompact, requiredCapability)
@@ -570,7 +544,9 @@ func (s *Compatible) selectProviderWithSchedulerForRoutingOnce(
 			if selection == nil || selection.Provider == nil {
 				return selection, decision, nil
 			}
-			if s.isOpenAIProviderTransportCompatible(selection.Provider, requiredTransport) &&
+			if (requiredTransport == egress.OpenAIUpstreamTransportAny ||
+				requiredTransport == egress.OpenAIUpstreamTransportHTTPSSE ||
+				s.isOpenAIProviderTransportCompatible(selection.Provider, requiredTransport)) &&
 				providerSupportsOpenAICapabilities(ctx, selection.Provider, requiredCapability, requiredImageCapability) {
 				return selection, decision, nil
 			}
