@@ -1,6 +1,0 @@
-interface:
-  display_name: "Dead code clean up"
-  short_description: "仅在用户明确指定本技能时检查死代码，获准清理后保存报告并执行"
-
-policy:
-  allow_implicit_invocation: false
