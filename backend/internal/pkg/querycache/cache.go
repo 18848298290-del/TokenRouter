@@ -80,7 +80,7 @@ func (c *Cache) GetOrLoad(key string, load func() (any, error)) (Entry, bool, er
 		return Entry{}, false, nil
 	}
 	if entry, ok := c.Get(key); ok {
-		return Clone(entry), true, nil
+		return entry, true, nil
 	}
 	if c == nil || key == "" {
 		payload, err := load()
