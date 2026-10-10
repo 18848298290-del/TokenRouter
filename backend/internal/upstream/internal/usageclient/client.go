@@ -167,22 +167,7 @@ func (c *Client) GetURLWithHeaders(ctx context.Context, endpoint string, fixedHe
 		}
 		req.Header.Set(name, value)
 	}
-	resp, err := c.Do(req)
-	if err != nil {
-		return nil, 0, UpstreamUsageOperationError(ctx, err)
-	}
-	if resp == nil || resp.Body == nil {
-		return nil, 0, usageview.ErrUpstreamUsageInvalidResponse
-	}
-	body, readErr := io.ReadAll(io.LimitReader(resp.Body, MaxBodyBytes+1))
-	_ = resp.Body.Close()
-	if readErr != nil {
-		return nil, 0, UpstreamUsageOperationError(ctx, readErr)
-	}
-	if int64(len(body)) > MaxBodyBytes {
-		return nil, 0, usageview.ErrUpstreamUsageInvalidResponse
-	}
-	return body, resp.StatusCode, nil
+	return c.readResponse(ctx, req)
 }
 
 // GetURLWithBearer 使用固定的 Bearer 令牌和可选用户 ID 请求管理端点。
@@ -209,6 +194,11 @@ func (c *Client) GetURLWithBearer(ctx context.Context, endpoint, bearerToken, us
 	if strings.TrimSpace(userID) != "" {
 		req.Header.Set("New-Api-User", strings.TrimSpace(userID))
 	}
+	return c.readResponse(ctx, req)
+}
+
+// readResponse 读取有长度上限的用量响应，并在读取后关闭响应体。
+func (c *Client) readResponse(ctx context.Context, req *http.Request) ([]byte, int, error) {
 	resp, err := c.Do(req)
 	if err != nil {
 		return nil, 0, UpstreamUsageOperationError(ctx, err)
