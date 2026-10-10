@@ -394,6 +394,73 @@ func TestBuildUsageLogBestEffortInsertQuery_IncludesRequestedModelColumn(t *test
 	require.Equal(t, prepared.args[5], args[5])
 }
 
+func TestUsageLogBatchInsertShape_ColumnsAndArguments(t *testing.T) {
+	prepared := make([]usageLogInsertPrepared, 2)
+	keys := []string{"first", "second"}
+	preparedByKey := make(map[string]usageLogInsertPrepared, len(keys))
+	for i, key := range keys {
+		prepared[i] = prepareUsageLogInsert(&usage.UsageLog{
+			UserID:    int64(i + 1),
+			APIKeyID:  int64(i + 2),
+			RequestID: key,
+			Model:     "gpt-5",
+			CreatedAt: time.Date(2026, 10, 11, 0, i, 0, 0, time.UTC),
+		})
+		preparedByKey[key] = prepared[i]
+	}
+	batchQuery, batchArgs := buildUsageLogBatchInsertQuery(keys, preparedByKey)
+	bestEffortQuery, bestEffortArgs := buildUsageLogBestEffortInsertQuery(prepared)
+	inputShape := regexp.MustCompile(`(?s)WITH input \((.*?)\) AS \(VALUES (.*?)\n\s*\)`)
+	insertShape := regexp.MustCompile(`(?s)INSERT INTO usage_logs \((.*?)\)\s*SELECT(.*?)FROM input`)
+	placeholderShape := regexp.MustCompile(`\$(\d+)(?:::(\w+))?`)
+	normalizeColumns := func(columns string) string {
+		return strings.Join(strings.Fields(columns), "")
+	}
+	wantColumns := normalizeColumns(usageLogInsertColumns)
+
+	for _, tt := range []struct {
+		name       string
+		query      string
+		args       []any
+		inputIndex bool
+	}{
+		{name: "batch", query: batchQuery, args: batchArgs, inputIndex: true},
+		{name: "best-effort", query: bestEffortQuery, args: bestEffortArgs},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			input := inputShape.FindStringSubmatch(tt.query)
+			require.Len(t, input, 3)
+			inputColumns := wantColumns
+			if tt.inputIndex {
+				inputColumns = "input_idx," + inputColumns
+			}
+			require.Equal(t, inputColumns, normalizeColumns(input[1]))
+			insert := insertShape.FindStringSubmatch(tt.query)
+			require.Len(t, insert, 3)
+			require.Equal(t, wantColumns, normalizeColumns(insert[1]))
+			require.Equal(t, wantColumns, normalizeColumns(insert[2]))
+
+			var wantArgs []any
+			var wantTypes []string
+			for i, row := range prepared {
+				if tt.inputIndex {
+					wantArgs = append(wantArgs, i)
+					wantTypes = append(wantTypes, "")
+				}
+				wantArgs = append(wantArgs, row.args...)
+				wantTypes = append(wantTypes, usageLogInsertArgTypes[:]...)
+			}
+			require.Equal(t, wantArgs, tt.args)
+			placeholders := placeholderShape.FindAllStringSubmatch(input[2], -1)
+			require.Len(t, placeholders, len(wantArgs))
+			for i, placeholder := range placeholders {
+				require.Equal(t, strconv.Itoa(i+1), placeholder[1])
+				require.Equal(t, wantTypes[i], placeholder[2])
+			}
+		})
+	}
+}
+
 func TestExecUsageLogInsertNoResult_PersistsRequestedModel(t *testing.T) {
 	db, mock := newSQLMock(t)
 	prepared := prepareUsageLogInsert(&usage.UsageLog{
