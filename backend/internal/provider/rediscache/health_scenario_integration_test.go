@@ -2,8 +2,7 @@
 
 package rediscache
 
-// 本文件覆盖 internal500_counter_cache.go、openai_403_counter_cache.go、
-// timeout_counter_cache.go 和 temp_unsched_cache.go 共用 Redis 时的计数与调度状态。
+// 本文件覆盖 health_counter.go 和 temp_unsched_cache.go 共用 Redis 时的计数与调度状态。
 
 import (
 	"context"
