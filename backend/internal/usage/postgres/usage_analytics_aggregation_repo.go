@@ -8,6 +8,35 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+const (
+	// usageAnalyticsRawDimensionsSQL 按聚合表列序归一原始日志，调用方将原始表命名为 ul。
+	usageAnalyticsRawDimensionsSQL = `
+			ul.user_id,
+			COALESCE(ul.billing_user_id, ul.user_id),
+			COALESCE(ul.team_id, 0),
+			ul.api_key_id,
+			COALESCE(ul.group_id, 0),
+			COALESCE(NULLIF(TRIM(ul.model), ''), NULLIF(TRIM(ul.requested_model), ''), ''),
+			CASE
+				WHEN COALESCE(ul.request_type, 0) <> 0 THEN ul.request_type
+				WHEN COALESCE(ul.openai_ws_mode, FALSE) THEN 3
+				WHEN COALESCE(ul.stream, FALSE) THEN 2
+				ELSE 1
+			END,
+			COALESCE(ul.stream, FALSE),
+			COALESCE(ul.billing_type, 0),
+			COALESCE(
+				NULLIF(ul.billing_mode, ''),
+				CASE
+					WHEN COALESCE(ul.video_duration_seconds, 0) > 0 THEN 'video'
+					WHEN COALESCE(ul.image_count, 0) > 0 THEN 'image'
+					ELSE 'token'
+				END
+			),
+			ul.platform,
+			COALESCE(ul.inbound_endpoint, ''),`
+)
+
 // AggregateUsageAnalyticsRange 完整重建范围涉及的 UTC 小时桶与日桶，末桶只扫描到结束水位。
 func (r *AggregationStore) AggregateUsageAnalyticsRange(ctx context.Context, start, end time.Time) error {
 	return r.aggregateUsageAnalyticsRange(ctx, start, end, false, true)
@@ -79,31 +108,7 @@ func (r *AggregationStore) aggregateUsageAnalyticsRangeInTx(ctx context.Context,
 		)
 		SELECT
 			date_trunc('hour', ul.created_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC',
-			ul.user_id,
-			COALESCE(ul.billing_user_id, ul.user_id),
-			COALESCE(ul.team_id, 0),
-			ul.api_key_id,
-			COALESCE(ul.group_id, 0),
-			-- 聚合使用内部请求模型，避免复合 Key 的自定义前缀拆分同一模型。
-			COALESCE(NULLIF(TRIM(ul.model), ''), NULLIF(TRIM(ul.requested_model), ''), ''),
-			CASE
-				WHEN COALESCE(ul.request_type, 0) <> 0 THEN ul.request_type
-				WHEN COALESCE(ul.openai_ws_mode, FALSE) THEN 3
-				WHEN COALESCE(ul.stream, FALSE) THEN 2
-				ELSE 1
-			END,
-			COALESCE(ul.stream, FALSE),
-			COALESCE(ul.billing_type, 0),
-			COALESCE(
-				NULLIF(ul.billing_mode, ''),
-				CASE
-					WHEN COALESCE(ul.video_duration_seconds, 0) > 0 THEN 'video'
-					WHEN COALESCE(ul.image_count, 0) > 0 THEN 'image'
-					ELSE 'token'
-				END
-			),
-			ul.platform,
-			COALESCE(ul.inbound_endpoint, ''),
+`+usageAnalyticsRawDimensionsSQL+`
 			COUNT(*),
 			COALESCE(SUM(ul.input_tokens), 0),
 			COALESCE(SUM(ul.output_tokens), 0),

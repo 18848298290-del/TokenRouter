@@ -127,28 +127,7 @@ func (r *Store) buildUsageAnalyticsQuery(ctx context.Context, filters UsageLogFi
 	parts = append(parts, `
 		SELECT
 			ul.created_at AS occurred_at,
-			ul.user_id,
-			COALESCE(ul.billing_user_id, ul.user_id),
-			COALESCE(ul.team_id, 0),
-			ul.api_key_id,
-			COALESCE(ul.group_id, 0),
-			-- 原始首尾区间必须与小时、日聚合使用同一内部请求模型口径。
-			COALESCE(NULLIF(TRIM(ul.model), ''), NULLIF(TRIM(ul.requested_model), ''), ''),
-			CASE
-				WHEN COALESCE(ul.request_type, 0) <> 0 THEN ul.request_type
-				WHEN COALESCE(ul.openai_ws_mode, FALSE) THEN 3
-				WHEN COALESCE(ul.stream, FALSE) THEN 2
-				ELSE 1
-			END,
-			COALESCE(ul.stream, FALSE),
-			COALESCE(ul.billing_type, 0),
-			COALESCE(NULLIF(ul.billing_mode, ''), CASE
-				WHEN COALESCE(ul.video_duration_seconds, 0) > 0 THEN 'video'
-				WHEN COALESCE(ul.image_count, 0) > 0 THEN 'image'
-				ELSE 'token'
-			END),
-			ul.platform,
-			COALESCE(ul.inbound_endpoint, ''),
+`+usageAnalyticsRawDimensionsSQL+`
 			1, ul.input_tokens, ul.output_tokens, ul.cache_creation_tokens,
 			ul.cache_read_tokens, ul.total_cost, ul.actual_cost,
 			COALESCE(ul.provider_stats_cost, ul.total_cost) * COALESCE(ul.provider_rate_multiplier, 1),
