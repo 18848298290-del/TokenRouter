@@ -144,31 +144,39 @@ func ReadCompatBufferedTerminal(resp *http.Response, options CompatBufferedOptio
 	}()
 	defer close(done)
 
+	processFrame := func(frame wire.OpenAICompatSSEFrame) (*wire.ResponsesResponse, error) {
+		payload := wire.OpenAICompatPayloadWithEventType(frame.Data, frame.EventType)
+		payload = string(options.RestoreToolNames([]byte(payload)))
+		var event wire.ResponsesStreamEvent
+		if err := json.Unmarshal([]byte(payload), &event); err != nil {
+			return nil, err
+		}
+		options.Observe([]byte(payload), event.Type)
+		wire.ParseSSEUsageBytesWithType([]byte(payload), event.Type, &usage)
+		acc.ProcessEvent(&event)
+		if response := CompatTerminalResponse(&event, []byte(payload)); IsCompatResponsesTerminalEvent(event.Type) && response != nil {
+			if event.Usage != nil {
+				usage = wire.CopyForwardUsage(event.Usage)
+				if response.Usage == nil {
+					response.Usage = event.Usage
+				}
+			}
+			if response.Usage != nil {
+				usage = wire.CopyForwardUsage(response.Usage)
+			}
+			return response, nil
+		}
+		return nil, nil
+	}
+
 	var parser wire.OpenAICompatSSEFrameParser
 	for {
 		select {
 		case ev, ok := <-events:
 			if !ok {
 				if frame, ok := parser.Finish(); ok {
-					payload := wire.OpenAICompatPayloadWithEventType(frame.Data, frame.EventType)
-					payload = string(options.RestoreToolNames([]byte(payload)))
-					var event wire.ResponsesStreamEvent
-					if err := json.Unmarshal([]byte(payload), &event); err == nil {
-						options.Observe([]byte(payload), event.Type)
-						wire.ParseSSEUsageBytesWithType([]byte(payload), event.Type, &usage)
-						acc.ProcessEvent(&event)
-						if response := CompatTerminalResponse(&event, []byte(payload)); IsCompatResponsesTerminalEvent(event.Type) && response != nil {
-							if event.Usage != nil {
-								usage = wire.CopyForwardUsage(event.Usage)
-								if response.Usage == nil {
-									response.Usage = event.Usage
-								}
-							}
-							if response.Usage != nil {
-								usage = wire.CopyForwardUsage(response.Usage)
-							}
-							return response, usage, acc, nil
-						}
+					if response, _ := processFrame(frame); response != nil {
+						return response, usage, acc, nil
 					}
 				}
 				return nil, usage, acc, nil
@@ -188,29 +196,12 @@ func ReadCompatBufferedTerminal(resp *http.Response, options CompatBufferedOptio
 			if !ok {
 				continue
 			}
-			payload := wire.OpenAICompatPayloadWithEventType(frame.Data, frame.EventType)
-			payload = string(options.RestoreToolNames([]byte(payload)))
-
-			var event wire.ResponsesStreamEvent
-			if err := json.Unmarshal([]byte(payload), &event); err != nil {
+			response, err := processFrame(frame)
+			if err != nil {
 				options.Log("failed to parse event", err, 0)
 				continue
 			}
-			options.Observe([]byte(payload), event.Type)
-			wire.ParseSSEUsageBytesWithType([]byte(payload), event.Type, &usage)
-
-			acc.ProcessEvent(&event)
-
-			if response := CompatTerminalResponse(&event, []byte(payload)); IsCompatResponsesTerminalEvent(event.Type) && response != nil {
-				if event.Usage != nil {
-					usage = wire.CopyForwardUsage(event.Usage)
-					if response.Usage == nil {
-						response.Usage = event.Usage
-					}
-				}
-				if response.Usage != nil {
-					usage = wire.CopyForwardUsage(response.Usage)
-				}
+			if response != nil {
 				return response, usage, acc, nil
 			}
 
