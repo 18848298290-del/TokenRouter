@@ -904,31 +904,7 @@ func (r *Store) queryErrorCounts(ctx context.Context, filter *ops.OpsDashboardFi
 	err error,
 ) {
 	where, args, _ := buildErrorWhere(filter, start, end, 1)
-	businessLimitedSQL := opsBusinessLimitedSQL("status_code", "upstream_status_code", "upstream_errors", "error_owner", "is_business_limited", filter.IgnoredStatusCodes)
-	slaCountableSQL := opsSLACountableSQL("status_code", "upstream_status_code", "upstream_errors", "error_owner", "is_business_limited", filter.IgnoredStatusCodes)
-
-	q := `
-SELECT
-  COALESCE(COUNT(*) FILTER (WHERE COALESCE(status_code, 0) >= 400), 0) AS error_total,
-  COALESCE(COUNT(*) FILTER (WHERE COALESCE(status_code, 0) >= 400 AND ` + businessLimitedSQL + `), 0) AS business_limited,
-  COALESCE(COUNT(*) FILTER (WHERE COALESCE(status_code, 0) >= 400 AND ` + slaCountableSQL + `), 0) AS error_sla,
-  COALESCE(COUNT(*) FILTER (WHERE error_owner = 'provider' AND ` + slaCountableSQL + ` AND COALESCE(upstream_status_code, status_code, 0) NOT IN (429, 529)), 0) AS upstream_excl,
-  COALESCE(COUNT(*) FILTER (WHERE error_owner = 'provider' AND ` + slaCountableSQL + ` AND COALESCE(upstream_status_code, status_code, 0) = 429), 0) AS upstream_429,
-  COALESCE(COUNT(*) FILTER (WHERE error_owner = 'provider' AND ` + slaCountableSQL + ` AND COALESCE(upstream_status_code, status_code, 0) = 529), 0) AS upstream_529
-FROM ops_error_logs
-` + where
-
-	if err := r.db.QueryRowContext(ctx, q, args...).Scan(
-		&errorTotal,
-		&businessLimited,
-		&errorCountSLA,
-		&upstreamExcl429529,
-		&upstream429,
-		&upstream529,
-	); err != nil {
-		return 0, 0, 0, 0, 0, 0, err
-	}
-	return errorTotal, businessLimited, errorCountSLA, upstreamExcl429529, upstream429, upstream529, nil
+	return queryOpsErrorCounts(ctx, r.db, where, args, filter.IgnoredStatusCodes)
 }
 
 func (r *Store) queryCurrentRates(ctx context.Context, filter *ops.OpsDashboardFilter, end time.Time) (qpsCurrent float64, tpsCurrent float64, err error) {

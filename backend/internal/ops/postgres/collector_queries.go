@@ -44,8 +44,22 @@ func (c *MetricsQueries) QueryErrorCounts(ctx context.Context, start, end time.T
 	upstream529 int64,
 	err error,
 ) {
+	const where = "WHERE created_at >= $1 AND created_at < $2 AND is_count_tokens = FALSE"
+	return queryOpsErrorCounts(ctx, c.db, where, []any{start, end}, ignoredStatusCodes)
+}
+
+func queryOpsErrorCounts(ctx context.Context, db *sql.DB, where string, args []any, ignoredStatusCodes []int) (
+	errorTotal int64,
+	businessLimited int64,
+	errorCountSLA int64,
+	upstreamExcl429529 int64,
+	upstream429 int64,
+	upstream529 int64,
+	err error,
+) {
 	businessLimitedSQL := opsBusinessLimitedSQL("status_code", "upstream_status_code", "upstream_errors", "error_owner", "is_business_limited", ignoredStatusCodes)
 	slaCountableSQL := opsSLACountableSQL("status_code", "upstream_status_code", "upstream_errors", "error_owner", "is_business_limited", ignoredStatusCodes)
+
 	q := `
 SELECT
   COALESCE(COUNT(*) FILTER (WHERE COALESCE(status_code, 0) >= 400), 0) AS error_total,
@@ -55,20 +69,19 @@ SELECT
   COALESCE(COUNT(*) FILTER (WHERE error_owner = 'provider' AND ` + slaCountableSQL + ` AND COALESCE(upstream_status_code, status_code, 0) = 429), 0) AS upstream_429,
   COALESCE(COUNT(*) FILTER (WHERE error_owner = 'provider' AND ` + slaCountableSQL + ` AND COALESCE(upstream_status_code, status_code, 0) = 529), 0) AS upstream_529
 FROM ops_error_logs
-WHERE created_at >= $1 AND created_at < $2
-  AND is_count_tokens = FALSE`
+` + where
 
-	if err := c.db.QueryRowContext(ctx, q, start, end).Scan(
+	if err := db.QueryRowContext(ctx, q, args...).Scan(
 		&errorTotal,
 		&businessLimited,
-		&errorSLA,
+		&errorCountSLA,
 		&upstreamExcl429529,
 		&upstream429,
 		&upstream529,
 	); err != nil {
 		return 0, 0, 0, 0, 0, 0, err
 	}
-	return errorTotal, businessLimited, errorSLA, upstreamExcl429529, upstream429, upstream529, nil
+	return errorTotal, businessLimited, errorCountSLA, upstreamExcl429529, upstream429, upstream529, nil
 }
 
 func (c *MetricsQueries) QueryUsageLatency(ctx context.Context, start, end time.Time) (duration ops.CollectedPercentiles, ttft ops.CollectedPercentiles, err error) {
