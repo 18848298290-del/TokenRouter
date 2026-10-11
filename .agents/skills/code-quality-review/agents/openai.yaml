@@ -1,0 +1,3 @@
+interface:
+  display_name: "代码质量审查与优化"
+  short_description: "按职责并行审查代码，统一评估收益与风险，再实施保持业务行为的优化"
