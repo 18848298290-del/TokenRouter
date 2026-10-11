@@ -261,6 +261,53 @@ func TestNotificationEmailAuthTemplatesAreListedAndPreviewable(t *testing.T) {
 	require.Contains(t, resetPreview.HTML, "https://example.com/reset?token=abc")
 }
 
+func TestNotificationEmailEventOrderAndCopies(t *testing.T) {
+	svc := NewNotificationEmailService(mailtest.NewMemorySettings(), nil)
+	want := []string{
+		NotificationEmailEventAuthVerifyCode,
+		NotificationEmailEventAuthPasswordReset,
+		NotificationEmailEventNotificationEmailVerifyCode,
+		NotificationEmailEventTeamInvitation,
+		NotificationEmailEventTeamOwnershipTransfer,
+		NotificationEmailEventSubscriptionPurchaseSuccess,
+		NotificationEmailEventSubscriptionExpiryReminder,
+		NotificationEmailEventBalanceLow,
+		NotificationEmailEventBalanceRechargeSuccess,
+		NotificationEmailEventProviderQuotaAlert,
+		NotificationEmailEventContentModerationViolation,
+		NotificationEmailEventContentModerationDisabled,
+		NotificationEmailEventOpsAlert,
+		NotificationEmailEventOpsScheduledReport,
+	}
+	infos := svc.ListEventInfos()
+	events := make([]string, 0, len(infos))
+	seen := make(map[string]bool, len(infos))
+	for _, info := range infos {
+		require.False(t, seen[info.Event], "重复事件：%s", info.Event)
+		seen[info.Event] = true
+		events = append(events, info.Event)
+	}
+	require.Equal(t, want, events)
+
+	infos[0].Event = "changed"
+	infos[0].Placeholders[0] = "changed"
+	again := svc.ListEventInfos()
+	require.Equal(t, want[0], again[0].Event)
+	require.Equal(t, "site_name", again[0].Placeholders[0])
+
+	templates, err := svc.ListTemplates(context.Background())
+	require.NoError(t, err)
+	locales := svc.SupportedLocales()
+	require.Len(t, templates, len(want)*len(locales))
+	for eventIndex, event := range want {
+		for localeIndex, language := range locales {
+			template := templates[eventIndex*len(locales)+localeIndex]
+			require.Equal(t, event, template.Event)
+			require.Equal(t, language, template.Locale)
+		}
+	}
+}
+
 func TestNotificationEmailAdditionalEventsAreListedAndPreviewable(t *testing.T) {
 	ctx := context.Background()
 	svc := NewNotificationEmailService(mailtest.NewMemorySettings(), nil)

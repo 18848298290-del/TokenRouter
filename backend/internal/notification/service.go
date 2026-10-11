@@ -74,32 +74,8 @@ var (
 	// 摘要指标保持独立占位符，方便管理员在模板中重排或省略单项指标。
 	notificationEmailOpsSummaryPlaceholders = contract.SummaryPlaceholders()
 
-	notificationEmailEventOrder = []string{
-		NotificationEmailEventAuthVerifyCode,
-		NotificationEmailEventAuthPasswordReset,
-		NotificationEmailEventNotificationEmailVerifyCode,
-		NotificationEmailEventTeamInvitation,
-		NotificationEmailEventTeamOwnershipTransfer,
-		NotificationEmailEventSubscriptionPurchaseSuccess,
-		NotificationEmailEventSubscriptionExpiryReminder,
-		NotificationEmailEventBalanceLow,
-		NotificationEmailEventBalanceRechargeSuccess,
-		NotificationEmailEventProviderQuotaAlert,
-		NotificationEmailEventContentModerationViolation,
-		NotificationEmailEventContentModerationDisabled,
-		NotificationEmailEventOpsAlert,
-		NotificationEmailEventOpsScheduledReport,
-	}
-
-	notificationEmailEventDefinitions = map[string]NotificationEmailEventInfo{
-		NotificationEmailEventTeamOwnershipTransfer: {
-			Event:       NotificationEmailEventTeamOwnershipTransfer,
-			Label:       "Team ownership transfer",
-			Description: "Sent when team ownership is offered to a user.",
-			Category:    "team", Optional: false,
-			Placeholders: append(append([]string{}, notificationEmailCommonPlaceholders...), "team_name", "transfer_url"),
-		},
-		NotificationEmailEventAuthVerifyCode: {
+	notificationEmailEvents = []NotificationEmailEventInfo{
+		{
 			Event:        NotificationEmailEventAuthVerifyCode,
 			Label:        "Email verification code",
 			Description:  "Sent for registration, email binding, OAuth pending email, and TOTP verification flows.",
@@ -107,7 +83,7 @@ var (
 			Optional:     false,
 			Placeholders: append(append([]string{}, notificationEmailCommonPlaceholders...), "verification_code", "expires_in_minutes"),
 		},
-		NotificationEmailEventAuthPasswordReset: {
+		{
 			Event:        NotificationEmailEventAuthPasswordReset,
 			Label:        "Password reset",
 			Description:  "Sent when a user requests a password reset link.",
@@ -115,7 +91,7 @@ var (
 			Optional:     false,
 			Placeholders: append(append([]string{}, notificationEmailCommonPlaceholders...), "reset_url", "expires_in_minutes"),
 		},
-		NotificationEmailEventNotificationEmailVerifyCode: {
+		{
 			Event:        NotificationEmailEventNotificationEmailVerifyCode,
 			Label:        "Notification email verification code",
 			Description:  "Sent when a user verifies an extra notification email address.",
@@ -123,7 +99,7 @@ var (
 			Optional:     false,
 			Placeholders: append(append([]string{}, notificationEmailCommonPlaceholders...), "verification_code", "expires_in_minutes"),
 		},
-		NotificationEmailEventTeamInvitation: {
+		{
 			Event:        NotificationEmailEventTeamInvitation,
 			Label:        "Team invitation",
 			Description:  "Sent when a team owner invites an email address to join the team.",
@@ -131,7 +107,14 @@ var (
 			Optional:     false,
 			Placeholders: append(append([]string{}, notificationEmailCommonPlaceholders...), "team_name", "invitation_url", "expires_at"),
 		},
-		NotificationEmailEventSubscriptionPurchaseSuccess: {
+		{
+			Event:       NotificationEmailEventTeamOwnershipTransfer,
+			Label:       "Team ownership transfer",
+			Description: "Sent when team ownership is offered to a user.",
+			Category:    "team", Optional: false,
+			Placeholders: append(append([]string{}, notificationEmailCommonPlaceholders...), "team_name", "transfer_url"),
+		},
+		{
 			Event:        NotificationEmailEventSubscriptionPurchaseSuccess,
 			Label:        "Subscription purchase success",
 			Description:  "Sent after a subscription purchase is fulfilled.",
@@ -139,7 +122,7 @@ var (
 			Optional:     false,
 			Placeholders: append(append([]string{}, notificationEmailCommonPlaceholders...), "subscription_group", "subscription_days", "expiry_time", "order_id"),
 		},
-		NotificationEmailEventSubscriptionExpiryReminder: {
+		{
 			Event:        NotificationEmailEventSubscriptionExpiryReminder,
 			Label:        "Subscription expiry reminder",
 			Description:  "Optional reminder sent before an active subscription expires.",
@@ -147,7 +130,7 @@ var (
 			Optional:     true,
 			Placeholders: append(append([]string{}, notificationEmailCommonPlaceholders...), "subscription_group", "expiry_time", "days_remaining", "unsubscribe_url"),
 		},
-		NotificationEmailEventBalanceLow: {
+		{
 			Event:        NotificationEmailEventBalanceLow,
 			Label:        "Low balance alert",
 			Description:  "Optional alert sent when balance crosses the configured low-balance threshold.",
@@ -155,7 +138,7 @@ var (
 			Optional:     true,
 			Placeholders: append(append([]string{}, notificationEmailCommonPlaceholders...), "current_balance", "threshold", "recharge_url", "unsubscribe_url"),
 		},
-		NotificationEmailEventBalanceRechargeSuccess: {
+		{
 			Event:        NotificationEmailEventBalanceRechargeSuccess,
 			Label:        "Balance recharge success",
 			Description:  "Sent after a balance recharge order is fulfilled.",
@@ -163,7 +146,7 @@ var (
 			Optional:     false,
 			Placeholders: append(append([]string{}, notificationEmailCommonPlaceholders...), "recharge_amount", "current_balance", "order_id"),
 		},
-		NotificationEmailEventProviderQuotaAlert: {
+		{
 			Event:       NotificationEmailEventProviderQuotaAlert,
 			Label:       "Provider quota alert",
 			Description: "Sent to configured admin notification emails when an upstream provider quota threshold is crossed.",
@@ -172,7 +155,7 @@ var (
 			Placeholders: append(append([]string{}, notificationEmailCommonPlaceholders...),
 				"provider_id", "provider_name", "platform", "quota_dimension", "quota_used", "quota_limit", "quota_remaining", "quota_threshold"),
 		},
-		NotificationEmailEventContentModerationViolation: {
+		{
 			Event:       NotificationEmailEventContentModerationViolation,
 			Label:       "Risk control violation notice",
 			Description: "Sent to users when a request triggers content moderation/risk control rules.",
@@ -181,7 +164,7 @@ var (
 			Placeholders: append(append([]string{}, notificationEmailCommonPlaceholders...),
 				"triggered_at", "group_name", "moderation_category", "moderation_score", "violation_count", "ban_threshold"),
 		},
-		NotificationEmailEventContentModerationDisabled: {
+		{
 			Event:       NotificationEmailEventContentModerationDisabled,
 			Label:       "Risk control account disabled",
 			Description: "Sent to users when content moderation automatically disables their account.",
@@ -190,7 +173,7 @@ var (
 			Placeholders: append(append([]string{}, notificationEmailCommonPlaceholders...),
 				"triggered_at", "group_name", "moderation_category", "moderation_score", "violation_count", "ban_threshold"),
 		},
-		NotificationEmailEventOpsAlert: {
+		{
 			Event:       NotificationEmailEventOpsAlert,
 			Label:       "Ops alert",
 			Description: "Sent to configured operations recipients when an ops alert rule fires.",
@@ -199,7 +182,7 @@ var (
 			Placeholders: append(append([]string{}, notificationEmailCommonPlaceholders...),
 				"rule_name", "severity", "alert_status", "metric_type", "operator", "metric_value", "threshold_value", "triggered_at", "alert_description"),
 		},
-		NotificationEmailEventOpsScheduledReport: {
+		{
 			Event:       NotificationEmailEventOpsScheduledReport,
 			Label:       "Ops scheduled report",
 			Description: "Sent to configured operations recipients for scheduled daily/weekly/error/provider-health reports.",
@@ -214,6 +197,8 @@ var (
 			),
 		},
 	}
+
+	notificationEmailEventDefinitions = indexNotificationEmailEvents(notificationEmailEvents)
 
 	notificationEmailOfficialTemplates = map[string]map[string]notificationEmailOfficialTemplate{
 		NotificationEmailEventTeamOwnershipTransfer: {
@@ -675,10 +660,17 @@ func IsNotificationEmailDeliveryError(err error) bool {
 	return errors.As(err, &deliveryErr)
 }
 
+func indexNotificationEmailEvents(events []NotificationEmailEventInfo) map[string]NotificationEmailEventInfo {
+	index := make(map[string]NotificationEmailEventInfo, len(events))
+	for _, info := range events {
+		index[info.Event] = info
+	}
+	return index
+}
+
 func (s *NotificationEmailService) ListEventInfos() []NotificationEmailEventInfo {
-	infos := make([]NotificationEmailEventInfo, 0, len(notificationEmailEventDefinitions))
-	for _, event := range notificationEmailEventOrder {
-		info := notificationEmailEventDefinitions[event]
+	infos := make([]NotificationEmailEventInfo, 0, len(notificationEmailEvents))
+	for _, info := range notificationEmailEvents {
 		info.Placeholders = append([]string(nil), info.Placeholders...)
 		infos = append(infos, info)
 	}
@@ -690,10 +682,10 @@ func (s *NotificationEmailService) SupportedLocales() []string {
 }
 
 func (s *NotificationEmailService) ListTemplates(ctx context.Context) ([]NotificationEmailTemplate, error) {
-	items := make([]NotificationEmailTemplate, 0, len(notificationEmailEventOrder)*len(notificationEmailLocales))
-	for _, event := range notificationEmailEventOrder {
+	items := make([]NotificationEmailTemplate, 0, len(notificationEmailEvents)*len(notificationEmailLocales))
+	for _, info := range notificationEmailEvents {
 		for _, locale := range notificationEmailLocales {
-			tmpl, err := s.GetTemplate(ctx, event, locale)
+			tmpl, err := s.GetTemplate(ctx, info.Event, locale)
 			if err != nil {
 				return nil, err
 			}
