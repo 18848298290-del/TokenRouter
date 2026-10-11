@@ -639,28 +639,7 @@ func (s *BackupService) createBackup(ctx context.Context, triggeredBy string, ex
 		return nil, fmt.Errorf("init object store: %w", err)
 	}
 
-	now := s.now()
-	backupID := uuid.New().String()[:8]
-	fileName := fmt.Sprintf("%s_%s.sql.gz", s.databaseName, now.Format("20060102_150405"))
-	storageKey := s.buildStorageKey(storageType, s3Cfg, fileName)
-
-	var expiresAt string
-	if expireDays > 0 {
-		expiresAt = now.AddDate(0, 0, expireDays).Format(time.RFC3339)
-	}
-
-	record := &BackupRecord{
-		ID:          backupID,
-		Status:      "running",
-		BackupType:  "postgres",
-		FileName:    fileName,
-		StorageType: storageType,
-		StorageKey:  storageKey,
-		S3Key:       legacyS3Key(storageType, storageKey),
-		TriggeredBy: triggeredBy,
-		StartedAt:   now.Format(time.RFC3339),
-		ExpiresAt:   expiresAt,
-	}
+	record := s.newBackupRecord(storageType, s3Cfg, triggeredBy, expireDays)
 
 	dumpOptions, err := s.buildDumpOptions(ctx)
 	if err != nil {
@@ -740,34 +719,13 @@ func (s *BackupService) StartBackup(ctx context.Context, triggeredBy string, exp
 		return nil, fmt.Errorf("init object store: %w", err)
 	}
 
-	now := s.now()
-	backupID := uuid.New().String()[:8]
-	fileName := fmt.Sprintf("%s_%s.sql.gz", s.databaseName, now.Format("20060102_150405"))
-	storageKey := s.buildStorageKey(storageType, s3Cfg, fileName)
-
-	var expiresAt string
-	if expireDays > 0 {
-		expiresAt = now.AddDate(0, 0, expireDays).Format(time.RFC3339)
-	}
-
+	record := s.newBackupRecord(storageType, s3Cfg, triggeredBy, expireDays)
 	dumpOptions, err := s.buildDumpOptions(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	record := &BackupRecord{
-		ID:          backupID,
-		Status:      "running",
-		BackupType:  "postgres",
-		FileName:    fileName,
-		StorageType: storageType,
-		StorageKey:  storageKey,
-		S3Key:       legacyS3Key(storageType, storageKey),
-		TriggeredBy: triggeredBy,
-		StartedAt:   now.Format(time.RFC3339),
-		ExpiresAt:   expiresAt,
-		Progress:    "pending",
-	}
+	record.Progress = "pending"
 
 	if err := s.saveRecord(ctx, record); err != nil {
 		return nil, fmt.Errorf("save initial record: %w", err)
@@ -798,6 +756,31 @@ func (s *BackupService) StartBackup(ctx context.Context, triggeredBy string, exp
 	})
 
 	return &result, nil
+}
+
+func (s *BackupService) newBackupRecord(storageType string, s3Cfg *BackupS3Config, triggeredBy string, expireDays int) *BackupRecord {
+	now := s.now()
+	backupID := uuid.New().String()[:8]
+	fileName := fmt.Sprintf("%s_%s.sql.gz", s.databaseName, now.Format("20060102_150405"))
+	storageKey := s.buildStorageKey(storageType, s3Cfg, fileName)
+
+	var expiresAt string
+	if expireDays > 0 {
+		expiresAt = now.AddDate(0, 0, expireDays).Format(time.RFC3339)
+	}
+
+	return &BackupRecord{
+		ID:          backupID,
+		Status:      "running",
+		BackupType:  "postgres",
+		FileName:    fileName,
+		StorageType: storageType,
+		StorageKey:  storageKey,
+		S3Key:       legacyS3Key(storageType, storageKey),
+		TriggeredBy: triggeredBy,
+		StartedAt:   now.Format(time.RFC3339),
+		ExpiresAt:   expiresAt,
+	}
 }
 
 // executeBackup 后台执行备份（独立于 HTTP context）。
