@@ -21,6 +21,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/creative"
 	creativehttp "github.com/TokenFlux/TokenRouter/internal/creative/httpapi"
 	"github.com/TokenFlux/TokenRouter/internal/gateway"
+	"github.com/TokenFlux/TokenRouter/internal/gateway/tierpolicy"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/ws"
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
@@ -57,6 +58,25 @@ type creativeModelCandidateReaderStub struct {
 	sanitizeGemini bool
 }
 
+type settingsResponseSource struct {
+	*composite.Runtime
+	snapshot     *composite.Snapshot
+	fastPolicy   *tierpolicy.OpenAIFastPolicySettings
+	responseRead int
+	reads        int
+	calls        *[]string
+}
+
+type settingsResponsePayment struct {
+	config *paymentcore.PaymentConfig
+	err    error
+	calls  *[]string
+}
+
+type settingsResponseMonitoring struct {
+	calls *[]string
+}
+
 func TestSettingsResponsesWSPatchAndNull(t *testing.T) {
 	h, repo := newStepUpSwitchTestHandler(t, map[string]string{ws.SettingKey: `{"read_timeout_seconds":45,"max_ingress_connections_per_api_key":5}`})
 	response := doUpdateSettings(t, h, map[string]any{"responses_ws": map[string]any{"read_timeout_seconds": nil, "max_ingress_connections_per_api_key": 0}}, nil)
@@ -74,6 +94,226 @@ func TestSettingsResponsesWSInvalidPatchDoesNotWrite(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
 	require.JSONEq(t, `{"read_timeout_seconds":45}`, repo.values[ws.SettingKey])
 }
+
+func TestSettingsResponseFieldsAndPaymentErrors(t *testing.T) {
+	for _, paymentCase := range []string{"configured", "absent service", "nil config", "read error", "config with error"} {
+		t.Run(paymentCase, func(t *testing.T) {
+			for _, method := range []string{http.MethodGet, http.MethodPut} {
+				t.Run(method, func(t *testing.T) {
+					repo := &settingHandlerRepoStub{values: map[string]string{}}
+					options, _ := newCompositeSettingsHTTPFixture(repo, &config.Config{Default: config.DefaultConfig{UserConcurrency: 5}})
+					base, ok := options.Settings.(*composite.Runtime)
+					require.True(t, ok)
+					authDefaults, err := base.GetAuthSourceDefaultSettings(context.Background())
+					require.NoError(t, err)
+					snapshot := &composite.Snapshot{}
+					fillSettingsResponseScalars(snapshot)
+					snapshot.CustomMenuItems = `[{"id":"menu-1","label":"Help","icon_svg":"","url":"/help","visibility":"user","sort_order":2}]`
+					snapshot.CustomEndpoints = `[{"id":"endpoint-1","name":"API","endpoint":"https://api.example.com","description":"Example"}]`
+					snapshot.FooterLinks = `[{"id":"group-1","title":"Links","links":[{"id":"link-1","label":"Help","url":"/help"}]}]`
+					snapshot.HomeFeaturedModels = `["example-model"]`
+					snapshot.ResponsesWS = json.RawMessage(`{"read_timeout_seconds":45}`)
+					snapshot.ProviderSchedulingThresholds = map[string]int{"openai": 75}
+					snapshot.ProviderQuotaNotifyEmails = []identity.NotifyEmailEntry{{Email: "quota@example.com", Verified: true}}
+					if paymentCase == "configured" {
+						snapshot.DefaultSubscriptions = []billing.DefaultSubscriptionSetting{{PlanID: 17}}
+					}
+					var calls []string
+					source := &settingsResponseSource{Runtime: base, snapshot: snapshot, responseRead: 1, calls: &calls}
+					if paymentCase == "configured" {
+						source.fastPolicy = &tierpolicy.OpenAIFastPolicySettings{Rules: []tierpolicy.OpenAIFastPolicyRule{{ServiceTier: "priority", Action: "filter", Scope: "all", UserIDs: []int64{42}}}}
+					}
+					if method == http.MethodPut {
+						source.responseRead = 2
+					}
+					options.Settings = source
+					options.Monitoring = &settingsResponseMonitoring{calls: &calls}
+					payment := &settingsResponsePayment{calls: &calls}
+					if paymentCase == "configured" || paymentCase == "config with error" {
+						payment.config = &paymentcore.PaymentConfig{}
+						fillSettingsResponseScalars(payment.config)
+						payment.config.EnabledTypes = []string{"alipay", "wxpay"}
+						payment.config.MethodFees = paymentcore.MethodFeeSettings{"alipay": {Enabled: true, FixedFee: 0.25, FeeRate: 1.5}}
+					}
+					if strings.Contains(paymentCase, "error") {
+						payment.err = errors.New("payment read failed")
+					}
+					if paymentCase != "absent service" {
+						options.Payment = payment
+					}
+					h := settingshttp.NewHandler(options)
+					var rec *httptest.ResponseRecorder
+					if method == http.MethodPut {
+						rec = doUpdateSettings(t, h, map[string]any{}, nil)
+					} else {
+						rec = httptest.NewRecorder()
+						ctx, _ := gin.CreateTestContext(rec)
+						ctx.Request = httptest.NewRequest(http.MethodGet, "/settings", nil)
+						h.GetSettings(ctx)
+					}
+					wantCalls := []string{"settings", "auth", "monitoring"}
+					if method == http.MethodPut {
+						wantCalls = []string{"settings", "auth", "settings", "auth"}
+					}
+					if paymentCase != "absent service" {
+						wantCalls = append(wantCalls, "payment")
+					}
+					if method == http.MethodPut && payment.err != nil {
+						require.Equal(t, http.StatusInternalServerError, rec.Code, rec.Body.String())
+						require.Equal(t, wantCalls, calls)
+						return
+					}
+					require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+					require.Equal(t, append(wantCalls, "totp", "fast"), calls)
+					var response struct {
+						Data map[string]json.RawMessage `json:"data"`
+					}
+					require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
+					for _, field := range []string{"smtp_password", "turnstile_secret_key", "oidc_connect_client_secret"} {
+						require.NotContains(t, response.Data, field)
+					}
+					assertSettingsResponseFields(t, response.Data, source, payment.config, authDefaults, method)
+				})
+			}
+		})
+	}
+}
+
+func fillSettingsResponseScalars(target any) {
+	value := reflect.ValueOf(target).Elem()
+	for i := range value.NumField() {
+		field := value.Field(i)
+		switch field.Kind() {
+		case reflect.Bool:
+			field.SetBool(true)
+		case reflect.String:
+			field.SetString("fixture." + value.Type().Field(i).Name)
+		case reflect.Int:
+			field.SetInt(int64(i + 10))
+		case reflect.Float64:
+			field.SetFloat(float64(i) + 0.25)
+		}
+	}
+}
+
+func assertSettingsResponseFields(t *testing.T, data map[string]json.RawMessage, source *settingsResponseSource, payment *paymentcore.PaymentConfig, authDefaults *identity.AuthSourceDefaultSettings, method string) {
+	t.Helper()
+	snapshot := source.snapshot
+	if payment == nil {
+		payment = &paymentcore.PaymentConfig{}
+	}
+	settingsValue := reflect.ValueOf(snapshot).Elem()
+	paymentValue := reflect.ValueOf(payment).Elem()
+	responseType := reflect.TypeFor[settingsdto.SystemSettings]()
+	for field := range responseType.Fields() {
+		name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+		if (field.Name == "OpenAIFastPolicySettings" && source.fastPolicy == nil) || (field.Name == "ProviderSchedulingThresholds" && method == http.MethodPut) {
+			require.NotContains(t, data, name)
+			continue
+		}
+		var expected any
+		switch field.Name {
+		case "OpenAIFastPolicySettings":
+			expected = source.fastPolicy
+		case "TotpEncryptionKeyConfigured":
+			expected = true
+		case "OpsMonitoringEnabled":
+			expected = method == http.MethodPut
+		case "DefaultSubscriptions":
+			expected = snapshot.DefaultSubscriptions
+			if snapshot.DefaultSubscriptions == nil {
+				expected = []any{}
+			}
+		case "LoginAgreementDocuments":
+			expected = []any{}
+		case "CustomMenuItems", "CustomEndpoints", "FooterLinks", "HomeFeaturedModels":
+			expected = json.RawMessage(settingsValue.FieldByName(field.Name).String())
+		case "PaymentMethodFees":
+			expected = payment.MethodFees
+			if payment.MethodFees == nil {
+				expected = map[string]any{}
+			}
+		default:
+			value := settingsValue.FieldByName(field.Name)
+			if !value.IsValid() {
+				paymentName := strings.TrimPrefix(field.Name, "Payment")
+				if field.Name == "PaymentLoadBalanceStrat" {
+					paymentName = "LoadBalanceStrategy"
+				}
+				value = paymentValue.FieldByName(paymentName)
+			}
+			require.True(t, value.IsValid(), field.Name)
+			expected = value.Interface()
+		}
+		encoded, err := json.Marshal(expected)
+		require.NoError(t, err)
+		require.Contains(t, data, name)
+		require.JSONEq(t, string(encoded), string(data[name]), name)
+		delete(data, name)
+	}
+	for _, provider := range []struct {
+		name  string
+		value identity.ProviderDefaultGrantSettings
+	}{
+		{"email", authDefaults.Email},
+		{"linuxdo", authDefaults.LinuxDo},
+		{"oidc", authDefaults.OIDC},
+		{"wechat", authDefaults.WeChat},
+		{"github", authDefaults.GitHub},
+		{"google", authDefaults.Google},
+		{"dingtalk", authDefaults.DingTalk},
+	} {
+		for key, value := range map[string]any{
+			"balance": provider.value.Balance, "concurrency": provider.value.Concurrency, "subscriptions": provider.value.Subscriptions,
+			"grant_on_signup": provider.value.GrantOnSignup, "grant_on_first_bind": provider.value.GrantOnFirstBind,
+		} {
+			name := "auth_source_default_" + provider.name + "_" + key
+			encoded, err := json.Marshal(value)
+			require.NoError(t, err)
+			require.JSONEq(t, string(encoded), string(data[name]), name)
+			delete(data, name)
+		}
+	}
+	require.JSONEq(t, "false", string(data["force_email_on_third_party_signup"]))
+	delete(data, "force_email_on_third_party_signup")
+	require.Empty(t, data)
+}
+
+func (s *settingsResponseSource) GetAllSettings(ctx context.Context) (*composite.Snapshot, error) {
+	*s.calls = append(*s.calls, "settings")
+	s.reads++
+	if s.reads >= s.responseRead {
+		return s.snapshot, nil
+	}
+	return s.Runtime.GetAllSettings(ctx)
+}
+
+func (s *settingsResponseSource) GetAuthSourceDefaultSettings(ctx context.Context) (*identity.AuthSourceDefaultSettings, error) {
+	*s.calls = append(*s.calls, "auth")
+	return s.Runtime.GetAuthSourceDefaultSettings(ctx)
+}
+
+func (s *settingsResponseSource) IsTotpEncryptionKeyConfigured() bool {
+	*s.calls = append(*s.calls, "totp")
+	return true
+}
+
+func (s *settingsResponseSource) GetOpenAIFastPolicySettings(context.Context) (*tierpolicy.OpenAIFastPolicySettings, error) {
+	*s.calls = append(*s.calls, "fast")
+	return s.fastPolicy, nil
+}
+
+func (s *settingsResponsePayment) GetPaymentConfig(context.Context) (*paymentcore.PaymentConfig, error) {
+	*s.calls = append(*s.calls, "payment")
+	return s.config, s.err
+}
+
+func (s *settingsResponseMonitoring) IsMonitoringEnabled(context.Context) bool {
+	*s.calls = append(*s.calls, "monitoring")
+	return false
+}
+
+func (s *settingsResponseMonitoring) SetMonitoringEnabled(bool) {}
 
 // newCompositeSettingsHTTPFixture 组合设置读取、准备和保存组件，套餐校验使用空回调。
 // 夹具绑定可信代理发布与更新通知函数。
@@ -1018,6 +1258,61 @@ func TestDiffSettingsTracksGoogleOneTapSwitch(t *testing.T) {
 	changed := settingshttp.DiffSettings(before, after, nil, nil, settingsdto.UpdateSettingsRequest{})
 
 	require.Contains(t, changed, "google_one_tap_enabled")
+}
+
+func TestUpdateSettingsNormalizedModuleFields(t *testing.T) {
+	tests := []struct {
+		field         string
+		stored        string
+		storedValue   any
+		emptyValue    any
+		emptyResponse any
+		emptyStored   string
+		pointerField  bool
+	}{
+		{field: "default_balance", stored: "12.00000000", storedValue: float64(12), emptyValue: float64(0), emptyStored: "0.00000000"},
+		{field: "default_subscriptions", stored: `[{"plan_id":17}]`, storedValue: []any{map[string]any{"plan_id": float64(17)}}, emptyValue: []any{}, emptyStored: "[]"},
+		{field: "balance_low_notify_enabled", stored: "true", storedValue: true, emptyValue: false, emptyStored: "false", pointerField: true},
+		{field: "balance_low_notify_threshold", stored: "3.00000000", storedValue: float64(3), emptyValue: float64(0), emptyStored: "0.00000000", pointerField: true},
+		{field: "enable_model_fallback", stored: "true", storedValue: true, emptyValue: false, emptyStored: "false"},
+		{field: "fallback_model_openai", stored: "gpt-fallback", storedValue: "gpt-fallback", emptyValue: "", emptyResponse: "gpt-4o", emptyStored: ""},
+		{field: "site_name", stored: "Example Gateway", storedValue: "Example Gateway", emptyValue: "", emptyResponse: "TokenRouter", emptyStored: ""},
+		{field: "min_claude_code_version", stored: "1.2.3", storedValue: "1.2.3", emptyValue: "", emptyStored: ""},
+		{field: "backend_mode_enabled", stored: "true", storedValue: true, emptyValue: false, emptyStored: "false"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.field, func(t *testing.T) {
+			emptyResponse := tt.emptyValue
+			if tt.emptyResponse != nil {
+				emptyResponse = tt.emptyResponse
+			}
+			for _, mode := range []string{"omitted", "empty", "null"} {
+				t.Run(mode, func(t *testing.T) {
+					h, repo := newStepUpSwitchTestHandler(t, map[string]string{tt.field: tt.stored})
+					payload := map[string]any{"risk_control_enabled": true}
+					wantStored, wantValue := tt.stored, tt.storedValue
+					if mode == "empty" {
+						payload[tt.field] = tt.emptyValue
+						wantStored, wantValue = tt.emptyStored, emptyResponse
+					}
+					if mode == "null" {
+						payload[tt.field] = nil
+						if !tt.pointerField {
+							wantStored, wantValue = tt.emptyStored, emptyResponse
+						}
+					}
+					rec := doUpdateSettings(t, h, payload, nil)
+					require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+					require.Equal(t, wantStored, repo.values[tt.field])
+					var response struct {
+						Data map[string]any `json:"data"`
+					}
+					require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
+					require.Equal(t, wantValue, response.Data[tt.field])
+				})
+			}
+		})
+	}
 }
 
 func TestUpdateSettingsPartialPayloadKeepsUnsentKeys(t *testing.T) {
