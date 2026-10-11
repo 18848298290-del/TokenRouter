@@ -512,12 +512,22 @@ func BatchImageFindImageParts(obj map[string]any) (int, string) {
 }
 
 func BatchImageFindImagePartsInCandidates(raw any) (int, string) {
-	candidates, ok := raw.([]any)
-	if !ok {
-		return 0, ""
-	}
 	count := 0
 	firstMime := ""
+	visitBatchImageInlineImages(raw, func(mime, _ string) {
+		count++
+		if firstMime == "" {
+			firstMime = mime
+		}
+	})
+	return count, firstMime
+}
+
+func visitBatchImageInlineImages(raw any, visit func(mime, data string)) {
+	candidates, ok := raw.([]any)
+	if !ok {
+		return
+	}
 	for _, candidateRaw := range candidates {
 		candidate, ok := candidateRaw.(map[string]any)
 		if !ok {
@@ -538,17 +548,13 @@ func BatchImageFindImagePartsInCandidates(raw any) (int, string) {
 				continue
 			}
 			data := strings.TrimSpace(BatchImageMapString(inline, "data"))
-			mime := BatchImageFirstNonEmptyString(BatchImageMapString(inline, "mimeType"), BatchImageMapString(inline, "mime_type"))
-			if data == "" || !strings.HasPrefix(strings.ToLower(strings.TrimSpace(mime)), "image/") {
+			mime := strings.TrimSpace(BatchImageFirstNonEmptyString(BatchImageMapString(inline, "mimeType"), BatchImageMapString(inline, "mime_type")))
+			if data == "" || !strings.HasPrefix(strings.ToLower(mime), "image/") {
 				continue
 			}
-			count++
-			if firstMime == "" {
-				firstMime = strings.TrimSpace(mime)
-			}
+			visit(mime, data)
 		}
 	}
-	return count, firstMime
 }
 
 func BatchImageFailureFromProviderFields(obj map[string]any) (string, string, bool) {

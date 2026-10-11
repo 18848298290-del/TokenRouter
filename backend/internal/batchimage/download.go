@@ -446,41 +446,14 @@ func ExtractBatchImagePartsFromResultLine(line []byte) (*BatchImageLineImages, e
 }
 
 func ExtractBatchImageInlineImages(raw any) []BatchImageInlineImage {
-	candidates, ok := raw.([]any)
-	if !ok {
-		return nil
-	}
 	var images []BatchImageInlineImage
-	for _, candidateRaw := range candidates {
-		candidate, ok := candidateRaw.(map[string]any)
-		if !ok {
-			continue
-		}
-		parts, ok := BatchImageNestedAny(candidate, "content", "parts").([]any)
-		if !ok {
-			continue
-		}
-		for _, partRaw := range parts {
-			part, ok := partRaw.(map[string]any)
-			if !ok {
-				continue
-			}
-			inline, ok := FirstMap(part["inlineData"], part["inline_data"])
-			if !ok {
-				continue
-			}
-			data := strings.TrimSpace(BatchImageMapString(inline, "data"))
-			mime := strings.TrimSpace(BatchImageFirstNonEmptyString(BatchImageMapString(inline, "mimeType"), BatchImageMapString(inline, "mime_type")))
-			if data == "" || !strings.HasPrefix(strings.ToLower(mime), "image/") {
-				continue
-			}
-			images = append(images, BatchImageInlineImage{
-				MimeType:   mime,
-				Extension:  BatchImageFileExtension(mime),
-				Base64Data: data,
-			})
-		}
-	}
+	visitBatchImageInlineImages(raw, func(mime, data string) {
+		images = append(images, BatchImageInlineImage{
+			MimeType:   mime,
+			Extension:  BatchImageFileExtension(mime),
+			Base64Data: data,
+		})
+	})
 	return images
 }
 

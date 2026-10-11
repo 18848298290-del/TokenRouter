@@ -44,6 +44,30 @@ func TestParseBatchImageResultLine_SuccessShapes(t *testing.T) {
 			line:   `{"request":{"key":"cover_004"},"candidates":[{"content":{"parts":[{"inline_data":{"mime_type":"image/png","data":"` + batchImageTestData + `"}},{"inlineData":{"mimeType":"image/png","data":"` + batchImageTestData + `"}}]}}]}`,
 			wantID: "cover_004", wantMime: "image/png", wantExt: "png", wantCount: 2,
 		},
+		{
+			name: "response_images_take_priority",
+			line: `{"key":"cover_005","response":{"candidates":[{"content":{"parts":[
+				{"inlineData":{"mimeType":" Image/JPEG ","data":" invalid base64 "}},
+				{"inline_data":{"mime_type":"image/webp","data":"c2Vjb25k"}}
+			]}}]},"candidates":[{"content":{"parts":[{"inlineData":{"mimeType":"image/png","data":"dGhpcmQ="}}]}}]}`,
+			wantID: "cover_005", wantMime: "Image/JPEG", wantExt: "jpg", wantCount: 2,
+		},
+		{
+			name: "empty_response_falls_back_to_top_level",
+			line: `{"key":"cover_006","response":{"candidates":[{"content":{"parts":[{"text":"none"}]}}]},
+				"candidates":[{"content":{"parts":[{"inline_data":{"mime_type":"image/png","data":"Zmlyc3Q="}}]}}]}`,
+			wantID: "cover_006", wantMime: "image/png", wantExt: "png", wantCount: 1,
+		},
+		{
+			name: "skip_empty_and_non_image_parts",
+			line: `{"key":"cover_007","candidates":[null,{}, {"content":{"parts":[
+				null,{"text":"none"},{"inlineData":{"mimeType":"text/plain","data":"dGV4dA=="}},
+				{"inlineData":{"mimeType":"image/png","data":" \t "}},
+				{"inlineData":{},"inline_data":{"mime_type":"image/png","data":"c2tpcA=="}},
+				{"inlineData":{"mimeType":" ","mime_type":" image/webp ","data":"cGljdHVyZQ=="}}
+			]}}]}`,
+			wantID: "cover_007", wantMime: "image/webp", wantExt: "webp", wantCount: 1,
+		},
 	}
 
 	for _, tt := range tests {

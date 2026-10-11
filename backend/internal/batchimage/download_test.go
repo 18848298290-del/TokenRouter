@@ -186,3 +186,34 @@ func TestBatchImageDownloadFilenames(t *testing.T) {
 	require.Equal(t, "___secret_name.png", batchimage.BatchImageSafeDownloadFilename("../../secret\nname", "png"))
 	require.Equal(t, `attachment; filename="cover_001.png"`, batchimage.BatchImageContentDispositionAttachment(`cover"001.png`))
 }
+
+func TestExtractBatchImagePartsFromResultLine_MixedEnvelopes(t *testing.T) {
+	line := `{"key":"mixed","response":{"candidates":[null,{}, {"content":{"parts":[
+		null,{"text":"none"},{"inlineData":{"mimeType":"text/plain","data":"dGV4dA=="}},
+		{"inlineData":{"mimeType":"image/png","data":" \t "}},
+		{"inlineData":{},"inline_data":{"mime_type":"image/png","data":"c2tpcA=="}},
+		{"inlineData":{"mimeType":" Image/JPEG ","data":" invalid base64 "}},
+		{"inline_data":{"mime_type":"image/webp","data":" c2Vjb25k "}}
+	]}}]},"candidates":[{"content":{"parts":[
+		{"inlineData":{"mimeType":" ","mime_type":" image/png ","data":" dGhpcmQ= "}}
+	]}}]}`
+	got, err := batchimage.ExtractBatchImagePartsFromResultLine([]byte(line))
+	require.NoError(t, err)
+	require.Equal(t, "mixed", got.CustomID)
+	require.Empty(t, got.ErrorCode)
+	require.Equal(t, []batchimage.BatchImageInlineImage{
+		{MimeType: "Image/JPEG", Extension: "jpg", Base64Data: "invalid base64"},
+		{MimeType: "image/webp", Extension: "webp", Base64Data: "c2Vjb25k"},
+		{MimeType: "image/png", Extension: "png", Base64Data: "dGhpcmQ="},
+	}, got.Images)
+}
+
+func TestExtractBatchImageInlineImages_EmptyInputReturnsNil(t *testing.T) {
+	for _, raw := range []any{nil, map[string]any{}, []any{}, []any{nil, map[string]any{"content": nil}}} {
+		require.Nil(t, batchimage.ExtractBatchImageInlineImages(raw))
+	}
+	got, err := batchimage.ExtractBatchImagePartsFromResultLine([]byte(`{"key":"empty","response":{"candidates":[]},"candidates":null}`))
+	require.NoError(t, err)
+	require.Nil(t, got.Images)
+	require.Equal(t, "EMPTY_IMAGE_OUTPUT", got.ErrorCode)
+}
