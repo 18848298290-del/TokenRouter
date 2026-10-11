@@ -70,18 +70,7 @@ func (s *GeminiPrecheck) PreCheckUsage(ctx context.Context, provider *Record, re
 
 	// 日配额按洛杉矶当地日界检查。
 	{
-		var limit int64
-		if quota.SharedRPD > 0 {
-			limit = quota.SharedRPD
-		} else {
-			switch modelClass {
-			case GeminiModelFlash:
-				limit = quota.FlashRPD
-			default:
-				limit = quota.ProRPD
-			}
-		}
-
+		limit := geminiDailyLimit(quota, modelClass)
 		if limit > 0 {
 			start := GeminiDailyWindowStart(now, s.options.Location)
 			totals, ok := s.getGeminiUsageTotals(provider.ID, start, now)
@@ -94,18 +83,7 @@ func (s *GeminiPrecheck) PreCheckUsage(ctx context.Context, provider *Record, re
 				s.setGeminiUsageTotals(provider.ID, start, now, totals)
 			}
 
-			var used int64
-			if quota.SharedRPD > 0 {
-				used = totals.ProRequests + totals.FlashRequests
-			} else {
-				switch modelClass {
-				case GeminiModelFlash:
-					used = totals.FlashRequests
-				default:
-					used = totals.ProRequests
-				}
-			}
-
+			used := geminiUsedRequests(quota, modelClass, totals, true)
 			if used >= limit {
 				resetAt := GeminiDailyResetTime(now, s.options.Location)
 				// 日额度预检使用本地统计，
@@ -119,18 +97,7 @@ func (s *GeminiPrecheck) PreCheckUsage(ctx context.Context, provider *Record, re
 
 	// 分钟配额使用当前固定分钟窗口。
 	{
-		var limit int64
-		if quota.SharedRPM > 0 {
-			limit = quota.SharedRPM
-		} else {
-			switch modelClass {
-			case GeminiModelFlash:
-				limit = quota.FlashRPM
-			default:
-				limit = quota.ProRPM
-			}
-		}
-
+		limit := geminiMinuteLimit(quota, modelClass)
 		if limit > 0 {
 			start := now.Truncate(time.Minute)
 			stats, err := s.usageRepo.GetModelUsage(ctx, provider.ID, start, now)
@@ -139,18 +106,7 @@ func (s *GeminiPrecheck) PreCheckUsage(ctx context.Context, provider *Record, re
 			}
 			totals := AggregateGeminiUsage(stats)
 
-			var used int64
-			if quota.SharedRPM > 0 {
-				used = totals.ProRequests + totals.FlashRequests
-			} else {
-				switch modelClass {
-				case GeminiModelFlash:
-					used = totals.FlashRequests
-				default:
-					used = totals.ProRequests
-				}
-			}
-
+			used := geminiUsedRequests(quota, modelClass, totals, false)
 			if used >= limit {
 				resetAt := start.Add(time.Minute)
 				// 本地分钟预检同样不持久化提供商限流状态。
