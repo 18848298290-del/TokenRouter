@@ -12,6 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/apikey"
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 	"github.com/TokenFlux/TokenRouter/internal/egress"
+	"github.com/TokenFlux/TokenRouter/internal/gateway/completion"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/failover"
 	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
 	gatewayhttp "github.com/TokenFlux/TokenRouter/internal/gateway/httpapi"
@@ -224,32 +225,10 @@ func (b *responsesAttemptBridge) Complete() {
 	if res == nil {
 		return
 	}
-	gatewayhttp.StampOpenAIRequestedReasoningEffort(res, b.c)
-	userAgent := b.c.GetHeader("User-Agent")
-	clientIP := clientip.GetClientIP(b.c)
-	requestPayloadHash := billing.HashUsageRequestPayload(b.body)
-	inboundEndpoint := gatewayhttp.GetInboundEndpoint(b.c)
-	upstreamEndpoint := ResolveOpenAIUpstreamEndpoint(b.c, b.provider, res)
-
-	clientSessionID := gatewayhttp.ExtractClientSessionID(b.c)
-	// 入队前捕获资金和报文数据，worker 使用这份快照。
-	completionInput := gatewaycapture.CaptureOpenAI(gatewayhttp.CompletionContext(b.c), &gatewaycapture.OpenAICapture{
+	completionInput := b.captureCompletion(gatewaycapture.OpenAICapture{
 		Result:             res,
-		APIKey:             b.apiKey,
-		User:               b.apiKey.User,
-		Provider:           gatewaycapture.ExecutionCompletionRecord(b.provider),
-		Subscription:       b.subscription,
-		InboundEndpoint:    inboundEndpoint,
-		UpstreamEndpoint:   upstreamEndpoint,
-		UserAgent:          userAgent,
-		IPAddress:          clientIP,
-		RequestPayloadHash: requestPayloadHash,
-		RequestBody:        b.body,
-		APIKeyService:      b.binding().apiKeyService,
-
-		ClientSessionID:    clientSessionID,
+		RequestPayloadHash: billing.HashUsageRequestPayload(b.body),
 		PricingUsageFields: b.groupMapping.ToUsageFields(b.reqModel, res.UpstreamModel),
-		CyberBlocked:       b.cyberPolicyHandled,
 		NativeCompactionV2: b.nativeCompactionV2,
 	})
 	completionUserID := b.subject.UserID
@@ -267,6 +246,24 @@ func (b *responsesAttemptBridge) Complete() {
 			).Error("openai.record_usage_failed", zap.Error(err))
 		}
 	})
+}
+
+// captureCompletion 在提交前复制请求和转发结果，供后台记录器使用。
+func (b *responsesAttemptBridge) captureCompletion(capture gatewaycapture.OpenAICapture) *completion.Input {
+	gatewayhttp.StampOpenAIRequestedReasoningEffort(capture.Result, b.c)
+	capture.UserAgent = b.c.GetHeader("User-Agent")
+	capture.IPAddress = clientip.GetClientIP(b.c)
+	capture.InboundEndpoint = gatewayhttp.GetInboundEndpoint(b.c)
+	capture.UpstreamEndpoint = ResolveOpenAIUpstreamEndpoint(b.c, b.provider, capture.Result)
+	capture.ClientSessionID = gatewayhttp.ExtractClientSessionID(b.c)
+	capture.APIKey = b.apiKey
+	capture.User = b.apiKey.User
+	capture.Provider = gatewaycapture.ExecutionCompletionRecord(b.provider)
+	capture.Subscription = b.subscription
+	capture.RequestBody = b.body
+	capture.APIKeyService = b.binding().apiKeyService
+	capture.CyberBlocked = b.cyberPolicyHandled
+	return gatewaycapture.CaptureOpenAI(gatewayhttp.CompletionContext(b.c), &capture)
 }
 
 // PartialImages 记录已产出部分图片时发生的转发错误。
