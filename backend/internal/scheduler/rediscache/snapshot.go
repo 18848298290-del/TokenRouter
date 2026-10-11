@@ -410,19 +410,8 @@ func newSchedulerGroupLifecycleOwnerToken() (string, error) {
 }
 
 func (c *SnapshotCache) SetSnapshot(ctx context.Context, bucket scheduler.SchedulerBucket, token scheduler.SchedulerBucketWriteToken, providers []scheduler.SnapshotProvider) error {
-	if !token.ValidFor(bucket) {
-		return fmt.Errorf("%w: bucket=%s", scheduler.ErrSchedulerBucketWriteFenced, bucket.String())
-	}
-	// 分配版本和激活指针时分别校验写入令牌，数据通过激活时的校验后发布。
-	version, err := c.allocateSnapshotVersion(ctx, bucket, token)
-	if err != nil {
-		return err
-	}
-	// 快照成员使用已编码提供商的有序 ID，写入后即可激活版本。
-	if _, err := c.writeSnapshotVersionAndReturnProviderIDs(ctx, bucket, version, providers); err != nil {
-		return err
-	}
-	return c.activateSnapshotVersion(ctx, bucket, token, version)
+	_, err := c.SetSnapshotAndReturnProviderIDs(ctx, bucket, token, providers)
+	return err
 }
 
 // SetSnapshotAndReturnProviderIDs 完整发布快照，并返回实际成功编码并写入的有序提供商 ID。
