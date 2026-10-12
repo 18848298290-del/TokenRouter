@@ -15,18 +15,31 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 )
 
+// Audit capture surrounds management handlers so the stored event can include
+// the final status and handler-supplied actor overrides. Mutating methods are
+// captured by default; selected reads receive fixed actions, and credential-bearing
+// routes omit bodies that key-based JSON redaction cannot safely inspect. Successful
+// token refreshes are excluded after the handler runs to limit routine event volume.
+//
+// Reading a bounded prefix advances the original body before JSON binding occurs.
+// The middleware therefore restores that prefix ahead of the remaining stream,
+// including when the prefix read reports an error. Close still reaches the
+// original body. Authentication metadata is read after handler execution, with
+// positive actor IDs and nonempty emails supplied by handlers taking precedence.
+
 // Handlers and authentication middleware use these Gin context keys to supply audit metadata.
 const (
-	auditCtxKeyAction     = "audit_action"
-	auditCtxKeyActorID    = "audit_actor_id"
-	auditCtxKeyActorEmail = "audit_actor_email"
-	auditCtxKeySkip       = "audit_skip"
+	auditCtxKeyAction     = "audit_action"      // handler-selected operation name
+	auditCtxKeyActorID    = "audit_actor_id"    // handler-identified actor user
+	auditCtxKeyActorEmail = "audit_actor_email" // handler-identified actor email
+	auditCtxKeySkip       = "audit_skip"        // suppress middleware recording
 	// ContextKeyAuthEmail holds the email supplied by authentication middleware.
 	ContextKeyAuthEmail = "auth_email"
 )
 
 var (
-	// auditSensitiveReads maps audited GET method/route pairs to action names.
+	// auditSensitiveReads selects GET method/route pairs that expose sensitive data
+	// and assigns their stable actions before the handler executes the read.
 	auditSensitiveReads = map[string]string{
 		"GET /api/v1/admin/providers/data":            "admin.providers.export",
 		"GET /api/v1/admin/proxies/data":              "admin.proxies.export",
@@ -41,7 +54,8 @@ var (
 		"GET /api/v1/admin/data-management/s3/config": "admin.data_management.s3_config.read",
 	}
 
-	// auditActionOverrides supplies fixed action names before route-based derivation.
+	// auditActionOverrides supplies stable mutation actions when generic method and
+	// route derivation would obscure the authentication or management operation being recorded.
 	auditActionOverrides = map[string]string{
 		"POST /api/v1/auth/login":                                 audit.AuditActionLogin,
 		"POST /api/v1/auth/login/2fa":                             audit.AuditActionLogin2FA,
@@ -71,22 +85,28 @@ var (
 	}
 )
 
-// AuditLogMiddleware distinguishes audit middleware for Wire injection.
+// AuditLogMiddleware identifies the management audit wrapper for application dependency injection.
 type AuditLogMiddleware gin.HandlerFunc
 
-// restoredBody combines the captured prefix with the unread original body.
-// Handlers receive the complete body; Close delegates to the original body.
+// restoredBody replays captured bytes before continuing reads from the original body.
+// Close reaches the original body even when a handler leaves the restored stream unread.
 type restoredBody struct {
-	io.Reader
-	closer io.Closer
+	// Reader replays the consumed prefix before the unread original stream; closer
+	// retains the original body so net/http cleanup still releases that body's resources.
+	io.Reader           // complete reconstructed request stream
+	closer    io.Closer // original request body closer
 }
 
-// SetAuditAction overrides the action derived for the current request.
+// SetAuditAction supplies a handler-selected action for the current request's
+// audit record. Middleware reads it after c.Next returns; an empty action leaves
+// the fixed or route-derived operation name in effect.
 func SetAuditAction(c *gin.Context, action string) {
 	c.Set(auditCtxKeyAction, action)
 }
 
-// SetAuditActor supplies or overrides the actor, including during login before authentication.
+// SetAuditActor supplies identified actor metadata during a handler, including
+// login before authentication. Positive user IDs and nonempty emails override
+// authentication metadata when middleware builds the completed request's audit record.
 func SetAuditActor(c *gin.Context, userID int64, email string) {
 	if userID > 0 {
 		c.Set(auditCtxKeyActorID, userID)
@@ -96,15 +116,23 @@ func SetAuditActor(c *gin.Context, userID int64, email string) {
 	}
 }
 
-// SkipAudit suppresses the audit record for the current request.
+// SkipAudit suppresses middleware recording for the current handled management request.
 func SkipAudit(c *gin.Context) {
 	c.Set(auditCtxKeySkip, true)
 }
 
-// NewAuditLogMiddleware records mutations and selected sensitive reads.
-// It records POST, PUT, PATCH, DELETE, and allowlisted GET requests.
-// Mount it after authentication for admin, user, and admin-payment groups so rejected authentication is excluded.
-// The auth group has no preceding authentication and therefore includes failed login, registration, and refresh attempts.
+// NewAuditLogMiddleware captures mutations and selected sensitive reads after
+// their handlers complete. Mount it after authentication on administrator, user,
+// and administrator-payment groups so rejected authentication is excluded. The
+// unauthenticated auth group also records failed login, registration, and refresh attempts.
+//
+// Bounded body reads are restored before downstream binding, and redaction runs
+// only when capture succeeds. Handler action and actor overrides are consumed
+// after execution; SkipAudit suppresses recording when a synchronous operation
+// already retained its trace. Successful refreshes are skipped, and accepted audit
+// records are handed to the service's asynchronous writer.
+// Provide a nonnil redactor for JSON body capture; a nil audit service skips
+// enqueueing through Record's nil-receiver handling.
 func NewAuditLogMiddleware(auditService *audit.AuditLogService, redactor *audit.Redactor) AuditLogMiddleware {
 	return AuditLogMiddleware(func(c *gin.Context) {
 		routeKey := c.Request.Method + " " + c.FullPath()
@@ -133,6 +161,8 @@ func NewAuditLogMiddleware(auditService *audit.AuditLogService, redactor *audit.
 		// avoiding a second full in-memory copy of large import bodies.
 		var bodyRedacted string
 		if _, omit := auditBodyOmittedRoutes[routeKey]; omit {
+			// Credentials embedded inside arbitrary strings cannot be identified by JSON
+			// key matching, so these routes retain an omission marker for the entire body.
 			bodyRedacted = "<credential-bearing body omitted>"
 		} else if c.Request.Body != nil && c.Request.Method != http.MethodGet {
 			orig := c.Request.Body
@@ -141,6 +171,8 @@ func NewAuditLogMiddleware(auditService *audit.AuditLogService, redactor *audit.
 				Reader: io.MultiReader(bytes.NewReader(raw), orig),
 				closer: orig,
 			}
+			// A partial read leaves audit body text unset, because redacting an incomplete
+			// document cannot establish which values are safe. Restored bytes still reach binding.
 			if err == nil {
 				bodyRedacted = redactor.RedactBody(raw, c.GetHeader("Content-Type"))
 			}
@@ -154,7 +186,8 @@ func NewAuditLogMiddleware(auditService *audit.AuditLogService, redactor *audit.
 		}
 
 		status := c.Writer.Status()
-		// Successful refreshes are routine high-volume events; retain failures for investigation.
+		// Successful token refreshes are routine high-volume events. Retain failed
+		// refreshes so attempts that return errors remain available for later audit investigation.
 		if routeKey == "POST /api/v1/auth/refresh" && status < 400 {
 			return
 		}
@@ -171,9 +204,13 @@ func NewAuditLogMiddleware(auditService *audit.AuditLogService, redactor *audit.
 			LatencyMs:   time.Since(start).Milliseconds(),
 		}
 		if entry.Path == "" {
+			// An unmatched route has no Gin template. Retain the request path so a
+			// failed mutation can still be identified in audit searches after routing fails.
 			entry.Path = c.Request.URL.Path
 		}
 		if entry.Action == "" {
+			// Routes outside the fixed action maps still need searchable operation names;
+			// derive one from the method and route before applying a handler's override.
 			entry.Action = deriveAuditAction(c.Request.Method, entry.Path)
 		}
 		if v, ok := c.Get(auditCtxKeyAction); ok {
@@ -185,7 +222,8 @@ func NewAuditLogMiddleware(auditService *audit.AuditLogService, redactor *audit.
 			entry.RequestID = requestID
 		}
 
-		// Read authentication metadata first, then apply any actor overrides supplied by the handler.
+		// Read the authenticated user, role, email, and method before handler overrides.
+		// Login handlers can identify an actor even when the request began unauthenticated.
 		if subject, ok := authctx.GetAuthSubjectFromContext(c); ok && subject.UserID > 0 {
 			uid := subject.UserID
 			entry.ActorUserID = &uid
@@ -196,6 +234,8 @@ func NewAuditLogMiddleware(auditService *audit.AuditLogService, redactor *audit.
 		entry.ActorEmail = c.GetString(ContextKeyAuthEmail)
 		entry.AuthMethod = c.GetString("auth_method")
 		if entry.AuthMethod == "" && entry.ActorUserID != nil {
+			// An authenticated user without an explicit method is recorded as a JWT
+			// actor; login-time actor overrides occur later and do not trigger this inference.
 			entry.AuthMethod = audit.AuditAuthMethodJWT
 		}
 		if v, ok := c.Get(auditCtxKeyActorID); ok {
@@ -209,7 +249,8 @@ func NewAuditLogMiddleware(auditService *audit.AuditLogService, redactor *audit.
 			}
 		}
 
-		// Mask credentials before storing request-header metadata.
+		// Mask the header credential before enqueueing so CredentialMasked holds its
+		// display form; fields such as route parameters follow their own capture rules below.
 		entry.CredentialMasked = MaskedRequestCredential(c)
 
 		extra := map[string]any{}
@@ -231,9 +272,14 @@ func NewAuditLogMiddleware(auditService *audit.AuditLogService, redactor *audit.
 	})
 }
 
+// Close forwards cleanup to the original request body and returns its close error.
+// It can be called before the restored stream is exhausted, so cleanup does not
+// wait for downstream body reads.
 func (b *restoredBody) Close() error { return b.closer.Close() }
 
-// MaskedRequestCredential extracts and masks the API key or Authorization credential.
+// MaskedRequestCredential returns a masked display credential from request headers.
+// A nonempty x-api-key takes precedence over Authorization; authorization schemes
+// are retained when separated by a space, and missing headers yield an empty string.
 func MaskedRequestCredential(c *gin.Context) string {
 	if apiKey := strings.TrimSpace(c.GetHeader("x-api-key")); apiKey != "" {
 		return "x-api-key " + audit.MaskAuditCredential(apiKey)
@@ -249,14 +295,18 @@ func MaskedRequestCredential(c *gin.Context) string {
 	return audit.MaskAuditCredential(authHeader)
 }
 
-// deriveAuditAction combines the method and route template into an action name.
-// For example, PUT /api/v1/admin/providers/:id becomes admin.providers.update.
+// deriveAuditAction converts an HTTP method and route template into an audit
+// operation name, such as admin.providers.update for PUT on the provider detail
+// route. Dynamic route segments are omitted, hyphens become underscores, and an
+// empty path returns the method's action verb alone.
 func deriveAuditAction(method, fullPath string) string {
 	path := strings.TrimPrefix(fullPath, "/api/v1/")
 	path = strings.Trim(path, "/")
 	segs := strings.Split(path, "/")
 	parts := make([]string, 0, len(segs))
 	for _, seg := range segs {
+		// Parameter and catch-all segments describe resource identities rather than
+		// operation categories, so removing them keeps action filters stable across individual requests.
 		if seg == "" || strings.HasPrefix(seg, ":") || strings.HasPrefix(seg, "*") {
 			continue
 		}
@@ -273,6 +323,8 @@ func deriveAuditAction(method, fullPath string) string {
 	case "GET":
 		verb = "read"
 	default:
+		// Methods without a predefined CRUD action retain their lowercase spelling,
+		// giving unusual method requests a searchable name instead of an empty action suffix.
 		verb = strings.ToLower(method)
 	}
 	if len(parts) == 0 {

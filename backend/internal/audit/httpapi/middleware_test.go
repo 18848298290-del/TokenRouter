@@ -19,38 +19,54 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// partialErrorBody injects one read error after returning a captured prefix.
 type partialErrorBody struct {
-	data  []byte
-	first bool
+	// data and first track unread bytes and whether the injected error was emitted.
+	// The first read advances data before failing, reproducing consumption during capture.
+	data  []byte // remaining request body bytes
+	first bool   // first read already completed
 }
 
+// auditCaptureRepository retains middleware events for assertions after writer shutdown.
 type auditCaptureRepository struct {
-	mu   sync.Mutex
-	logs []*audit.AuditLog
+	// mu protects logs while the background audit writer appends records and tests
+	// take snapshots. Stored pointers remain shared after insertion for assertion reads.
+	mu   sync.Mutex        // captured event collection lock
+	logs []*audit.AuditLog // captured management audit events
 }
 
 // clearHTTPRepository implements ClearWithTrace so tests fail if the handler switches to separate clear and insert calls.
 type clearHTTPRepository struct {
+	// AuditLogRepository leaves unrelated operations unimplemented so this test fails
+	// if clearing switches away from the single overridden transactional trace call.
 	audit.AuditLogRepository
-	trace *audit.AuditLog
-	err   error
+	trace *audit.AuditLog // last supplied clearing trace
+	err   error           // injected clearing operation failure
+	// order points to the test's shared event slice. ClearWithTrace appends after
+	// verification so assertions can distinguish authorization from attempted storage changes.
 	order *[]string
 }
 
 // clearTOTPVerifier records fresh TOTP verification for the clearing operation.
 type clearTOTPVerifier struct {
-	err   error
-	user  int64
-	code  string
+	err  error  // injected verification failure
+	user int64  // last verified user identifier
+	code string // last submitted verification code
+	// order points to the event slice shared with clearHTTPRepository. VerifyCode
+	// appends first even when the injected error prevents any later clearing call.
 	order *[]string
 }
 
+// Read consumes a prefix and returns an injected error on its first call.
+// Subsequent calls consume remaining bytes normally, and exhausted input returns
+// EOF, allowing handler reads to recover the body after middleware prefix capture.
 func (b *partialErrorBody) Read(p []byte) (int, error) {
 	if len(b.data) == 0 {
 		return 0, io.EOF
 	}
 	limit := len(b.data)
 	if !b.first && limit > 5 {
+		// Leave unread bytes for replay after the injected capture failure.
 		limit = 5
 	}
 	n := copy(p, b.data[:limit])
@@ -62,41 +78,62 @@ func (b *partialErrorBody) Read(p []byte) (int, error) {
 	return n, nil
 }
 
+// Close completes the synthetic body lifetime with no external resources.
 func (b *partialErrorBody) Close() error { return nil }
 
+// BatchInsert appends shared record pointers under the capture lock for later
+// middleware assertions. It reports the supplied count and leaves context unused
+// because this test repository models successful in-memory persistence.
 func (r *auditCaptureRepository) BatchInsert(_ context.Context, logs []*audit.AuditLog) (int64, error) {
+	// Synchronize collection mutation with test snapshots so the writer cannot append
+	// while assertions copy the captured events after a request has finished.
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.logs = append(r.logs, logs...)
 	return int64(len(logs)), nil
 }
 
+// Insert appends one shared record under the capture lock and succeeds.
+// Tests use the same collection for synchronous and batch writes so both paths
+// remain visible to middleware assertions.
 func (r *auditCaptureRepository) Insert(_ context.Context, log *audit.AuditLog) error {
+	// Use the writer's collection lock for synchronous insertion too, keeping snapshots
+	// consistent when the same repository observes both persistence paths during a scenario.
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.logs = append(r.logs, log)
 	return nil
 }
 
+// List returns an empty page because these scenarios assert captured events directly.
 func (r *auditCaptureRepository) List(context.Context, *audit.AuditLogFilter) (*audit.AuditLogList, error) {
 	return &audit.AuditLogList{}, nil
 }
 
+// GetByID returns ErrAuditLogNotFound because middleware tests perform no detail lookup.
 func (r *auditCaptureRepository) GetByID(context.Context, int64) (*audit.AuditLog, error) {
 	return nil, audit.ErrAuditLogNotFound
 }
 
+// Count returns zero because event assertions inspect the captured slice directly.
 func (r *auditCaptureRepository) Count(context.Context) (int64, error) { return 0, nil }
-func (r *auditCaptureRepository) TruncateAll(context.Context) error    { return nil }
+
+// TruncateAll succeeds without clearing the collection in these capture-only scenarios.
+func (r *auditCaptureRepository) TruncateAll(context.Context) error { return nil }
+
+// DeleteBefore returns zero so retention cannot modify middleware test event history.
 func (r *auditCaptureRepository) DeleteBefore(context.Context, time.Time, int) (int64, error) {
 	return 0, nil
 }
 
+// TestDeriveAuditAction supplies resource routes with dynamic identifiers and
+// different HTTP methods. Derived actions must identify operations consistently,
+// and subscription revocation must retain its fixed user action override.
 func TestDeriveAuditAction(t *testing.T) {
 	cases := []struct {
-		method string
-		path   string
-		want   string
+		method string // operation HTTP method
+		path   string // Gin resource route template
+		want   string // expected classified action name
 	}{
 		{"PUT", "/api/v1/admin/providers/:id", "admin.providers.update"},
 		{"POST", "/api/v1/admin/providers", "admin.providers.create"},
@@ -114,6 +151,9 @@ func TestDeriveAuditAction(t *testing.T) {
 	}
 }
 
+// TestAuditSensitiveReadsIncludesForkBackupRoutes checks the direct backup
+// download and storage-configuration read routes. Both must remain audited GET
+// operations with the actions used to search sensitive management access.
 func TestAuditSensitiveReadsIncludesForkBackupRoutes(t *testing.T) {
 	want := map[string]string{
 		"GET /api/v1/admin/backups/:id/download":   "admin.backups.download",
@@ -126,6 +166,9 @@ func TestAuditSensitiveReadsIncludesForkBackupRoutes(t *testing.T) {
 	}
 }
 
+// TestAuditMiddlewareRestoresPartialBodyAfterReadError injects a capture failure
+// after the original body yields its first bytes. The downstream handler must
+// still receive the complete request and return its successful status.
 func TestAuditMiddlewareRestoresPartialBodyAfterReadError(t *testing.T) {
 	want := []byte(`{"name":"完整请求"}`)
 	var got []byte
@@ -155,8 +198,9 @@ func TestAuditMiddlewareRestoresPartialBodyAfterReadError(t *testing.T) {
 	}
 }
 
-// TestOllamaCloudUsageSessionRouteOmitsAuditBody checks that browser cookies in the session body
-// are omitted entirely from audit storage, including credentials under the "session" key.
+// TestOllamaCloudUsageSessionRouteOmitsAuditBody submits cookies embedded in an
+// Ollama usage session string. The completed request must produce one audit event
+// with the full-body omission marker and no cookie canary text.
 func TestOllamaCloudUsageSessionRouteOmitsAuditBody(t *testing.T) {
 	require.Contains(t, auditBodyOmittedRoutes, "PUT /api/v1/admin/providers/:id/ollama-cloud-usage/session")
 
@@ -181,8 +225,12 @@ func TestOllamaCloudUsageSessionRouteOmitsAuditBody(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, request)
 	require.Equal(t, http.StatusOK, recorder.Code)
+	// Stop waits for the writer's final drain, making the captured collection complete
+	// before assertions snapshot it instead of racing asynchronous request observation delivery.
 	auditService.Stop()
 
+	// Read through the repository's collection lock after the drain, keeping snapshot
+	// access consistent with the synchronization used by both synchronous and batch insert helpers.
 	repository.mu.Lock()
 	logs := append([]*audit.AuditLog(nil), repository.logs...)
 	repository.mu.Unlock()
@@ -191,6 +239,9 @@ func TestOllamaCloudUsageSessionRouteOmitsAuditBody(t *testing.T) {
 	require.NotContains(t, logs[0].RequestBody, "audit-canary")
 }
 
+// TestPasskeyFinishRoutesOmitAuditBody checks the login and registration finish route keys.
+// Both must remain in the full-body omission map so the middleware selects that
+// capture policy for those endpoints.
 func TestPasskeyFinishRoutesOmitAuditBody(t *testing.T) {
 	// WebAuthn finish bodies contain full assertions or attestations and must be omitted from audit storage.
 	for _, route := range []string{
@@ -201,7 +252,12 @@ func TestPasskeyFinishRoutesOmitAuditBody(t *testing.T) {
 	}
 }
 
+// ClearWithTrace replaces the captured collection with its supplied clearing trace
+// under the writer lock and returns the previous record count. Tests receive the
+// same shared trace pointer that would be passed to transactional persistence.
 func (r *auditCaptureRepository) ClearWithTrace(_ context.Context, trace *audit.AuditLog) (int64, error) {
+	// Serialize counting and replacement against event appends so the test's deleted
+	// count corresponds to the exact collection replaced by this clearing trace.
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	n := len(r.logs)
@@ -209,25 +265,37 @@ func (r *auditCaptureRepository) ClearWithTrace(_ context.Context, trace *audit.
 	return int64(n), nil
 }
 
+// ClearWithTrace records its position after TOTP verification and captures the
+// supplied trace. It returns a fixed deleted count together with the injected
+// storage error, letting handler tests distinguish success from failed trace persistence.
 func (r *clearHTTPRepository) ClearWithTrace(_ context.Context, trace *audit.AuditLog) (int64, error) {
 	*r.order = append(*r.order, "clear-with-trace")
 	r.trace = trace
 	return 7, r.err
 }
 
+// VerifyCode records the supplied actor and code before returning the
+// injected authorization error. The shared order slice lets tests establish that
+// clearing follows verification and is skipped when verification fails.
 func (v *clearTOTPVerifier) VerifyCode(_ context.Context, user int64, code string) error {
 	*v.order = append(*v.order, "totp")
 	v.user, v.code = user, code
 	return v.err
 }
 
+// TestAuditClearHTTPAuthorizationAndTrace exercises missing identity, malformed
+// request JSON, verification failures, and storage failures before successful clearing.
+// Verification must precede the single trace call, and middleware skipping must
+// occur only after that call succeeds.
 func TestAuditClearHTTPAuthorizationAndTrace(t *testing.T) {
 	cases := []struct {
+		// name identifies the scenario; auth selects the request authentication method;
+		// body supplies the JSON request; reason identifies the expected structured error.
 		name, auth, body, reason string
-		user                     int64
-		verifyErr, storeErr      error
-		status                   int
-		wantOrder                []string
+		user                     int64    // authenticated test actor identifier
+		verifyErr, storeErr      error    // verifyErr: injected authorization failure; storeErr: injected trace persistence failure
+		status                   int      // expected HTTP response status
+		wantOrder                []string // expected authorization and clearing order
 	}{
 		{name: "admin-key-rejected-before-body", auth: audit.AuditAuthMethodAdminAPIKey, status: http.StatusForbidden, reason: "STEP_UP_ADMIN_API_KEY_FORBIDDEN"},
 		{name: "missing-subject", auth: audit.AuditAuthMethodJWT, status: http.StatusUnauthorized},

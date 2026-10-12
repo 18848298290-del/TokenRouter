@@ -15,23 +15,34 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// Administrators inspect audit summaries through paginated filters and fetch
+// redacted bodies through individual detail records. Clearing history verifies a
+// fresh TOTP code and submits a synchronous trace, allowing the middleware to skip
+// its usual asynchronous record after that transaction succeeds.
+
 // AuditLogHandler exposes administrator audit-log queries and clearing.
 // Clearing all records requires a fresh TOTP verification.
 type AuditLogHandler struct {
-	auditService *audit.AuditLogService
-	totpService  TOTPVerifier
+	auditService *audit.AuditLogService // audit queries and transactional clearing
+	totpService  TOTPVerifier           // fresh operation authorization verifier
 }
 
+// auditLogClearRequest supplies the fresh second factor for audit history clearing.
 type auditLogClearRequest struct {
-	TotpCode string `json:"totp_code" binding:"required"`
+	TotpCode string `json:"totp_code" binding:"required"` // submitted one-time verification code
 }
 
 // TOTPVerifier validates the TOTP code supplied for this operation.
 type TOTPVerifier interface {
+	// VerifyCode checks the supplied user's fresh TOTP code before history clearing.
+	// Verification errors, including missing setup and exhausted attempts, prevent
+	// the handler from asking the repository to clear records.
 	VerifyCode(context.Context, int64, string) error
 }
 
-// NewAuditLogHandler creates the audit-log handler.
+// NewAuditLogHandler binds the audit service and TOTP verifier to administrator
+// endpoints. The handler retains these dependencies for each request; app installs
+// administrator authentication before registering its routes.
 func NewAuditLogHandler(auditService *audit.AuditLogService, totpService TOTPVerifier) *AuditLogHandler {
 	return &AuditLogHandler{
 		auditService: auditService,
@@ -39,11 +50,15 @@ func NewAuditLogHandler(auditService *audit.AuditLogService, totpService TOTPVer
 	}
 }
 
-// List returns a page of audit logs.
+// List parses administrator audit filters and returns a paginated summary response.
+// Actor identifiers must be positive and timestamps use RFC3339. A supplied
+// success value selects successful statuses only when it equals "true"; other
+// nonempty values select failure statuses, and page size is capped at two hundred.
 // GET /api/v1/admin/audit-logs
 func (h *AuditLogHandler) List(c *gin.Context) {
 	page, pageSize := response.ParsePagination(c)
 	if pageSize > 200 {
+		// Bound response size before forwarding filters to the audit store.
 		pageSize = 200
 	}
 
@@ -96,7 +111,9 @@ func (h *AuditLogHandler) List(c *gin.Context) {
 	response.Paginated(c, result.Logs, int64(result.Total), result.Page, result.PageSize)
 }
 
-// Get returns an audit record, including its redacted request body.
+// Get returns an audit detail record including its stored redacted request body.
+// The route identifier must be a positive decimal integer; repository absence
+// and read errors are translated through the shared HTTP response helpers.
 // GET /api/v1/admin/audit-logs/:id
 func (h *AuditLogHandler) Get(c *gin.Context) {
 	id, err := strconv.ParseInt(strings.TrimSpace(c.Param("id")), 10, 64)
@@ -141,7 +158,8 @@ func (h *AuditLogHandler) Clear(c *gin.Context) {
 		return
 	}
 
-	// Reject missing TOTP setup, invalid codes, and exhausted verification attempts.
+	// Verify this operation's code even after administrator middleware succeeds;
+	// an existing step-up session cannot substitute for fresh authorization to erase history.
 	if err := h.totpService.VerifyCode(c.Request.Context(), subject.UserID, strings.TrimSpace(req.TotpCode)); err != nil {
 		response.ErrorFrom(c, err)
 		return
@@ -171,7 +189,8 @@ func (h *AuditLogHandler) Clear(c *gin.Context) {
 		return
 	}
 
-	// The clearing transaction already persisted a trace; avoid a duplicate asynchronous record.
+	// The clearing transaction already persisted its trace. Suppress middleware
+	// recording for this request so one clear produces one retained administrative event.
 	SkipAudit(c)
 	response.Success(c, gin.H{"deleted": deleted})
 }

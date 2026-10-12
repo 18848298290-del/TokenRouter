@@ -21,6 +21,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
+// TestIdempotencyRepo_CreateProcessing_CompeteSameKey inserts a claim and then
+// retries its scope/key pair with a different fingerprint. PostgreSQL must assign
+// the first record an ID and decline ownership for the second insert.
 func TestIdempotencyRepo_CreateProcessing_CompeteSameKey(t *testing.T) {
 	tx := idempotencyTestTx(t)
 	repo := NewIdempotencyRepository(tx)
@@ -53,6 +56,9 @@ func TestIdempotencyRepo_CreateProcessing_CompeteSameKey(t *testing.T) {
 	require.False(t, owner, "same scope+key hash should be de-duplicated")
 }
 
+// TestIdempotencyRepo_TryReclaim_StatusAndLockWindow retries failed records before
+// and after their backoff deadline. An expired lock must return the record to
+// processing with a future lock, while an active backoff must reject reclaim.
 func TestIdempotencyRepo_TryReclaim_StatusAndLockWindow(t *testing.T) {
 	tx := idempotencyTestTx(t)
 	repo := NewIdempotencyRepository(tx)
@@ -118,6 +124,9 @@ func TestIdempotencyRepo_TryReclaim_StatusAndLockWindow(t *testing.T) {
 	require.False(t, reclaimed, "within lock window should not reclaim")
 }
 
+// TestIdempotencyRepo_StatusTransition_ToSucceeded completes an inserted
+// processing record with a stored response. Its reloaded state must be succeeded,
+// retain the exact status and body, and release the processing lock.
 func TestIdempotencyRepo_StatusTransition_ToSucceeded(t *testing.T) {
 	tx := idempotencyTestTx(t)
 	repo := NewIdempotencyRepository(tx)
@@ -149,10 +158,14 @@ func TestIdempotencyRepo_StatusTransition_ToSucceeded(t *testing.T) {
 	require.Nil(t, got.LockedUntil)
 }
 
-// idempotencyTestTx applies migrations in an isolated PostgreSQL instance and rolls back the test
-// transaction at cleanup.
+// idempotencyTestTx returns a transaction inside a fresh migrated PostgreSQL test
+// container. Setup uses a two-minute context, and cleanup rolls back the test
+// transaction before closing its pool and terminating the container, keeping
+// each repository scenario's state isolated from subsequent tests.
 func idempotencyTestTx(t *testing.T) *sql.Tx {
 	t.Helper()
+	// Register container, pool, and transaction cleanup as each resource is acquired;
+	// test cleanup's reverse order releases the transaction before its underlying database resources.
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	container, err := tcpostgres.Run(ctx, "postgres:18.1-alpine3.23", tcpostgres.WithDatabase("idempotency_contracts"), tcpostgres.WithUsername("postgres"), tcpostgres.WithPassword("postgres"), tcpostgres.BasicWaitStrategies())
@@ -170,6 +183,9 @@ func idempotencyTestTx(t *testing.T) *sql.Tx {
 	return tx
 }
 
+// uniqueIdempotencyValue combines a fixture prefix with the normalized test name.
+// Slashes and spaces become underscores. Scope construction and hashedTestValue
+// use this same deterministic representation to identify their fixture's named scenario.
 func uniqueIdempotencyValue(t *testing.T, prefix string) string {
 	t.Helper()
 	safeName := strings.NewReplacer("/", "_", " ", "_").Replace(t.Name())
@@ -183,5 +199,5 @@ func hashedTestValue(t *testing.T, prefix string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// ptrTime returns a pointer to the supplied time.
+// ptrTime returns a pointer holding the supplied fixture timestamp value.
 func ptrTime(t time.Time) *time.Time { return &t }

@@ -8,9 +8,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 )
 
+// Audit bodies may contain provider credentials even when their field names use
+// different separators or casing. Normalized key matching masks those values
+// recursively, while non-JSON and oversized bodies become size-bearing placeholders
+// so request capture can remain bounded and avoid retaining uninspectable secrets.
+
+// Redaction limits replace sensitive values and stop recursion before deeply
+// nested input can produce an unbounded traversal of an audit request body.
 const (
-	auditRedactedPlaceholder = "***"
-	auditRedactMaxDepth      = 24
+	auditRedactedPlaceholder = "***" // sensitive JSON value replacement
+	auditRedactMaxDepth      = 24    // maximum inspected nesting depth
 )
 
 // auditBodySensitiveSubstrings matches normalized request-body keys.
@@ -22,18 +29,22 @@ var auditBodySensitiveSubstrings = []string{
 	"sessionkey", "serviceprovider",
 }
 
-// Redactor holds normalized sensitive keys and is shared read-only after construction.
-// NewRedactor combines built-in keys with module-owned provider and payment key
-// lists supplied by the caller, keeping redaction consistent with credential fields.
-type Redactor struct{ exact map[string]struct{} }
+// Redactor matches sensitive JSON keys using an immutable normalized key set.
+type Redactor struct {
+	// exact combines built-in names and caller-supplied module keys. NewRedactor
+	// finishes populating this map before middleware shares the redactor across requests.
+	exact map[string]struct{}
+}
 
 // auditNormalizeBodyKey lowercases keys and removes separators.
 // This gives private_key, privateKey, and privatekey the same representation,
-// so matching also covers credentials whose names omit separators.
+// so matching also covers request credentials whose names omit separators.
 func auditNormalizeBodyKey(key string) string {
 	var b strings.Builder
 	b.Grow(len(key))
 	for _, r := range strings.ToLower(strings.TrimSpace(key)) {
+		// Ignore credential-name separators so module-supplied snake_case keys also match
+		// camelCase request-body fields after lowercasing, keeping both naming forms under one rule.
 		switch r {
 		case '_', '-', '.', ' ':
 			continue
@@ -44,6 +55,9 @@ func auditNormalizeBodyKey(key string) string {
 	return b.String()
 }
 
+// NewRedactor combines built-in credential names with the supplied module keys.
+// Keys are normalized into a new set, so later changes to extraKeys do not affect
+// the redactor shared by HTTP middleware.
 func NewRedactor(extraKeys []string) *Redactor {
 	builtin := []string{"code", "codes", "pin", "cvv", "authorization", "cookie", "x-api-key", "credential", "key", "proxy_key", "custom_key", "session"}
 	set := make(map[string]struct{}, len(builtin)+len(extraKeys))
@@ -53,6 +67,9 @@ func NewRedactor(extraKeys []string) *Redactor {
 	return &Redactor{exact: set}
 }
 
+// IsSensitiveKey reports whether the normalized key matches a sensitive name or
+// contains a configured sensitive substring. Callers use the result to replace
+// the complete value, including any nested object beneath that key.
 func (r *Redactor) IsSensitiveKey(key string) bool {
 	k := auditNormalizeBodyKey(key)
 	if _, ok := r.exact[k]; ok {
@@ -66,10 +83,10 @@ func (r *Redactor) IsSensitiveKey(key string) bool {
 	return false
 }
 
-// RedactBody prepares request bodies for audit storage:
-//   - JSON values under sensitive keys are redacted recursively; other fields remain visible.
-//   - Invalid JSON, non-JSON, and bodies above the capture limit are replaced with placeholders.
-//   - Encoded output above the storage limit is truncated and marked.
+// RedactBody returns bounded request text suitable for audit storage after masking
+// sensitive JSON fields. Empty bodies return an empty string; malformed, non-JSON,
+// and oversized input returns an omission placeholder. Encoded output may be cut
+// at the storage byte limit and is then marked as truncated.
 func (r *Redactor) RedactBody(raw []byte, contentType string) string {
 	if len(raw) == 0 {
 		return ""
@@ -86,22 +103,32 @@ func (r *Redactor) RedactBody(raw []byte, contentType string) string {
 
 	var value any
 	if err := json.Unmarshal(raw, &value); err != nil {
+		// An unexpected decode failure still omits the raw bytes, because recording
+		// them would bypass the sensitive-key traversal performed on decoded values.
 		return "<unparsable body omitted>"
 	}
 	redacted := r.redactValue(value, 0)
 	encoded, err := json.Marshal(redacted)
 	if err != nil {
+		// Keep a redaction marker on encoding failure so the audit record can be
+		// retained without substituting an unredacted copy of the original request.
 		return "<redacted>"
 	}
 	out := string(encoded)
 	if len(out) > auditRequestBodyMaxBytes {
+		// The truncation marker distinguishes a stored prefix from a complete body.
 		out = out[:auditRequestBodyMaxBytes] + "...<truncated>"
 	}
 	return out
 }
 
+// redactValue copies decoded objects and arrays while masking sensitive-key
+// values. Scalar values pass through, and recursion beyond the configured depth
+// replaces the entire remaining subtree with an explanatory placeholder.
 func (r *Redactor) redactValue(value any, depth int) any {
 	if depth > auditRedactMaxDepth {
+		// Omit the remaining subtree once the recursion bound is exceeded, so deeper
+		// credentials cannot escape inspection through an unchecked return of the input.
 		return "<depth limit exceeded>"
 	}
 	switch v := value.(type) {
@@ -126,9 +153,15 @@ func (r *Redactor) redactValue(value any, depth int) any {
 	}
 }
 
+// MaskAuditCredential returns the shared log-redaction display form of a credential.
+// Whitespace is trimmed first; empty credentials stay empty and short credentials
+// become a mask. Longer credentials expose the prefix and suffix selected by
+// logredact.MaskCredential.
 func MaskAuditCredential(credential string) string { return logredact.MaskCredential(credential) }
 
-// RedactAuditQuery masks credential fields in the raw URL query.
+// RedactAuditQuery masks supported credential names in trimmed raw URL query text.
+// An empty query returns an empty string; matching and value masking follow
+// logredact.RedactText rather than parsing the query into decoded URL parameters.
 func RedactAuditQuery(rawQuery string) string {
 	rawQuery = strings.TrimSpace(rawQuery)
 	if rawQuery == "" {

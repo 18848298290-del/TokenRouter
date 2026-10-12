@@ -13,6 +13,16 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// User write fingerprints include the authenticated actor alongside method,
+// route, and payload. Records are keyed by the supplied business scope and key
+// hash, so a different actor using that same pair produces a fingerprint conflict.
+// Responses report stored replays and retry delays, while storage failures return errors.
+
+// ExecuteUserIdempotentJSON runs a user-scoped command through the injected
+// coordinator and writes its JSON response. Missing coordinators execute directly
+// for fixtures; bound coordinators apply required-key checks according to their
+// observe-only configuration and expose stored replays or retry-delay errors.
+// Callers provide a nonnil callback for both execution paths.
 func (e *Executor) ExecuteUserIdempotentJSON(
 	c *gin.Context,
 	scope string,
@@ -22,6 +32,8 @@ func (e *Executor) ExecuteUserIdempotentJSON(
 ) {
 	coordinator := e.coordinator
 	if coordinator == nil {
+		// Independent HTTP fixtures can omit app binding. Execute their callback directly
+		// so these tests retain user response handling without configuring an idempotency repository.
 		data, err := execute(c.Request.Context())
 		if err != nil {
 			response.ErrorFrom(c, err)

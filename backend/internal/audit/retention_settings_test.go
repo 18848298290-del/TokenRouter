@@ -4,6 +4,9 @@ import (
 	"testing"
 )
 
+// TestParseAuditLogRetentionDays exercises missing, malformed, positive, and
+// nonpositive settings text. Defaults and indefinite-retention values must match
+// the period interpreted by the audit cleanup worker.
 func TestParseAuditLogRetentionDays(t *testing.T) {
 	cases := map[string]int{
 		"":       DefaultRetentionDays,

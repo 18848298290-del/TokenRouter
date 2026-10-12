@@ -5,11 +5,14 @@ import (
 	"testing"
 )
 
+// TestMaskAuditCredential covers empty, short, and long credential inputs at the
+// masking cutoff. Display output must match the shared masker and keep full long
+// credentials out of audit text.
 func TestMaskAuditCredential(t *testing.T) {
 	cases := []struct {
-		name string
-		in   string
-		want string
+		name string // credential size scenario
+		in   string // supplied credential text
+		want string // expected masked display
 	}{
 		{"empty", "", ""},
 		{"short", "abc", "****"},
