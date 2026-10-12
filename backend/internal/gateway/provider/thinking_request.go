@@ -51,10 +51,6 @@ func NormalizeGLMOpenAIReasoningEffort(body []byte, mappedModel string) ([]byte,
 	return requeststate.NormalizeGLMOpenAIReasoningEffort(body, thinkingRequestOptions(mappedModel))
 }
 
-func isGLM53Model(model string) bool {
-	return strings.EqualFold(strings.TrimSpace(model), "glm-5.3")
-}
-
 // Thinking Budget Rectifier
 
 // NormalizeChineseLLMThinking 修正国产 Anthropic 兼容上游的 thinking.type 差异。
@@ -78,6 +74,6 @@ func thinkingRequestOptions(models ...string) requeststate.ThinkingRequestOption
 	normalized := strings.ToLower(strings.TrimSpace(model))
 	options.NativeReasoningEffort = strings.HasPrefix(normalized, "deepseek-")
 	options.GLM = strings.HasPrefix(normalized, "glm-")
-	options.GLM53 = isGLM53Model(model)
+	options.GLM53 = normalized == "glm-5.3"
 	return options
 }

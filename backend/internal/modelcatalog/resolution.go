@@ -374,9 +374,9 @@ func (t Target) servicePlatform() string {
 	if t.Platform != "openai" || t.ProviderType == "oauth" || t.ProviderType == "setup-token" {
 		return t.Platform
 	}
-	switch t.ServiceID() {
+	switch service := t.ServiceID(); service {
 	case "anthropic", "deepseek":
-		return t.ServiceID()
+		return service
 	case "xai":
 		return "grok"
 	case "google":

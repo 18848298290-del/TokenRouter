@@ -9,11 +9,7 @@ import (
 )
 
 func (s *Public) validateModelAttributes(ctx context.Context, session *routing.ModelAttributeSession, groupID *int64, provider *Candidate, model string, request BatchImageSubmitRequest) error {
-	target := modelcatalog.Target{Platform: "gemini", Model: model, ClientProtocol: "image_batches"}
-	if provider.AttributeTarget != nil {
-		target = provider.AttributeTarget(model)
-		target.ClientProtocol = "image_batches"
-	}
+	target := provider.modelAttributeTarget(model)
 	var group int64
 	if groupID != nil {
 		group = *groupID
@@ -38,4 +34,13 @@ func (s *Public) validateModelAttributes(ctx context.Context, session *routing.M
 		}
 	}
 	return nil
+}
+
+func (c *Candidate) modelAttributeTarget(model string) modelcatalog.Target {
+	target := modelcatalog.Target{Platform: "gemini", Model: model}
+	if c.AttributeTarget != nil {
+		target = c.AttributeTarget(model)
+	}
+	target.ClientProtocol = "image_batches"
+	return target
 }

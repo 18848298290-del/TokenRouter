@@ -442,10 +442,12 @@ func CreativeDefaultImageSizesForPlatform(platform string) []string {
 // CreativeCapabilitiesForModel 将统一媒体能力整理为创作台参数。
 func CreativeCapabilitiesForModel(platform, model string, attributes ...modelcatalog.Attributes) CreativeModelCapabilities {
 	result := CreativeModelCapabilities{AspectRatios: []string{}, Qualities: []string{}, OutputFormats: []string{}, BackgroundOptions: []string{}, ThinkingLevels: []string{}, MaxOutputCount: 1, MaxReferenceImages: 1}
-	media := modelcatalog.MediaForModel(platform, model)
+	var media *modelcatalog.MediaCapabilities
 	if len(attributes) > 0 {
 		media = attributes[0].Media
 		result.ThinkingLevels = attributes[0].Efforts()
+	} else {
+		media = modelcatalog.MediaForModel(platform, model)
 	}
 	if media == nil {
 		return result

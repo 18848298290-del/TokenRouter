@@ -124,7 +124,7 @@ func ResolveGeminiThinking(input GeminiThinkingInput, options GeminiThinkingOpti
 			}
 			maximum := options.BudgetMax
 			if options.BudgetPadding > 0 && options.OutputLimit != nil {
-				limit := *options.OutputLimit - max(options.BudgetPadding, 1)
+				limit := *options.OutputLimit - options.BudgetPadding
 				if maximum == nil || limit < *maximum {
 					maximum = &limit
 				}
@@ -150,17 +150,18 @@ func ResolveGeminiThinking(input GeminiThinkingInput, options GeminiThinkingOpti
 			effort = "high"
 		}
 	}
-	if effort != "" && effort != "default" {
-		if !options.ControlsKnown {
-			result.ThinkingLevel = effort
-			return result, nil
-		}
-		level, err := geminiCompatibleEffort(effort, options.Efforts)
-		if err != nil {
-			return nil, err
-		}
-		result.ThinkingLevel = level
+	if effort == "" || effort == "default" {
+		return result, nil
 	}
+	if !options.ControlsKnown {
+		result.ThinkingLevel = effort
+		return result, nil
+	}
+	level, err := geminiCompatibleEffort(effort, options.Efforts)
+	if err != nil {
+		return nil, err
+	}
+	result.ThinkingLevel = level
 	return result, nil
 }
 
@@ -183,14 +184,11 @@ func geminiCompatibleEffort(effort string, allowed []string) (string, error) {
 		return effort, nil
 	}
 	selected := ""
-	for _, candidate := range order {
+	for index, candidate := range order {
 		if !slices.Contains(allowed, candidate) {
 			continue
 		}
-		if selected == "" {
-			selected = candidate
-		}
-		if slices.Index(order, candidate) <= rank {
+		if selected == "" || index <= rank {
 			selected = candidate
 		}
 	}

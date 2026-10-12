@@ -671,11 +671,7 @@ func (s *Public) ListModels(ctx context.Context, owner BatchImageOwner) (*BatchI
 				}
 				modalities, found := outputs[upstreamModel]
 				if s.Attributes != nil {
-					target := modelcatalog.Target{Platform: "gemini", Model: upstreamModel, ClientProtocol: "image_batches"}
-					if provider.AttributeTarget != nil {
-						target = provider.AttributeTarget(upstreamModel)
-					}
-					target.ClientProtocol = "image_batches"
+					target := provider.modelAttributeTarget(upstreamModel)
 					var groupID int64
 					if owner.GroupID != nil {
 						groupID = *owner.GroupID

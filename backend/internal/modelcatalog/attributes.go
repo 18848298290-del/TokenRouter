@@ -207,7 +207,7 @@ func Common(values []Attributes) (Attributes, bool) {
 			}
 		}
 		result.Media = commonMedia(result.Media, value.Media)
-		if !equalInterleaved(result.Interleaved, value.Interleaved) {
+		if !reflect.DeepEqual(result.Interleaved, value.Interleaved) {
 			result.Interleaved = nil
 		}
 		result.InputModalities = intersection(result.InputModalities, value.InputModalities)

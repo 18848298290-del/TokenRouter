@@ -301,8 +301,6 @@ func commonStrings(a, b []string) []string {
 	return *intersection(&a, &b)
 }
 
-func equalInterleaved(a, b *Interleaved) bool { return reflect.DeepEqual(a, b) }
-
 func maximum(a, b *int) *int {
 	if a == nil || b != nil && *b > *a {
 		return b
