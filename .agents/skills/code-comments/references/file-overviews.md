@@ -1,25 +1,8 @@
-# Explaining the rules shared by a file
+# File overview examples
 
-Start from the fact a reader needs before following the implementation. Explain the condition, consequence, or relationship that follows from it. Choose the subject from the code and its callers. Repeating a different introductory formula in every file would recreate the same problem.
+Read these before drafting an overview. Each begins with a specific problem or rule and develops its consequence. Verify the stated assumptions; use the purpose or design role and minima from SKILL.md.
 
-The mandatory minima still apply: a purpose overview needs 30 words and 2 complete sentences; a design overview needs 80 words and 2 prose paragraphs. Select the role using SKILL.md's design criteria. Establish the problem and explain its consequences before adding secondary facts. Keep an existing explanation at its owning declaration when the overview can instead explain why the surrounding pieces work together.
-
-## Choosing the opening subject
-
-Choose a subject from the behavior verified in the implementation and its callers. The following situations illustrate how a concrete opening leads to an explanation; use a situation only when the code actually implements it.
-
-| Opening subject | How the explanation develops |
-| --- | --- |
-| A conversation staying with the account that answered it | Explain cache reuse, when routing can choose again, and whether the choice survives a restart |
-| One allowance represented by two records | Explain how duplicates affect totals, how the records are matched, and what a failed read means |
-| Whole configuration tables as the unit of replacement | Identify which tables the editor owns and what surrounding content it preserves |
-| Two components supporting different proxy protocols | Name the incompatibility and explain the adapter that connects them |
-| Environment-variable references in settings | Follow a value from its stored syntax to the consumer's syntax and explain unsupported expansion |
-| A persistent ledger and its disposable index | Establish which data can be rebuilt and how the index reduces append and read work |
-| An update the computer refuses to run | Explain the startup check, recovery behavior, and conditions for a later retry |
-| Downloading an update through a mirror | Explain the transport choice and how the download is checked against independently obtained metadata |
-
-These subjects lead to different explanations because they answer different questions. Function names appear where they locate a step or rule. An overview does not need to enumerate every function to establish its purpose.
+Reject introductions such as "This file parses ...", "The IP utilities provide ...", or a catalog of helpers. A renamed container or a rotation of stock opening phrases still fails. Start from the behavior, format, dependency, or failure that makes the implementation worth explaining. The first two sentences must establish a file-specific fact.
 
 ## Purpose overview: a refresh failure
 
@@ -30,8 +13,6 @@ Assume a failed refresh retains the previous catalog, and replacement entries ar
 // Refresh errors leave the previous entries available, so readers can continue
 // model lookup while a valid replacement is being prepared.
 ```
-
-The opening establishes the availability rule. The next sentence explains its consequence for readers.
 
 ## Design overview: an account slot's lifetime
 
@@ -50,8 +31,6 @@ Assume requests queue per account, cancellation can race with admission, and rel
 // Release is idempotent because normal completion and cleanup may both call it.
 ```
 
-The paragraphs cover lifetime and coordination. Individual function comments can then state their callers' obligations without repeating this whole flow.
-
 ## Purpose overview: the editable unit
 
 Assume the editor replaces provider tables it generated and preserves other TOML content. Make the unit of replacement and the user's retained content clear.
@@ -63,8 +42,6 @@ Assume the editor replaces provider tables it generated and preserves other TOML
 // surrounding settings.
 ```
 
-The data format is the subject. The text explains the editing rule instead of listing parser and writer helpers.
-
 ## Purpose overview: a dependency limitation
 
 Assume plugins run under a runtime that accepts HTTP proxies but rejects SOCKS5, and the application supplies a loopback bridge for SOCKS5 selections.
@@ -74,8 +51,6 @@ Assume plugins run under a runtime that accepts HTTP proxies but rejects SOCKS5,
 // uses SOCKS5. A loopback HTTP proxy bridges the two protocols and forwards
 // plugin requests through that SOCKS5 server using the user's chosen connection.
 ```
-
-The limitation gives the bridge a reason to exist. Keep the names and behavior specific to the dependencies the implementation actually uses.
 
 ## Design overview: valid rules and configured rules
 
@@ -94,8 +69,6 @@ Assume compilation skips invalid IP patterns but retains their original count, a
 // NormalizeIP trims an address and removes its port when SplitHostPort succeeds.
 ```
 
-The count's consequence explains why it survives parsing. The final paragraph distinguishes the entry points whose whitespace handling differs.
-
 ## Purpose overview: the stored records and their index
 
 Assume this file is a facade over a ledger and index implemented elsewhere. The JSONL ledger is authoritative, readers use immutable index blocks, and an append copies at most the unfinished final block. The facade needs a purpose overview; the component that implements publication and consistency owns the design explanation.
@@ -105,8 +78,6 @@ Assume this file is a facade over a ledger and index implemented elsewhere. The 
 // rebuilt from them. Readers decode the blocks that overlap their requested
 // time range, while appending a record copies at most the unfinished final block.
 ```
-
-The opening identifies which data can be reconstructed. The second sentence explains the work the index saves.
 
 ## Design overview: a value split across stream events
 
@@ -125,8 +96,6 @@ Assume the implementation restores known placeholders, holds a possible unfinish
 // literally so the caller receives all of the original text.
 ```
 
-The split example establishes why buffering exists. The following sentences explain the state that buffering preserves and how it ends. A catalog of the writer's methods would not convey this relationship.
-
 ## Design overview: elapsed work and operation counts
 
 Assume the implementation merges completed intervals, clips them to the request window, and counts each operation once. A mutex protects recording and snapshot creation; merging and formatting use the copied snapshot.
@@ -144,15 +113,3 @@ Assume the implementation merges completed intervals, clips them to the request 
 // consistent while allowing later observations to be recorded for subsequent
 // snapshots.
 ```
-
-The first paragraph explains what the numbers mean. The second follows the consequence of calculating them while new work is recorded. Entry-specific defaults and serialization details stay with their declarations.
-
-## Rejected introductions
-
-- `This file parses IP access rules ...` announces the file's contents. Start with the rule and the distinction the reader needs.
-- `The IP utilities provide parsing and matching capabilities ...` replaces the container's name while keeping the same generic introduction.
-- `Compile parses, Match matches, and Validate validates ...` inventories declarations. Explain the relationship that makes them worth describing together.
-- `Rules use the corresponding standard library operation ...` leaves the operation and its significance unnamed. State the actual condition or consequence, or remove the sentence.
-- Several overviews that differ only in a domain noun and a list of helper names fail the review even when each passes its word minimum.
-
-Choose supported facts before writing the sentences. If an overview repeats a declaration's details to fill space, follow the callers or shared state to find the relationship the overview is meant to explain. Report missing evidence if it cannot be established; invented reasons cannot satisfy the minimum.
