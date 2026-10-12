@@ -154,3 +154,18 @@ func BenchmarkRequestableConfiguredProviders(b *testing.B) {
 		}
 	}
 }
+
+func TestRequestableCompactAttributesUseFinalModel(t *testing.T) {
+	ctx := context.Background()
+	id := int64(1)
+	record := provider.Record{ID: 1, Platform: "openai", Type: "oauth", Credentials: map[string]any{"model_whitelist": []string{"gpt-5.4", "gpt-5.6-sol"}, "compact_model_mapping": map[string]any{"gpt-5.4": "gpt-5.6-sol"}}}
+	group := &routing.Group{ID: id, AllowedProtocols: []protocol.ProtocolID{protocol.ProtocolResponsesCompact}}
+	policies := routing.NewPricingConfigService(nil, nil, routing.PricingConfigOptions{ReadGroup: func(context.Context, int64) (*routing.Group, error) { return group, nil }})
+	resolver := routing.RequestableResolver{GroupPolicies: &countedCataloguePolicies{PricingConfigService: policies}}
+	result := resolver.ResolveSelectedWithProviders(ctx, &id, "", []string{"gpt-5.4"}, gatewayprovider.CatalogueProviders([]provider.Record{record}))
+	require.Len(t, result.Models, 1)
+	require.Len(t, result.Models[0].AttributeTargets, 1)
+	_, runtimeModel := (gatewayprovider.ModelPolicy{Record: &record}).ForwardMappedModels("gpt-5.4", true)
+	require.Equal(t, "gpt-5.6-sol", runtimeModel)
+	require.Equal(t, runtimeModel, result.Models[0].AttributeTargets[0].Model)
+}

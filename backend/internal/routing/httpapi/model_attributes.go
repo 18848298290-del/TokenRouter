@@ -143,6 +143,14 @@ func (h *ModelAttributeHandler) Delete(c *gin.Context) {
 }
 
 func (h *ModelAttributeHandler) Defaults(c *gin.Context) {
+	if h.service.Catalog.Index != nil {
+		index, status := h.service.Catalog.Index()
+		page, size := httpx.ParsePagination(c)
+		total := index.Len()
+		result := index.Search(modelcatalog.AttributeQuery{Search: c.Query("search"), Provider: c.Query("provider"), Capability: c.Query("capability"), Offset: attributePageStart(page, size, total), Limit: size})
+		httpx.Success(c, gin.H{"items": result.Items, "total": result.Total, "providers": result.Providers, "version": status.Version, "last_updated": status.LastUpdated, "last_error": status.LastError})
+		return
+	}
 	snapshot := h.service.Catalog.Snapshot()
 	rows := []modelcatalog.Entry{}
 	providers := map[string]bool{}
@@ -187,6 +195,11 @@ func (h *ModelAttributeHandler) Model(c *gin.Context) {
 }
 
 func (h *ModelAttributeHandler) Models(c *gin.Context) {
+	if h.service.Catalog.Index != nil {
+		index, _ := h.service.Catalog.Index()
+		httpx.Success(c, index.ModelIDs())
+		return
+	}
 	names := []string{}
 	for _, row := range h.service.Catalog.Snapshot().Items {
 		names = append(names, row.Model)

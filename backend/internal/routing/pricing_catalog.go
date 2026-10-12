@@ -12,6 +12,7 @@ type ModelPriceReader interface {
 
 // PricingCatalog 提供价格目录快照、单价查询和更新函数。
 type PricingCatalog struct {
+	Query    func(DefaultPricingQuery) DefaultPricingPage
 	Snapshot func() DefaultPricingSnapshot
 	Update   func() error
 	Prices   ModelPriceReader
@@ -26,6 +27,17 @@ type DefaultPricingSnapshot struct {
 }
 
 type ModelPricing = pricing.ModelPricing
+
+type DefaultPricingQuery struct {
+	Search, Platform, Mode string
+	Offset, Limit          int
+}
+
+type DefaultPricingPage struct {
+	DefaultPricingSnapshot
+	Platforms []string
+	Total     int
+}
 
 func (c *PricingCatalog) DefaultPricing(model string) (*ModelPricing, error) {
 	return c.Prices.GetModelPricing(model)

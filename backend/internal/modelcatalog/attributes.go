@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"reflect"
 	"slices"
 
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
@@ -49,22 +50,56 @@ func (a Attributes) fields() map[string]json.RawMessage {
 
 // Merge 按字段覆盖，未填写的字段继续继承，数组整体替换。
 func Merge(base, patch Attributes) Attributes {
-	fields := base.fields()
-	maps.Copy(fields, patch.fields())
-	if base.Media != nil && patch.Media != nil {
-		body, _ := json.Marshal(base.Media)
-		var media map[string]json.RawMessage
-		_ = json.Unmarshal(body, &media)
-		body, _ = json.Marshal(patch.Media)
-		var override map[string]json.RawMessage
-		_ = json.Unmarshal(body, &override)
-		maps.Copy(media, override)
-		fields["media"], _ = json.Marshal(media)
+	if patch.DisplayNameLocalization != nil {
+		base.DisplayNameLocalization = patch.DisplayNameLocalization
 	}
-	body, _ := json.Marshal(fields)
-	var result Attributes
-	_ = json.Unmarshal(body, &result)
-	return result
+	if patch.DisplayName != nil {
+		base.DisplayName = patch.DisplayName
+	}
+	if patch.Context != nil {
+		base.Context = patch.Context
+	}
+	if patch.InputLimit != nil {
+		base.InputLimit = patch.InputLimit
+	}
+	if patch.OutputLimit != nil {
+		base.OutputLimit = patch.OutputLimit
+	}
+	if patch.InputModalities != nil {
+		base.InputModalities = patch.InputModalities
+	}
+	if patch.OutputModalities != nil {
+		base.OutputModalities = patch.OutputModalities
+	}
+	if patch.Reasoning != nil {
+		base.Reasoning = patch.Reasoning
+	}
+	if patch.ToolCall != nil {
+		base.ToolCall = patch.ToolCall
+	}
+	if patch.StructuredOutput != nil {
+		base.StructuredOutput = patch.StructuredOutput
+	}
+	if patch.Temperature != nil {
+		base.Temperature = patch.Temperature
+	}
+	if patch.Attachment != nil {
+		base.Attachment = patch.Attachment
+	}
+	if patch.TopP != nil {
+		base.TopP = patch.TopP
+	}
+	if patch.ReasoningOptions != nil {
+		base.ReasoningOptions = patch.ReasoningOptions
+	}
+	if patch.Interleaved != nil {
+		base.Interleaved = patch.Interleaved
+	}
+	if patch.Conditions != nil {
+		base.Conditions = patch.Conditions
+	}
+	base.Media = mergeMedia(base.Media, patch.Media)
+	return base.Clone()
 }
 
 // ApplyAttributeSupplement 从模型补充条目的 attributes 中填入缺失字段。
@@ -145,11 +180,10 @@ func Common(values []Attributes) (Attributes, bool) {
 		return Attributes{}, false
 	}
 	result := Merge(Attributes{}, values[0])
-	first, _ := json.Marshal(result)
+	first := values[0]
 	different := false
 	for _, value := range values[1:] {
-		body, _ := json.Marshal(value)
-		different = different || string(body) != string(first)
+		different = different || !reflect.DeepEqual(value, first)
 		result.Context = minimum(result.Context, value.Context)
 		result.InputLimit = minimum(result.InputLimit, value.InputLimit)
 		result.OutputLimit = minimum(result.OutputLimit, value.OutputLimit)
@@ -182,7 +216,7 @@ func Common(values []Attributes) (Attributes, bool) {
 			result.DisplayName = nil
 		}
 	}
-	return result, different
+	return result.Clone(), different
 }
 
 func minimum(a, b *int) *int {

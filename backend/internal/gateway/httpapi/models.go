@@ -187,7 +187,6 @@ func (h *ModelsHandler) CompositeRequestableModels(c *gin.Context, apiKey *apike
 		}
 		groupID := group.ID
 		resolution := h.backend.Resolve(ctx, &groupID, requiredPlatform)
-		h.captureModelAttributes(c, &groupID, resolution.Models, binding.Prefix+"/")
 		available := routing.RequestableModelIDs(resolution.Models)
 		if customListEnabled(group) {
 			available = FilterModelsByCustomList(available, nil, group.ModelsListConfig.Models)

@@ -303,13 +303,13 @@ func (q *requestableQuery) resolve(ctx context.Context, requestedModel string) (
 			}
 			upstreamModels = append(upstreamModels, upstreamModel)
 			if aware, ok := provider.Rules.(interface {
-				AttributeTarget(string, capability.ProtocolID, capability.ProtocolID) modelcatalog.Target
+				AttributeTarget(string, string, capability.ProtocolID, capability.ProtocolID) modelcatalog.Target
 			}); ok {
 				for _, source := range candidateProtocols {
-					attributeTargets = append(attributeTargets, aware.AttributeTarget(upstreamModel, source, targetProtocols[source]))
+					attributeTargets = append(attributeTargets, aware.AttributeTarget(groupMappedModel, upstreamModel, source, targetProtocols[source]))
 				}
 				if len(candidateProtocols) == 0 {
-					attributeTargets = append(attributeTargets, aware.AttributeTarget(upstreamModel, "", ""))
+					attributeTargets = append(attributeTargets, aware.AttributeTarget(groupMappedModel, upstreamModel, "", ""))
 				}
 			}
 			contributed = true

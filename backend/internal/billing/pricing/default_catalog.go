@@ -27,3 +27,25 @@ type DefaultPriceInterval struct {
 	MaxTokens *int                `json:"max_tokens"`
 	Prices    []DefaultPriceValue `json:"prices"`
 }
+
+// DefaultBillingMode 从已发布报价确定管理目录的计费分类，缺少媒体价格时可使用 token 价格。
+func DefaultBillingMode(model, mode string, raw *CatalogModelPricing) string {
+	if raw != nil && len(raw.VideoPrices) > 0 {
+		return "video"
+	}
+	imageModel := mode == "image" || HasExplicitImageGenerationPricing(raw) || LooksLikeImageModel(model)
+	if raw != nil && len(raw.ImagePrices) > 0 || HasImageUnitPrice(raw) && (imageModel || raw.TokenPricingAbsent) {
+		return "image"
+	}
+	if value, err := ResolveModelPricing(model, raw); err == nil && value != nil {
+		return "token"
+	}
+	switch mode {
+	case "image", "image_generation":
+		return "image"
+	case "video":
+		return "video"
+	default:
+		return "token"
+	}
+}

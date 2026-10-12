@@ -131,3 +131,43 @@ func TestGetModelDefaultPricing_UnknownQoderRouteKeysRemainUnpriced(t *testing.T
 		require.Zero(t, body.Data.InputPrice, "model=%s", model)
 	}
 }
+
+func TestPricingCatalogQueryPagesAndModeMatchSnapshot(t *testing.T) {
+	service := provider.NewService(provider.Options{DataDir: t.TempDir()}, nil)
+	require.NoError(t, service.Initialize())
+	catalog := providePricingCatalog(billing.NewCalculator(service, billing.CalculatorOptions{}), service)
+	all := catalog.Query(routing.DefaultPricingQuery{Search: "gpt-image"})
+	require.Greater(t, all.Total, 2)
+	page := catalog.Query(routing.DefaultPricingQuery{Search: "gpt-image", Offset: 1, Limit: 1})
+	require.Equal(t, all.Total, page.Total)
+	require.Equal(t, all.Prices[1:2], page.Prices)
+	require.Equal(t, all.Platforms, page.Platforms)
+	for _, mode := range []string{"token", "image", "video"} {
+		filtered := catalog.Query(routing.DefaultPricingQuery{Search: "gpt-image", Mode: mode})
+		expected := []pricing.DefaultModelPrice{}
+		for _, row := range all.Prices {
+			if row.BillingMode == mode {
+				expected = append(expected, row)
+			}
+		}
+		require.Equal(t, expected, filtered.Prices)
+		require.Equal(t, len(expected), filtered.Total)
+	}
+	require.Empty(t, catalog.Query(routing.DefaultPricingQuery{Offset: 1 << 30, Limit: 20}).Prices)
+}
+
+func BenchmarkDefaultPricingPage(b *testing.B) {
+	service := provider.NewService(provider.Options{DataDir: b.TempDir()}, nil)
+	require.NoError(b, service.Initialize())
+	catalog := providePricingCatalog(billing.NewCalculator(service, billing.CalculatorOptions{}), service)
+	for _, mode := range []string{"", "image"} {
+		b.Run("mode="+mode, func(b *testing.B) {
+			for range b.N {
+				result := catalog.Query(routing.DefaultPricingQuery{Mode: mode, Limit: 20})
+				if len(result.Prices) != min(20, result.Total) {
+					b.Fatal("missing page")
+				}
+			}
+		})
+	}
+}

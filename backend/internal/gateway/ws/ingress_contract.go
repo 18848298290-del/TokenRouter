@@ -145,7 +145,7 @@ type IngressPort interface {
 	StoreDisabled([]byte) bool
 	InvalidDigests(int64, string) map[string]struct{}
 	StripInvalid([]byte, map[string]struct{}, string, int64, int) ([]byte, int)
-	BridgeIdentity([]byte, string) (string, error)
+	BridgeIdentity([]byte, string, int) (string, error)
 	Bridge(context.Context, ClientPayload, []byte, string, int) (*ForwardResult, error)
 	SetRequestState(string, string)
 	OpenPool(ClientPayload) error

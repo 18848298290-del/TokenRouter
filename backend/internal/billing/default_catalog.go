@@ -23,6 +23,7 @@ func (s *Calculator) DefaultModelPrice(model, platform, mode string) pricing.Def
 		result.Prices = append(result.Prices, pricing.DefaultPriceValue{Key: key, Value: &value, Unit: unit})
 	}
 	raw := s.RawModelPricing(model)
+	result.BillingMode = pricing.DefaultBillingMode(model, mode, raw)
 	if raw != nil {
 		result.Source = raw.Source
 		result.PriceSources = maps.Clone(raw.PriceSources)
@@ -32,7 +33,6 @@ func (s *Calculator) DefaultModelPrice(model, platform, mode string) pricing.Def
 		if result.PriceSources == nil {
 			result.PriceSources = map[string]string{}
 		}
-		result.BillingMode = "video"
 		for _, size := range []string{"480p", "720p", "1080p"} {
 			price, ok := pricing.DefaultVideoPrice(raw, size)
 			if !ok {
@@ -52,17 +52,10 @@ func (s *Calculator) DefaultModelPrice(model, platform, mode string) pricing.Def
 	imageModel := mode == "image" || pricing.HasExplicitImageGenerationPricing(raw) || pricing.LooksLikeImageModel(model)
 	// 聊天模型附带的图片元数据不切换 token 模式；纯按张价和明确的图片模型使用媒体单位。
 	hasImagePrice := knownImage || pricing.HasImageUnitPrice(raw) && (imageModel || raw.TokenPricingAbsent)
-	switch mode {
-	case "video", "image":
-		result.BillingMode = mode
-	case "image_generation":
-		result.BillingMode = "image"
-	}
 	if hasImagePrice {
 		if result.PriceSources == nil {
 			result.PriceSources = map[string]string{}
 		}
-		result.BillingMode = "image"
 		imageSource := result.PriceSources["image"]
 		if imageSource == "" {
 			imageSource = result.Source
@@ -87,10 +80,6 @@ func (s *Calculator) DefaultModelPrice(model, platform, mode string) pricing.Def
 	base, err := pricing.ResolveModelPricing(model, raw)
 	if err != nil || base == nil {
 		return result
-	}
-	// 媒体维度缺价时仍可展示已有 token 报价，不借用通用按张或按秒兜底。
-	if !hasImagePrice {
-		result.BillingMode = "token"
 	}
 	result.PriceStatus = "priced"
 	base = s.applyCatalogTimePricing(base, s.options.Now())

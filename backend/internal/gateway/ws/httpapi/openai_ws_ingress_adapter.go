@@ -27,7 +27,7 @@ type wsIngressAdapter struct {
 	ShouldBridgeFn   func(payload gatewayws.ClientPayload) bool
 	InvalidFn        func(groupID int64, hash string) map[string]struct{}
 	StripFn          func(body []byte, digests map[string]struct{}, key string, id int64, turn int) ([]byte, int)
-	BridgeIdentityFn func(body []byte, model string) (string, error)
+	BridgeIdentityFn func(body []byte, model string, turn int) (string, error)
 	BridgeFn         func(ctx context.Context, input gatewayws.ClientPayload, body []byte, identity string, turn int) (*gatewayws.ForwardResult, error)
 	SetStateFn       func(state, hash string)
 	OpenPoolFn       func(payload gatewayws.ClientPayload) error
@@ -69,8 +69,8 @@ func (p *wsIngressAdapter) StripInvalid(body []byte, digests map[string]struct{}
 	return p.StripFn(body, digests, key, id, turn)
 }
 
-func (p *wsIngressAdapter) BridgeIdentity(body []byte, model string) (string, error) {
-	return p.BridgeIdentityFn(body, model)
+func (p *wsIngressAdapter) BridgeIdentity(body []byte, model string, turn int) (string, error) {
+	return p.BridgeIdentityFn(body, model, turn)
 }
 
 func (p *wsIngressAdapter) Bridge(ctx context.Context, input gatewayws.ClientPayload, body []byte, identity string, turn int) (*gatewayws.ForwardResult, error) {

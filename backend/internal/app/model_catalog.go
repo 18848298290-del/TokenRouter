@@ -6,6 +6,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/apikey"
 	"github.com/TokenFlux/TokenRouter/internal/config"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/provider/modelidentity"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/postgres"
@@ -18,7 +19,11 @@ func provideModelAttributes(repo *postgres.ModelAttributeStore, catalog *provide
 		Invalidator: invalidator,
 		Catalogue:   catalogue,
 		Catalog: routing.ModelAttributeCatalog{
-			View:       catalog.CapabilityView,
+			View: catalog.CapabilityView,
+			Index: func() (modelcatalog.Index, routing.ModelAttributeSnapshot) {
+				index, status := catalog.AttributeIndex()
+				return index, routing.ModelAttributeSnapshot{Version: status.Version, LastUpdated: status.LastUpdated, LastError: status.LastError}
+			},
 			Lookup:     catalog.ModelAttributes,
 			Update:     catalog.ForceUpdate,
 			Candidates: modelidentity.CandidatesFactory,

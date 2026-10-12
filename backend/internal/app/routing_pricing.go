@@ -9,6 +9,7 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/apikey"
 	"github.com/TokenFlux/TokenRouter/internal/billing"
+	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 	pricingprovider "github.com/TokenFlux/TokenRouter/internal/billing/provider"
 	catalogprovider "github.com/TokenFlux/TokenRouter/internal/modelcatalog/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
@@ -29,47 +30,46 @@ func providePricingConfigService(repo *routingpostgres.PricingConfigStore, group
 }
 
 func providePricingCatalog(calculator *billing.Calculator, prices *catalogprovider.Service) *routing.PricingCatalog {
-	return &routing.PricingCatalog{Prices: calculator, Update: calculator.ForceUpdatePricing, Snapshot: func() routing.DefaultPricingSnapshot {
-		snapshot := prices.ReadOnlySnapshot()
-		data := snapshot.Snapshot()
-		frozen := calculator.WithPriceCatalog(snapshot)
-		entries := make(map[string]string)
-		modes := make(map[string]string)
-		for model, value := range data.Data {
-			if value == nil {
-				continue
-			}
-			platform := value.Provider
+	query := func(input routing.DefaultPricingQuery) routing.DefaultPricingPage {
+		view := prices.PricingView()
+		frozen := calculator.WithPriceCatalog(view)
+		result := routing.DefaultPricingPage{Platforms: []string{}, DefaultPricingSnapshot: routing.DefaultPricingSnapshot{
+			UpdatedAt: view.Status.LastUpdated, Version: view.Status.Version, LastError: view.Status.LastError, Prices: []pricing.DefaultModelPrice{},
+		}}
+		platforms := map[string]bool{}
+		search, filterPlatform := strings.ToLower(strings.TrimSpace(input.Search)), strings.ToLower(strings.TrimSpace(input.Platform))
+		for item := range view.Models() {
+			platform := item.Provider
 			switch platform {
 			case "xai":
 				platform = "grok"
 			case "moonshot":
 				platform = "kimi"
-			}
-			if platform == "" {
+			case "":
 				platform = "other"
 			}
-			entries[model] = platform
-			modes[model] = value.Mode
-		}
-		for _, entry := range prices.AttributesSnapshot().Items {
-			if _, exists := entries[entry.Model]; !exists {
-				entries[entry.Model] = entry.Provider
+			platforms[platform] = true
+			if filterPlatform != "" && platform != filterPlatform || search != "" && !strings.Contains(strings.ToLower(item.Model), search) {
+				continue
 			}
-		}
-		names := make([]string, 0, len(entries))
-		for model := range entries {
-			names = append(names, model)
-		}
-		sort.Strings(names)
-		result := routing.DefaultPricingSnapshot{UpdatedAt: data.LastUpdated, Version: data.LocalHash, LastError: data.LastError}
-		for _, model := range names {
-			mode := modes[model]
-			if strings.Contains(model, "grok-imagine-video") {
-				mode = "video"
+			if input.Mode != "" && item.BillingMode != input.Mode {
+				continue
 			}
-			result.Prices = append(result.Prices, frozen.DefaultModelPrice(model, entries[model], mode))
+			position := result.Total
+			result.Total++
+			if position < max(0, input.Offset) || input.Limit > 0 && len(result.Prices) >= input.Limit {
+				continue
+			}
+			row := frozen.DefaultModelPrice(item.Model, platform, item.Mode)
+			result.Prices = append(result.Prices, row)
 		}
+		for platform := range platforms {
+			result.Platforms = append(result.Platforms, platform)
+		}
+		sort.Strings(result.Platforms)
 		return result
+	}
+	return &routing.PricingCatalog{Prices: calculator, Update: calculator.ForceUpdatePricing, Query: query, Snapshot: func() routing.DefaultPricingSnapshot {
+		return query(routing.DefaultPricingQuery{}).DefaultPricingSnapshot
 	}}
 }

@@ -25,8 +25,11 @@ import (
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	sessiontestkit "github.com/TokenFlux/TokenRouter/internal/gateway/session/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/ws"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/requestcontext"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
+	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	xai "github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
@@ -1768,7 +1771,20 @@ func TestProxyResponsesWebSocketFromClientForGrokUsesXAIHTTPBridge(t *testing.T)
 
 		requestCtx, abort := requestcontext.WithAbort(r.Context())
 		defer abort()
-		errCh <- svc.ProxyResponsesWebSocketFromClient(requestCtx, ginCtx, conn, provider, "access-token", firstMessage, nil)
+		turnContexts := map[int]context.Context{}
+		hooks := &ws.OpenAIIngressHooks{ContextForTurn: func(turn int) context.Context {
+			if current, exists := turnContexts[turn]; exists {
+				return current
+			}
+			enabled := turn == 2
+			attributes := &routing.ModelAttributeService{Catalog: routing.ModelAttributeCatalog{Lookup: func(string) modelcatalog.Attributes {
+				return modelcatalog.Attributes{Temperature: &enabled}
+			}}}
+			current := routing.WithModelAttributes(requestCtx, attributes)
+			turnContexts[turn] = current
+			return current
+		}}
+		errCh <- svc.ProxyResponsesWebSocketFromClient(requestCtx, ginCtx, conn, provider, "access-token", firstMessage, hooks)
 	}))
 	defer wsServer.Close()
 
@@ -1778,7 +1794,7 @@ func TestProxyResponsesWebSocketFromClientForGrokUsesXAIHTTPBridge(t *testing.T)
 	require.NoError(t, err)
 
 	writeCtx, cancelWrite := context.WithTimeout(context.Background(), 3*time.Second)
-	err = clientConn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","generate":true,"model":"grok","stream":true,"input":"hi","prompt_cache_retention":"24h"}`))
+	err = clientConn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","generate":true,"model":"grok","stream":true,"temperature":0.4,"input":"hi","prompt_cache_retention":"24h"}`))
 	cancelWrite()
 	require.NoError(t, err)
 
@@ -1800,7 +1816,7 @@ func TestProxyResponsesWebSocketFromClientForGrokUsesXAIHTTPBridge(t *testing.T)
 	require.Equal(t, "resp_grok_ws_1", gjson.GetBytes(completed, "response.id").String())
 
 	writeCtx, cancelWrite = context.WithTimeout(context.Background(), 3*time.Second)
-	err = clientConn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","generate":true,"model":"grok","stream":true,"previous_response_id":"resp_grok_ws_1","input":"second turn"}`))
+	err = clientConn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","generate":true,"model":"grok","stream":true,"temperature":0.4,"previous_response_id":"resp_grok_ws_1","input":"second turn"}`))
 	cancelWrite()
 	require.NoError(t, err)
 
@@ -1813,7 +1829,7 @@ func TestProxyResponsesWebSocketFromClientForGrokUsesXAIHTTPBridge(t *testing.T)
 	require.Equal(t, "resp_grok_ws_2", gjson.GetBytes(completed, "response.id").String())
 
 	writeCtx, cancelWrite = context.WithTimeout(context.Background(), 3*time.Second)
-	err = clientConn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","generate":true,"model":"grok-4.3","stream":true,"previous_response_id":"resp_grok_ws_2","input":"third turn with a different model"}`))
+	err = clientConn.Write(writeCtx, coderws.MessageText, []byte(`{"type":"response.create","generate":true,"model":"grok-4.3","stream":true,"temperature":0.4,"previous_response_id":"resp_grok_ws_2","input":"third turn with a different model"}`))
 	cancelWrite()
 	require.NoError(t, err)
 
@@ -1835,6 +1851,9 @@ func TestProxyResponsesWebSocketFromClientForGrokUsesXAIHTTPBridge(t *testing.T)
 
 	require.Len(t, upstream.requests, 3)
 	require.Len(t, upstream.bodies, 3)
+	require.False(t, gjson.GetBytes(upstream.bodies[0], "temperature").Exists())
+	require.Equal(t, 0.4, gjson.GetBytes(upstream.bodies[1], "temperature").Float())
+	require.False(t, gjson.GetBytes(upstream.bodies[2], "temperature").Exists())
 	require.Equal(t, xai.DefaultCLIBaseURL+"/responses", upstream.lastReq.URL.String())
 	require.Equal(t, "Bearer access-token", upstream.lastReq.Header.Get("Authorization"))
 	require.Equal(t, xai.CLIUserAgent(xai.CLIClientVersion), upstream.lastReq.Header.Get("User-Agent"))
@@ -2470,5 +2489,25 @@ func grokMessagesSSECompletedResponse(responseID string, cachedTokens int) *http
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
 		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+}
+
+func TestProxyOpenAIWSHTTPBridgeGrokReasoningOptions(t *testing.T) {
+	for _, tc := range []struct{ model, effort, want string }{{"grok-build-0.1", "high", ""}, {"grok-4.7", "xhigh", "xhigh"}, {"grok-private-route", "max", "max"}} {
+		t.Run(tc.model, func(t *testing.T) {
+			upstream := &auxiliaryHTTPRecorder{resp: &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(`data: {"type":"response.completed","response":{"id":"resp_options","model":"` + tc.model + `","usage":{"input_tokens":1,"output_tokens":1}}}` + "\n\n"))}}
+			svc := newWSFixture(wsFixtureInputs{transport: upstream})
+			svc.Requests.Readers = newExecutionReadersFixture(nil, nil)
+			svc.Requests.Readers.Attributes = &routing.ModelAttributeService{Catalog: routing.ModelAttributeCatalog{View: testkit.OfflineView}}
+			target := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, ID: 72, Platform: capability.PlatformGrok, Type: capability.ProviderTypeOAuth, Concurrency: 1, Credentials: map[string]any{"base_url": xai.DefaultCLIBaseURL}}}
+			payload := []byte(fmt.Sprintf(`{"type":"response.create","model":%q,"input":"hi","reasoning":{"effort":%q}}`, tc.model, tc.effort))
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+			result, err := svc.proxyOpenAIWSHTTPBridgeTurn(context.Background(), c, target, "access-token", payload, len(payload), tc.model, tc.model, "", "", "", "", 1, func([]byte) error { return nil })
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.Equal(t, tc.want, gjson.GetBytes(upstream.lastBody, "reasoning.effort").String())
+		})
 	}
 }

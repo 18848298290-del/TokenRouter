@@ -118,7 +118,7 @@ Grok Build CLI 的模型配置指向 TokenRouter 对外的地址（以 `/v1` 结
 
 模型名称和候选来自统一目录。白名单为空时允许任意 ID，未知型号由上游处理。Chat 到 Responses 的适配资格、推理档位、媒体请求默认值和套餐额度观测由 Grok 执行规则决定。
 
-文本和媒体入口使用手动映射后的完整模型 ID。推理属性由[统一解析器](model_catalog_and_marketplace.md#model_attributes)读取 xAI 服务的目录条目并叠加管理员覆盖。Grok 4.6/4.7 的 xhigh、4.3 的 none、4.5 的 low/medium/high 分别来自各自条目。Build 0.1 与 4.20 reasoning 会推理但没有可调档位，模型列表也展示空集合。Composer 的参数清理和 4.20 系列的 logprobs 限制属于平台执行规则。
+文本和媒体入口使用手动映射后的完整模型 ID。推理属性由[统一解析器](model_catalog_and_marketplace.md#model_attributes)读取 xAI 服务的目录条目并叠加管理员覆盖。Grok 4.6/4.7 的 xhigh、4.3 的 none、4.5 的 low/medium/high 分别来自各自条目。Build 0.1 与 4.20 reasoning 会推理但没有可调档位，模型列表也展示空集合。Composer 的参数清理和 4.20 系列的 logprobs 限制属于平台执行规则。 Messages 和 WebSocket 在最终模型确定后应用同一属性结果，再生成缓存身份。已知没有可调档位的型号会移除 effort；目录缺项的型号保留客户端传值。
 
 `grok-latest`、`grok-build-latest` 与未登记的供应商别名按完整 ID 处理。缺少目录记录时保留明确的请求参数，准入继续检查白名单和协议资格。健康状态、缓存和价格使用各自已经确定的完整模型身份。
 

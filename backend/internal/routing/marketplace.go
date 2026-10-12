@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
@@ -65,6 +66,7 @@ type marketplaceDiscountConfig struct {
 }
 
 type MarketplaceModelDef struct {
+	AttributeTargets []modelcatalog.Target
 	UpstreamModels   []string
 	Protocols        []capability.ProtocolID
 	NativeProtocols  []capability.ProtocolID
@@ -427,7 +429,7 @@ func (s *Marketplace) readAttributes(ctx context.Context, definitions map[int64]
 	for id, modelDefs := range definitions {
 		inputs := make([]RequestableModel, 0, len(modelDefs))
 		for _, value := range modelDefs {
-			inputs = append(inputs, RequestableModel{ID: value.ID, UpstreamModels: value.UpstreamModels})
+			inputs = append(inputs, RequestableModel{ID: value.ID, UpstreamModels: value.UpstreamModels, AttributeTargets: value.AttributeTargets})
 		}
 		groups[id] = inputs
 	}
@@ -545,6 +547,7 @@ func buildMarketplaceModelDefsFromRequestable(models []RequestableModel) []Marke
 	for _, model := range models {
 		defs = append(defs, MarketplaceModelDef{
 			ID:               model.ID,
+			AttributeTargets: model.AttributeTargets,
 			UpstreamModels:   model.UpstreamModels,
 			Protocols:        model.Protocols,
 			NativeProtocols:  model.NativeProtocols,

@@ -31,6 +31,8 @@ type Service struct {
 	billingDefaults  purepricing.OperationPrices
 	updateMu         sync.Mutex
 	modelCatalog     *modelcatalog.Catalog
+	attributeIndex   modelcatalog.Index
+	priceModels      []PriceModel
 	catalogETag      string
 	lastCatalogError string
 	catalogBody      []byte
@@ -97,6 +99,8 @@ func NewServiceFromSnapshot(options Options, remote RemoteClient, snapshot Snaps
 	s.pricingData = snapshot.Data
 	s.billingDefaults = snapshot.BillingDefaults.Clone()
 	s.modelCatalog = snapshot.catalogIdentity
+	s.attributeIndex = modelcatalog.NewIndex(s.modelCatalog)
+	s.priceModels = buildPriceModels(s.modelCatalog, s.pricingData)
 	s.lastCatalogError = snapshot.LastError
 	s.lastUpdated = snapshot.LastUpdated
 	s.localHash = snapshot.LocalHash
@@ -367,10 +371,14 @@ func (s *Service) GetModelModalities(modelName string) ([]string, []string) {
 func (s *Service) GetStatus() map[string]any {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	version := s.localHash
+	if s.modelCatalog != nil {
+		version = s.modelCatalog.Version
+	}
 
 	return map[string]any{
 		"model_count":  len(s.pricingData),
-		"version":      s.localHash,
+		"version":      version,
 		"last_error":   s.lastCatalogError,
 		"last_updated": s.lastUpdated,
 		"local_hash":   s.localHash[:min(8, len(s.localHash))],

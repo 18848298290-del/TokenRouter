@@ -130,6 +130,14 @@ func ApplyModelAttributeParameters(body []byte, result modelcatalog.Resolution) 
 			body, err = sjson.DeleteBytes(body, "thinking.budget_tokens")
 		}
 	}
+	if err == nil && (result.Target.Platform == "grok" || result.Target.ServiceID() == "xai") {
+		codec := GrokBodyCodec()
+		codec.Attributes = func(string) modelcatalog.Attributes { return result.Attributes }
+		if result.Target.UpstreamProtocol == "openai_chat_completions" {
+			return codec.NormalizeGrokChatReasoningEffort(body, result.Target.Model)
+		}
+		return codec.NormalizeGrokResponsesReasoningEffort(body, result.Target.Model)
+	}
 	return body, err
 }
 
@@ -209,4 +217,19 @@ func PrepareModelAttributeParameters(ctx context.Context, value *ExecutionProvid
 		}
 	}
 	return body, nil
+}
+
+// PrepareGrokResponses 先按最终路线处理参数，再生成 Grok 报文供缓存身份和转发共用。
+func PrepareGrokResponses(ctx context.Context, provider *ExecutionProvider, model string, body []byte, service *routing.ModelAttributeService) ([]byte, error) {
+	resolution, err := ResolveModelAttributes(ctx, provider, model, service, "openai_responses")
+	if err != nil {
+		return nil, err
+	}
+	body, err = ApplyModelAttributeParameters(body, resolution)
+	if err != nil {
+		return nil, err
+	}
+	codec := GrokBodyCodec()
+	codec.Attributes = func(string) modelcatalog.Attributes { return resolution.Attributes }
+	return codec.PatchGrokResponsesBody(body, model)
 }

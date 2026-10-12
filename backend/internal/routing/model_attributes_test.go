@@ -3,11 +3,13 @@ package routing
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
@@ -178,4 +180,29 @@ func TestAttributeRulesSeparateRoutesAndStableIDs(t *testing.T) {
 	config.Rules[0].Match = nil
 	config.Rules[1].Match = &ModelAttributeMatch{}
 	require.Error(t, (&ModelAttributeService{Repo: &attributeRepoFixture{}}).Save(context.Background(), config))
+}
+
+func BenchmarkModelAttributeRoutes(b *testing.B) {
+	view := testkit.OfflineView()
+	for _, count := range []int{1, 65} {
+		b.Run(fmt.Sprint(count), func(b *testing.B) {
+			svc := &ModelAttributeService{Catalog: ModelAttributeCatalog{View: func() modelcatalog.View { return view }}}
+			models := make([]RequestableModel, 186)
+			for i := range models {
+				models[i].ID = fmt.Sprint("alias-", i)
+				for range count {
+					for _, wire := range []string{"openai_responses", "openai_chat_completions", "anthropic_messages"} {
+						models[i].AttributeTargets = append(models[i].AttributeTargets, modelcatalog.Target{Platform: "openai", ProviderType: "apikey", Model: "gpt-5.4", ClientProtocol: wire, UpstreamProtocol: "openai_responses"})
+					}
+				}
+			}
+			b.ResetTimer()
+			for range b.N {
+				_, err := svc.ResolveGroups(context.Background(), map[int64][]RequestableModel{1: models})
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
 }

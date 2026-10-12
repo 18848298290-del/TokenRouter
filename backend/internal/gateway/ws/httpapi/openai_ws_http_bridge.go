@@ -30,6 +30,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
+	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
@@ -530,7 +531,7 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 
 	if provider.Record.Platform == capability.PlatformGrok {
 		upstreamModel := resolveGrokWSUpstreamModel(provider, body, originalModel)
-		body, err = gatewayprovider.GrokBodyCodec().PatchGrokResponsesBody(body, upstreamModel)
+		body, err = s.prepareGrokResponses(ctx, provider, upstreamModel, body)
 		if err != nil {
 			return nil, err
 		}
@@ -1090,13 +1091,13 @@ func (s *OpenAIWebSocketExecutor) proxyOpenAIWSHTTPBridgeTurn(
 	return resultWithUsage(), terminalErr
 }
 
-func resolveGrokWSCacheIdentity(c *gin.Context, provider *gatewayprovider.ExecutionProvider, payload []byte, routingModel string) (string, error) {
+func (s *OpenAIWebSocketExecutor) resolveGrokWSCacheIdentity(ctx context.Context, c *gin.Context, provider *gatewayprovider.ExecutionProvider, payload []byte, routingModel string) (string, error) {
 	body, err := prepareOpenAIWSHTTPBridgeBody(provider, payload)
 	if err != nil {
 		return "", err
 	}
 	upstreamModel := resolveGrokWSUpstreamModel(provider, body, routingModel)
-	body, err = gatewayprovider.GrokBodyCodec().PatchGrokResponsesBody(body, upstreamModel)
+	body, err = s.prepareGrokResponses(ctx, provider, upstreamModel, body)
 	if err != nil {
 		return "", err
 	}
@@ -1142,4 +1143,12 @@ func completeHTTPBridgeWarmup(model string, write func([]byte) error) (*forward.
 		LocalWarmup: true, RequestID: responseID, ResponseID: responseID, Model: model,
 		Stream: true, OpenAIWSMode: true, UpstreamTerminalEvent: "response.completed", Duration: time.Since(started),
 	}, nil
+}
+
+func (s *OpenAIWebSocketExecutor) prepareGrokResponses(ctx context.Context, provider *gatewayprovider.ExecutionProvider, model string, body []byte) ([]byte, error) {
+	var service *routing.ModelAttributeService
+	if s.Requests != nil && s.Requests.Readers != nil {
+		service = s.Requests.Readers.Attributes
+	}
+	return gatewayprovider.PrepareGrokResponses(ctx, provider, model, body, service)
 }

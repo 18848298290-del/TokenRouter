@@ -342,10 +342,17 @@ func (s *OpenAIWebSocketExecutor) executeWSIngressAdapter(
 			return forceHTTPBridge || (responsesWSHTTPBridgeAllowed(c, provider) && s.shouldBridgeOpenAIWSHTTP(provider, payload.PayloadBytes, payload.PreviousResponseID))
 		},
 		InvalidFn: s.Lineage.Digests, StripFn: s.Lineage.Strip,
-		BridgeIdentityFn: func(body []byte, model string) (string, error) {
-			return resolveGrokWSCacheIdentity(c, provider, body, model)
+		BridgeIdentityFn: func(body []byte, model string, turn int) (string, error) {
+			turnContext := ctx
+			if hooks != nil && hooks.ContextForTurn != nil {
+				turnContext = hooks.ContextForTurn(turn)
+			}
+			return s.resolveGrokWSCacheIdentity(turnContext, c, provider, body, model)
 		},
 		BridgeFn: func(ctx context.Context, input gatewayws.ClientPayload, body []byte, identity string, turn int) (*gatewayws.ForwardResult, error) {
+			if hooks != nil && hooks.ContextForTurn != nil {
+				ctx = hooks.ContextForTurn(turn)
+			}
 			result, err := s.proxyOpenAIWSHTTPBridgeTurn(ctx, c, provider, token, body, len(body), input.OriginalModel, input.RoutingModel, input.ImageBillingModel, input.ImageSizeTier, input.ImageInputSize, identity, turn, writeClientMessage, tlsRouterMatch)
 			return gatewayprovider.ProjectWSResult(result), err
 		},

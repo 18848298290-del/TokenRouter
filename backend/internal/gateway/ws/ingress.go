@@ -159,7 +159,7 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 			}
 			grokCacheIdentity := ""
 			if o.Platform == "grok" {
-				grokCacheIdentity, err = p.BridgeIdentity(grokCacheSeedPayload, currentBridgePayload.RoutingModel)
+				grokCacheIdentity, err = p.BridgeIdentity(grokCacheSeedPayload, currentBridgePayload.RoutingModel, turn)
 				if err != nil {
 					return fmt.Errorf("resolve Grok websocket cache identity: %w", err)
 				}

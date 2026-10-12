@@ -70,3 +70,32 @@ func TestModelAttributeSessionCachesReadFailure(t *testing.T) {
 	}
 	require.EqualValues(t, 1, repo.calls.Load())
 }
+
+func TestModelAttributeSessionCachesRouteValues(t *testing.T) {
+	lookups := 0
+	service := &ModelAttributeService{Catalog: ModelAttributeCatalog{Lookup: func(string) modelcatalog.Attributes {
+		lookups++
+		value := 100
+		return modelcatalog.Attributes{OutputLimit: &value}
+	}}}
+	session := service.NewSession()
+	cap := 100
+	target := modelcatalog.Target{Model: "private", Platform: "openai", Ollama: true, OllamaOutputCap: &cap, UpstreamProtocol: "openai_chat_completions"}
+	first, err := session.Resolve(context.Background(), 1, target)
+	require.NoError(t, err)
+	*first.Attributes.OutputLimit = 900
+	*first.Target.OllamaOutputCap = 900
+	first.Sources["output_limit"] = "changed"
+	sameCap := 100
+	target.OllamaOutputCap = &sameCap
+	second, err := session.Resolve(context.Background(), 1, target)
+	require.NoError(t, err)
+	require.Equal(t, 1, lookups)
+	require.Equal(t, 100, *second.Attributes.OutputLimit)
+	require.Equal(t, 100, *second.Target.OllamaOutputCap)
+	require.NotEqual(t, "changed", second.Sources["output_limit"])
+	target.UpstreamProtocol = "openai_responses"
+	_, err = session.Resolve(context.Background(), 1, target)
+	require.NoError(t, err)
+	require.Equal(t, 2, lookups)
+}

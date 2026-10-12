@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
+	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
@@ -30,6 +31,16 @@ func (h *PricingHandler) UpdateDefaultPricing(c *gin.Context) {
 // ListDefaultPricing 查询网关内存中已加载的默认价格。
 // @project-doc docs/interfaces/model_catalog_and_marketplace.md#gateway_default_pricing
 func (h *PricingHandler) ListDefaultPricing(c *gin.Context) {
+	if h.catalog.Query != nil {
+		page, size := httpx.ParsePagination(c)
+		offset := int(^uint(0) >> 1)
+		if page-1 <= offset/size {
+			offset = (page - 1) * size
+		}
+		result := h.catalog.Query(routing.DefaultPricingQuery{Search: c.Query("search"), Platform: c.Query("platform"), Mode: c.Query("billing_mode"), Offset: offset, Limit: size})
+		httpx.Success(c, gin.H{"items": result.Prices, "total": result.Total, "last_updated": result.UpdatedAt, "platforms": result.Platforms, "version": result.Version, "last_error": result.LastError})
+		return
+	}
 	snapshot := h.catalog.Snapshot()
 	platformSet := make(map[string]struct{})
 	for _, row := range snapshot.Prices {

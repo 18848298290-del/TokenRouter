@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -51,7 +50,7 @@ func (s *Service) CapabilityView() modelcatalog.View {
 func (s *Service) AttributesSnapshot() AttributeSnapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	result := AttributeSnapshot{Items: s.modelCatalog.Rows(), LastUpdated: s.lastUpdated, LastError: s.lastCatalogError}
+	result := AttributeSnapshot{Items: s.attributeIndex.Search(modelcatalog.AttributeQuery{}).Items, LastUpdated: s.lastUpdated, LastError: s.lastCatalogError}
 	if s.modelCatalog != nil {
 		result.Version = s.modelCatalog.Version
 	}
@@ -240,6 +239,12 @@ func (s *Service) publishModelsCatalog(body []byte, updated time.Time, persist b
 			return fmt.Errorf("custom pricing files changed during catalog update")
 		}
 	}
+	sourceHash := catalog.Version
+	if fingerprint != "" {
+		catalog.Version += ":" + fingerprint
+	}
+	index := modelcatalog.NewIndex(catalog)
+	priceModels := buildPriceModels(catalog, prices)
 	if persist {
 		path := s.catalogFilePath()
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -266,9 +271,11 @@ func (s *Service) publishModelsCatalog(body []byte, updated time.Time, persist b
 	s.mu.Lock()
 	warnDroppedLongContextLadders(s.pricingData, prices)
 	s.modelCatalog, s.pricingData = catalog, prices
+	s.attributeIndex = index
+	s.priceModels = priceModels
 	s.billingDefaults = defaults
 	s.catalogBody = append([]byte(nil), body...)
-	s.lastUpdated, s.localHash, s.lastCatalogError = updated, catalog.Version, ""
+	s.lastUpdated, s.localHash, s.lastCatalogError = updated, sourceHash, ""
 	s.customFilesHash = fingerprint
 	s.mu.Unlock()
 	return nil
@@ -329,6 +336,8 @@ func (s *Service) loadModelsCatalog() (err error) {
 		}
 		s.mu.Lock()
 		s.modelCatalog, s.pricingData = bootstrap.modelCatalog, bootstrap.pricingData
+		s.attributeIndex = bootstrap.attributeIndex
+		s.priceModels = bootstrap.priceModels
 		s.billingDefaults = bootstrap.billingDefaults
 		s.catalogBody = bootstrap.catalogBody
 		s.lastUpdated, s.localHash = bootstrap.lastUpdated, bootstrap.localHash
@@ -416,14 +425,7 @@ func (s *Service) updateModelsCatalog(force bool) (err error) {
 func (s *Service) ModelIDs() []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	ids := []string{}
-	if s.modelCatalog != nil {
-		for id := range s.modelCatalog.Entries {
-			ids = append(ids, id)
-		}
-	}
-	slices.Sort(ids)
-	return ids
+	return s.attributeIndex.ModelIDs()
 }
 
 // ModelEntry 按统一身份规则读取名称和厂商，未知型号保留请求 ID。
@@ -453,4 +455,15 @@ func (s *Service) ModelVersion() string {
 		return ""
 	}
 	return s.modelCatalog.Version
+}
+
+// AttributeIndex 返回同一次发布的索引和状态，查询期间更新不会替换该索引。
+func (s *Service) AttributeIndex() (modelcatalog.Index, AttributeSnapshot) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	version := s.localHash
+	if s.modelCatalog != nil {
+		version = s.modelCatalog.Version
+	}
+	return s.attributeIndex, AttributeSnapshot{Version: version, LastUpdated: s.lastUpdated, LastError: s.lastCatalogError}
 }

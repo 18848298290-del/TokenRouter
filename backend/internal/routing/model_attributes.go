@@ -52,6 +52,7 @@ type ModelAttributeRepository interface {
 
 // ModelAttributeCatalog 是管理员默认查询的只读端口。
 type ModelAttributeCatalog struct {
+	Index      func() (modelcatalog.Index, ModelAttributeSnapshot)
 	View       func() modelcatalog.View
 	Snapshot   func() ModelAttributeSnapshot
 	Lookup     func(string) modelcatalog.Attributes
@@ -254,6 +255,7 @@ func (s *ModelAttributeService) resolveModels(view modelcatalog.View, config *Mo
 		candidates = s.Catalog.Candidates()
 	}
 	result := map[string]EffectiveModelAttributes{}
+	resolvedTargets := make(map[modelcatalog.TargetKey]modelcatalog.Attributes)
 	for _, model := range models {
 		routes := model.AttributeTargets
 		if len(routes) == 0 {
@@ -265,11 +267,21 @@ func (s *ModelAttributeService) resolveModels(view modelcatalog.View, config *Mo
 				routes = append(routes, modelcatalog.Target{Model: name})
 			}
 		}
-		values := make([]modelcatalog.Attributes, 0, len(routes))
+		values := []modelcatalog.Attributes{}
 		var searchTerms []string
 		var resolution *locale.Resolution
+		seen := make(map[modelcatalog.TargetKey]bool)
 		for _, target := range routes {
-			base := s.resolve(view, config, target, candidates).Attributes
+			key := target.Key()
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			base, found := resolvedTargets[key]
+			if !found {
+				base = s.resolve(view, config, target, candidates).Attributes
+				resolvedTargets[key] = base
+			}
 			if base.DisplayNameLocalization != nil {
 				searchTerms = append(searchTerms, locale.SearchTexts(base.DisplayNameLocalization.Content, func(text string) []string { return []string{text} })...)
 				value, actual := base.DisplayNameLocalization.Resolve(language)

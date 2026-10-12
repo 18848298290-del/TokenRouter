@@ -1155,7 +1155,7 @@ func TestModelsCatalogOfflineManualUpdate(t *testing.T) {
 	require.NoError(t, os.WriteFile(patch, []byte(`{"custom-model":{"input_cost_per_token":0.000009}}`), 0o600))
 	require.NoError(t, service.ForceUpdate())
 	require.InDelta(t, 9e-6, service.GetModelPricing("custom-model").InputCostPerToken, 1e-12)
-	require.Equal(t, before.Version, service.AttributesSnapshot().Version)
+	require.NotEqual(t, before.Version, service.AttributesSnapshot().Version)
 	require.Empty(t, service.AttributesSnapshot().LastError)
 	// 本地更新同样完整校验，失败时保留上一次成功价格和属性。
 	require.NoError(t, os.WriteFile(patch, []byte(`{"custom-model":{"input_cost_per_token":"invalid"}}`), 0o600))

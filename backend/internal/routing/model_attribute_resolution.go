@@ -25,8 +25,9 @@ type ModelAttributeMatch struct {
 }
 
 type attributeGroupResult struct {
-	config *ModelAttributeConfig
-	err    error
+	config      *ModelAttributeConfig
+	err         error
+	resolutions map[modelcatalog.TargetKey]modelcatalog.Resolution
 }
 
 // ModelAttributeSession 固定请求内的目录和分组配置，多个尝试共享读取结果。
@@ -130,8 +131,10 @@ func (s *ModelAttributeSession) Resolve(ctx context.Context, groupID int64, targ
 		return (modelcatalog.View{}).Resolve(target, modelcatalog.Attributes{}), nil
 	}
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	group, found := s.groups[groupID]
 	if !found {
+		group.resolutions = make(map[modelcatalog.TargetKey]modelcatalog.Resolution)
 		if groupID > 0 && s.service.Repo != nil {
 			group.config, group.err = s.service.Repo.ForGroup(ctx, groupID)
 			if group.err == nil && group.config != nil {
@@ -145,15 +148,16 @@ func (s *ModelAttributeSession) Resolve(ctx context.Context, groupID int64, targ
 		}
 		s.groups[groupID] = group
 	}
-	s.mu.Unlock()
 	if group.err != nil {
 		return modelcatalog.Resolution{}, apperror.ServiceUnavailable("MODEL_ATTRIBUTES_UNAVAILABLE", "model attribute configuration is unavailable")
 	}
-	var candidates func(string) []string
-	if s.service.Catalog.Candidates != nil {
-		candidates = s.service.Catalog.Candidates()
+	key := target.Key()
+	if result, ok := group.resolutions[key]; ok {
+		return result.Clone(), nil
 	}
-	return s.service.resolve(s.view, group.config, target, candidates), nil
+	result := s.service.resolve(s.view, group.config, target, s.service.identityCandidates())
+	group.resolutions[key] = result.Clone()
+	return result, nil
 }
 
 func (s *ModelAttributeService) resolve(view modelcatalog.View, config *ModelAttributeConfig, target modelcatalog.Target, candidates func(string) []string) modelcatalog.Resolution {
@@ -189,10 +193,11 @@ func (s *ModelAttributeService) Preview(ctx context.Context, groupID int64, mode
 	}
 	result := []modelcatalog.Resolution{}
 	view := s.viewForContext(ctx)
+	candidates := s.identityCandidates()
 	for _, value := range resolved.Models {
 		for _, target := range value.AttributeTargets {
 			if clientProtocol == "" || target.ClientProtocol == clientProtocol {
-				result = append(result, s.resolve(view, config, target, nil))
+				result = append(result, s.resolve(view, config, target, candidates))
 			}
 		}
 	}
@@ -212,4 +217,11 @@ func (s *ModelAttributeSession) Unavailable() bool {
 		}
 	}
 	return false
+}
+
+func (s *ModelAttributeService) identityCandidates() func(string) []string {
+	if s.Catalog.Candidates != nil {
+		return s.Catalog.Candidates()
+	}
+	return nil
 }

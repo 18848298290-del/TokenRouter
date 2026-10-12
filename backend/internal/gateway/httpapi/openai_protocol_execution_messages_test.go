@@ -3682,3 +3682,28 @@ func grokMessagesSSECompletedResponse(responseID string, cachedTokens int) *http
 		Body:       io.NopCloser(strings.NewReader(body)),
 	}
 }
+
+func TestForwardGrokMessagesReasoningOptions(t *testing.T) {
+	for _, tc := range []struct{ model, effort, want string }{
+		{"grok-build-0.1", "", ""},
+		{"grok-4.20-0309-reasoning", "high", ""},
+		{"grok-4.7", "xhigh", "xhigh"},
+		{"grok-private-route", "max", "max"},
+	} {
+		t.Run(tc.model, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			body := []byte(fmt.Sprintf(`{"model":%q,"max_tokens":32,"stream":false,"messages":[{"role":"user","content":"hi"}],"output_config":{"effort":%q}}`, tc.model, tc.effort))
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+			target := gatewaytestkit.HealthyGrokOAuthProvider(54, "access-token")
+			repo := &grokQuotaProviderRepo{grokFixtureProviders: &grokFixtureProviders{providersByID: map[int64]*gatewayprovider.ExecutionProvider{54: target}}}
+			upstream := &auxiliaryHTTPRecorder{resp: grokMessagesSSECompletedResponse("resp_options", 0)}
+			svc := newResponsesFixture(responsesFixtureInputs{grokTokens: newHTTPGrokTokenFixture(repo, nil), transport: upstream, providers: repo})
+			result, err := svc.Text.Messages(context.Background(), c, target, body, "", "")
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.Equal(t, tc.want, gjson.GetBytes(upstream.lastBody, "reasoning.effort").String())
+			require.Equal(t, tc.model, gjson.GetBytes(upstream.lastBody, "model").String())
+		})
+	}
+}

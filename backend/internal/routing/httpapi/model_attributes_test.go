@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -82,4 +83,28 @@ func TestModelAttributeHTTPReadWriteAndAuthorization(t *testing.T) {
 	require.Zero(t, store.saved.ID)
 	require.False(t, *store.saved.Rules[0].Attributes.ToolCall)
 	require.Equal(t, 400, call("PUT", "/admin/model-attributes/configs/no", "{}", true).Code)
+}
+
+func TestModelAttributeDefaultsUsePagedIndex(t *testing.T) {
+	catalog, err := modelcatalog.Parse([]byte(`{"providers":{"test":{"models":{"a":{"reasoning":true},"b":{"reasoning":false}}}}}`))
+	require.NoError(t, err)
+	index := modelcatalog.NewIndex(catalog)
+	service := &routing.ModelAttributeService{Catalog: routing.ModelAttributeCatalog{
+		Index: func() (modelcatalog.Index, routing.ModelAttributeSnapshot) {
+			return index, routing.ModelAttributeSnapshot{Version: "indexed"}
+		},
+		Snapshot: func() routing.ModelAttributeSnapshot {
+			t.Fatal("unexpected full directory copy")
+			return routing.ModelAttributeSnapshot{}
+		},
+	}}
+	handler := NewModelAttributeHandler(service)
+	engine := gin.New()
+	engine.GET("/defaults", handler.Defaults)
+	recorder := httptest.NewRecorder()
+	engine.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/defaults?capability=reasoning&page_size=1", nil))
+	require.Equal(t, 200, recorder.Code)
+	require.Contains(t, recorder.Body.String(), `"total":2`)
+	require.Contains(t, recorder.Body.String(), `"version":"indexed"`)
+	require.NotContains(t, recorder.Body.String(), `"model":"b"`)
 }

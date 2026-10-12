@@ -1,7 +1,6 @@
 package modelcatalog
 
 import (
-	"encoding/json"
 	"maps"
 	"net/url"
 	"slices"
@@ -61,6 +60,13 @@ type Resolution struct {
 // View 持有一次已发布目录，查询返回值副本，热更新不会改变已取得的 View。
 type View struct{ catalog *Catalog }
 
+// TargetKey 按值区分所有影响属性的路线字段。
+type TargetKey struct {
+	target       Target
+	outputCap    int
+	hasOutputCap bool
+}
+
 func (c *Catalog) View() View { return View{catalog: c} }
 
 func (v View) Version() string {
@@ -83,7 +89,7 @@ func (v View) Resolve(target Target, override Attributes) Resolution {
 	}
 	entry := v.lookup(target, model)
 	result.Attributes = Merge(Attributes{}, entry.Attributes)
-	for field := range result.Attributes.fields() {
+	for _, field := range result.Attributes.fieldNames() {
 		result.Sources[field] = "models.dev"
 	}
 	maps.Copy(result.Sources, entry.AttributeSources)
@@ -154,16 +160,13 @@ func googleResourceModel(model string) string {
 }
 
 func (r *Resolution) patch(attrs Attributes, source string) {
-	for field := range attrs.fields() {
+	for _, field := range attrs.fieldNames() {
 		if field != "media" {
 			r.Sources[field] = source
 		}
 	}
 	if attrs.Media != nil {
-		body, _ := json.Marshal(attrs.Media)
-		var fields map[string]json.RawMessage
-		_ = json.Unmarshal(body, &fields)
-		for field := range fields {
+		for _, field := range attrs.Media.fieldNames() {
 			r.Sources["media."+field] = source
 		}
 	}
@@ -387,4 +390,29 @@ func (t Target) servicePlatform() string {
 	default:
 		return t.Platform
 	}
+}
+
+func (t Target) Key() TargetKey {
+	t = t.WithServiceIdentity()
+	key := TargetKey{target: t}
+	if t.OllamaOutputCap != nil {
+		key.outputCap, key.hasOutputCap = *t.OllamaOutputCap, true
+		key.target.OllamaOutputCap = nil
+	}
+	return key
+}
+
+// Clone 返回可独立修改的路线解析结果。
+func (r Resolution) Clone() Resolution {
+	r.Target.OllamaOutputCap = clonePointer(r.Target.OllamaOutputCap)
+	r.Attributes = r.Attributes.Clone()
+	r.Sources = maps.Clone(r.Sources)
+	r.Rules.EffortAliases = maps.Clone(r.Rules.EffortAliases)
+	r.Rules.DropFields = slices.Clone(r.Rules.DropFields)
+	r.Rules.CacheTTL = slices.Clone(r.Rules.CacheTTL)
+	r.Rules.ImageGenerationTool = clonePointer(r.Rules.ImageGenerationTool)
+	r.Rules.OutputParameter = clonePointer(r.Rules.OutputParameter)
+	r.Rules.ToolSearch = clonePointer(r.Rules.ToolSearch)
+	r.Rules.Verbosity = clonePointer(r.Rules.Verbosity)
+	return r
 }

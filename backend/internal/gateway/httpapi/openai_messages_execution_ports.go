@@ -287,7 +287,7 @@ func (p *openAIMessagesExecutionAdapter) GrokCacheIdentity(body []byte, key, mod
 }
 
 func (p *openAIMessagesExecutionAdapter) PatchGrokBody(body []byte, model string) ([]byte, error) {
-	return gatewayprovider.GrokBodyCodec().PatchGrokResponsesBody(body, model)
+	return gatewayprovider.PrepareGrokResponses(p.c.Request.Context(), p.provider, model, body, p.s.modelAttributes())
 }
 
 func (p *openAIMessagesExecutionAdapter) ApplyGrokCache(body, intent []byte, key string, oauth bool) ([]byte, error) {
