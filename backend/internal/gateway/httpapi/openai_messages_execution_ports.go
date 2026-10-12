@@ -181,7 +181,11 @@ func (p *openAIMessagesExecutionAdapter) ReplayGuard(r *protocolanthropic.Anthro
 }
 
 func (p *openAIMessagesExecutionAdapter) Convert(r *protocolanthropic.AnthropicRequest) (*protocolopenai.ResponsesRequest, error) {
-	return protocolbridge.AnthropicToResponses(r, protocolforward.ConversionOptionsForModel(r.Model))
+	result, err := p.modelResolution(r.Model, r, "openai_responses")
+	if err != nil {
+		return nil, err
+	}
+	return protocolbridge.AnthropicToResponses(r, gatewayprovider.ModelConversionOptions(result))
 }
 
 func (p *openAIMessagesExecutionAdapter) BetaFast() bool {
@@ -189,7 +193,7 @@ func (p *openAIMessagesExecutionAdapter) BetaFast() bool {
 }
 
 func (p *openAIMessagesExecutionAdapter) MessagesEffort(r *protocolanthropic.AnthropicRequest, model, effort string) string {
-	return gatewayprovider.OpenAICompatAnthropicReasoningEffort(r, model, effort)
+	return gatewayprovider.OpenAICompatAnthropicReasoningEffort(r, model, effort, gatewayprovider.ExecutionModelAttributes(p.provider, model))
 }
 
 func (p *openAIMessagesExecutionAdapter) TrimLatestTurn(r *protocolopenai.ResponsesRequest) {

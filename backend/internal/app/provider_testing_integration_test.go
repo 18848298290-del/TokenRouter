@@ -43,7 +43,7 @@ func TestNativeProviderTestAssembly(t *testing.T) {
 	store := providerpostgres.NewProviderStore(f.client, f.db, providerpostgres.ProviderStoreOptions{})
 	transport := &nativeProviderTestTransport{}
 	manager := lifecycle.New()
-	core := NewProviderTestsForTest(store, nil, nil, nil, nil, transport, &config.Config{}, nil, nil, nil, nil, manager)
+	core := NewProviderTestsForTest(store, nil, nil, nil, nil, transport, &config.Config{}, nil, nil, nil, nil, manager, nil)
 	require.Empty(t, transport.requests, "构造不请求供应商")
 	for _, test := range []struct{ platform, model, path, body string }{
 		{provider.PlatformOpenAI, "gpt-5.4", "/v1/responses", "data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\ndata: {\"type\":\"response.completed\"}\n\n"},

@@ -164,3 +164,18 @@ func TestAttributeConfigValidation(t *testing.T) {
 	valid := ModelAttributeConfig{Name: "metadata", Status: StatusActive, Rules: []ModelAttributeRule{{Models: []string{"*"}, Attributes: modelcatalog.Attributes{ToolCall: &no}}}}
 	require.NoError(t, service.Save(context.Background(), &valid))
 }
+
+func TestAttributeRulesSeparateRoutesAndStableIDs(t *testing.T) {
+	one, two := 1, 2
+	config := &ModelAttributeConfig{Name: "routes", Status: StatusActive, Rules: []ModelAttributeRule{
+		{Models: []string{"model"}, Match: &ModelAttributeMatch{Platform: "openai"}, Attributes: modelcatalog.Attributes{OutputLimit: &one}},
+		{Models: []string{"model"}, Match: &ModelAttributeMatch{Platform: "grok"}, Attributes: modelcatalog.Attributes{OutputLimit: &two}},
+	}}
+	require.NoError(t, (&ModelAttributeService{Repo: &attributeRepoFixture{}}).Save(context.Background(), config))
+	require.NotEqual(t, config.Rules[0].ID, config.Rules[1].ID)
+	require.Equal(t, one, *config.match("model", nil, modelcatalog.Target{Platform: "openai"}).OutputLimit)
+	require.Equal(t, two, *config.match("model", nil, modelcatalog.Target{Platform: "grok"}).OutputLimit)
+	config.Rules[0].Match = nil
+	config.Rules[1].Match = &ModelAttributeMatch{}
+	require.Error(t, (&ModelAttributeService{Repo: &attributeRepoFixture{}}).Save(context.Background(), config))
+}

@@ -6,12 +6,14 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
 // RequestableModel 描述客户端可请求的模型，以及模型广场应使用的定价模型。
 type RequestableModel struct {
+	AttributeTargets []modelcatalog.Target
 	// UpstreamModels 保存已确认可请求的最终模型，供展示使用。
 	UpstreamModels []string
 	Protocols      []capability.ProtocolID
@@ -257,6 +259,7 @@ func (q *requestableQuery) resolve(ctx context.Context, requestedModel string) (
 	}
 
 	upstreamModels := make([]string, 0, len(providers))
+	var attributeTargets []modelcatalog.Target
 	var protocols []capability.ProtocolID
 	// nativeByProtocol 记录协议是否在每个承接该模型的提供商上都走原生路线。
 	nativeByProtocol := map[capability.ProtocolID]bool{}
@@ -264,6 +267,7 @@ func (q *requestableQuery) resolve(ctx context.Context, requestedModel string) (
 		provider := &providers[i]
 		var candidateProtocols []capability.ProtocolID
 		var nativeCandidates []capability.ProtocolID
+		targetProtocols := map[capability.ProtocolID]capability.ProtocolID{}
 		if policy != nil && policy.AllowedProtocols != nil {
 			if policy.RequireOAuthOnly && provider.Type == capability.ProviderTypeAPIKey {
 				continue
@@ -279,6 +283,7 @@ func (q *requestableQuery) resolve(ctx context.Context, requestedModel string) (
 					continue
 				}
 				candidateProtocols = append(candidateProtocols, source)
+				targetProtocols[source] = target
 				if target == source {
 					nativeCandidates = append(nativeCandidates, source)
 				}
@@ -297,6 +302,16 @@ func (q *requestableQuery) resolve(ctx context.Context, requestedModel string) (
 				continue
 			}
 			upstreamModels = append(upstreamModels, upstreamModel)
+			if aware, ok := provider.Rules.(interface {
+				AttributeTarget(string, capability.ProtocolID, capability.ProtocolID) modelcatalog.Target
+			}); ok {
+				for _, source := range candidateProtocols {
+					attributeTargets = append(attributeTargets, aware.AttributeTarget(upstreamModel, source, targetProtocols[source]))
+				}
+				if len(candidateProtocols) == 0 {
+					attributeTargets = append(attributeTargets, aware.AttributeTarget(upstreamModel, "", ""))
+				}
+			}
 			contributed = true
 		}
 		if !contributed {
@@ -323,7 +338,7 @@ func (q *requestableQuery) resolve(ctx context.Context, requestedModel string) (
 		}
 	}
 	slices.Sort(upstreamModels)
-	resolved := RequestableModel{ID: requestedModel, Protocols: protocols, NativeProtocols: nativeProtocols, UpstreamModels: slices.Compact(upstreamModels)}
+	resolved := RequestableModel{ID: requestedModel, Protocols: protocols, NativeProtocols: nativeProtocols, UpstreamModels: slices.Compact(upstreamModels), AttributeTargets: attributeTargets}
 	switch billingSource {
 	case BillingModelSourceRequested:
 		resolved.PricingModel = requestedModel

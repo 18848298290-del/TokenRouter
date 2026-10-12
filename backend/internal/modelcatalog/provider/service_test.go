@@ -16,7 +16,6 @@ import (
 
 	billingpricing "github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
-	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	xai "github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
@@ -217,9 +216,6 @@ func TestCatalogLookupOpenAIProductIdentity(t *testing.T) {
 			}})
 			mutatePricingFixture(svc, func(data map[string]*billingpricing.CatalogModelPricing) { data[model] = own })
 			for _, effort := range []string{"none", "minimal", "low", "medium", "high", "xhigh", "max"} {
-				if !capability.OpenAIModelSupportsReasoningEffort(model, effort) {
-					continue
-				}
 				alias := "openai/" + model + "-" + effort
 				require.Nil(t, svc.GetModelPricing(alias), alias)
 				input, _ := svc.GetModelModalities(alias)

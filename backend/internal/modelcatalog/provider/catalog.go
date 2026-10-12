@@ -40,6 +40,13 @@ type AttributeSnapshot struct {
 	LastError   string               `json:"last_error,omitempty"`
 }
 
+// CapabilityView 固定当前已发布目录，后续查询无需加锁或复制整个目录。
+func (s *Service) CapabilityView() modelcatalog.View {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.modelCatalog.View()
+}
+
 // AttributesSnapshot 返回当前目录的独立属性快照，不触发网络请求。
 func (s *Service) AttributesSnapshot() AttributeSnapshot {
 	s.mu.RLock()

@@ -93,8 +93,12 @@ func Gemini(ctx context.Context, p GeminiPorts, in GeminiInput) (*Result, error)
 		p.Log(fmt.Sprintf("[Antigravity] Failed to clean schema: %v", err))
 	}
 
+	effectiveBody, err := p.ModelParameters(ctx, mappedModel, injectedBody)
+	if err != nil {
+		return nil, err
+	}
 	// 包装请求
-	wrappedBody, err := p.Wrap(projectID, mappedModel, injectedBody)
+	wrappedBody, err := p.Wrap(projectID, mappedModel, effectiveBody)
 	if err != nil {
 		if p.ProjectRequired(err) {
 			return nil, p.GoogleError(400, err.Error())

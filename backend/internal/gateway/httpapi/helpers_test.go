@@ -55,6 +55,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient"
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient/tlsfingerprint"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
+	catalogtestkit "github.com/TokenFlux/TokenRouter/internal/modelcatalog/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/moderation"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
@@ -1137,7 +1138,9 @@ func newAuxiliaryFixture(v auxiliaryFixtureInputs) *OpenAIAuxiliary {
 	}
 	identity := gatewayprovider.NewExecutionAgentIdentity(&providercore.OpenAITaskCoordinator{}, v.store, nil, nil)
 	turns := &CodexTurnStateHeaders{Origins: gatewaysession.NewCodexTurnOrigins(time.Now), TTL: func() time.Duration { return time.Hour }}
-	requests := &OpenAIRequests{Options: OpenAIRequestOptions{URLPolicy: egress.OperatorURLPolicy{AllowInsecureHTTP: v.allowHTTP}}, Providers: v.store, Identity: identity, Credentials: credentials, Transport: v.transport, Profiles: v.profiles, Turns: turns, ClientPolicy: &provideradapter.OpenAIProbePolicy{Available: true, DefaultBrowserUserAgent: gateway.DefaultOpenAICodexUserAgent, Profiles: v.profiles}, Failure: &UpstreamTransportFailure{Health: &provideradapter.TransportHealth{Runtime: blocks}}}
+	readers := gatewaytestkit.RuntimeReaders(&fakeSettingRepo{})
+	readers.Attributes = &routing.ModelAttributeService{Catalog: routing.ModelAttributeCatalog{View: catalogtestkit.OfflineView}}
+	requests := &OpenAIRequests{Readers: readers, Options: OpenAIRequestOptions{URLPolicy: egress.OperatorURLPolicy{AllowInsecureHTTP: v.allowHTTP}}, Providers: v.store, Identity: identity, Credentials: credentials, Transport: v.transport, Profiles: v.profiles, Turns: turns, ClientPolicy: &provideradapter.OpenAIProbePolicy{Available: true, DefaultBrowserUserAgent: gateway.DefaultOpenAICodexUserAgent, Profiles: v.profiles}, Failure: &UpstreamTransportFailure{Health: &provideradapter.TransportHealth{Runtime: blocks}}}
 	grok := &provideradapter.GrokHealth{Store: v.store, Health: v.observer, Runtime: blocks, ModelTransient: models, NormalizeModel: func(value *providercore.Record, model string) string {
 		return (gatewayprovider.ModelPolicy{Record: value}).NormalizeOpenAI(model)
 	}}
@@ -1654,7 +1657,15 @@ func newResponsesFixture(v responsesFixtureInputs) *OpenAIResponsesExecutor {
 		options = *v.options
 	}
 	aux.Requests.Options = options.Request
-	aux.Requests.Readers = v.readers
+	readers := v.readers
+	if readers == nil {
+		readers = gatewaytestkit.RuntimeReaders(&fakeSettingRepo{})
+	} else {
+		copy := *readers
+		readers = &copy
+	}
+	readers.Attributes = &routing.ModelAttributeService{Catalog: routing.ModelAttributeCatalog{View: catalogtestkit.OfflineView}}
+	aux.Requests.Readers = readers
 	aux.Requests.Routers = v.routers
 	aux.Requests.ClientPolicy.Routers = v.routers
 	aux.Requests.ClientPolicy.ForceCLI = options.Request.ForceCLI

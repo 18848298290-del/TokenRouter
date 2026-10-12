@@ -43,8 +43,10 @@ func ChatCompletionsToResponses(req *ChatCompletionsRequest, options RequestOpti
 	}
 
 	// 调用方根据模型规则指定是否移除采样参数。
-	if !options.DropSampling {
+	if !options.DropSampling && !options.DropTemperature {
 		out.Temperature = req.Temperature
+	}
+	if !options.DropSampling && !options.DropTopP {
 		out.TopP = req.TopP
 	}
 

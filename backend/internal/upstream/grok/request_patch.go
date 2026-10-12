@@ -11,6 +11,7 @@ import (
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	protocolbridge "github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
@@ -50,9 +51,19 @@ var (
 )
 
 // BodyCodec 调整 Grok 请求体，并通过 NewID 为工具调用生成标识符。
-type BodyCodec struct{ NewID func() string }
+type BodyCodec struct {
+	NewID      func() string
+	Attributes func(string) modelcatalog.Attributes
+}
 
 type GrokEncryptedContentStripRetriedKey struct{}
+
+func (m BodyCodec) modelAttributes(model string) modelcatalog.Attributes {
+	if m.Attributes != nil {
+		return m.Attributes(model)
+	}
+	return modelcatalog.Attributes{}
+}
 
 func (m BodyCodec) IsGrokInvalidEncryptedContentResponse(statusCode int, body []byte) bool {
 	if statusCode != http.StatusBadRequest && statusCode != http.StatusUnprocessableEntity {
@@ -372,10 +383,7 @@ func (m BodyCodec) SanitizeGrokResponsesModelCapabilities(body []byte, upstreamM
 
 // GrokModelRejectsReasoningEffort 判断 Composer 别名是否拒绝 reasoning 参数。
 func (m BodyCodec) GrokModelRejectsReasoningEffort(model string) bool {
-	model = strings.TrimSpace(strings.ToLower(model))
-	if slash := strings.LastIndex(model, "/"); slash >= 0 {
-		model = strings.TrimSpace(model[slash+1:])
-	}
+	model = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(model)), "xai/")
 	switch model {
 	case "grok-composer", "grok-composer-2.5-fast", "composer-2.5":
 		return true
@@ -385,7 +393,6 @@ func (m BodyCodec) GrokModelRejectsReasoningEffort(model string) bool {
 }
 
 func (m BodyCodec) NormalizeGrokResponsesReasoningEffort(body []byte, upstreamModel string) ([]byte, error) {
-	supportsEffort := m.GrokSupportsReasoningEffort(upstreamModel)
 	out := body
 	var err error
 	for _, field := range []string{"reasoning.effort", "reasoning_effort"} {
@@ -394,7 +401,7 @@ func (m BodyCodec) NormalizeGrokResponsesReasoningEffort(body []byte, upstreamMo
 			continue
 		}
 		normalized, keep := m.NormalizeGrokReasoningEffortValue(value.String(), upstreamModel)
-		if !supportsEffort || !keep {
+		if !keep {
 			out, err = sjson.DeleteBytes(out, field)
 		} else {
 			out, err = sjson.SetBytes(out, field, normalized)
@@ -409,7 +416,7 @@ func (m BodyCodec) NormalizeGrokResponsesReasoningEffort(body []byte, upstreamMo
 		if err != nil {
 			return nil, fmt.Errorf("remove Grok reasoningEffort: %w", err)
 		}
-		if supportsEffort && keep && !gjson.GetBytes(out, "reasoning_effort").Exists() {
+		if keep && !gjson.GetBytes(out, "reasoning_effort").Exists() {
 			out, err = sjson.SetBytes(out, "reasoning_effort", normalized)
 			if err != nil {
 				return nil, fmt.Errorf("set Grok reasoning_effort: %w", err)
@@ -431,7 +438,6 @@ func (m BodyCodec) NormalizeGrokChatReasoningEffort(body []byte, upstreamModel s
 		raw = strings.TrimSpace(gjson.GetBytes(body, "reasoningEffort").String())
 	}
 	normalized, keep := m.NormalizeGrokReasoningEffortValue(raw, upstreamModel)
-	keep = keep && m.GrokSupportsReasoningEffort(upstreamModel)
 	out := body
 	var err error
 	if gjson.GetBytes(out, "reasoningEffort").Exists() {
@@ -452,41 +458,37 @@ func (m BodyCodec) NormalizeGrokChatReasoningEffort(body []byte, upstreamModel s
 
 func (m BodyCodec) NormalizeGrokReasoningEffortValue(raw, model string) (string, bool) {
 	value := strings.NewReplacer("-", "", "_", "", " ", "").Replace(strings.ToLower(strings.TrimSpace(raw)))
+	attributes := m.modelAttributes(model)
+	if attributes.ReasoningOptions == nil && (attributes.Reasoning == nil || *attributes.Reasoning) {
+		return strings.TrimSpace(raw), strings.TrimSpace(raw) != ""
+	}
 	switch value {
 	case "none", "low", "medium", "high":
-		return value, true
 	case "minimal":
-		return "low", true
+		value = "low"
 	case "xhigh", "extrahigh":
-		if m.GrokSupportsXHighReasoningEffort(model) {
-			return "xhigh", true
+		value = "xhigh"
+		if supported := attributes.EffortSupport(value); supported != nil && !*supported {
+			value = "high"
 		}
-		return "high", true
 	case "max", "ultra":
-		return "high", true
+		value = "high"
 	default:
 		return "", false
 	}
+	supported := attributes.EffortSupport(value)
+	return value, supported == nil || *supported
 }
 
 // GrokSupportsXHighReasoningEffort 判断模型是否声明并透传 xhigh 推理档位。
 // 当前仅 Grok 4.6 及其无日期别名支持。
 func (m BodyCodec) GrokSupportsXHighReasoningEffort(model string) bool {
-	model = grokReasoningModelID(model)
-	return model == "grok-4.6" || model == "grok-4.6-latest"
+	supported := m.modelAttributes(model).EffortSupport("xhigh")
+	return supported != nil && *supported
 }
 
 func (m BodyCodec) GrokSupportsReasoningEffort(model string) bool {
-	model = grokReasoningModelID(model)
-	switch model {
-	case "grok-4.5", "grok-4.5-latest", "grok-4.6", "grok-4.6-latest",
-		"grok-4.3", "grok-4.3-latest",
-		"grok-3-mini", "grok-3-mini-fast", "grok-4.20-0309-reasoning",
-		"grok-4.20-reasoning", "grok-4.20-multi-agent-0309":
-		return true
-	default:
-		return false
-	}
+	return m.modelAttributes(model).HasReasoningOption("effort")
 }
 
 func (m BodyCodec) SanitizeGrokResponsesUnsupportedFields(body []byte) ([]byte, error) {
@@ -960,15 +962,7 @@ func (m BodyCodec) ShouldBridgeGrokComposerImageInputs(body []byte) bool {
 }
 
 func (m BodyCodec) IsGrokComposerModel(model string) bool {
-	model = strings.TrimSpace(strings.ToLower(model))
-	if model == "" {
-		return false
-	}
-	if strings.Contains(model, "/") {
-		parts := strings.Split(model, "/")
-		model = strings.TrimSpace(parts[len(parts)-1])
-	}
-	return strings.Contains(model, "composer")
+	return m.GrokModelRejectsReasoningEffort(model)
 }
 
 func (m BodyCodec) CollectGrokComposerImageURLs(reqBody map[string]any) []string {

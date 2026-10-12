@@ -13,6 +13,7 @@ import (
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
@@ -39,6 +40,14 @@ func (r *Runtime) bedrock(
 		return nil, err
 	}
 	region, mappedModel := route.SourceRegion, route.ModelID
+	attributes, attributesErr := gatewayprovider.ResolveModelAttributes(ctx, provider, mappedModel, r.dependencies.Attributes, "anthropic_messages")
+	if attributesErr != nil {
+		return nil, attributesErr
+	}
+	body, err = gatewayprovider.ApplyModelAttributeParameters(body, attributes)
+	if err != nil {
+		return nil, err
+	}
 	if mappedModel != reqModel {
 		logging.LegacyPrintf("service.gateway", "[Bedrock] Model mapping: %s -> %s (provider: %s)", reqModel, mappedModel, provider.Record.Name)
 	}
@@ -49,12 +58,12 @@ func (r *Runtime) bedrock(
 	}
 
 	// 准备请求体（注入 anthropic_version/anthropic_beta，移除 Bedrock 不支持的字段，清理 cache_control）
-	betaTokens, err := r.bedrockBetaTokens(ctx, provider, betaHeader, body, mappedModel)
+	betaTokens, err := r.bedrockBetaTokens(ctx, provider, betaHeader, body, mappedModel, attributes.Rules)
 	if err != nil {
 		return nil, err
 	}
 
-	bedrockBody, err := bedrock.PrepareBedrockRequestBodyWithTokens(body, mappedModel, betaTokens, false)
+	bedrockBody, err := bedrock.PrepareBedrockRequestBodyWithTokens(body, mappedModel, betaTokens, false, attributes.Rules)
 	if err != nil {
 		return nil, fmt.Errorf("prepare bedrock request body: %w", err)
 	}
@@ -202,12 +211,12 @@ func (r *Runtime) bedrockOptions(ctx context.Context, output HTTPBoundary, state
 }
 
 // bedrockBetaTokens 依次校验 Header、转换平台 token，并再次校验转换结果。
-func (r *Runtime) bedrockBetaTokens(ctx context.Context, target *gatewayprovider.ExecutionProvider, header string, body []byte, model string) ([]string, error) {
+func (r *Runtime) bedrockBetaTokens(ctx context.Context, target *gatewayprovider.ExecutionProvider, header string, body []byte, model string, rules ...modelcatalog.ExecutionRules) ([]string, error) {
 	policy := r.evaluateBeta(ctx, target, header, model)
 	if policy.BlockErr != nil {
 		return nil, policy.BlockErr
 	}
-	tokens := bedrock.ResolveBedrockBetaTokens(header, body, model)
+	tokens := bedrock.ResolveBedrockBetaTokens(header, body, model, rules...)
 	if err := r.checkBetaTokens(ctx, tokens, target, model); err != nil {
 		return nil, err
 	}

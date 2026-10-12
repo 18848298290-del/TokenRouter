@@ -16,6 +16,7 @@ type ImageBilling struct {
 
 // RequestPort 每次只调用一个既有解析/策略能力，完整处理顺序由 Normalize 拥有。
 type RequestPort interface {
+	ModelAttributes(context.Context, int, string, []byte) ([]byte, error)
 	PromptReplace(context.Context, []byte) []byte
 	Mutate([]byte, string, string) ([]byte, error)
 	RequestedEffort([]byte, string) *string

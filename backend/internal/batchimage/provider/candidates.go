@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/TokenFlux/TokenRouter/internal/batchimage"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
@@ -61,6 +62,10 @@ func (r *Candidates) Project(value *provider.Record) *batchimage.Candidate {
 	models := provider.PrepareModelRules(value, provideradapter.ModelDefaults(), provideradapter.ModelRules(value))
 	snapshot := value.RoutingSnapshot()
 	result := &batchimage.Candidate{ID: value.ID, Priority: value.Priority, CandidateRules: candidateRules{Record: value, models: models}}
+	result.AttributeTarget = func(model string) modelcatalog.Target {
+		protocol, _ := resolveBatchProtocol(value)
+		return value.ModelAttributeTarget(model, string(protocol))
+	}
 	result.ProtocolEnabled = func() bool {
 		_, ok := routing.Plan(routing.PlanInput{ClientProtocol: protocol.ProtocolImageBatches}).ResolveCandidate(snapshot)
 		return ok

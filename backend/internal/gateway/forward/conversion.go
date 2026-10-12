@@ -13,7 +13,6 @@ import (
 	protocolcore "github.com/TokenFlux/TokenRouter/internal/protocol"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
-	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
 // AsResponses 依次转换请求、取得凭据、调用上游并输出 Responses 响应。
@@ -138,7 +137,7 @@ func AsChat(ctx context.Context, p ConversionPorts, in ConversionInput, body []b
 	clientStream := ccReq.Stream
 	includeUsage := ccReq.StreamOptions != nil && ccReq.StreamOptions.IncludeUsage
 
-	responsesReq, err := bridge.ChatCompletionsToResponses(&ccReq, bridge.RequestOptions{DropSampling: capability.ResponsesBridgeDropsSampling(ccReq.Model), SupportsMaxEffort: capability.ResponsesBridgeSupportsMaxEffort(ccReq.Model)})
+	responsesReq, err := bridge.ChatCompletionsToResponses(&ccReq, bridge.RequestOptions{SupportsMaxEffort: true})
 	if err != nil {
 		return nil, fmt.Errorf("convert chat completions to responses: %w", err)
 	}
@@ -288,11 +287,10 @@ func LiftResponsesAdditionalTools(requestBody map[string]any) (bool, error) {
 	return true, nil
 }
 
-// ConversionOptionsForModel 根据模型策略生成协议转换选项。
-func ConversionOptionsForModel(model string) bridge.RequestOptions {
+// ConversionOptionsForModel 在目标尚未确定时保存请求参数，最终能力由执行适配器解析。
+func ConversionOptionsForModel(_ string) bridge.RequestOptions {
 	return bridge.RequestOptions{
-		DropSampling:      capability.ResponsesBridgeDropsSampling(model),
-		SupportsMaxEffort: capability.ResponsesBridgeSupportsMaxEffort(model),
+		SupportsMaxEffort: true,
 	}
 }
 

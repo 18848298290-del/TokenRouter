@@ -2,9 +2,11 @@ package creative
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"strings"
 
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
@@ -15,9 +17,10 @@ type groupModelPolicy struct {
 
 // creativeModelQuery 复用一个分组的提供商及模型规则。
 type creativeModelQuery struct {
-	group     *GroupView
-	policy    groupModelPolicy
-	providers map[string][]CatalogProvider
+	attributes *routing.ModelAttributeSession
+	group      *GroupView
+	policy     groupModelPolicy
+	providers  map[string][]CatalogProvider
 }
 
 func newGroupModelPolicy(policy routing.GroupRoutingPolicy) groupModelPolicy {
@@ -86,6 +89,7 @@ func (s *Public) prepareCreativeModels(ctx context.Context, group *GroupView) (*
 		return nil, nil
 	}
 	query := &creativeModelQuery{group: group, policy: newGroupModelPolicy(group.RoutingPolicy), providers: map[string][]CatalogProvider{}}
+	query.attributes = s.Attributes.NewSession()
 	for _, platform := range []string{PlatformOpenAI, PlatformGemini, PlatformGrok} {
 		if len(group.Operations[platform]) == 0 {
 			continue
@@ -122,50 +126,85 @@ func (q *creativeModelQuery) candidates(configured []string) []string {
 	return q.policy.candidates(models, providers)
 }
 
-func (q *creativeModelQuery) resolveModels(ctx context.Context, models []string) map[string]creativeModelRoute {
+func (q *creativeModelQuery) resolveModels(ctx context.Context, models []string) (map[string]creativeModelRoute, error) {
 	out := make(map[string]creativeModelRoute)
 	for _, model := range models {
 		if ctx.Err() != nil {
-			return map[string]creativeModelRoute{}
+			return nil, ctx.Err()
 		}
 		if _, exists := out[model]; exists {
 			continue
 		}
-		if route, ok := q.resolve(ctx, model); ok {
+		if route, ok, err := q.resolve(ctx, model, true); err != nil {
+			return nil, err
+		} else if ok {
 			out[model] = route
 		}
 	}
-	return out
+	return out, nil
 }
 
 // resolve 校验具体型号，并按 OpenAI、Gemini、Grok 的顺序选择图片能力。
-func (q *creativeModelQuery) resolve(ctx context.Context, model string) (creativeModelRoute, bool) {
+func (q *creativeModelQuery) resolve(ctx context.Context, model string, display bool) (creativeModelRoute, bool, error) {
 	if q == nil || ctx.Err() != nil || strings.TrimSpace(model) == "" || strings.ContainsAny(model, "*?") {
-		return creativeModelRoute{}, false
+		return creativeModelRoute{}, false, nil
 	}
 	mapped, allowed := q.policy.resolve(model)
 	if !allowed {
-		return creativeModelRoute{}, false
+		return creativeModelRoute{}, false, nil
 	}
 	for _, platform := range []string{PlatformOpenAI, PlatformGemini, PlatformGrok} {
+		route := creativeModelRoute{Platform: platform, OperationAttributes: map[string]modelcatalog.Attributes{}}
+		var values []modelcatalog.Attributes
+		perOperation := map[string][]modelcatalog.Attributes{}
 		for _, provider := range q.providers[platform] {
 			if provider == nil || provider.PlatformID() != platform || !provider.IsSchedulable() || !provider.IsModelSupported(mapped) {
 				continue
 			}
 			finalModel := mappedCatalogModel(provider, mapped)
-			if !CreativePlatformImageModel(platform, finalModel) || !q.policy.allowsUpstream(finalModel) {
+			if !q.policy.allowsUpstream(finalModel) {
 				continue
 			}
-			var operations []string
 			for _, operation := range q.group.Operations[platform] {
-				if provider.AllowsProtocol(OperationProtocol(platform, operation), q.group.ProtocolFallbacks) {
-					operations = append(operations, operation)
+				if !provider.AllowsProtocol(OperationProtocol(platform, operation), q.group.ProtocolFallbacks) {
+					continue
 				}
-			}
-			if len(operations) > 0 {
-				return creativeModelRoute{Platform: platform, Model: finalModel, Operations: operations}, true
+				target := modelcatalog.Target{Platform: platform, Model: finalModel}
+				if aware, ok := provider.(interface {
+					AttributeTarget(string) modelcatalog.Target
+				}); ok {
+					target = aware.AttributeTarget(finalModel)
+				}
+				target.ClientProtocol = string(OperationProtocol(platform, operation))
+				target.UpstreamProtocol = target.ClientProtocol
+				resolved, err := q.attributes.Resolve(ctx, q.group.ID, target)
+				if err != nil {
+					if !display {
+						return creativeModelRoute{}, false, err
+					}
+					resolved = modelcatalog.Resolution{}
+				}
+				modalities := resolved.Attributes.OutputModalities
+				if modalities != nil && !slices.Contains(*modalities, "image") || modalities == nil && !CreativePlatformImageModel(platform, finalModel) {
+					continue
+				}
+				if route.Model == "" {
+					route.Model = finalModel
+				}
+				if !slices.Contains(route.Operations, operation) {
+					route.Operations = append(route.Operations, operation)
+				}
+				perOperation[operation] = append(perOperation[operation], resolved.Attributes)
+				values = append(values, resolved.Attributes)
 			}
 		}
+		if len(route.Operations) > 0 {
+			route.Attributes, _ = modelcatalog.Common(values)
+			for operation, attributes := range perOperation {
+				route.OperationAttributes[operation], _ = modelcatalog.Common(attributes)
+			}
+			return route, true, nil
+		}
 	}
-	return creativeModelRoute{}, false
+	return creativeModelRoute{}, false, nil
 }

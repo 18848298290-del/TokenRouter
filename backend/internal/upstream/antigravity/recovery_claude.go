@@ -10,6 +10,7 @@ import (
 	logger "github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 	protocolanthropic "github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 	googlewire "github.com/TokenFlux/TokenRouter/internal/protocol/google"
 )
 
@@ -80,7 +81,10 @@ func RecoverClaude(ctx context.Context, input ClaudeRecoveryInput, resp *http.Re
 
 			logger.LegacyPrintf("service.antigravity_gateway", "Antigravity provider %d: detected signature-related 400, retrying once (%s)", input.ProviderID, stage.name)
 
-			retryGeminiBody, txErr := TransformClaudeToGeminiWithOptions(&retryClaudeReq, projectID, mappedModel, options.TransformOptions(ctx))
+			retryOptions := options.TransformOptions(ctx)
+			retryOptions.Thinking = nil
+			retryOptions.ThinkingResolved = true
+			retryGeminiBody, txErr := TransformClaudeToGeminiWithOptions(&retryClaudeReq, projectID, mappedModel, retryOptions)
 			if txErr != nil {
 				continue
 			}
@@ -184,7 +188,10 @@ func RecoverClaude(ctx context.Context, input ClaudeRecoveryInput, resp *http.Re
 
 				logger.LegacyPrintf("service.antigravity_gateway", "Antigravity provider %d: detected budget_tokens constraint error, retrying with rectified budget (budget_tokens=%d, max_tokens=%d)", input.ProviderID, options.BudgetTokens, options.MaxTokens)
 
-				retryGeminiBody, txErr := TransformClaudeToGeminiWithOptions(&retryClaudeReq, projectID, mappedModel, transformOpts)
+				retryOptions := transformOpts
+				retryOptions.Thinking = &bridge.GeminiThinkingConfig{IncludeThoughts: true, ThinkingBudget: options.BudgetTokens, BudgetSet: true}
+				retryOptions.ThinkingResolved = true
+				retryGeminiBody, txErr := TransformClaudeToGeminiWithOptions(&retryClaudeReq, projectID, mappedModel, retryOptions)
 				if txErr == nil {
 					retryResult, retryErr := options.Retry(retryGeminiBody)
 					if retryErr == nil {

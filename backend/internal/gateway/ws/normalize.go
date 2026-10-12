@@ -95,6 +95,10 @@ func (s *RequestNormalizer) Normalize(ctx context.Context, raw []byte, applyUser
 	if resolveModelErr != nil {
 		return ClientPayload{}, resolveModelErr
 	}
+	normalized, resolveModelErr = p.ModelAttributes(ctx, turn, upstreamModel, normalized)
+	if resolveModelErr != nil {
+		return ClientPayload{}, resolveModelErr
+	}
 	promptCacheKey := strings.TrimSpace(values[2].String())
 	previousResponseID := strings.TrimSpace(values[3].String())
 	previousResponseIDKind := p.ClassifyPrevious(previousResponseID)

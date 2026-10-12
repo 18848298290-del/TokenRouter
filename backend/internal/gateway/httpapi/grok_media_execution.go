@@ -108,6 +108,11 @@ func (s *GrokExecutor) ForwardGrokMedia(
 				return nil, fmt.Errorf("rewrite grok media provider mapped model: %w", err)
 			}
 		}
+		resolved, err := gatewayprovider.ResolveModelAttributes(ctx, provider, upstreamModel, s.Attributes)
+		if err != nil {
+			return nil, err
+		}
+		provider.Capabilities = &resolved
 		modeltrace.RegisterStage(ctx, upstreamModel)
 	}
 	body, contentType, err = sanitizeGrokMediaForwardBody(endpoint, body, contentType)

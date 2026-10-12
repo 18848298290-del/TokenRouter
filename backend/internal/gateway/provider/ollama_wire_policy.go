@@ -1,10 +1,7 @@
 package provider
 
 import (
-	"go.uber.org/zap"
-
 	"github.com/TokenFlux/TokenRouter/internal/egress"
-	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/ollama"
@@ -51,8 +48,7 @@ func ApplyOllamaCloudRawChatCompletionsRequest(provider *ExecutionProvider, body
 	if !IsOllamaCloudRawChatCompletionsProvider(provider) || len(body) == 0 {
 		return body
 	}
-	body = ollama.NormalizeOllamaCloudChatCompletionsRequest(body)
-	return ClampOllamaCloudMaxTokens(provider, body)
+	return ollama.NormalizeOllamaCloudChatCompletionsRequest(body)
 }
 
 func ApplyOllamaCloudRawChatCompletionsResponse(provider *ExecutionProvider, body []byte) []byte {
@@ -75,13 +71,4 @@ func OllamaCloudMaxTokensCap(provider *ExecutionProvider) int64 {
 	}
 	value, ok := provider.Record.Extra[ollama.MaxTokensCapExtraKey]
 	return ollama.MaxTokensCap(value, ok)
-}
-
-func ClampOllamaCloudMaxTokens(provider *ExecutionProvider, body []byte) []byte {
-	cap := OllamaCloudMaxTokensCap(provider)
-	out, clamped := ollama.ClampMaxTokens(body, cap)
-	if clamped && provider != nil {
-		logging.L().Debug("openai chat_completions raw: clamped max_tokens for ollama cloud provider", zap.Int64("provider_id", provider.Record.ID), zap.Int64("cap", cap))
-	}
-	return out
 }

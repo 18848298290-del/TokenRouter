@@ -52,7 +52,9 @@ func (s *Public) NormalizeCreativeModelSettingsForSave(ctx context.Context, inpu
 			}
 			queries[item.GroupID] = query
 		}
-		if route, ok := query.resolve(ctx, item.Model); ok {
+		if route, ok, err := query.resolve(ctx, item.Model, false); err != nil {
+			return nil, err
+		} else if ok {
 			item.Operations = intersectCreativeOperations(item.Operations, route.Operations)
 		}
 		if len(item.Operations) > 0 {

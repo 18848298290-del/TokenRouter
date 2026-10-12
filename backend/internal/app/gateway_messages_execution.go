@@ -49,6 +49,7 @@ func provideMessagesExecution(credentials *provider.MessageCredentialSource, fin
 	}
 	if readers != nil {
 		deps.Settings = readers.Gateway
+		deps.Attributes = readers.Attributes
 	}
 	if activity != nil {
 		deps.Enter = activity.Enter

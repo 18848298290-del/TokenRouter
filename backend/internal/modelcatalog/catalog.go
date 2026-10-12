@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"sort"
 	"strings"
@@ -47,15 +48,16 @@ type CostTier struct {
 
 // Entry 同时保存属性与报价，价格缺失不影响属性可见性。
 type Entry struct {
-	Model            string     `json:"model"`
-	Provider         string     `json:"provider"`
-	Canonical        string     `json:"canonical_model_id,omitempty"`
-	Source           string     `json:"source"`
-	Attributes       Attributes `json:"attributes"`
-	Cost             Cost       `json:"-"`
-	Tiers            []CostTier `json:"-"`
-	Fast             *Cost      `json:"-"`
-	FirstParty       bool       `json:"-"`
+	Model            string            `json:"model"`
+	Provider         string            `json:"provider"`
+	Canonical        string            `json:"canonical_model_id,omitempty"`
+	Source           string            `json:"source"`
+	Attributes       Attributes        `json:"attributes"`
+	AttributeSources map[string]string `json:"attribute_sources,omitempty"`
+	Cost             Cost              `json:"-"`
+	Tiers            []CostTier        `json:"-"`
+	Fast             *Cost             `json:"-"`
+	FirstParty       bool              `json:"-"`
 	originalEndpoint bool
 }
 
@@ -67,16 +69,19 @@ type Catalog struct {
 	Ambiguous map[string]bool
 	// attributeFallbacks 保存归属一致的公共模型属性，供属性查询回退使用。
 	attributeFallbacks map[string]Attributes
+	publicEntries      map[string]Entry
 }
 
 type sourceModel struct {
-	Name             string `json:"name"`
-	Canonical        string `json:"canonical_model_id"`
-	Reasoning        *bool  `json:"reasoning"`
-	ToolCall         *bool  `json:"tool_call"`
-	StructuredOutput *bool  `json:"structured_output"`
-	Temperature      *bool  `json:"temperature"`
-	Attachment       *bool  `json:"attachment"`
+	Name             string             `json:"name"`
+	Canonical        string             `json:"canonical_model_id"`
+	Reasoning        *bool              `json:"reasoning"`
+	ReasoningOptions *[]ReasoningOption `json:"reasoning_options"`
+	Interleaved      *Interleaved       `json:"interleaved"`
+	ToolCall         *bool              `json:"tool_call"`
+	StructuredOutput *bool              `json:"structured_output"`
+	Temperature      *bool              `json:"temperature"`
+	Attachment       *bool              `json:"attachment"`
 	Limit            struct {
 		Context int `json:"context"`
 		Input   int `json:"input"`
@@ -182,6 +187,7 @@ func Parse(body []byte) (*Catalog, error) {
 		}
 	}
 	publicAttributes := make(map[string]Attributes, len(source.Models))
+	catalog.publicEntries = make(map[string]Entry, len(source.Models))
 	// 模型资料可独立查询，报价按各供应商记录解析。
 	for id, model := range source.Models {
 		entry, err := model.entry(id, strings.SplitN(id, "/", 2)[0])
@@ -189,6 +195,7 @@ func Parse(body []byte) (*Catalog, error) {
 			return nil, err
 		}
 		publicAttributes[normalize(id)] = entry.Attributes
+		catalog.publicEntries[normalize(id)] = entry
 		if _, exists := catalog.Entries[normalize(id)]; !exists {
 			catalog.Entries[normalize(id)] = entry
 		}
@@ -274,6 +281,8 @@ func (m sourceModel) entry(id, provider string) (Entry, error) {
 		InputModalities:  m.Modalities.Input,
 		OutputModalities: m.Modalities.Output,
 		Reasoning:        m.Reasoning,
+		ReasoningOptions: m.ReasoningOptions,
+		Interleaved:      m.Interleaved,
 		ToolCall:         m.ToolCall,
 		StructuredOutput: m.StructuredOutput,
 		Temperature:      m.Temperature,
@@ -342,6 +351,7 @@ func (c *Catalog) Lookup(candidates []string) (Entry, bool) {
 	for _, candidate := range candidates {
 		if entry, ok := c.Entries[normalize(candidate)]; ok {
 			entry.Attributes = Merge(Attributes{}, entry.Attributes)
+			entry.AttributeSources = maps.Clone(entry.AttributeSources)
 			return entry, true
 		}
 	}
@@ -373,6 +383,7 @@ func (c *Catalog) Rows() []Entry {
 	for key, value := range c.Entries {
 		value.Model = key
 		value.Attributes = Merge(Attributes{}, value.Attributes)
+		value.AttributeSources = maps.Clone(value.AttributeSources)
 		rows = append(rows, value)
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Model < rows[j].Model })

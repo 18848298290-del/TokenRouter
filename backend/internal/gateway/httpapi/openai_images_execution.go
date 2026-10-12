@@ -74,6 +74,9 @@ func (s *OpenAIImagesExecutor) forwardOpenAIImagesAPIKey(
 	if err != nil {
 		return nil, err
 	}
+	if err := s.resolveModelAttributes(ctx, provider, upstreamModel); err != nil {
+		return nil, err
+	}
 	SetOpsUpstreamModel(c, upstreamModel)
 	logging.LegacyPrintf(
 		"service.openai_gateway",

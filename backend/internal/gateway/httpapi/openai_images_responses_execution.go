@@ -126,6 +126,9 @@ func (s *OpenAIImagesExecutor) forwardOpenAIImagesOAuth(
 	if err != nil {
 		return nil, err
 	}
+	if err := s.resolveModelAttributes(ctx, provider, upstreamModel); err != nil {
+		return nil, err
+	}
 	logging.LegacyPrintf(
 		"service.openai_gateway",
 		"[OpenAI] Images request routing request_model=%s upstream_model=%s endpoint=%s provider_type=%s uploads=%d",

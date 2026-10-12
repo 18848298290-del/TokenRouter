@@ -3,9 +3,11 @@ package creative
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
@@ -16,6 +18,10 @@ type ExecutionGroup struct {
 	ConfigureContext func(context.Context, string, string) context.Context
 }
 type Selection struct {
+	ResolveAttributes func(context.Context, string) (modelcatalog.Resolution, error)
+	attributes        *modelcatalog.Resolution
+	attributeContext  context.Context
+	configureContext  func(context.Context) context.Context
 	ProviderID        int64
 	Platform          string
 	Acquired, Waiting bool
@@ -25,6 +31,7 @@ type Selection struct {
 	Report            func(string, bool)
 }
 type Executor struct {
+	Attributes           *routing.ModelAttributeService
 	Group                func(context.Context, int64) (*ExecutionGroup, error)
 	OpenAI, Grok, Gemini func(context.Context, CreativeRun) (*Selection, error)
 	Timeout              time.Duration
@@ -44,6 +51,7 @@ func (e *Executor) Prepare(ctx context.Context, run CreativeRun) (*CreativeExecu
 	if e.Group == nil {
 		return nil, errors.New("creative group repository is not configured")
 	}
+	ctx = routing.WithModelAttributes(ctx, e.Attributes)
 	group, err := e.Group(ctx, run.GroupID)
 	if err != nil || group == nil {
 		return nil, CreativeNonRetryableError("creative group %d policy is unavailable", run.GroupID)
@@ -85,7 +93,25 @@ func (e *Executor) Prepare(ctx context.Context, run CreativeRun) (*CreativeExecu
 			continue
 		}
 		model := strings.TrimSpace(selection.ResolveModel(selectionCtx, groupModel))
-		if selection.Platform != platform || !CreativePlatformImageModel(selection.Platform, model) || !policy.allowsUpstream(model) {
+		imageModel := CreativePlatformImageModel(selection.Platform, model)
+		if selection.ResolveAttributes != nil {
+			resolved, resolveErr := selection.ResolveAttributes(selectionCtx, model)
+			if resolveErr != nil {
+				if selection.Release != nil {
+					selection.Release()
+				}
+				return nil, resolveErr
+			}
+			selection.attributes = &resolved
+			selection.attributeContext = routing.CopyModelAttributes(context.Background(), selectionCtx)
+			if resolved.Attributes.OutputModalities != nil {
+				imageModel = slices.Contains(*resolved.Attributes.OutputModalities, "image")
+			}
+		}
+		if group.ConfigureContext != nil {
+			selection.configureContext = func(ctx context.Context) context.Context { return group.ConfigureContext(ctx, platform, run.Operation) }
+		}
+		if selection.Platform != platform || !imageModel || !policy.allowsUpstream(model) {
 			if selection.Release != nil {
 				selection.Release()
 			}
@@ -118,6 +144,39 @@ func (t *preparedExecution) Execute(ctx context.Context, run CreativeRun, payloa
 		return nil, errors.New("creative execution upstream model is not configured")
 	}
 	run.RequestedOutputCount = 1
+	if t.selection.attributeContext != nil {
+		ctx = routing.CopyModelAttributes(ctx, t.selection.attributeContext)
+	}
+	if t.selection.configureContext != nil {
+		ctx = t.selection.configureContext(ctx)
+	}
+	if resolved := t.selection.attributes; resolved != nil {
+		if media := resolved.Attributes.Media; media != nil {
+			imageSize := payload.ImageSize
+			if imageSize == "" {
+				imageSize = run.ImageSize
+			}
+			if imageSize != "" && media.ImageSizes != nil && !slices.Contains(media.ImageSizes, imageSize) {
+				return nil, CreativeNonRetryableError("image size is not supported by the selected route")
+			}
+			if media.MaxReferenceImages != nil && len(payload.Sources) > *media.MaxReferenceImages {
+				return nil, CreativeNonRetryableError("reference image count exceeds the selected route limit")
+			}
+			for _, item := range []struct {
+				value   string
+				allowed []string
+			}{{payload.Quality, media.Qualities}, {payload.Background, media.BackgroundOptions}, {payload.AspectRatio, media.AspectRatios}} {
+				if item.value != "" && item.allowed != nil && !slices.Contains(item.allowed, item.value) {
+					return nil, CreativeNonRetryableError("image parameter is not supported by the selected route")
+				}
+			}
+		}
+		if payload.ThinkingLevel != "" {
+			if supported := resolved.Attributes.EffortSupport(payload.ThinkingLevel); supported != nil && !*supported {
+				return nil, CreativeNonRetryableError("reasoning effort is not supported by the selected route")
+			}
+		}
+	}
 	ctx, cancel := context.WithTimeout(ctx, t.timeout)
 	defer cancel()
 	s := t.selection

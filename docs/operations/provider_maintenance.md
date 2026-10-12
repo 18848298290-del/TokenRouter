@@ -124,7 +124,7 @@ Qoder、Gemini、Grok、Anthropic、Bedrock、OpenAI 和国产平台的测试目
 
 - Qoder 共用授权会话。
 - Gemini 有 API Key、AI Studio OAuth、Code Assist 和 Vertex 四条请求路径。
-- Anthropic 和 Bedrock 各自保留认证和签名区域。
+- Anthropic、Vertex 和 Bedrock 按最终服务型号读取统一目录的采样能力，再构造测试报文。认证与签名区域由各平台处理。
 - Grok 区分文字和图片端点，并使用同一套健康写入规则。
 - OpenAI 有 Responses、Chat、两种 Compact 和图片分支。
 - 国产平台按固定协议和自适应的探测顺序测试。

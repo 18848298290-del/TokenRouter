@@ -13,17 +13,19 @@ import (
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/provider/selection"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/provider"
+	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
 // provideCreativeExecutor 为创作台绑定任务用例和执行目标。
-func provideCreativeExecutor(cfg *config.Config, groups creativeprovider.ExecutionGroups, targets *gatewayprovider.CreativeTargets, generic *selection.Generic, choices *selection.Compatible) *creative.Executor {
+func provideCreativeExecutor(cfg *config.Config, groups creativeprovider.ExecutionGroups, targets *gatewayprovider.CreativeTargets, generic *selection.Generic, choices *selection.Compatible, attributes *routing.ModelAttributeService) *creative.Executor {
 	timeout := 5 * time.Minute
 	if cfg != nil && cfg.Creative.ExecuteTimeoutSeconds > 0 {
 		timeout = time.Duration(cfg.Creative.ExecuteTimeoutSeconds) * time.Second
 	}
-	out := &creative.Executor{Timeout: timeout}
+	out := &creative.Executor{Timeout: timeout, Attributes: attributes}
 	if groups != nil {
 		out.Group = func(ctx context.Context, id int64) (*creative.ExecutionGroup, error) {
 			group, err := groups.GetByIDLite(ctx, id)
@@ -45,6 +47,9 @@ func provideCreativeExecutor(cfg *config.Config, groups creativeprovider.Executi
 		}
 		value := result.Provider
 		selection := &creative.Selection{ProviderID: value.Record.ID, Platform: value.Record.Platform, Acquired: result.Acquired, Waiting: result.WaitPlan != nil, Release: result.ReleaseFunc}
+		selection.ResolveAttributes = func(ctx context.Context, model string) (modelcatalog.Resolution, error) {
+			return gatewayprovider.ResolveModelAttributes(ctx, value, model, attributes)
+		}
 		selection.ResolveModel = func(ctx context.Context, model string) string {
 			policy := gatewayprovider.ExecutionModelPolicy(value)
 			if !policy.Supports(ctx, model) {

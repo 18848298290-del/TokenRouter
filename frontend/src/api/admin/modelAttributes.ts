@@ -5,6 +5,24 @@ export interface AttributeRule {
   id?: string
   models: string[]
   attributes: ModelAttributes
+  match?: AttributeRouteMatch
+}
+
+export interface AttributeRouteMatch {
+  platform?: string
+  provider_type?: string
+  provider_mode?: string
+  site?: string
+  client_protocol?: string
+  upstream_protocol?: string
+}
+
+export interface ResolvedAttributes {
+  target: AttributeRouteMatch & { model: string; catalog_provider?: string; endpoint?: string }
+  attributes: ModelAttributes
+  sources: Record<string, string>
+  rules: Record<string, unknown>
+  version: string
 }
 
 export interface AttributeConfig {
@@ -39,6 +57,11 @@ const base = '/admin/model-attributes'
 
 // 默认查询和档案编辑分开，普通读取不触发目录更新。
 export const modelAttributesAPI = {
+  async preview(groupID: number, model: string, config?: AttributeConfig, clientProtocol?: string) {
+    return (await apiClient.post<{ routes: ResolvedAttributes[] }>(`${base}/preview`, {
+      group_id: groupID, model, config, client_protocol: clientProtocol,
+    })).data
+  },
   async list(params: Record<string, string | number>) {
     return (await apiClient.get<{ items: AttributeConfig[]; total: number }>(`${base}/configs`, { params })).data
   },

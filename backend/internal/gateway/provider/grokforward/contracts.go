@@ -7,6 +7,7 @@ import (
 	"time"
 
 	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
@@ -28,9 +29,10 @@ type Input struct {
 
 // Options 包含 Grok 编解码器、行长度上限和请求生命周期登记函数。
 type Options struct {
-	Codec       grok.BodyCodec
-	MaxLineSize int
-	Enter       func() (func(), error)
+	ResolveAttributes func(context.Context, string) (modelcatalog.Attributes, error)
+	Codec             grok.BodyCodec
+	MaxLineSize       int
+	Enter             func() (func(), error)
 }
 
 type (

@@ -389,6 +389,7 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 		}
 		attemptRecords := requestRecords.attempt()
 		hooks := &EntryHooks{
+			ContextForTurn:              func(turn int) context.Context { return attemptRecords.context(ctx, turn) },
 			TurnStarted:                 func(turn int, _ time.Time) { _ = attemptRecords.context(ctx, turn) },
 			ClientLifecycleContext:      clientLifecycleCtx,
 			InitialRequestModel:         reqModel,

@@ -10,6 +10,7 @@ import (
 	openaiexecution "github.com/TokenFlux/TokenRouter/internal/gateway/provider/openaiforward"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/tierpolicy"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
@@ -61,7 +62,13 @@ func (p *openAIRawChatAdapter) StripGrokCacheKey(b []byte) ([]byte, error) {
 }
 
 func (p *openAIRawChatAdapter) GrokEffort(b []byte, m string) ([]byte, error) {
-	return gatewayprovider.GrokBodyCodec().NormalizeGrokChatReasoningEffort(b, m)
+	result, err := gatewayprovider.ResolveModelAttributes(p.c.Request.Context(), p.provider, m, p.s.modelAttributes(), "openai_chat_completions")
+	if err != nil {
+		return nil, err
+	}
+	codec := gatewayprovider.GrokBodyCodec()
+	codec.Attributes = func(string) modelcatalog.Attributes { return result.Attributes }
+	return codec.NormalizeGrokChatReasoningEffort(b, m)
 }
 
 func (p *openAIRawChatAdapter) OllamaBody(b []byte) []byte {

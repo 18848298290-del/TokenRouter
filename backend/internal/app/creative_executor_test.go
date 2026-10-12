@@ -42,13 +42,13 @@ func TestCreativeExecutorNativeAssemblyPreservesPrepareReads(t *testing.T) {
 	groups := &creativeExecutionGroupProbe{}
 	cfg := &config.Config{}
 	cfg.Creative.ExecuteTimeoutSeconds = 17
-	executor := provideCreativeExecutor(cfg, groups, nil, nil, nil)
+	executor := provideCreativeExecutor(cfg, groups, nil, nil, nil, nil)
 	require.Zero(t, groups.reads)
 	require.Equal(t, 17*time.Second, executor.Timeout)
 	_, err := executor.Prepare(context.Background(), creative.CreativeRun{GroupID: 12, Model: "gemini-3.1-flash-image", Operation: creative.CreativeOperationGenerate})
 	require.ErrorContains(t, err, "no compatible creative provider available")
 	require.Equal(t, 1, groups.reads, "一次读取完整策略用于全部候选")
-	require.Equal(t, 5*time.Minute, provideCreativeExecutor(nil, nil, nil, nil, nil).Timeout)
+	require.Equal(t, 5*time.Minute, provideCreativeExecutor(nil, nil, nil, nil, nil, nil).Timeout)
 }
 
 func (s creativePolicyGroups) GetByID(context.Context, int64) (*routing.Group, error) {
@@ -91,7 +91,7 @@ func TestCreativeExecutorForwardsModelAllowedByGroupScheduler(t *testing.T) {
 	choices := selection.NewCompatible(selection.CompatibleDependencies{
 		Reads: selection.Reads{Providers: providers, Groups: groups}, Shared: selection.Shared{GroupPolicies: policies},
 	}, selection.DefaultOptions())
-	executor := provideCreativeExecutor(nil, groups, &gatewayprovider.CreativeTargets{}, nil, choices)
+	executor := provideCreativeExecutor(nil, groups, &gatewayprovider.CreativeTargets{}, nil, choices, nil)
 	run := creative.CreativeRun{GroupID: group.ID, Model: "gpt-image-1", Operation: creative.CreativeOperationGenerate, ImageSize: "1K"}
 	prepared, err := executor.Prepare(ctx, run)
 	require.NoError(t, err)
@@ -118,7 +118,7 @@ func TestCreativeExecutorKeepsPersistedGroupWhenClientRestricted(t *testing.T) {
 		ID: 12, Status: "active", ClaudeCodeOnly: true, FallbackGroupID: &fallback,
 		AllowedProtocols: []capability.ProtocolID{capability.ProtocolImagesGenerations},
 	}
-	executor := provideCreativeExecutor(nil, creativePolicyGroups{group}, nil, nil, nil)
+	executor := provideCreativeExecutor(nil, creativePolicyGroups{group}, nil, nil, nil, nil)
 	selected := false
 	executor.OpenAI = func(context.Context, creative.CreativeRun) (*creative.Selection, error) {
 		selected = true

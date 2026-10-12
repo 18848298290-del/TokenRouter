@@ -123,7 +123,7 @@ func TestGeminiV1BetaCustomListCannotInventProviders(t *testing.T) {
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodGet, "/v1beta/models", nil)
 	c.Set(string(keyhttp.ContextKeyAPIKey), &apikey.APIKey{Group: &routing.Group{ID: 42, AllowedProtocols: []protocol.ProtocolID{protocol.ProtocolGeminiGenerateContent}, ModelsListConfig: routing.GroupModelsListConfig{Enabled: true, Models: []string{"gemini-2.5-pro"}}}})
-	provideModelsHTTP(nil, nil, nil, nil, nil).GeminiV1BetaListModels(c)
+	provideModelsHTTP(nil, nil, nil, nil, nil, nil).GeminiV1BetaListModels(c)
 	require.Equal(t, 200, rec.Code)
 	require.JSONEq(t, `{"models":[]}`, rec.Body.String())
 }
@@ -250,7 +250,7 @@ func newGatewayModelsHandlerWithPricingConfigForTest(repo modelHTTPProviderRows,
 		pricingConfigPort = modelConfigs
 	}
 	catalogue := &routing.RequestableCatalogue{Read: read, Resolver: routing.RequestableResolver{GroupPolicies: pricingConfigPort, Warn: slog.Warn}, Warn: slog.Warn}
-	return modelsHTTP(gatewayModelCatalogFixture(), catalogue, nil, nil, nil)
+	return modelsHTTP(gatewayModelCatalogFixture(), catalogue, nil, nil, nil, &routing.ModelAttributeService{Catalog: routing.ModelAttributeCatalog{View: catalogtest.OfflineView}})
 }
 
 // newGatewayModelsPricingConfigServiceForTest 构造模型接口测试使用的模型配置服务。
@@ -313,7 +313,7 @@ func TestAntigravityModelsWithoutCatalogueReturnsEmpty(t *testing.T) {
 		"missing":            "not-requestable",
 	}})
 
-	provideModelsHTTP(nil, nil, nil, nil, nil).AntigravityModels(c)
+	provideModelsHTTP(nil, nil, nil, nil, nil, nil).AntigravityModels(c)
 
 	require.Equal(t, http.StatusOK, recorder.Code)
 	var got gatewayModelsResponseForTest

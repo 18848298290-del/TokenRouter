@@ -12,11 +12,13 @@ import (
 )
 
 // provideModelAttributes 为管理和展示接口提供模型属性服务。
-func provideModelAttributes(repo *postgres.ModelAttributeStore, catalog *provider.Service, invalidator apikey.APIKeyAuthCacheInvalidator) *routing.ModelAttributeService {
+func provideModelAttributes(repo *postgres.ModelAttributeStore, catalog *provider.Service, invalidator apikey.APIKeyAuthCacheInvalidator, catalogue *routing.RequestableCatalogue) *routing.ModelAttributeService {
 	return &routing.ModelAttributeService{
 		Repo:        repo,
 		Invalidator: invalidator,
+		Catalogue:   catalogue,
 		Catalog: routing.ModelAttributeCatalog{
+			View:       catalog.CapabilityView,
 			Lookup:     catalog.ModelAttributes,
 			Update:     catalog.ForceUpdate,
 			Candidates: modelidentity.CandidatesFactory,

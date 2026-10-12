@@ -12,6 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient"
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient/tlsfingerprint"
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
+	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
@@ -20,6 +21,7 @@ import (
 // @project-doc docs/interfaces/grok_upstream.md#grok_account_contract
 // GrokExecutor 绑定单次平台执行的固定依赖，提供商切换和完成处理由请求拥有者负责。
 type GrokExecutor struct {
+	Attributes  *routing.ModelAttributeService
 	FastPolicy  *gatewayadapter.ExecutionFastPolicy
 	Credentials *gatewayadapter.RequestCredentials
 	Transport   httpclient.UpstreamTransport

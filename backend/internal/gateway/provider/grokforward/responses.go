@@ -9,6 +9,7 @@ import (
 	"time"
 
 	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
@@ -24,6 +25,18 @@ func Forward(ctx context.Context, p Ports, o Options, in Input) (*forwardcore.Op
 	}
 	billingModel := p.BillingModel(originalModel)
 	upstreamModel := p.UpstreamModel(billingModel)
+	if o.ResolveAttributes != nil {
+		attributes, err := o.ResolveAttributes(ctx, upstreamModel)
+		if err != nil {
+			return nil, err
+		}
+		o.Codec.Attributes = func(model string) modelcatalog.Attributes {
+			if model == upstreamModel {
+				return attributes
+			}
+			return modelcatalog.Attributes{}
+		}
+	}
 	if p.ImageModel(upstreamModel) {
 		err := fmt.Errorf("model %s is an image model and is not available on the Responses endpoint; use /v1/images/generations instead", upstreamModel)
 		// 这是客户端点选择错误，直接返回 400，避免 handler 将普通错误改写为通用 502。

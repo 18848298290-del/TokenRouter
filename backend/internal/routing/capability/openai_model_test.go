@@ -18,7 +18,7 @@ func TestNormalizeOpenAIReasoningEffortForGPT56(t *testing.T) {
 		{name: "Luna 后缀保留 max", raw: "max", model: "gpt-5.6-luna-2026-07-09", want: "max"},
 		{name: "DeepSeek V4 保留 max", raw: "max", model: "deepseek-v4-pro", want: "max"},
 		{name: "GLM 保留 max", raw: "max", model: "glm-5.2", want: "max"},
-		{name: "旧模型拒绝 max 档位", raw: "max", model: "gpt-5.5", want: ""},
+		{name: "记录已发送档位不推断模型能力", raw: "max", model: "gpt-5.5", want: "max"},
 	}
 
 	for _, tt := range tests {

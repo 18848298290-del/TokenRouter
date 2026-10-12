@@ -69,6 +69,7 @@ type Output interface {
 
 // Gemini 包含凭据、传输和错误观测依赖。
 type Gemini struct {
+	Attributes   *routing.ModelAttributeService
 	Options      Options
 	Tokens       *provider.GeminiTokenSource
 	Health       *provideradapter.UpstreamHealth
@@ -80,16 +81,17 @@ type Gemini struct {
 
 // Antigravity 使用应用已有的健康与重试实例，每次调用独立构造平台输入。
 type Antigravity struct {
-	Options   Options
-	Tokens    *provider.AntigravityTokenSource
-	Retry     *provideradapter.AntigravityRetry
-	Errors    *provideradapter.AntigravityErrorObserver
-	Store     gatewayadapter.ExecutionProviderStore
-	Transport httpclient.UpstreamTransport
-	Gateway   *gateway.RuntimeSettings
-	Routing   *routing.RuntimeSettings
-	Sticky    session.GatewayCache
-	Enter     func() (func(), error)
+	Attributes *routing.ModelAttributeService
+	Options    Options
+	Tokens     *provider.AntigravityTokenSource
+	Retry      *provideradapter.AntigravityRetry
+	Errors     *provideradapter.AntigravityErrorObserver
+	Store      gatewayadapter.ExecutionProviderStore
+	Transport  httpclient.UpstreamTransport
+	Gateway    *gateway.RuntimeSettings
+	Routing    *routing.RuntimeSettings
+	Sticky     session.GatewayCache
+	Enter      func() (func(), error)
 }
 
 // attempt 的图片计数与工具映射只属于一次平台调用，切换提供商时重新创建。

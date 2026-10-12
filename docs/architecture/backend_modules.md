@@ -193,7 +193,7 @@ backend/
 │   │   ├── openai/                                      Responses、Chat、媒体、WS、Codex 与用量报文
 │   │   ├── systemone/                                   SystemOne 请求、答案与用量的纯校验
 │   │   └── wirejson/                                    保持报文结构的 JSON 读取与修改
-│   ├── modelcatalog/                                    models.dev 目录、内嵌官方补充、供应商身份索引及展示属性值
+│   ├── modelcatalog/                                    models.dev 目录、内嵌官方补充、供应商身份索引、路线能力解析与平台执行规则
 │   │   └── provider/                                   统一目录加载、条件同步、内嵌与自定义补充、价格和属性原子快照
 │   ├── routing/                                         分组、价格配置、模型目录和请求路线
 │   │   ├── accessview/                                  分组访问、能力、模型和调度配置的只读视图

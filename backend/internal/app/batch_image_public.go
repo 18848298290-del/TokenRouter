@@ -13,19 +13,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/completion"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/modeltrace"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
-	catalogprovider "github.com/TokenFlux/TokenRouter/internal/modelcatalog/provider"
 	providerpostgres "github.com/TokenFlux/TokenRouter/internal/provider/postgres"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
 // provideBatchPublic 装配批量图片提交用例，共享任务、提供商、资金和模型配置读取实例。
-func provideBatchPublic(catalog *catalogprovider.Service, repo batchimage.BatchImageRepository, providers *providerpostgres.ProviderStore, modelConfigs *routing.PricingConfigService, groups routing.GroupRepository, rates billing.UserGroupRateRepository, queue batchimage.BatchImageQueue, pricing *batchimage.Pricing, funds *billing.Funds, subscriptions *billingpostgres.SettlementStore, auth apikey.APIKeyAuthCacheInvalidator, cfg *config.Config, registry *batchimage.Registry[batchprovider.BatchImageProvider]) *batchimage.Public {
+func provideBatchPublic(attributes *routing.ModelAttributeService, repo batchimage.BatchImageRepository, providers *providerpostgres.ProviderStore, modelConfigs *routing.PricingConfigService, groups routing.GroupRepository, rates billing.UserGroupRateRepository, queue batchimage.BatchImageQueue, pricing *batchimage.Pricing, funds *billing.Funds, subscriptions *billingpostgres.SettlementStore, auth apikey.APIKeyAuthCacheInvalidator, cfg *config.Config, registry *batchimage.Registry[batchprovider.BatchImageProvider]) *batchimage.Public {
 	core := &batchimage.Public{
-		ModelOutputModalities: func(model string) *[]string {
-			return catalog.ModelEntry(model).Attributes.OutputModalities
-		},
-		Now:  time.Now,
-		Repo: repo,
+		Attributes: attributes,
+		Now:        time.Now,
+		Repo:       repo,
 		ProviderRepo: &batchprovider.Candidates{
 			Source:       providers,
 			Registry:     registry,

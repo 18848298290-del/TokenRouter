@@ -147,6 +147,9 @@ func (h *QoderChatHandler) fail(c *gin.Context, err error, stream bool) {
 }
 
 func (h *QoderChatHandler) writeError(c *gin.Context, f *HTTPFailure, stream bool) {
+	copy := *f
+	f = &copy
+	f.Status, f.Message = modelAttributeError(c, f.Status, f.Message)
 	if f.RetryAfter > 0 {
 		c.Header("Retry-After", strconv.Itoa(f.RetryAfter))
 	}

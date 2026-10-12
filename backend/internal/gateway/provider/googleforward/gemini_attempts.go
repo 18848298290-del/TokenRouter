@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tidwall/sjson"
+
 	"github.com/TokenFlux/TokenRouter/internal/egress"
 	egressadapter "github.com/TokenFlux/TokenRouter/internal/egress/provider"
 	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
@@ -102,6 +104,14 @@ func (s *Gemini) Forward(ctx context.Context, output Output, provider *gatewaypr
 	if err != nil {
 		return nil, c.ClaudeError(http.StatusBadRequest, "invalid_request_error", err.Error())
 	}
+	attributes, err := gatewayprovider.ResolveModelAttributes(ctx, provider, mappedModel, s.Attributes, "gemini_generate_content")
+	if err != nil {
+		return nil, err
+	}
+	geminiReq, err = applyGeminiModelParameters(geminiReq, body, attributes, true)
+	if err != nil {
+		return nil, c.ClaudeError(http.StatusBadRequest, "invalid_request_error", err.Error())
+	}
 	geminiReq = ensureGeminiFunctionCallThoughtSignatures(geminiReq)
 	originalClaudeBody := body
 
@@ -134,6 +144,17 @@ func (s *Gemini) Forward(ctx context.Context, output Output, provider *gatewaypr
 	options.FilterThinking = func() []byte { return gatewayprovider.FilterThinkingBlocksForRetry(originalClaudeBody, originalModel) }
 	options.FilterTools = func() []byte {
 		return gatewayprovider.FilterSignatureSensitiveBlocksForRetry(originalClaudeBody, originalModel)
+	}
+	options.ConvertRetry = func(stripped []byte) ([]byte, error) {
+		converted, err := convertClaudeMessagesToGeminiGenerateContent(stripped)
+		if err != nil {
+			return nil, err
+		}
+		converted, err = applyGeminiModelParameters(converted, stripped, attributes, false)
+		if err == nil && attributes.Attributes.HasReasoningOption("toggle") {
+			converted, err = sjson.SetBytes(converted, "generationConfig.thinkingConfig", bridge.GeminiThinkingConfig{BudgetSet: true})
+		}
+		return converted, err
 	}
 	options.ReplaceBody = func(value []byte) { geminiReq = value }
 	var requestID string
@@ -314,6 +335,14 @@ func (s *Gemini) ForwardNative(ctx context.Context, output Output, provider *gat
 
 	// 分组映射后的模型进入提供商后统一解析为最终上游模型，不按凭据类型跳过。
 	mappedModel := providercore.ResolveForwardMappedModel(gatewayprovider.ExecutionRecord(provider), originalModel, provideradapter.ModelDefaults())
+	attributes, err := gatewayprovider.ResolveModelAttributes(ctx, provider, mappedModel, s.Attributes, "gemini_generate_content")
+	if err != nil {
+		return nil, err
+	}
+	body, err = applyGeminiModelParameters(body, body, attributes, false)
+	if err != nil {
+		return nil, err
+	}
 
 	proxyURL := ""
 	if provider.Record.ProxyID != nil && provider.Record.Proxy != nil {

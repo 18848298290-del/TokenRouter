@@ -79,6 +79,7 @@ type EntryCyberSnapshot struct {
 
 // EntryHooks 在 turn 生命周期中接收入口回调。
 type EntryHooks struct {
+	ContextForTurn              func(int) context.Context
 	ClientLifecycleContext      context.Context
 	InitialRequestModel         string
 	InitialTurnStartedAt        time.Time

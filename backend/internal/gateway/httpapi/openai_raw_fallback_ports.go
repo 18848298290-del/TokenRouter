@@ -8,7 +8,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	protocolforward "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	openaiexecution "github.com/TokenFlux/TokenRouter/internal/gateway/provider/openaiforward"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
@@ -43,8 +42,8 @@ func (p *openAIRawFallbackAdapter) ThinkingFallback(e *string, b []byte, m strin
 	return gatewayprovider.ApplyThinkingEnabledFallback(e, b, m)
 }
 
-func (p *openAIRawFallbackAdapter) NormalizeGLM(b []byte, m string) ([]byte, bool) {
-	return gatewayprovider.NormalizeGLMOpenAIReasoningEffort(b, m)
+func (p *openAIRawFallbackAdapter) PrepareModel(ctx context.Context, body []byte) ([]byte, error) {
+	return p.s.Requests.applyModelAttributes(ctx, p.provider, body, "openai_chat_completions")
 }
 
 func (p *openAIRawFallbackAdapter) FastFallback(ctx context.Context, m string, b []byte) ([]byte, error) {
@@ -95,5 +94,9 @@ func (p *openAIRawFallbackAdapter) RawOptions(r *http.Response, billing, model s
 }
 
 func (p *openAIRawFallbackAdapter) AnthropicToChat(r *protocolanthropic.AnthropicRequest) (*protocolopenai.ChatCompletionsRequest, error) {
-	return protocolbridge.AnthropicToChatCompletionsRequest(r, protocolforward.ConversionOptionsForModel(r.Model))
+	result, err := p.modelResolution(r.Model, r, "openai_chat_completions")
+	if err != nil {
+		return nil, err
+	}
+	return protocolbridge.AnthropicToChatCompletionsRequest(r, gatewayprovider.ModelConversionOptions(result))
 }

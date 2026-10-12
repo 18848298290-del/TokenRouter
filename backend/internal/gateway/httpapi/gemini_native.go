@@ -74,6 +74,7 @@ func NewGeminiNativeHandler(options GeminiNativeOptions, backend GeminiNativeBac
 
 // WriteGoogleError 写出 Google 格式的 JSON 错误。
 func WriteGoogleError(c *gin.Context, status int, message string) {
+	status, message = modelAttributeError(c, status, message)
 	c.JSON(status, gin.H{"error": gin.H{"code": status, "message": message, "status": HTTPStatusToGoogleStatus(status)}})
 }
 

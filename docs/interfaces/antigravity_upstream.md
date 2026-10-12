@@ -64,7 +64,9 @@ Chat Completions / Responses
 
 每次 failover attempt 都从原始请求重新转换，并刷新工具名的回程映射。流开始之后，遵守共同的"不再切换"规则。Gemini v1beta 专用入口保持 Google 的错误和流格式，不经过 OpenAI 的 envelope。
 
-兼容层把 Chat 请求里正数的 `max_completion_tokens`（没有时用 `max_tokens`），在转换成 Anthropic 请求之前封顶为 64000；零、负数或没填时，使用转换器已有的默认上限。这样客户端传来的超大参数不会被上游拒绝。
+Chat 的输出转换上限为 64000。Messages 的 Claude 路线为 64000，其他模型为 65000，并取目录更小值。Gemini 直通入口读取其本身的能力。管理员覆盖与路线条件通过[统一解析器](model_catalog_and_marketplace.md#model_attributes)生效。
+
+转换器根据已解析的预算或档位集合发送 thinking 控制。已登记 Opus 4.6/4.7/4.8 的 adaptive 编码使用 24576 预算；客户端给出的 effort 单独转换。签名恢复时清除恢复阶段禁用的 thinking 控制，预算恢复使用修正后的预算。
 
 ## 跨平台分组选号
 

@@ -34,6 +34,7 @@ type RouteAccess struct {
 
 // RouteMiddleware 在 app 一次装配，路由不构造认证、配置或观测服务。
 type RouteMiddleware struct {
+	ModelAttributes                                                                                                gin.HandlerFunc
 	ClientGroupFallback                                                                                            ClientGroupFallbackResolver
 	APIKeyAuth, GoogleAPIKeyAuth, BodyLimit, TextBodyLimit, ClientRequestID, OpsErrorLogger, EndpointNormalization gin.HandlerFunc
 	RequireGroupAnthropic, RequireGroupGoogle, ForceAntigravity                                                    gin.HandlerFunc

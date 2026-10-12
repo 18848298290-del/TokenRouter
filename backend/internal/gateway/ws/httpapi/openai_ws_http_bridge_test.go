@@ -117,7 +117,7 @@ func TestPrepareOpenAIWSHTTPBridgeBodyStripsWSFields(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestPrepareOpenAIWSHTTPBridgeBodyStripsNoneReasoningForCompatibleEndpoint(t *testing.T) {
+func TestPrepareOpenAIWSHTTPBridgeBodyPreservesUnknownModelReasoning(t *testing.T) {
 	payload := []byte(`{"type":"response.create","model":"company-coding-model","reasoning":{"effort":"none"},"input":"hi"}`)
 	compatible := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey, Credentials: map[string]any{
 		"base_url": "https://compat.example/v1",
@@ -125,8 +125,7 @@ func TestPrepareOpenAIWSHTTPBridgeBodyStripsNoneReasoningForCompatibleEndpoint(t
 
 	body, err := prepareOpenAIWSHTTPBridgeBody(compatible, payload)
 	require.NoError(t, err)
-	require.False(t, gjson.GetBytes(body, "reasoning.effort").Exists())
-	require.False(t, gjson.GetBytes(body, "reasoning").Exists())
+	require.Equal(t, "none", gjson.GetBytes(body, "reasoning.effort").String())
 
 	officialBody, err := prepareOpenAIWSHTTPBridgeBody(&gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey}}, payload)
 	require.NoError(t, err)

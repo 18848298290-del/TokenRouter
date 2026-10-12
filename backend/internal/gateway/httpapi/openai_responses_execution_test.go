@@ -121,7 +121,7 @@ func TestAdaptiveProtocolRoutesKimiResponsesToNativeResponses(t *testing.T) {
 	require.Equal(t, "http://responses.example/v1/responses", upstream.lastReq.URL.String())
 	require.True(t, gjson.GetBytes(upstream.lastBody, "input").Exists())
 	require.False(t, gjson.GetBytes(upstream.lastBody, "messages").Exists())
-	require.False(t, gjson.GetBytes(upstream.lastBody, "reasoning").Exists())
+	require.Equal(t, "none", gjson.GetBytes(upstream.lastBody, "reasoning.effort").String())
 	require.False(t, gjson.GetBytes(upstream.lastBody, "store").Bool())
 	require.False(t, gjson.GetBytes(upstream.lastBody, "previous_response_id").Exists())
 }
@@ -2640,13 +2640,13 @@ func TestOpenAIGatewayService_Forward_CodexSparkRejectsEscapedInputImage(t *test
 	provider := &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
 			LoadLocation: time.LoadLocation, ID: 5,
-			Name:        "openai-apikey",
+			Name:        "openai-oauth",
 			Platform:    capability.PlatformOpenAI,
-			Type:        capability.ProviderTypeAPIKey,
+			Type:        capability.ProviderTypeOAuth,
 			Concurrency: 1,
 			Credentials: map[string]any{
-				"api_key":  "sk-test",
-				"base_url": "https://example.com",
+				"access_token": "test-token",
+				"base_url":     "https://example.com",
 			},
 			Extra: map[string]any{"use_responses_api": true},
 		},
@@ -2750,7 +2750,7 @@ func TestOpenAIGatewayService_Forward_HTTPPreservesPreviousResponseIDForAPIKey(t
 	}
 }
 
-func TestOpenAIGatewayService_Forward_StripsImageGenerationToolForSparkAPIKey(t *testing.T) {
+func TestOpenAIGatewayService_Forward_CustomSparkAPIKeyPreservesImageTool(t *testing.T) {
 	upstream := &auxiliaryHTTPRecorder{
 		resp: &http.Response{
 			StatusCode: http.StatusOK,
@@ -2778,7 +2778,7 @@ func TestOpenAIGatewayService_Forward_StripsImageGenerationToolForSparkAPIKey(t 
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/openai/v1/responses", nil)
-	// 开启图片生成使工具通过规范化，再检查 Spark 是否剥离该工具。
+	// 自定义 API Key 服务不使用 Codex OAuth 的 Spark 工具限制。
 	c.Set("api_key", &apikey.APIKey{Group: &routing.Group{AllowImageGeneration: true}})
 	SetOpenAIClientTransport(c, OpenAIClientTransportHTTP)
 
@@ -2787,7 +2787,7 @@ func TestOpenAIGatewayService_Forward_StripsImageGenerationToolForSparkAPIKey(t 
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.NotNil(t, upstream.lastReq)
-	require.False(t, gjson.GetBytes(upstream.lastBody, `tools.#(type=="image_generation")`).Exists())
+	require.True(t, gjson.GetBytes(upstream.lastBody, `tools.#(type=="image_generation")`).Exists())
 	require.True(t, gjson.GetBytes(upstream.lastBody, `tools.#(type=="function")`).Exists())
 }
 

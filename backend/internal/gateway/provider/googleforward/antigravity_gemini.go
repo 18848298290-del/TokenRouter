@@ -6,9 +6,16 @@ import (
 
 	forwardcore "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
+	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
+	"github.com/TokenFlux/TokenRouter/internal/protocol"
+	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
 func (s *Antigravity) ForwardGemini(ctx context.Context, output Output, provider *gatewayprovider.ExecutionProvider, originalModel string, action string, stream bool, body []byte, isStickySession bool, options ...forwardcore.GeminiSessionOption) (*forwardcore.MessagesResult, error) {
+	ctx = requeststate.WithClientProtocol(ctx, protocol.ProtocolGeminiGenerateContent)
+	if routing.ModelAttributesFromContext(ctx) == nil {
+		ctx = routing.WithModelAttributes(ctx, s.Attributes)
+	}
 	c := &attempt{Output: output}
 
 	start := time.Now()

@@ -11,6 +11,7 @@ import (
 	protocolforward "github.com/TokenFlux/TokenRouter/internal/gateway/forward"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
@@ -28,6 +29,11 @@ const (
 	antigravityCompatChatCompletions antigravityCompatProtocol = iota
 	antigravityCompatResponses
 )
+
+type antigravityModelAttributes struct {
+	Resolution *modelcatalog.Resolution
+	Controls   []byte
+}
 
 type antigravityCompatProtocol uint8
 
@@ -61,6 +67,7 @@ func (s *Antigravity) ForwardAsChatCompletions(
 	body []byte,
 	_ *requeststate.ParsedRequest,
 ) (*protocolforward.MessagesResult, error) {
+	ctx = requeststate.WithClientProtocol(ctx, protocol.ProtocolOpenAIChatCompletions)
 	c := &attempt{Output: output}
 
 	if err := s.validateAntigravityCompatProvider(c, provider); err != nil {
@@ -118,6 +125,7 @@ func (s *Antigravity) ForwardAsResponses(
 	body []byte,
 	_ *requeststate.ParsedRequest,
 ) (*protocolforward.MessagesResult, error) {
+	ctx = requeststate.WithClientProtocol(ctx, protocol.ProtocolOpenAIResponses)
 	c := &attempt{Output: output}
 
 	if err := s.validateAntigravityCompatProvider(c, provider); err != nil {
@@ -322,7 +330,11 @@ func (s *Antigravity) prepareAntigravityCompatCall(
 		_ = c.AntigravityCompatError(http.StatusBadRequest, "invalid_request_error", err.Error())
 		return nil, err
 	}
-	geminiBody, err := s.buildAntigravityCompatGeminiBody(modelCtx, request.claudeBody, &claudeRequest, projectID, mappedModel)
+	attributes, attributesErr := gatewayprovider.ResolveModelAttributes(modelCtx, provider, mappedModel, s.Attributes, "gemini_generate_content")
+	if attributesErr != nil {
+		return nil, attributesErr
+	}
+	geminiBody, err := s.buildAntigravityCompatGeminiBody(modelCtx, request.claudeBody, &claudeRequest, projectID, mappedModel, antigravityModelAttributes{Resolution: &attributes, Controls: request.originalBody})
 	if err != nil {
 		return nil, c.AntigravityCompatError(http.StatusBadRequest, "invalid_request_error", "Invalid request")
 	}
@@ -351,7 +363,17 @@ func (s *Antigravity) buildAntigravityCompatGeminiBody(
 	claudeRequest *protocolanthropic.ClaudeRequest,
 	projectID string,
 	mappedModel string,
+	inputs ...antigravityModelAttributes,
 ) ([]byte, error) {
+	var resolved *modelcatalog.Resolution
+	controls := claudeBody
+	if len(inputs) > 0 {
+		resolved = inputs[0].Resolution
+		if inputs[0].Controls != nil {
+			controls = inputs[0].Controls
+		}
+	}
+
 	if strings.HasPrefix(strings.ToLower(mappedModel), "gemini-") {
 		body, err := convertClaudeMessagesToGeminiGenerateContent(claudeBody)
 		if err != nil {
@@ -369,10 +391,26 @@ func (s *Antigravity) buildAntigravityCompatGeminiBody(
 		if cleaned, cleanErr := antigravity.CleanGeminiRequest(body); cleanErr == nil {
 			body = cleaned
 		}
+		if resolved != nil {
+			body, err = applyGeminiModelParameters(body, controls, *resolved, true)
+			if err != nil {
+				return nil, err
+			}
+		}
+
 		return antigravity.WrapV1InternalRequest(projectID, mappedModel, body)
 	}
 
 	options := s.getClaudeTransformOptions(ctx)
+	if resolved != nil {
+		options.Capabilities = resolved
+		var err error
+		options.Thinking, err = gatewayprovider.GeminiThinking(*resolved, controls)
+		if err != nil {
+			return nil, err
+		}
+		options.ThinkingResolved = true
+	}
 	options.EnableIdentityPatch = true
 	return antigravity.TransformClaudeToGeminiWithOptions(claudeRequest, projectID, mappedModel, options)
 }

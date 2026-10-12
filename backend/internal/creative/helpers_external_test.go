@@ -20,6 +20,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/moderation"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/querycache"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
@@ -324,7 +325,7 @@ func newCreativePublicFixture(repo creative.CreativeRunRepository, keys creative
 		results.InvalidateAuth = auth.InvalidateAuthCacheByUserID
 	}
 	bindCreativeUsageFixture(results, logs)
-	core := &creative.Public{Repo: repo, UserGroupRateRepo: rates, Queue: queue, TransientStore: transient, Results: results, Settings: settings, UserNotFound: identity.ErrUserNotFound, Observe: creativeLegacyObserve, ImageUnitPrice: creativePriceFixture(calculator, resolver)}
+	core := &creative.Public{Attributes: &routing.ModelAttributeService{Catalog: routing.ModelAttributeCatalog{View: testkit.OfflineView}}, Repo: repo, UserGroupRateRepo: rates, Queue: queue, TransientStore: transient, Results: results, Settings: settings, UserNotFound: identity.ErrUserNotFound, Observe: creativeLegacyObserve, ImageUnitPrice: creativePriceFixture(calculator, resolver)}
 	if users != nil {
 		core.UserRepo = creativeUserReader{users}
 	}

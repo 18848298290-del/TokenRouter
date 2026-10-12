@@ -23,6 +23,7 @@ import (
 // Dependencies 包含请求准备和执行共用的凭据、传输和策略依赖。
 // Prepare 与执行共用这些实例，动态设置在请求处理中读取。
 type Dependencies struct {
+	Attributes    *routing.ModelAttributeService
 	Credentials   *provider.MessageCredentialSource
 	Fingerprint   *anthropic.RequestFingerprint
 	Transport     httpclient.UpstreamTransport

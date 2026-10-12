@@ -19,6 +19,14 @@ import (
 
 // buildRequest 根据已选提供商类型调用请求构造器。
 func (r *Runtime) buildRequest(ctx context.Context, output HTTPBoundary, state *AttemptState, target *gatewayadapter.ExecutionProvider, body []byte, token, tokenType, model string, stream, mimic bool) (*http.Request, []byte, error) {
+	attributes, err := gatewayadapter.ResolveModelAttributes(ctx, target, model, r.dependencies.Attributes, "anthropic_messages")
+	if err != nil {
+		return nil, nil, err
+	}
+	body, err = gatewayadapter.ApplyModelAttributeParameters(body, attributes)
+	if err != nil {
+		return nil, nil, err
+	}
 	if target.Record.Platform == capability.PlatformAnthropic && target.Record.Type == capability.ProviderTypeServiceAccount {
 		body = anthropic.StripDeferredToolCacheControl(body)
 		request, err := r.buildVertexRequest(ctx, output, target, body, token, model, stream)
@@ -64,6 +72,14 @@ func (r *Runtime) buildVertexRequest(ctx context.Context, output HTTPBoundary, t
 
 func (r *Runtime) buildPassthroughRequest(ctx context.Context, output HTTPBoundary, state *AttemptState, target *gatewayadapter.ExecutionProvider, body []byte, token string) (*http.Request, []byte, error) {
 	model := strings.TrimSpace(gjson.GetBytes(body, "model").String())
+	attributes, err := gatewayadapter.ResolveModelAttributes(ctx, target, model, r.dependencies.Attributes, "anthropic_messages")
+	if err != nil {
+		return nil, nil, err
+	}
+	body, err = gatewayadapter.ApplyModelAttributeParameters(body, attributes)
+	if err != nil {
+		return nil, nil, err
+	}
 	options := r.requestOptions(ctx, output, state, target, model, "apikey", false)
 	options.URL = func() (string, error) {
 		if base := target.View().GetBaseURL(); base != "" {

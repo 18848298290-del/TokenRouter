@@ -22,6 +22,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 	openaicore "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
+	"github.com/TokenFlux/TokenRouter/internal/routing"
 	upstreamcore "github.com/TokenFlux/TokenRouter/internal/upstream"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 	openaiwsv2 "github.com/TokenFlux/TokenRouter/internal/upstream/openai/ws/relay"
@@ -40,6 +41,17 @@ type wsPassthroughAdapter struct {
 	headers  http.Header
 	wsURL    string
 	proxyURL string
+}
+
+func (p *wsPassthroughAdapter) ModelAttributes(ctx context.Context, turn int, model string, body []byte) ([]byte, error) {
+	if p.hooks != nil && p.hooks.ContextForTurn != nil {
+		ctx = p.hooks.ContextForTurn(turn)
+	}
+	var service *routing.ModelAttributeService
+	if p.service.Requests != nil && p.service.Requests.Readers != nil {
+		service = p.service.Requests.Readers.Attributes
+	}
+	return gatewayprovider.PrepareModelAttributeParameters(ctx, p.provider, model, body, service)
 }
 
 func (p *wsPassthroughAdapter) IsLite(body []byte) bool {

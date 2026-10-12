@@ -40,4 +40,14 @@ describe('ModelAttributesSummary', () => {
     expect(state('temperature')).toEqual(['unsupported', 'x'])
     expect(state('tool_call')).toEqual(['unknown', 'minus'])
   })
+  it('显示条件、推理开关与空的可调选项', () => {
+    const wrapper = mount(ModelAttributesSummary, {
+      props: { attributes: { temperature: true, conditions: { temperature: { efforts: ['none'] } }, reasoning: true, reasoning_options: [] } }
+    })
+    expect(wrapper.get('[data-capability="temperature"]').attributes('data-state')).toBe('conditional')
+    expect(wrapper.get('[data-capability="reasoning"]').attributes('data-state')).toBe('supported')
+    expect(wrapper.text()).toContain('none')
+    expect(wrapper.text()).toContain('admin.modelAttributes.notAdjustable')
+  })
+
 })

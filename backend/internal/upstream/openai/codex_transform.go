@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
@@ -57,6 +58,8 @@ type CodexTransformResult struct {
 }
 
 type CodexOAuthTransformOptions struct {
+	Attributes                          *modelcatalog.Attributes
+	Rules                               *modelcatalog.ExecutionRules
 	IsMessagesBridge                    func(map[string]any) bool
 	IsCodexCLI                          bool
 	IsCompact                           bool
@@ -154,6 +157,14 @@ func ApplyCodexOAuthTransformWithOptions(reqBody map[string]any, opts CodexOAuth
 
 	// Strip parameters unsupported by ChatGPT internal Codex endpoint.
 	for _, key := range OpenAICodexOAuthUnsupportedFields {
+		if opts.Attributes != nil {
+			if key == "temperature" && opts.Attributes.Temperature != nil && *opts.Attributes.Temperature {
+				continue
+			}
+			if key == "top_p" && opts.Attributes.TopP != nil && *opts.Attributes.TopP {
+				continue
+			}
+		}
 		if _, ok := reqBody[key]; ok {
 			delete(reqBody, key)
 			result.Modified = true
@@ -237,11 +248,16 @@ func ApplyCodexOAuthTransformWithOptions(reqBody map[string]any, opts CodexOAuth
 	if !opts.SkipDefaultInstructions && ApplyInstructions(reqBody, opts.IsCodexCLI) {
 		result.Modified = true
 	}
-	if IsCodexSparkModel(normalizedModel) && ApplyCodexSparkImageUnsupportedInstructions(reqBody) {
+	rules := (modelcatalog.View{}).Resolve(modelcatalog.Target{Platform: "openai", ProviderType: "oauth", Model: normalizedModel}, modelcatalog.Attributes{}).Rules
+	if opts.Rules != nil {
+		rules = *opts.Rules
+	}
+	imageToolsDisabled := rules.ImageGenerationTool != nil && !*rules.ImageGenerationTool
+	if imageToolsDisabled && ApplyCodexSparkImageUnsupportedInstructions(reqBody) {
 		result.Modified = true
 	}
 	// gpt-5.3-codex-spark 上游会拒绝 image_generation 工具，Codex CLI 默认携带时需要剥离。
-	if IsCodexSparkModel(normalizedModel) && StripCodexSparkImageGenerationTools(reqBody) {
+	if imageToolsDisabled && StripCodexSparkImageGenerationTools(reqBody) {
 		result.Modified = true
 	}
 
@@ -771,13 +787,6 @@ func NormalizeOpenAIResponsesImageGenerationTools(reqBody map[string]any) bool {
 			delete(toolMap, "compression")
 			modified = true
 		}
-		imageModel := strings.ToLower(strings.TrimSpace(FirstNonEmptyString(toolMap["model"])))
-		if strings.HasPrefix(imageModel, "gpt-image-2") {
-			if _, ok := toolMap["input_fidelity"]; ok {
-				delete(toolMap, "input_fidelity")
-				modified = true
-			}
-		}
 	}
 	return modified
 }
@@ -1068,29 +1077,6 @@ func NormalizeOpenAIResponsesImageOnlyModel(reqBody map[string]any, imageOnly bo
 	}
 	reqBody["model"] = ImagesResponsesMainModel
 	return modified
-}
-
-func SupportsVerbosity(model string) bool {
-	if !strings.HasPrefix(model, "gpt-") {
-		return true
-	}
-
-	var major, minor int
-	n, _ := fmt.Sscanf(model, "gpt-%d.%d", &major, &minor)
-
-	if major > 5 {
-		return true
-	}
-	if major < 5 {
-		return false
-	}
-
-	// gpt-5
-	if n == 1 {
-		return true
-	}
-
-	return minor >= 3
 }
 
 // ExtractTextFromContent extracts plain text from a content value that is either

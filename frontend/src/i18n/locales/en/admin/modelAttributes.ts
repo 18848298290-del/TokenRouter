@@ -1,7 +1,7 @@
 export default {
   "modelAttributes": {
     "title": "Model Attributes",
-    "description": "Manage model information and client export metadata. Attribute configurations do not change gateway request processing.",
+    "description": "Configure model attributes used by the marketplace, client exports, and request parameter handling.",
     "searchConfigs": "Search attribute configuration names",
     "searchModels": "Search model names",
     "tabs": {
@@ -51,7 +51,8 @@ export default {
       "tool_call": "Tool calling",
       "structured_output": "Structured output",
       "temperature": "Temperature",
-      "attachment": "Attachments"
+      "attachment": "Attachments",
+      "top_p": "Top-p sampling"
     },
     "modalities": {
       "text": "Text",
@@ -64,8 +65,59 @@ export default {
       "models.dev": "models.dev",
       "local_supplement": "Local supplement",
       "rule_supplement": "Rule supplement",
-      "local_override": "Local override"
+      "local_override": "Local override",
+      "platform": "Platform",
+      "adapter": "Adapter",
+      "config": "Configuration",
+      "execution_default": "Execution default"
     },
-    "configDescription": "Description"
+    "configDescription": "Description",
+    "custom": "Custom",
+    "notAdjustable": "Not adjustable",
+    "reasoningOptions": "Reasoning controls",
+    "thinkingToggle": "Allow thinking toggle",
+    "efforts": "Allowed reasoning efforts",
+    "tokenBudget": "Allow reasoning token budget",
+    "budget": {
+      "min": "Minimum budget",
+      "max": "Maximum budget"
+    },
+    "conditions": "Parameter conditions",
+    "conditionsHint": "Parameters left blank have no additional conditions. Clear all conditions to override the platform defaults.",
+    "thinkingState": "Thinking state",
+    "anyState": "Any state",
+    "thinkingOn": "While thinking is enabled",
+    "thinkingOff": "While thinking is disabled",
+    "interleaved": "Reasoning history field",
+    "media": "Media parameters",
+    "mediaFields": {
+      "video_operations": "Video operations",
+      "video_parameters": "Video parameters",
+      "input_fidelity": "Input fidelity parameter",
+      "image_sizes": "Image sizes, comma separated",
+      "aspect_ratios": "Aspect ratios, comma separated",
+      "qualities": "Quality levels, comma separated",
+      "background_options": "Background options, comma separated",
+      "output_formats": "Output formats, comma separated",
+      "max_reference_images": "Maximum reference images",
+      "max_output_count": "Maximum outputs"
+    },
+    "routeMatch": "Matching routes",
+    "allRoutes": "All routes",
+    "routeFields": {
+      "platform": "Platform",
+      "provider_type": "Authentication type",
+      "provider_mode": "Provider mode",
+      "site": "Site",
+      "client_protocol": "Client protocol",
+      "upstream_protocol": "Upstream protocol"
+    },
+    "preview": "Preview effective attributes",
+    "previewModel": "Requested model",
+    "previewEmpty": "No matching requestable routes.",
+    "previewHint": "Preview this draft against saved group and provider routes.",
+    "fieldSource": "Field sources",
+    "conditional": "Conditionally supported",
+    "defaultReference": "Default attribute reference"
   }
 }

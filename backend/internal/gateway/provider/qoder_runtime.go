@@ -7,16 +7,20 @@ import (
 	"sync"
 
 	egressprovider "github.com/TokenFlux/TokenRouter/internal/egress/provider"
+	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	openaiwire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
+	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
 // QoderRuntimeOptions 包含提供商令牌源、传输和平台会话依赖。
 type QoderRuntimeOptions struct {
+	Attributes    *routing.ModelAttributeService
 	Tokens        *provideradapter.QoderTokenProvider
 	Client        qoder.StreamClient
 	Transport     provideradapter.QoderTransport
@@ -79,6 +83,19 @@ func (r *QoderRuntime) Target(metadata qoder.RequestMetadata, value *provider.Re
 	}
 	return &qoder.Target{
 		ProviderID: id, Site: site, UserType: userType, Metadata: metadata,
+		Attributes: func(ctx context.Context, model string, wire protocol.ProtocolID) (modelcatalog.Resolution, error) {
+			target := value.ModelAttributeTarget(model, string(wire))
+			target.ClientProtocol, target.UpstreamProtocol = string(wire), string(wire)
+			session := routing.ModelAttributesFromContext(ctx)
+			if session == nil {
+				session = r.options.Attributes.NewSession()
+			}
+			var groupID int64
+			if group, ok := requeststate.GroupFromContext(ctx); ok && group != nil {
+				groupID = group.ID
+			}
+			return session.Resolve(ctx, groupID, target)
+		},
 		Session: func(ctx context.Context) (*qoder.SessionContext, error) {
 			return r.options.Tokens.GetSession(ctx, value)
 		},

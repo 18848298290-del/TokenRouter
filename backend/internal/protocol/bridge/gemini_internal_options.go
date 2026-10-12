@@ -11,6 +11,10 @@ type InternalGeminiGenerationOptions struct {
 	DefaultOutputTokens    int
 	MaxOutputTokens        int
 	ReasoningModel         bool
+	OmitStopSequences      bool
+	DropTemperature        bool
+	DropTopP               bool
+	DropTopK               bool
 	StopSequences          []string
 	AdaptiveThinkingBudget int
 	ThinkingBudgetLimit    int
@@ -152,7 +156,7 @@ func BuildInternalGeminiGenerationConfig(req *ClaudeRequest, options InternalGem
 	}
 
 	isReasoning := options.ReasoningModel
-	if !isReasoning {
+	if !isReasoning && !options.OmitStopSequences {
 		config.StopSequences = options.StopSequences
 	}
 
@@ -200,13 +204,13 @@ func BuildInternalGeminiGenerationConfig(req *ClaudeRequest, options InternalGem
 
 	// 其他参数
 	if !isReasoning {
-		if req.Temperature != nil {
+		if req.Temperature != nil && !options.DropTemperature {
 			config.Temperature = req.Temperature
 		}
-		if req.TopP != nil {
+		if req.TopP != nil && !options.DropTopP {
 			config.TopP = req.TopP
 		}
-		if req.TopK != nil {
+		if req.TopK != nil && !options.DropTopK {
 			config.TopK = req.TopK
 		}
 	}

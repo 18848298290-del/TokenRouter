@@ -1,5 +1,7 @@
 package gemini
 
+import "encoding/json"
+
 // GeminiRequest Gemini 请求内容。
 type GeminiRequest struct {
 	Contents          []GeminiContent         `json:"contents"`
@@ -66,8 +68,10 @@ type GeminiImageConfig struct {
 
 // GeminiThinkingConfig Gemini thinking 配置。
 type GeminiThinkingConfig struct {
-	IncludeThoughts bool `json:"includeThoughts"`
-	ThinkingBudget  int  `json:"thinkingBudget,omitempty"`
+	IncludeThoughts bool   `json:"includeThoughts"`
+	ThinkingBudget  int    `json:"thinkingBudget,omitempty"`
+	ThinkingLevel   string `json:"thinkingLevel,omitempty"`
+	BudgetSet       bool   `json:"-"`
 }
 
 // GeminiToolDeclaration Gemini 工具声明。
@@ -168,6 +172,34 @@ type GeminiGroundingChunk struct {
 type GeminiGroundingWeb struct {
 	Title string `json:"title,omitempty"`
 	URI   string `json:"uri,omitempty"`
+}
+
+func (c GeminiThinkingConfig) MarshalJSON() ([]byte, error) {
+	var budget *int
+	if c.ThinkingLevel == "" && (c.BudgetSet || c.ThinkingBudget != 0) {
+		budget = &c.ThinkingBudget
+	}
+	return json.Marshal(struct {
+		IncludeThoughts bool   `json:"includeThoughts"`
+		Budget          *int   `json:"thinkingBudget,omitempty"`
+		Level           string `json:"thinkingLevel,omitempty"`
+	}{c.IncludeThoughts, budget, c.ThinkingLevel})
+}
+
+func (c *GeminiThinkingConfig) UnmarshalJSON(body []byte) error {
+	var value struct {
+		IncludeThoughts bool   `json:"includeThoughts"`
+		Budget          *int   `json:"thinkingBudget"`
+		Level           string `json:"thinkingLevel"`
+	}
+	if err := json.Unmarshal(body, &value); err != nil {
+		return err
+	}
+	*c = GeminiThinkingConfig{IncludeThoughts: value.IncludeThoughts, ThinkingLevel: value.Level, BudgetSet: value.Budget != nil}
+	if value.Budget != nil {
+		c.ThinkingBudget = *value.Budget
+	}
+	return nil
 }
 
 // ImageOutputTokens 从 CandidatesTokensDetails 中提取 IMAGE 模态的 token 数。

@@ -1836,13 +1836,13 @@ func TestApplyCodexOAuthTransform_NormalizesPromptAndCommands(t *testing.T) {
 	require.NotContains(t, reqBody, "commands")
 }
 
-func TestNormalizeOpenAIResponsesImageGenerationTools_StripsGPTImage2InputFidelity(t *testing.T) {
+func TestNormalizeOpenAIResponsesImageGenerationTools_PreservesInputFidelityBeforeResolution(t *testing.T) {
 	reqBody := map[string]any{"tools": []any{
 		map[string]any{"type": "image_generation", "model": "gpt-image-2-codex", "input_fidelity": "high"},
 		map[string]any{"type": "image_generation", "model": "gpt-image-1.5", "input_fidelity": "high"},
 	}}
 
-	require.True(t, openai.NormalizeOpenAIResponsesImageGenerationTools(reqBody))
+	require.False(t, openai.NormalizeOpenAIResponsesImageGenerationTools(reqBody))
 	tools, ok := reqBody["tools"].([]any)
 	require.True(t, ok)
 	require.Len(t, tools, 2)
@@ -1850,14 +1850,14 @@ func TestNormalizeOpenAIResponsesImageGenerationTools_StripsGPTImage2InputFideli
 	require.True(t, ok)
 	second, ok := tools[1].(map[string]any)
 	require.True(t, ok)
-	require.NotContains(t, first, "input_fidelity")
+	require.Equal(t, "high", first["input_fidelity"])
 	require.Equal(t, "high", second["input_fidelity"])
 }
 
 func TestOpenAIRequestBodyImageGenerationToolNeedsNormalization_GPTImage2InputFidelity(t *testing.T) {
 	body := []byte(`{"tools":[{"type":"image_generation","model":"gpt-image-2-codex","input_fidelity":"high"}]}`)
 
-	require.True(t, ImageIntent().OpenAIRequestBodyImageGenerationToolNeedsNormalization(body))
+	require.False(t, ImageIntent().OpenAIRequestBodyImageGenerationToolNeedsNormalization(body))
 }
 
 func TestApplyCodexOAuthTransform_ExtractsSystemMessages(t *testing.T) {

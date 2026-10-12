@@ -18,7 +18,10 @@ import (
 type NativeGeminiUsage struct{ InputTokens, OutputTokens, CacheReadInputTokens, ImageOutputTokens int }
 
 // NativeGeminiOptions 保存调用方选择的签名策略。
-type NativeGeminiOptions struct{ DummyThoughtSignature string }
+type NativeGeminiOptions struct {
+	DummyThoughtSignature string
+	Thinking              *GeminiThinkingConfig
+}
 
 // NativeGeminiRuntime 接收调用方提供的消息和工具 ID 生成函数。
 type NativeGeminiRuntime struct {
@@ -317,6 +320,12 @@ func NativeConvertClaudeMessagesToGeminiGenerateContent(options NativeGeminiOpti
 	}
 
 	generationConfig := NativeConvertClaudeGenerationConfig(req)
+	if options.Thinking != nil {
+		if generationConfig == nil {
+			generationConfig = map[string]any{}
+		}
+		generationConfig["thinkingConfig"] = options.Thinking
+	}
 	if generationConfig != nil {
 		out["generationConfig"] = generationConfig
 	}

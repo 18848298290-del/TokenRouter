@@ -72,7 +72,7 @@ Gemini、OpenAI、Claude 和 Grok 的模型后缀按完整 ID 处理，不生成
 
 GPT-5.6 系列按完整型号查询目录。`gpt-5.6-sol/terra/luna` 与裸的 `gpt-5.6` 分别处理；裸名称的请求资格由白名单决定，价格按该完整名称查询。
 
-展示属性读取 models.dev 的 `modalities.input/output`，支持文字、图片、音频、视频和 PDF。字段缺失和零长度表示未知或不适用；明确的 false 和空的模态数组会保留。本地旧价格 JSON 里的模态推断，只用于兼容价格的使用方，分组的有效属性使用独立的解析器。
+模型属性读取 models.dev 的 `modalities.input/output`，支持文字、图片、音频、视频和 PDF。字段缺失和零长度表示未知或不适用；明确的 false 和空的模态数组会保留。本地旧价格 JSON 里的模态推断，只用于兼容价格的使用方，分组的有效属性使用上述统一解析器。
 
 裸模型名因为有多个供应商的记录而产生歧义时，属性查询在精确查询失败之后，检查这些记录的 `canonical_model_id`。所有记录都明确指向同一个公共模型、并且公共资料存在时，使用这个公共模型的属性；归属缺失、不一致或者公共资料缺失时，保持未知。供应商限定的名称不使用这条回退，已经有精确条目的也不会用公共资料补字段。属性的回退不影响价格索引和价格歧义的状态，不会借用任何中继的报价。
 
@@ -144,17 +144,31 @@ token 报价的单价对应价格配置分时规则的 1x 时段和非 `max` 档
 
 属性配置保存在 `model_attribute_configs`，包括名称、描述、启用状态和有序的规则；分组关联表用 `group_id` 唯一约束，保证每个分组最多关联一份配置，一份配置可以供多个分组使用。规则和关联在同一个事务里保存，名称或分组冲突时整体回滚。属性配置和价格配置相互独立，停用、删除或解除关联后，恢复默认属性。
 
-规则匹配可请求解析结果里最终的上游模型，计费模型不参与。先按明确的模型身份候选查找精确规则，再按配置顺序匹配末尾通配符，只使用第一条命中的规则。覆盖按字段进行：缺失的键继承；布尔 false 和空的模态数组有明确的含义；模态数组整体替换；管理员填写的长度需要是正整数。未知的字段不会被当成"不支持"或"零容量"。
+`modelcatalog.View.Resolve` 为每条路线合并属性，顺序是实际服务的完整型号条目、本地缺项补充、平台修正、管理员覆盖、转换器能够编码的格式。`Resolution` 同时返回字段来源和执行规则，协议适配器使用其中的采样条件、推理选项、预算和媒体参数。价格继续由计费解析器查询。模型属性查询读取内存里的目录，不发网络请求。
 
-模型广场先解析可见分组的可请求模型，再用一次数据库查询读取这些分组关联的启用属性档案。共享档案的规则解码一次，结果在本次请求内供各分组使用。控制台的可见分组按分组读取配置。每次展示查询都读取已提交的数据库值，配置写入后发送分组认证的失效通知。属性由展示查询单独读取。分组 DTO 的 `model_attributes` 按公开的模型 ID 索引，市场模型的 `attributes` 和兼容的模态字段来自同一个解析结果。批量属性读取失败时，市场返回模型和价格，属性保持未知。有多条路线时，展示共同的能力和已知的最小上限，`route_differences` 标明路线之间的差异。API Key 别名的导出使用一跳目标的属性，名称和协议资格由可请求目录决定。
+服务身份由平台、认证类型、`provider_mode`、站点和已识别的官方地址确定。Bedrock 按出站区域 ID 查询 `amazon-bedrock`，Anthropic Vertex 按转换后的日期 ID 查询 `google-vertex-anthropic`，Gemini Vertex 使用 `google-vertex`。Kimi 区分国内、国际、PayG 和 Coding，GLM 区分 `zhipuai`、`zai` 及各自的 Coding 服务。自定义中继使用完整型号查询与可靠的公共资料。供应商前缀、日期与档位后缀参与身份匹配；已识别的 Google 资源路径在查询时规范化，出站 ID 保持实际路由结果。
 
-管理员接口在 `/api/v1/admin/model-attributes`：`/configs` 提供分页列表和创建，`/configs/:id` 提供查询、完整更新和删除；`/defaults` 支持按搜索词、厂商、能力筛选和分页，`/defaults/model` 查询单个模型的属性，`/defaults/models` 返回候选名称。`POST /defaults/update` 和价格页调用同一个更新器。默认页不叠加分组的配置，未定价模型的属性也可以查询。
+规则匹配最终上游模型，并可限定平台、认证类型、服务模式、站点、入口协议和上游协议。精确模型先于通配规则，同类按配置顺序使用第一条匹配项。字段缺失表示继承，false 与空数组表示明确的覆盖。推理能力 `reasoning` 与可调选项 `reasoning_options` 分开保存：选项缺失表示未知，空集合表示模型没有可配置的推理控制。`conditions` 表达 temperature、top_p、tool_call 对 effort 或 thinking 状态的要求。管理员可以覆盖这些属性；认证资格、签名与转换器内容格式由平台实现处理。
 
-属性配置编辑器里，添加模型标签、而当前规则还没填属性时，通过单模型接口填入已知的属性；批量添加时查询第一个新增的模型，通配符不触发填充。明确的 false 和空模态数组原样保留，已有的属性不会被覆盖。查询期间修改了模型或属性、移除了规则或关闭了编辑器，旧的查询结果不会再写进表单；未知模型和查询失败时，保留手动填写的方式。
+HTTP 请求和媒体执行使用固定的目录版本，同一分组的配置读取一次并复制到请求快照。故障转移、协议回退和模型映射后，适配器用同一快照重新解析目标路线。WebSocket 每个 turn 创建新快照。下一次请求可以读取配置的启用、停用、删除与修改结果。目录更新失败时使用上一有效版本；运行时配置读取失败会返回不可用错误。
 
-属性只用于展示和配置导出，和 HTTP、WebSocket、实时会话或媒体任务的准入、参数处理、提供商筛选和故障转移都无关。较小的输出上限，或者明确不支持某项能力，都不会让网关新增拒绝、删除参数、截断或注入请求参数。现有的分组策略、提供商能力和协议兼容行为各自独立执行。
+模型广场保存每条提供商与协议路线，分别解析后展示共同能力和已知最小上限，`route_differences` 标明差异。条件能力在界面显示适用状态。市场批量读取分组档案，并在整批查询中使用同一目录版本。属性查询失败时，市场保留模型与价格，属性显示未知。API Key 别名的客户端导出读取一跳目标的属性，目录候选仍来自有限的已保存配置。
 
-OpenCode 的导出包括显示名、附件、推理、温度、工具调用、模态和长度。它的 schema 要求 `limit.context` 和 `limit.output` 同时存在，所以缺少任何一项时，省略整个 `limit`；它不支持的 `structured_output` 和路线差异字段不会写入。Grok 的导出可以使用有效的显示名，其他客户端保持各自现有的配置格式，不加未知的键。
+管理员接口位于 `/api/v1/admin/model-attributes`：`/configs` 管理配置，`/defaults` 查询目录，`POST /defaults/update` 更新目录。`POST /preview` 接受 `group_id`、具体模型、可选入口协议与配置草稿，返回该分组可请求路线的最终属性、条件和来源。编辑器默认继承目录与平台值，查询得到的默认属性作为参考显示，修改过的字段才保存为覆盖。
+
+OpenCode 导出显示名、附件、推理、温度、工具调用、模态和长度。它要求 `limit.context` 与 `limit.output` 同时存在，缺少其中一项时省略 `limit`。它的 schema 无法表达条件能力，条件温度与工具调用按 false 导出。Grok 模型列表的可调推理档位也读取分组解析结果。
+
+### 平台执行规则
+
+- OpenAI 使用目录的 effort 集合。GPT-5.2/5.4 的采样参数在 effort 为 none 时可用；GPT-6 的 Chat 工具能力依型号与 effort 设置条件。Codex OAuth 禁用采样与输出参数字段，模型的输出容量仍保留。Spark 的当前接入为文本输入。GPT-5.6 Sol/Terra/Luna 的 OAuth Compact 将 max 编码成 xhigh，规则在最终型号确定后执行。
+- Claude thinking 的预算、开关和档位来自服务条目。温度按 thinking 状态处理，adaptive、手动 budget 与 Sonnet 5.5 的 between_tools 分别表达。Bedrock 已登记型号的缓存 TTL、tool search 与 adaptive 编码在 `modelcatalog/bedrock.go`，新增型号需同时修改固定清单和报文测试。
+- Grok 4.7 读取 xhigh，Build 0.1 等会推理但没有可调选项的型号显示空集合。Composer 的 reasoning 参数清理和 4.20 系列的 logprobs 规则单独执行。GLM-5.2/5.3 使用各自的档位集合，DeepSeek 的 temperature 与 top_p 分别按 thinking 状态处理。
+- Qoder 的站点路由表在 `modelcatalog/qoder.go`，输入上限写入 `input_limit`。`mmodel` 按站点选择公共身份，动态档位的公共属性保持未知，未知 raw route 使用 200000 输入执行默认值。当前转换器支持文本与工具交互，模态为 text。
+- Antigravity 的 Messages Claude 路线限制输出 64000，其他 Messages 转换限制 65000，Chat 转换限制 64000，并取目录更小值。Gemini 直通入口使用其本身的能力。已登记 Opus 4.6/4.7/4.8 adaptive 请求使用 24576 预算；指定 Gemini 私有路由的采样、stop 与 toolConfig 处理单独保存。
+- Gemini 转换按最终模型的控制集合发送互斥的 thinkingLevel 或 thinkingBudget。客户端控制来自转换前的请求，预算会按目录与当前转换的输出空间处理。已知不允许关闭 thinking 的型号不会被显示为可关闭。
+- 媒体尺寸、参考图数量与细分参数在 `modelcatalog/media.go`。创作台与批量图片按最终路线检查这些值。Responses 的图片工具在请求构造末尾读取工具型号的属性，HTTP 与 WebSocket 共用处理。OAuth 图片接口的构造器不发送 input_fidelity，该路线将此参数标为不可用。Ollama Cloud 的输出参数 clamp 使用解析后的输出上限；提供商配置为非正数时关闭 clamp。
+
+规则依据包括 [OpenAI 模型指南](https://developers.openai.com/api/docs/guides/latest-model?model=gpt-5.4)、[部署检查](https://developers.openai.com/api/docs/guides/deployment-checklist)、[Claude 协议](https://platform.claude.com/docs/en/claude_api_primer)、[Grok 推理](https://docs.x.ai/developers/model-capabilities/text/reasoning)、[GLM-5.3](https://docs.z.ai/guides/llm/glm-5.3)、[DeepSeek thinking](https://api-docs.deepseek.com/guides/thinking_mode/)、[Gemini GenerateContent thinking](https://ai.google.dev/gemini-api/docs/generate-content/thinking)和 [Kimi Coding 型号](https://www.kimi.com/code/docs/en/kimi-code/models)。Qoder 的实现以当前 1.24.2 适配表为准。
 
 <a id="group_availability_probe"></a>
 ## 容量与可用性

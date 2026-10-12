@@ -32,10 +32,10 @@ func AnthropicToResponses(req *AnthropicRequest, options RequestOptions) (*Respo
 		out.ServiceTier = "priority"
 	}
 
-	// Responses API 的 gpt-5.x 推理模型不接受采样参数，携带 temperature/top_p 会触发 400。
-	// 因此只有非推理模型才透传这些参数。
-	if !options.DropSampling {
+	if !options.DropSampling && !options.DropTemperature {
 		out.Temperature = req.Temperature
+	}
+	if !options.DropSampling && !options.DropTopP {
 		out.TopP = req.TopP
 	}
 

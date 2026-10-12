@@ -41,6 +41,7 @@ type GeminiPorts interface {
 	ImageTier(string) string
 	ZeroCount()
 	MappedModel(string) string
+	ModelParameters(context.Context, string, []byte) ([]byte, error)
 	FeatureDenied()
 	Credential(context.Context) error
 	ProjectID() (string, error)

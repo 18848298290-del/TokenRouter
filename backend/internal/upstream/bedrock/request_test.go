@@ -186,8 +186,8 @@ func TestIsBedrockClaude45OrNewer(t *testing.T) {
 		{"anthropic.claude-3-5-sonnet-20241022-v2:0", false},
 		{"anthropic.claude-3-opus-20240229-v1:0", false},
 		{"anthropic.claude-3-haiku-20240307-v1:0", false},
-		// 未来版本应自动支持
-		{"us.anthropic.claude-sonnet-5-0-v1", true},
+		// 未登记的版本不推断能力。
+		{"us.anthropic.claude-sonnet-5-0-v1", false},
 		{"us.anthropic.claude-opus-4-7", true},
 		// 旧版本
 		{"anthropic.claude-opus-4-1-v1", false},
@@ -570,7 +570,7 @@ func TestIsBedrockOpus47OrNewer(t *testing.T) {
 		{"us.anthropic.claude-opus-4-7", true},
 		{"us.anthropic.claude-opus-4-6-v1", false},
 		{"us.anthropic.claude-opus-4-5-20251101-v1:0", false},
-		{"us.anthropic.claude-opus-5-0-v1", true},
+		{"us.anthropic.claude-opus-5-0-v1", false},
 		// Sonnet 4.7 不是 Opus，应返回 false。
 		{"us.anthropic.claude-sonnet-4-7-v1", false},
 		{"us.anthropic.claude-sonnet-4-6", false},
@@ -755,7 +755,7 @@ func TestIsBedrockOpus47OrNewer_EdgeCases(t *testing.T) {
 	}{
 		{"anthropic.claude-opus-4-8", true},
 		{"anthropic.claude-opus-4-7", true},
-		{"us.anthropic.claude-opus-4-7-20270101-v1:0", true},
+		{"us.anthropic.claude-opus-4-7-20270101-v1:0", false},
 		{"", false},
 		// Forward() 传入的是 parsed.Model（标准模型名），不一定是 Bedrock 模型 ID。
 		{"claude-opus-4-8", true},

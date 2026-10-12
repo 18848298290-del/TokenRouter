@@ -275,7 +275,9 @@ Responses 生图有一个明确的协议适配例外：请求的图片模型进�
 
 客户端的模型名依次经过 Key、分组和提供商手动配置的映射。调度、模型列表、健康冷却、管理测试和请求转发使用同一个完整的模型身份；原生能力和传输资格继续限制提供商选择，相似的模型名绕不过这些限制。
 
-Messages、Chat、Responses 和 WebSocket 都保留手动映射后的完整模型 ID，不做 Codex 拼写纠正、旧型号迁移、日期剥离或 effort 后缀解析。明确的 `output_config.effort` 按最终的上游型号转换；GPT-5.6 支持原生的 max，不会降成 xhigh。能力判断可以只读地识别供应商限定名的型号尾段，例如 `openai/gpt-5.6-sol` 支持明确的 max；这种识别不用于改写转发的 ID 或生成价格候选，Messages 桥接和 Responses 转换遵守同样的规则。
+Messages、Chat、Responses 和 WebSocket 按最终的完整型号查询[统一模型属性](model_catalog_and_marketplace.md#model_attributes)。推理档位来自目录与管理员覆盖，未知型号保留客户端的明确参数。GPT-5.6 Sol/Terra/Luna 的普通请求支持 max，OAuth Compact 使用平台的 max 到 xhigh 转换。GPT-5.2/5.4 的采样能力带 effort=none 条件，GPT-6 的 Chat 工具能力按具体型号与 effort 区分。Codex OAuth 禁用 temperature、top_p 和输出参数字段，目录中的输出容量仍保留。
+
+供应商限定名按完整服务条目查询，例如 `openai/gpt-5.6-sol`。查询结果不改写出站模型，目录缺项时也不会从任意尾段、日期或版本号生成能力。
 
 GPT-5.6 的内置产品是 `gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`。裸的 `gpt-5.6` 按未知型号处理。请求通过提供商的模型范围和协议资格检查后，上游收到手动映射后的完整型号，计费候选使用选定的计费模型。未知名称是否可用由上游决定。管理员配置的 Key、分组和提供商映射参与请求处理，历史配置和用量记录保持原值。模型目录的查询和能力来源，见[模型目录与市场](model_catalog_and_marketplace.md#model_catalog_metadata_lookup)。
 

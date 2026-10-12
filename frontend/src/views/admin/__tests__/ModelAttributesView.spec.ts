@@ -3,12 +3,13 @@ import { flushPromises, mount } from '@vue/test-utils'
 import ModelAttributesView from '../ModelAttributesView.vue'
 import { modelAttributesAPI } from '@/api/admin/modelAttributes'
 import ModelAttributesFields from '@/components/admin/ModelAttributesFields.vue'
+import ModelAttributeRouteFields from '@/components/admin/ModelAttributeRouteFields.vue'
 import RuleListEditor from '@/components/common/RuleListEditor.vue'
 import type { ModelAttributes } from '@/types/modelAttributes'
 
-vi.mock('@/api/admin/modelAttributes', () => ({ modelAttributesAPI: { list: vi.fn(), defaults: vi.fn(), getModelDefaultAttributes: vi.fn(), update: vi.fn(), save: vi.fn(), remove: vi.fn() } }))
+vi.mock('@/api/admin/modelAttributes', () => ({ modelAttributesAPI: { list: vi.fn(), defaults: vi.fn(), getModelDefaultAttributes: vi.fn(), preview: vi.fn(), update: vi.fn(), save: vi.fn(), remove: vi.fn() } }))
 vi.mock('@/api/admin', () => ({ adminAPI: { groups: { getAll: vi.fn().mockResolvedValue([{ id: 7, name: 'Group' }]) } } }))
-vi.mock('vue-i18n', async () => ({ ...(await vi.importActual<typeof import('vue-i18n')>('vue-i18n')), useI18n: () => ({ t: (key: string) => key }) }))
+vi.mock('vue-i18n', async () => ({ ...(await vi.importActual<typeof import('vue-i18n')>('vue-i18n')), useI18n: () => ({ t: (key: string) => key, te: () => false }) }))
 
 const stubs = {
   AppLayout: { template: '<div><slot /></div>' },
@@ -37,7 +38,7 @@ describe('属性管理页面', () => {
     return wrapper
   }
 
-  it('新增模型填入完整已知属性，保存时保留 false、空模态和未知字段', async () => {
+  it('默认属性作为参考，保存时采用手动覆盖的 false 和空模态', async () => {
     const attributes = { display_name: 'Known', context: 128000, output_limit: 8192, reasoning: false, tool_call: true, input_modalities: ['text'], output_modalities: [] }
     vi.mocked(modelAttributesAPI.getModelDefaultAttributes).mockResolvedValueOnce(attributes)
     const wrapper = await openEmptyRule()
@@ -47,11 +48,15 @@ describe('属性管理页面', () => {
     await flushPromises()
 
     expect(modelAttributesAPI.getModelDefaultAttributes).toHaveBeenCalledWith('vendor/known')
-    expect(wrapper.findAllComponents(ModelAttributesFields)[1]!.props('modelValue')).toEqual(attributes)
+    const fields = wrapper.findAllComponents(ModelAttributesFields)[1]!
+    expect(fields.props('modelValue')).toEqual({})
+    expect(fields.props('inherited')).toEqual(attributes)
+    fields.vm.$emit('update:modelValue', { reasoning: false, output_modalities: [] })
+    await flushPromises()
     await wrapper.get('#attribute-form').trigger('submit')
     await flushPromises()
     expect(modelAttributesAPI.save).toHaveBeenCalledWith(expect.objectContaining({
-      rules: [expect.objectContaining({ models: ['upstream'], attributes: { tool_call: false } }), expect.objectContaining({ id: expect.any(String), models: ['vendor/known'], attributes })],
+      rules: [expect.objectContaining({ models: ['upstream'], attributes: { tool_call: false } }), expect.objectContaining({ id: expect.any(String), models: ['vendor/known'], attributes: { reasoning: false, output_modalities: [] } })],
     }))
     wrapper.unmount()
   })
@@ -68,7 +73,8 @@ describe('属性管理页面', () => {
     await flushPromises()
     expect(modelAttributesAPI.getModelDefaultAttributes).toHaveBeenCalledTimes(1)
     expect(modelAttributesAPI.getModelDefaultAttributes).toHaveBeenCalledWith('first')
-    expect(wrapper.findAllComponents(ModelAttributesFields)[1]!.props('modelValue')).toEqual({ reasoning: false })
+    expect(wrapper.findAllComponents(ModelAttributesFields)[1]!.props('modelValue')).toEqual({})
+    expect(wrapper.findAllComponents(ModelAttributesFields)[1]!.props('inherited')).toEqual({ reasoning: false })
     wrapper.unmount()
   })
 
@@ -128,7 +134,8 @@ describe('属性管理页面', () => {
     await flushPromises()
     resolve({ display_name: 'Stale' })
     await flushPromises()
-    expect(wrapper.findAllComponents(ModelAttributesFields)[1]!.props('modelValue')).toEqual({ display_name: 'Latest' })
+    expect(wrapper.findAllComponents(ModelAttributesFields)[1]!.props('modelValue')).toEqual({})
+    expect(wrapper.findAllComponents(ModelAttributesFields)[1]!.props('inherited')).toEqual({ display_name: 'Latest' })
     wrapper.unmount()
   })
 
@@ -230,4 +237,25 @@ describe('属性管理页面', () => {
     expect(wrapper.get('[role="alert"]').text()).toBe('admin.modelAttributes.modelsRequired')
     wrapper.unmount()
   })
+  it('保存路线条件并展示草稿的最终属性与来源', async () => {
+    vi.mocked(modelAttributesAPI.preview).mockResolvedValue({ routes: [{ target: { model: 'gpt-5.4', platform: 'openai', provider_type: 'apikey', catalog_provider: 'openai', client_protocol: 'openai_responses' }, attributes: { temperature: true, conditions: { temperature: { efforts: ['none'] } } }, sources: { temperature: 'config' }, rules: {}, version: 'fixed' }] })
+    const wrapper = mount(ModelAttributesView, { global: { stubs } })
+    await flushPromises()
+    await wrapper.get('button[aria-label="common.edit"]').trigger('click')
+    await flushPromises()
+    wrapper.getComponent(ModelAttributeRouteFields).vm.$emit('update:modelValue', { platform: 'openai', provider_type: 'apikey' })
+    await flushPromises()
+    const preview = wrapper.findAll('button').find(button => button.text() === 'admin.modelAttributes.preview')!
+    await preview.trigger('click')
+    await flushPromises()
+    expect(modelAttributesAPI.preview).toHaveBeenCalledWith(7, 'upstream', expect.objectContaining({ rules: [expect.objectContaining({ match: { platform: 'openai', provider_type: 'apikey' } })] }))
+    expect(wrapper.text()).toContain('gpt-5.4')
+    expect(wrapper.text()).toContain('admin.modelAttributes.sources.config')
+    expect(wrapper.find('[data-capability="temperature"][data-state="conditional"]').exists()).toBe(true)
+    await wrapper.get('#attribute-form').trigger('submit')
+    await flushPromises()
+    expect(modelAttributesAPI.save).toHaveBeenCalledWith(expect.objectContaining({ rules: [expect.objectContaining({ match: { platform: 'openai', provider_type: 'apikey' } })] }))
+    wrapper.unmount()
+  })
+
 })

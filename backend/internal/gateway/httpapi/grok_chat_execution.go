@@ -16,6 +16,7 @@ import (
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/tierpolicy"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	protocolbridge "github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
@@ -47,6 +48,12 @@ func (s *GrokExecutor) ChatResponses(
 	clientStream := chatReq.Stream
 	billingModel := gatewayprovider.ExecutionModelPolicy(provider).ForwardModel(originalModel, defaultMappedModel)
 	upstreamModel := gatewayprovider.ExecutionModelPolicy(provider).NormalizeOpenAI(billingModel)
+	attributes, attributesErr := gatewayprovider.ResolveModelAttributes(ctx, provider, upstreamModel, s.Attributes, "openai_responses")
+	if attributesErr != nil {
+		return nil, true, attributesErr
+	}
+	codec := gatewayprovider.GrokBodyCodec()
+	codec.Attributes = func(string) modelcatalog.Attributes { return attributes.Attributes }
 	cacheIdentity := ResolveGrokCacheIdentity(c, body, promptCacheKey, upstreamModel)
 	// 图片输入使用 Responses 桥接，普通 Chat Completions 路径会丢弃非 Composer 模型的 image_url。
 	// 因此缺少 prompt-cache 身份的图片请求也使用 Responses。
@@ -55,7 +62,7 @@ func (s *GrokExecutor) ChatResponses(
 		return nil, false, nil
 	}
 
-	responsesReq, err := protocolbridge.ChatCompletionsToResponses(&chatReq, protocolforward.ConversionOptionsForModel(chatReq.Model))
+	responsesReq, err := protocolbridge.ChatCompletionsToResponses(&chatReq, gatewayprovider.ModelConversionOptions(attributes.ForRequest(gatewayprovider.ModelRequestState(body))))
 	if err != nil {
 		return nil, true, fmt.Errorf("convert grok chat completions to responses: %w", err)
 	}
@@ -77,7 +84,7 @@ func (s *GrokExecutor) ChatResponses(
 	if err != nil {
 		return nil, true, fmt.Errorf("normalize grok responses bridge cache intent: %w", err)
 	}
-	responsesBody, err = gatewayprovider.GrokBodyCodec().PatchGrokResponsesBody(responsesBody, upstreamModel)
+	responsesBody, err = codec.PatchGrokResponsesBody(responsesBody, upstreamModel)
 	if err != nil {
 		return nil, true, fmt.Errorf("patch grok responses bridge request: %w", err)
 	}

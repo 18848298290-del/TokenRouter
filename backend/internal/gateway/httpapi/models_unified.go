@@ -4,6 +4,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 )
 
 // WriteUnifiedModelsList 使用模型目录中的名称和厂商，未知别名归属于网关。
@@ -15,9 +17,13 @@ func (h *ModelsHandler) WriteUnifiedModelsList(c *gin.Context, ids []string) {
 	models := make([]gin.H, 0, len(ids))
 	for _, id := range ids {
 		model := h.catalog.Model(id)
+		attributes := h.displayAttributes(c, id)
+		if attributes.DisplayName != nil {
+			model.DisplayName = *attributes.DisplayName
+		}
 		item := gin.H{"id": id, "object": "model", "type": "model", "display_name": model.DisplayName, "owned_by": model.OwnedBy, "created": model.Created}
-		if GrokModelSupportsConfigurableReasoning(id) {
-			item = h.unifiedGrokModel(GrokModel{ID: id, Object: "model", Type: "model", OwnedBy: "xai", DisplayName: model.DisplayName})
+		if h.grokDisplayModel(c, id, model.OwnedBy) {
+			item = h.unifiedGrokModel(GrokModel{ID: id, Object: "model", Type: "model", OwnedBy: "xai", DisplayName: model.DisplayName}, attributes)
 		}
 		models = append(models, item)
 	}
@@ -25,15 +31,12 @@ func (h *ModelsHandler) WriteUnifiedModelsList(c *gin.Context, ids []string) {
 }
 
 // unifiedGrokModel 保留客户端识别推理强度的既有元数据。
-func (h *ModelsHandler) unifiedGrokModel(model GrokModel) gin.H {
+func (h *ModelsHandler) unifiedGrokModel(model GrokModel, attributes modelcatalog.Attributes) gin.H {
 	item := gin.H{"id": model.ID, "object": "model", "type": "model", "display_name": model.DisplayName, "owned_by": model.OwnedBy, "created": model.Created}
-	if GrokModelSupportsConfigurableReasoning(model.ID) {
+	if values := attributes.Efforts(); len(values) > 0 {
 		item["supportsReasoningEffort"] = true
-		item["reasoningEffort"] = "high"
-		efforts := []grokReasoningEffortOption{{Value: "low", Label: "Low"}, {Value: "medium", Label: "Medium"}, {Value: "high", Label: "High", Default: true}}
-		if h.catalog.GrokSupportsXHigh(model.ID) {
-			efforts = append(efforts, grokReasoningEffortOption{Value: "xhigh", Label: "xHigh"})
-		}
+		current, efforts := grokEffortOptions(values)
+		item["reasoningEffort"] = current
 		item["reasoningEfforts"] = efforts
 	}
 	return item

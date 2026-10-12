@@ -50,6 +50,14 @@ func (a *geminiExecutionAdapter) MappedModel(model string) string {
 	return a.s.getMappedModel(a.provider, model)
 }
 
+func (a *geminiExecutionAdapter) ModelParameters(ctx context.Context, model string, body []byte) ([]byte, error) {
+	resolved, err := gatewayprovider.ResolveModelAttributes(ctx, a.provider, model, a.s.Attributes, "gemini_generate_content")
+	if err != nil {
+		return nil, err
+	}
+	return applyGeminiModelParameters(body, body, resolved, false)
+}
+
 func (a *geminiExecutionAdapter) FeatureDenied() {
 	a.c.FeatureDenied()
 }
@@ -115,6 +123,7 @@ func (a *geminiExecutionAdapter) ClientCanceled() bool { return a.c.RequestConte
 
 func (a *geminiExecutionAdapter) Recover(ctx context.Context, in forwardcore.GeminiExecution) (forwardcore.GeminiRecovery, error) {
 	opts := antigravity.GeminiRecoveryOptions{
+		Prepare: func(model string, body []byte) ([]byte, error) { return a.ModelParameters(ctx, model, body) },
 		Retry: func(body []byte) (*http.Response, error) {
 			next := a.params
 			next.Body = body

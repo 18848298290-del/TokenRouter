@@ -74,6 +74,11 @@ func (s *OpenAIRequests) ResponseOptions(ctx context.Context, c *gin.Context, pr
 
 // Build 将执行目标和请求选项传给请求构造器。
 func (s *OpenAIRequests) Build(ctx context.Context, c *gin.Context, provider *gatewayprovider.ExecutionProvider, body []byte, token string, isStream bool, promptCacheKey string, isCodexCLI bool, routerMatch ...egress.TLSFingerprintRouterMatchResult) (*http.Request, error) {
+	var err error
+	body, err = s.applyModelAttributes(ctx, provider, body, "openai_responses")
+	if err != nil {
+		return nil, err
+	}
 	return forward.BuildResponsesRequest(ctx, body, promptCacheKey, s.Target(c, provider, false), func(path string) { SetActualOpenAIUpstreamEndpoint(c, path) }, func(b []byte) []byte {
 		return forward.NormalizeCNResponsesBody(provider != nil && gatewayprovider.ExecutionProtocolTarget(provider).UsesNativeCNResponses(), b)
 	}, func(target string) openai.ResponsesRequestOptions {
@@ -89,6 +94,11 @@ func (s *OpenAIRequests) BuildPassthrough(
 	token string,
 	routerMatch ...egress.TLSFingerprintRouterMatchResult,
 ) (*http.Request, error) {
+	var err error
+	body, err = s.applyModelAttributes(ctx, provider, body, "openai_responses")
+	if err != nil {
+		return nil, err
+	}
 	return forward.BuildPassthroughRequest(ctx, body, s.Target(c, provider, true), func(b []byte) []byte {
 		return forward.NormalizeCNResponsesBody(provider != nil && gatewayprovider.ExecutionProtocolTarget(provider).UsesNativeCNResponses(), b)
 	}, func(target string) openai.PassthroughRequestOptions {

@@ -43,7 +43,7 @@ type creativeModeration struct {
 }
 
 // provideCreativePublic 绑定创作任务、资金及查询接口，共享应用存储实例。
-func provideCreativePublic(requests *requestlog.Service, repo creative.CreativeRunRepository, keys *keypostgres.KeyStore, users *identitypostgres.UserStore, providers *providerpostgres.ProviderStore, groups *routingpostgres.GroupStore, rates billing.UserGroupRateRepository, queue creative.CreativeRunQueue, transient creative.CreativeTransientStore, funds *billing.Funds, subscriptions *billingpostgres.SettlementStore, logs usage.UsageLogRepository, pricing *billing.PriceResolver, modelConfigs *routing.PricingConfigService, moderation *moderation.ContentModerationService, auth apikey.APIKeyAuthCacheInvalidator, settings *creative.RuntimeSettings, cfg *config.Config, outbox creative.CreativeRunOutboxRepository) *creative.Public {
+func provideCreativePublic(requests *requestlog.Service, repo creative.CreativeRunRepository, keys *keypostgres.KeyStore, users *identitypostgres.UserStore, providers *providerpostgres.ProviderStore, groups *routingpostgres.GroupStore, rates billing.UserGroupRateRepository, queue creative.CreativeRunQueue, transient creative.CreativeTransientStore, funds *billing.Funds, subscriptions *billingpostgres.SettlementStore, logs usage.UsageLogRepository, pricing *billing.PriceResolver, modelConfigs *routing.PricingConfigService, moderation *moderation.ContentModerationService, auth apikey.APIKeyAuthCacheInvalidator, settings *creative.RuntimeSettings, cfg *config.Config, outbox creative.CreativeRunOutboxRepository, attributes *routing.ModelAttributeService) *creative.Public {
 	ttl := 30 * time.Minute
 	if cfg.Creative.TransientTTLSeconds > 0 {
 		ttl = time.Duration(cfg.Creative.TransientTTLSeconds) * time.Second
@@ -77,6 +77,7 @@ func provideCreativePublic(requests *requestlog.Service, repo creative.CreativeR
 		NamePrefix: "creative-studio",
 	}
 	return &creative.Public{
+		Attributes:        attributes,
 		Now:               time.Now,
 		Repo:              repo,
 		UserRepo:          creativeUsers{users},

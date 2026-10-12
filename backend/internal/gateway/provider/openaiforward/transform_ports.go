@@ -3,10 +3,12 @@ package openaiforward
 import (
 	"context"
 
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
 type TransformPorts interface {
+	ModelAttributes(context.Context, string, []byte, bool) (modelcatalog.Resolution, error)
 	Reject(Rejection)
 	Log(string, ...any)
 	Decode(body []byte) (map[string]any, error)
@@ -23,7 +25,6 @@ type TransformPorts interface {
 	IsImageGenerationIntentMap(endpoint, model string, body map[string]any) bool
 	IsExplicitImageGenerationIntentMap(endpoint, model string, body map[string]any) bool
 	IsOpenAIImageGenerationModel(model string) bool
-	IsCodexSparkModel(model string) bool
 	OpenAIRequestBodyImageGenerationToolNeedsNormalization(body []byte) bool
 	OpenAIRequestBodyHasImageGenerationDeclaration(body []byte) bool
 	EnsureOpenAIResponsesImageGenerationTool(body map[string]any) bool

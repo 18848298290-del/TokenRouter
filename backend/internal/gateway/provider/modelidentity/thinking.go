@@ -1,6 +1,6 @@
 package modelidentity
 
-import "strings"
+import "github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 
 const (
 	// ThinkingProtocolUnknown 表示无法识别协议族，默认保守不剥离。
@@ -23,40 +23,15 @@ type ThinkingProtocol int
 // Anthropic 原生路径应传映射后的上游模型；Gemini messages compat 的 Claude body
 // retry 则传客户端原始模型，因为被整流的是 Anthropic 请求体本身。
 func ResolveThinkingProtocol(modelID string) ThinkingProtocol {
-	id := strings.ToLower(strings.TrimSpace(modelID))
-	if id == "" {
+	rules := (modelcatalog.View{}).Resolve(modelcatalog.Target{Model: modelID, UpstreamProtocol: "anthropic_messages"}, modelcatalog.Attributes{}).Rules
+	switch rules.SignatureMode {
+	case "passback":
+		return ThinkingProtocolPassbackRequired
+	case "anthropic":
+		return ThinkingProtocolAnthropicStrict
+	default:
 		return ThinkingProtocolUnknown
 	}
-
-	switch {
-	case strings.HasPrefix(id, "deepseek-"),
-		strings.HasPrefix(id, "kimi-"),
-		strings.HasPrefix(id, "moonshot-"),
-		strings.HasPrefix(id, "glm-"),
-		// Kimi Code 的官方 bare ID 必须精确匹配，不能用宽泛的 k3- 前缀。
-		id == "k3",
-		id == "k3-256k":
-		return ThinkingProtocolPassbackRequired
-	}
-	if strings.HasPrefix(id, "minimax-m") {
-		return ThinkingProtocolPassbackRequired
-	}
-	if (strings.HasPrefix(id, "qwen-") ||
-		strings.HasPrefix(id, "qwen2-") ||
-		strings.HasPrefix(id, "qwen3-") ||
-		strings.HasPrefix(id, "qwen4-")) && strings.Contains(id, "-thinking") {
-		return ThinkingProtocolPassbackRequired
-	}
-
-	switch {
-	case strings.HasPrefix(id, "claude-"),
-		strings.HasPrefix(id, "opus-"),
-		strings.HasPrefix(id, "sonnet-"),
-		strings.HasPrefix(id, "haiku-"):
-		return ThinkingProtocolAnthropicStrict
-	}
-
-	return ThinkingProtocolUnknown
 }
 
 // ShouldPreFilterThinkingBlocks 判断是否应在转发前剥离无效 thinking block。

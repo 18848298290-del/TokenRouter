@@ -11,6 +11,7 @@ import (
 	forward "github.com/TokenFlux/TokenRouter/internal/gateway/provider/openaiforward"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/tierpolicy"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
@@ -19,6 +20,33 @@ import (
 )
 
 type openAIForwardTransformAdapter struct{ openAIForwardPreludeAdapter }
+
+func (p openAIForwardTransformAdapter) ModelAttributes(ctx context.Context, model string, body []byte, compact bool) (modelcatalog.Resolution, error) {
+	result, err := gatewayadapter.ResolveModelAttributes(ctx, p.provider, model, p.s.Text.modelAttributes(), "openai_responses")
+	if err != nil {
+		return modelcatalog.Resolution{}, err
+	}
+	if compact {
+		target := result.Target
+		target.Endpoint = "compact"
+		session := routing.ModelAttributesFromContext(ctx)
+		if session == nil {
+			session = p.s.Text.modelAttributes().NewSession()
+		}
+		var groupID int64
+		if group, ok := requeststate.GroupFromContext(ctx); ok && group != nil {
+			groupID = group.ID
+		}
+		result, err = session.Resolve(ctx, groupID, target)
+		if err != nil {
+			return modelcatalog.Resolution{}, err
+		}
+	}
+	if p.provider != nil {
+		p.provider.Capabilities = &result
+	}
+	return result.ForRequest(gatewayadapter.ModelRequestState(body)), nil
+}
 
 func (p openAIForwardTransformAdapter) Decode(body []byte) (map[string]any, error) {
 	return requeststate.DecodeOpenAIRequestBody(body)
@@ -81,10 +109,6 @@ func (p openAIForwardTransformAdapter) IsOpenAIImageGenerationModel(model string
 	return media.IsImageGenerationModel(model)
 }
 
-func (p openAIForwardTransformAdapter) IsCodexSparkModel(model string) bool {
-	return gatewayadapter.IsCodexSparkModel(model)
-}
-
 func (p openAIForwardTransformAdapter) OpenAIRequestBodyImageGenerationToolNeedsNormalization(body []byte) bool {
 	return gatewayadapter.ImageIntent().OpenAIRequestBodyImageGenerationToolNeedsNormalization(body)
 }
@@ -118,6 +142,10 @@ func (p openAIForwardTransformAdapter) ApplyCodexImageGenerationBridgeInstructio
 }
 
 func (p openAIForwardTransformAdapter) CodexTransform(body map[string]any, options openai.CodexOAuthTransformOptions) openai.CodexTransformResult {
+	if p.provider != nil && p.provider.Capabilities != nil {
+		options.Attributes = &p.provider.Capabilities.Attributes
+		options.Rules = &p.provider.Capabilities.Rules
+	}
 	return gatewayadapter.ApplyCodexOAuthTransformWithOptions(body, options)
 }
 

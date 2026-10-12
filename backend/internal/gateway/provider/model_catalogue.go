@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
@@ -13,6 +14,12 @@ import (
 )
 
 type catalogueRules struct{ policy ModelPolicy }
+
+func (v catalogueRules) AttributeTarget(model string, source, target capability.ProtocolID) modelcatalog.Target {
+	value := v.policy.Record.ModelAttributeTarget(model, string(target))
+	value.ClientProtocol, value.UpstreamProtocol = string(source), string(target)
+	return value
+}
 
 // SupportsClientProtocol 不把专用 Embeddings、Images 模型展示为普通对话候选。
 // 提供商模型别名先按同一规则展开，再判断已有适配器支持的调用形状。

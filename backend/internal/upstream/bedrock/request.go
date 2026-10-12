@@ -6,13 +6,13 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 
 	logger "github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	claude "github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
 )
 
@@ -29,11 +29,6 @@ const (
 
 var (
 	BedrockCrossRegionPrefixes = []string{"us.", "eu.", "apac.", "jp.", "au.", "us-gov.", "global."}
-
-	// ClaudeVersionRe 匹配 Claude 模型 ID 中的版本号部分
-	// 支持 claude-{tier}-{major}、claude-{tier}-{major}-{minor} 和 claude-{tier}-{major}.{minor} 格式；
-	// 省略 minor 时按 0 处理，以兼容 Claude 5 这类主版本模型 ID。
-	ClaudeVersionRe = regexp.MustCompile(`claude-(?:haiku|sonnet|opus)-(\d+)(?:[-.](\d+))?`)
 
 	// BedrockSupportedBetaTokens 是 Bedrock Invoke 支持的 beta 头白名单
 	// 参考: AWS Bedrock 官方文档 + litellm anthropic_beta_headers_config.json
@@ -149,7 +144,7 @@ func PrepareBedrockRequestBody(body []byte, modelID string, betaHeader string) (
 
 // PrepareBedrockRequestBodyWithTokens 使用预解析的 beta token 准备 Bedrock 请求体。
 // ccCompat 启用 CC 兼容模式时额外处理 thinking 类型转换和 tool_use.id 清理。
-func PrepareBedrockRequestBodyWithTokens(body []byte, modelID string, betaTokens []string, ccCompat bool) ([]byte, error) {
+func PrepareBedrockRequestBodyWithTokens(body []byte, modelID string, betaTokens []string, ccCompat bool, rules ...modelcatalog.ExecutionRules) ([]byte, error) {
 	var err error
 
 	betaTokens = FilterBedrockBetaTokens(betaTokens)
@@ -207,11 +202,11 @@ func PrepareBedrockRequestBodyWithTokens(body []byte, modelID string, betaTokens
 	body = RemoveCustomFieldFromTools(body)
 
 	// 清理 cache_control 中 Bedrock 不支持的字段
-	body = SanitizeBedrockCacheControl(body, modelID)
+	body = SanitizeBedrockCacheControl(body, modelID, rules...)
 
 	// CC 兼容模式：修复 CC 发送的 Bedrock 不兼容字段
 	if ccCompat {
-		body = SanitizeBedrockThinking(body, modelID)
+		body = SanitizeBedrockThinking(body, modelID, rules...)
 		body = SanitizeBedrockToolUseIDs(body)
 	}
 
@@ -219,9 +214,9 @@ func PrepareBedrockRequestBodyWithTokens(body []byte, modelID string, betaTokens
 }
 
 // ResolveBedrockBetaTokens computes the final Bedrock beta token list before policy filtering.
-func ResolveBedrockBetaTokens(betaHeader string, body []byte, modelID string) []string {
+func ResolveBedrockBetaTokens(betaHeader string, body []byte, modelID string, rules ...modelcatalog.ExecutionRules) []string {
 	betaTokens := ParseAnthropicBetaHeader(betaHeader)
-	betaTokens = AutoInjectBedrockBetaTokens(betaTokens, body, modelID)
+	betaTokens = AutoInjectBedrockBetaTokens(betaTokens, body, modelID, rules...)
 	return FilterBedrockBetaTokens(betaTokens)
 }
 
@@ -302,31 +297,17 @@ func RemoveCustomFieldFromTools(body []byte) []byte {
 	return body
 }
 
-// IsBedrockClaude45OrNewer 判断 Bedrock 模型 ID 是否为 Claude 4.5 或更新版本
-// Claude 4.5+ 支持 cache_control 中的 ttl 字段（"5m" 和 "1h"）。
+// IsBedrockClaude45OrNewer 查询已登记型号的缓存 TTL 支持。
 func IsBedrockClaude45OrNewer(modelID string) bool {
-	lower := strings.ToLower(modelID)
-	if IsBedrockFable5(lower) {
-		return true
-	}
-	matches := ClaudeVersionRe.FindStringSubmatch(lower)
-	if matches == nil {
-		return false
-	}
-	major, _ := strconv.Atoi(matches[1])
-	minor := 0
-	if len(matches) > 2 && matches[2] != "" {
-		minor, _ = strconv.Atoi(matches[2])
-	}
-	return major > 4 || (major == 4 && minor >= 5)
+	return len(modelcatalog.BedrockExecutionRules(modelID).CacheTTL) > 0
 }
 
 // SanitizeBedrockCacheControl 清理 system 和 messages 中 cache_control 里
 // Bedrock 不支持的字段：
 //   - scope：Bedrock 不支持（如 "global" 跨请求缓存）
 //   - ttl：仅 Claude 4.5+ 支持 "5m" 和 "1h"，旧模型需要移除
-func SanitizeBedrockCacheControl(body []byte, modelID string) []byte {
-	isClaude45 := IsBedrockClaude45OrNewer(modelID)
+func SanitizeBedrockCacheControl(body []byte, modelID string, rules ...modelcatalog.ExecutionRules) []byte {
+	isClaude45 := len(bedrockExecutionRules(modelID, rules).CacheTTL) > 0
 
 	// 清理 system 数组中的 cache_control
 	systemArr := gjson.GetBytes(body, "system")
@@ -404,7 +385,7 @@ func ParseAnthropicBetaHeader(header string) []string { return claude.ParseAnthr
 //
 // 客户端（特别是非 Claude Code 客户端）可能只在 body 中启用了功能而不在 header 中带对应 beta token，
 // 这里通过检测请求体特征自动补齐，确保 Bedrock Invoke 不会因缺少必要 beta 头而 400。
-func AutoInjectBedrockBetaTokens(tokens []string, body []byte, modelID string) []string {
+func AutoInjectBedrockBetaTokens(tokens []string, body []byte, modelID string, rules ...modelcatalog.ExecutionRules) []string {
 	seen := make(map[string]bool, len(tokens))
 	for _, t := range tokens {
 		seen[t] = true
@@ -447,7 +428,8 @@ func AutoInjectBedrockBetaTokens(tokens []string, body []byte, modelID string) [
 			// 后续 FilterBedrockBetaTokens 会将其转换为 Bedrock 特定的 tool-search-tool
 			inject("advanced-tool-use-2025-11-20")
 		}
-		if toolSearchUsed && BedrockModelSupportsToolSearch(modelID) {
+		rule := bedrockExecutionRules(modelID, rules)
+		if toolSearchUsed && rule.ToolSearch != nil && *rule.ToolSearch {
 			// 纯 tool search（无 programmatic/inputExamples）时直接注入 Bedrock 特定头，
 			// 跳过 advanced-tool-use → tool-search-tool 的转换步骤（与 litellm 对齐）
 			if !programmaticToolCallingUsed && !inputExamplesUsed {
@@ -496,21 +478,8 @@ func ContainsStringInJSONArray(result gjson.Result, target string) bool {
 // BedrockModelSupportsToolSearch 判断 Bedrock 模型是否支持 tool search
 // 目前仅 Claude Opus/Sonnet 4.5+ 支持，Haiku 不支持。
 func BedrockModelSupportsToolSearch(modelID string) bool {
-	lower := strings.ToLower(modelID)
-	matches := ClaudeVersionRe.FindStringSubmatch(lower)
-	if matches == nil {
-		return false
-	}
-	// Haiku 不支持 tool search
-	if strings.Contains(lower, "haiku") {
-		return false
-	}
-	major, _ := strconv.Atoi(matches[1])
-	minor := 0
-	if len(matches) > 2 && matches[2] != "" {
-		minor, _ = strconv.Atoi(matches[2])
-	}
-	return major > 4 || (major == 4 && minor >= 5)
+	rules := modelcatalog.BedrockExecutionRules(modelID)
+	return rules.ToolSearch != nil && *rules.ToolSearch
 }
 
 // FilterBedrockBetaTokens 过滤并转换 beta token 列表，仅保留 Bedrock Invoke 支持的 token
@@ -571,34 +540,19 @@ func ContainsAnyBedrockBetaToken(tokens []string, targets ...string) bool {
 	return false
 }
 
-// IsBedrockOpus47OrNewer 判断 Bedrock 模型 ID 是否为 Claude Opus 4.7 或更新版本
-// Opus 4.7 仅支持 thinking.type: "adaptive"，不支持 "enabled"。
+// IsBedrockOpus47OrNewer 查询已登记 Opus 型号的 adaptive 编码。
 func IsBedrockOpus47OrNewer(modelID string) bool {
-	lower := strings.ToLower(modelID)
-	if !strings.Contains(lower, "opus") {
-		return false
-	}
-	matches := ClaudeVersionRe.FindStringSubmatch(lower)
-	if matches == nil {
-		return false
-	}
-	major, _ := strconv.Atoi(matches[1])
-	minor := 0
-	if len(matches) > 2 && matches[2] != "" {
-		minor, _ = strconv.Atoi(matches[2])
-	}
-	return major > 4 || (major == 4 && minor >= 7)
+	return modelcatalog.BedrockExecutionRules(modelID).ThinkingMode == "adaptive" && strings.Contains(strings.ToLower(modelID), "opus")
 }
 
 func IsBedrockFable5(modelID string) bool {
-	return strings.Contains(strings.ToLower(modelID), "claude-fable-5")
+	return modelcatalog.BedrockExecutionRules(modelID).ThinkingMode == "adaptive" && strings.Contains(strings.ToLower(modelID), "fable")
 }
 
-// SanitizeBedrockThinking 修复 thinking 字段的 Bedrock 兼容性问题：
-//   - Fable 5: 仅使用 always-on adaptive thinking，不支持手动 budget_tokens
-//   - Opus 4.7+: 仅支持 "adaptive"，将 "enabled" 转换为 "adaptive" 并移除 budget_tokens
-//   - 其他模型: "enabled" 必须带 budget_tokens，缺失时补充默认值
-func SanitizeBedrockThinking(body []byte, modelID string) []byte {
+// SanitizeBedrockThinking 按已解析的模式准备 thinking 字段。
+// enabled 转为 adaptive 时移除预算，Fable 的 adaptive 请求也移除预算。
+// 预算模式缺少 budget_tokens 时，使用协议默认值。
+func SanitizeBedrockThinking(body []byte, modelID string, rules ...modelcatalog.ExecutionRules) []byte {
 	thinking := gjson.GetBytes(body, "thinking")
 	if !thinking.Exists() || !thinking.IsObject() {
 		return body
@@ -609,19 +563,12 @@ func SanitizeBedrockThinking(body []byte, modelID string) []byte {
 		return body
 	}
 
-	if IsBedrockFable5(modelID) {
+	mode := bedrockExecutionRules(modelID, rules).ThinkingMode
+	if mode == "adaptive" || mode == "adaptive_between_tools" {
 		if thinkingType == "enabled" {
 			body, _ = sjson.SetBytes(body, "thinking.type", "adaptive")
 		}
-		if thinkingType == "enabled" || thinkingType == "adaptive" {
-			body, _ = sjson.DeleteBytes(body, "thinking.budget_tokens")
-		}
-		return body
-	}
-
-	if IsBedrockOpus47OrNewer(modelID) {
-		if thinkingType == "enabled" {
-			body, _ = sjson.SetBytes(body, "thinking.type", "adaptive")
+		if thinkingType == "enabled" || thinkingType == "adaptive" && IsBedrockFable5(modelID) {
 			body, _ = sjson.DeleteBytes(body, "thinking.budget_tokens")
 		}
 		return body
@@ -704,7 +651,7 @@ func SanitizeBedrockCCFields(body []byte) []byte {
 
 // SanitizeBedrockCCBetaTokens 清理请求体中的 anthropic_beta 字段，只保留 Bedrock 支持的 beta token
 // CC 可能在请求体中注入了 Bedrock 不支持的 beta token（如 prompt-caching 等），导致 ValidationException。
-func SanitizeBedrockCCBetaTokens(body []byte, modelID string) []byte {
+func SanitizeBedrockCCBetaTokens(body []byte, modelID string, rules ...modelcatalog.ExecutionRules) []byte {
 	betaField := gjson.GetBytes(body, "anthropic_beta")
 	if !betaField.Exists() {
 		return body
@@ -723,7 +670,7 @@ func SanitizeBedrockCCBetaTokens(body []byte, modelID string) []byte {
 
 	// 复用现有的 Bedrock beta token 过滤逻辑（自动注入 + 白名单过滤 + 转换）
 	// 即使 tokens 为空，也要执行自动注入（根据 body 内容补充必要的 beta token）
-	tokens = AutoInjectBedrockBetaTokens(tokens, body, modelID)
+	tokens = AutoInjectBedrockBetaTokens(tokens, body, modelID, rules...)
 	tokens = FilterBedrockBetaTokens(tokens)
 
 	if len(tokens) == 0 {
@@ -741,4 +688,11 @@ func SanitizeBedrockCCBetaTokens(body []byte, modelID string) []byte {
 	}
 
 	return body
+}
+
+func bedrockExecutionRules(model string, rules []modelcatalog.ExecutionRules) modelcatalog.ExecutionRules {
+	if len(rules) > 0 {
+		return rules[0]
+	}
+	return modelcatalog.BedrockExecutionRules(model)
 }

@@ -4,6 +4,8 @@ import (
 	"maps"
 	"slices"
 	"strings"
+
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 )
 
 const (
@@ -13,111 +15,16 @@ const (
 	ThinkingLowHighMax
 
 	// FallbackMaxInputTokens 是未知或尚未纳入能力快照的 Qoder route 使用的保守输入上限。
-	FallbackMaxInputTokens = 200000
+	FallbackMaxInputTokens = modelcatalog.QoderFallbackInputLimit
 )
 
 var (
-	// globalAliases 与 cnAliases 固化公开模型 ID 到内部 route key 的站点映射。
-	globalAliases = map[string]string{
-		"claude-opus-4-6":   "ultimate",
-		"auto":              "auto",
-		"performance":       "performance",
-		"efficient":         "efficient",
-		"lite":              "lite",
-		"qwen3.8-max":       "qmodel_38max",
-		"qwen3.7-max":       "qmodel_latest",
-		"qwen3.7-plus":      "qmodel",
-		"kimi-k3":           "kmodel_latest",
-		"kimi-k2.7-code":    "kmodel",
-		"glm-5.3":           "gmodel",
-		"glm-5.2":           "gm51model",
-		"deepseek-v4-pro":   "dmodel",
-		"deepseek-v4-flash": "dfmodel",
-		"minimax-m3":        "mmodel",
-	}
-
-	cnAliases = map[string]string{
-		"auto":              "auto",
-		"qwen3.8-max":       "qmodel_38max",
-		"qwen3.7-max":       "qmodel_latest",
-		"qwen3.7-plus":      "qmodel",
-		"qwen3.6-flash":     "q36fmodel",
-		"deepseek-v4-pro":   "dmodel",
-		"deepseek-v4-flash": "dfmodel",
-		"glm-5.3":           "gmodel",
-		"glm-5.2":           "gm51model",
-		"kimi-k2.7-code":    "kmodel",
-		"minimax-m2.7":      "mmodel",
-	}
-
-	// globalThinkingCapabilities 显式记录每个国际站 route key 的可调思考能力。
-	// 两站共有 route key 与国内站保持一致；国际站独有模型仍只采用已验证的能力。
-	globalThinkingCapabilities = map[string]ThinkingCapability{
-		"ultimate":      ThinkingUnsupported,
-		"auto":          ThinkingUnsupported,
-		"performance":   ThinkingUnsupported,
-		"efficient":     ThinkingUnsupported,
-		"lite":          ThinkingUnsupported,
-		"qmodel_38max":  ThinkingToggleOnly,
-		"qmodel_latest": ThinkingToggleOnly,
-		"qmodel":        ThinkingToggleOnly,
-		"kmodel_latest": ThinkingUnsupported,
-		"kmodel":        ThinkingUnsupported,
-		"gmodel":        ThinkingLowHighMax,
-		"gm51model":     ThinkingHighMax,
-		"dmodel":        ThinkingHighMax,
-		"dfmodel":       ThinkingHighMax,
-		"mmodel":        ThinkingUnsupported,
-	}
-
-	// cnThinkingCapabilities 显式记录每个国内站 route key 的可调思考能力。
-	cnThinkingCapabilities = map[string]ThinkingCapability{
-		"auto":          ThinkingUnsupported,
-		"qmodel_38max":  ThinkingToggleOnly,
-		"qmodel_latest": ThinkingToggleOnly,
-		"qmodel":        ThinkingToggleOnly,
-		"q36fmodel":     ThinkingUnsupported,
-		"dmodel":        ThinkingHighMax,
-		"dfmodel":       ThinkingHighMax,
-		"gmodel":        ThinkingLowHighMax,
-		"gm51model":     ThinkingHighMax,
-		"kmodel":        ThinkingUnsupported,
-		"mmodel":        ThinkingUnsupported,
-	}
-
-	// globalContextCapabilities 来自 Qoder 国际版 1.24.2 的 Assistant 运行时模型配置。
-	globalContextCapabilities = map[string]ContextCapability{
-		"ultimate":      {MaxInputTokens: 1000000, RuntimeSelectable: true},
-		"auto":          {MaxInputTokens: 180000},
-		"performance":   {MaxInputTokens: 1000000, RuntimeSelectable: true},
-		"efficient":     {MaxInputTokens: 180000},
-		"lite":          {MaxInputTokens: 180000},
-		"qmodel_38max":  {MaxInputTokens: 1000000, RuntimeSelectable: true},
-		"qmodel_latest": {MaxInputTokens: 1000000, RuntimeSelectable: true},
-		"qmodel":        {MaxInputTokens: 1000000, RuntimeSelectable: true},
-		"kmodel_latest": {MaxInputTokens: 1000000, RuntimeSelectable: true},
-		"kmodel":        {MaxInputTokens: 256000, RuntimeSelectable: true},
-		"gmodel":        {MaxInputTokens: 1000000, RuntimeSelectable: true},
-		"gm51model":     {MaxInputTokens: 1000000, RuntimeSelectable: true},
-		"dmodel":        {MaxInputTokens: 1000000, RuntimeSelectable: true},
-		"dfmodel":       {MaxInputTokens: 1000000, RuntimeSelectable: true},
-		"mmodel":        {MaxInputTokens: 1000000, RuntimeSelectable: true},
-	}
-
-	// cnContextCapabilities 来自 Qoder CN 1.24.2 的 Assistant 运行时模型配置。
-	cnContextCapabilities = map[string]ContextCapability{
-		"auto":          {MaxInputTokens: 180000},
-		"qmodel_38max":  {MaxInputTokens: 1000000, RuntimeSelectable: true},
-		"qmodel_latest": {MaxInputTokens: 1000000, RuntimeSelectable: true},
-		"qmodel":        {MaxInputTokens: 1000000, RuntimeSelectable: true},
-		"q36fmodel":     {MaxInputTokens: 1000000, RuntimeSelectable: true},
-		"dmodel":        {MaxInputTokens: 1000000, RuntimeSelectable: true},
-		"dfmodel":       {MaxInputTokens: 1000000, RuntimeSelectable: true},
-		"gmodel":        {MaxInputTokens: 1000000, RuntimeSelectable: true},
-		"gm51model":     {MaxInputTokens: 1000000, RuntimeSelectable: true},
-		"kmodel":        {MaxInputTokens: 256000, RuntimeSelectable: true},
-		"mmodel":        {MaxInputTokens: 200000, RuntimeSelectable: true},
-	}
+	globalAliases              = modelcatalog.QoderAliases("global")
+	cnAliases                  = modelcatalog.QoderAliases("cn")
+	globalThinkingCapabilities = qoderThinkingCapabilities("global")
+	cnThinkingCapabilities     = qoderThinkingCapabilities("cn")
+	globalContextCapabilities  = qoderContextCapabilities("global")
+	cnContextCapabilities      = qoderContextCapabilities("cn")
 )
 
 // ThinkingCapability 描述 Qoder 模型可由客户端调整的思考能力。
@@ -301,4 +208,35 @@ func (info *AuthInfo) ToAuthIdentity() *AuthIdentity {
 		SecurityOauthToken: token,
 		RefreshToken:       info.RefreshToken,
 	}
+}
+
+func qoderThinkingCapabilities(site string) map[string]ThinkingCapability {
+	result := map[string]ThinkingCapability{}
+	for _, key := range modelcatalog.QoderAliases(site) {
+		options := modelcatalog.QoderReasoningOptions(site, key)
+		result[key] = thinkingCapabilityFromAttributes(modelcatalog.Attributes{ReasoningOptions: &options})
+	}
+	return result
+}
+
+func thinkingCapabilityFromAttributes(attributes modelcatalog.Attributes) ThinkingCapability {
+	if attributes.HasReasoningOption("effort") {
+		if supported := attributes.EffortSupport("low"); supported != nil && *supported {
+			return ThinkingLowHighMax
+		}
+		return ThinkingHighMax
+	}
+	if attributes.HasReasoningOption("toggle") {
+		return ThinkingToggleOnly
+	}
+	return ThinkingUnsupported
+}
+
+func qoderContextCapabilities(site string) map[string]ContextCapability {
+	result := map[string]ContextCapability{}
+	for _, key := range modelcatalog.QoderAliases(site) {
+		limit, selectable := modelcatalog.QoderInputLimit(site, key)
+		result[key] = ContextCapability{MaxInputTokens: limit, RuntimeSelectable: selectable}
+	}
+	return result
 }

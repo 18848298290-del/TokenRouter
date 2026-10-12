@@ -12,6 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/egress"
 	egressprovider "github.com/TokenFlux/TokenRouter/internal/egress/provider"
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient/tlsfingerprint"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	claude "github.com/TokenFlux/TokenRouter/internal/upstream/anthropic"
@@ -21,6 +22,7 @@ import (
 
 // AnthropicProviderTest 绑定供应商接口，凭据和健康状态通过提供商接口读写。
 type AnthropicProviderTest struct {
+	Attributes  func() modelcatalog.View
 	Tokens      *providercore.ClaudeTokenSource
 	Transport   QoderTransport
 	Profiles    *egressprovider.TLSProfiles
@@ -91,6 +93,7 @@ func (s *AnthropicProviderTest) Execute(c *TestRun, value *providercore.Record, 
 	if err != nil {
 		return (TestStreamOutput{}).Error(c, "Failed to create test payload")
 	}
+	s.applyModelAttributes(value, testModelID, payload)
 	payloadBytes, _ := json.Marshal(payload)
 
 	// 报文构造完成后发布开始事件。
@@ -164,6 +167,7 @@ func (s *AnthropicProviderTest) executeVertex(c *TestRun, ctx context.Context, v
 	if err != nil {
 		return (TestStreamOutput{}).Error(c, "Failed to create test payload")
 	}
+	s.applyModelAttributes(value, testModelID, payload)
 	payloadBytes, _ := json.Marshal(payload)
 	vertexBody, err := vertex.BuildVertexAnthropicRequestBody(payloadBytes)
 	if err != nil {
@@ -249,6 +253,7 @@ func (s *AnthropicProviderTest) ExecuteBedrock(c *TestRun, ctx context.Context, 
 		"max_tokens":  256,
 		"temperature": 1,
 	}
+	s.applyModelAttributes(value, testModelID, bedrockPayload)
 	bedrockBody, _ := json.Marshal(bedrockPayload)
 
 	// 上游非流式响应仍按 Claude JSON 处理。
@@ -337,4 +342,18 @@ func (s *AnthropicProviderTest) resolveTLSProfile(value *providercore.Record) *t
 func mappedTestModel(value *providercore.Record, model string) string {
 	mapped, _ := providercore.ResolveMappedModel(providercore.ResolveModelMapping(value, ModelDefaults()), model)
 	return mapped
+}
+
+func (s *AnthropicProviderTest) applyModelAttributes(value *providercore.Record, model string, payload map[string]any) {
+	var view modelcatalog.View
+	if s.Attributes != nil {
+		view = s.Attributes()
+	}
+	resolved := view.Resolve(value.ModelAttributeTarget(model, "anthropic_messages"), modelcatalog.Attributes{}).ForRequest(modelcatalog.RequestState{})
+	if resolved.Attributes.Temperature != nil && !*resolved.Attributes.Temperature {
+		delete(payload, "temperature")
+	}
+	if resolved.Attributes.TopP != nil && !*resolved.Attributes.TopP {
+		delete(payload, "top_p")
+	}
 }

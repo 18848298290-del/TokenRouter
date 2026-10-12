@@ -68,6 +68,11 @@ func (s *OpenAIRequests) SendChat(
 	grokCacheIdentity string,
 	tlsRouterMatch ...egress.TLSFingerprintRouterMatchResult,
 ) (*http.Response, error) {
+	var err error
+	body, err = s.applyModelAttributes(ctx, provider, body, "openai_chat_completions")
+	if err != nil {
+		return nil, err
+	}
 	return openai.SendChatRequest(ctx, body, openai.CCRequestOptions{
 		URL: targetURL, Token: bearerToken, Stream: stream, Headers: c.Request.Header,
 		RequestContext:  gatewayprovider.DetachUpstreamContext,
@@ -112,6 +117,11 @@ func (s *OpenAIRequests) AnthropicURL(provider *gatewayprovider.ExecutionProvide
 
 // BuildAnthropic 从当前请求 Header 和提供商策略构造请求。
 func (s *OpenAIRequests) BuildAnthropic(ctx context.Context, c *gin.Context, provider *gatewayprovider.ExecutionProvider, body []byte, apiKey, targetURL string) (*http.Request, []byte, error) {
+	var err error
+	body, err = s.applyModelAttributes(ctx, provider, body, "anthropic_messages")
+	if err != nil {
+		return nil, nil, err
+	}
 	var headers http.Header
 	if c != nil && c.Request != nil {
 		headers = c.Request.Header

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/requestcontext"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
@@ -24,6 +25,7 @@ type streamClientWithDoer interface {
 
 // Target 保存本次 Qoder 请求的站点、元数据和会话获取函数。
 type Target struct {
+	Attributes func(context.Context, string, protocol.ProtocolID) (modelcatalog.Resolution, error)
 	ProviderID int64
 	Site       Site
 	UserType   string
@@ -141,6 +143,14 @@ func (e *Executor) Execute(ctx context.Context, input upstream.AttemptInput, sin
 	responseModel := input.ResponseModel
 	if responseModel == "" {
 		responseModel = request.Model
+	}
+	if target.Attributes != nil {
+		modelKey := ResolveQoderModelForSite(target.Site, request.Model).Key
+		attributes, resolveErr := target.Attributes(ctx, modelKey, input.Protocol)
+		if resolveErr != nil {
+			return upstream.AttemptResult{}, resolveErr
+		}
+		request.Capabilities = &attributes
 	}
 	payload, model, plan := e.PrepareConversation(target, input.Protocol, request)
 	body, err := json.Marshal(payload)

@@ -10,6 +10,7 @@ import (
 
 // OpenAIIngressHooks 定义入站 WS 每个 turn 的生命周期回调。
 type OpenAIIngressHooks struct {
+	ContextForTurn func(int) context.Context
 	// ClientLifecycleContext 是加入 ingress 租约取消信号前的客户端 context。
 	// 下行写入继承客户端断开和服务关闭信号，租约丢失则在当前帧完成后结束连接。
 	ClientLifecycleContext context.Context

@@ -17,6 +17,7 @@ type OpenAIErrorOutput struct {
 }
 
 func (h OpenAIErrorOutput) WriteAnthropicStreamingError(c *gin.Context, status int, kind, message string, started bool) {
+	status, message = modelAttributeError(c, status, message)
 	if !started {
 		WriteAnthropicError(c, status, kind, "", message)
 		return
@@ -38,6 +39,7 @@ func (h OpenAIErrorOutput) WriteStreamingErrorWithCode(
 	streamStarted bool,
 	countTowardsSLA bool,
 ) {
+	status, message = modelAttributeError(c, status, message)
 	// body-signal compact 心跳可能已把响应头提交为 200：先停心跳（建立
 	// happens-before，接管 ResponseWriter），并升级为流内错误处理。
 	if h.stopCompact(c) {
@@ -92,6 +94,7 @@ func DefaultOpenAIErrorOutput() OpenAIErrorOutput {
 }
 
 func (h OpenAIErrorOutput) WriteError(c *gin.Context, status int, kind, message string) {
+	status, message = modelAttributeError(c, status, message)
 	writeOpenAIRequestError(c, status, kind, message, h.stopCompact, h.markStream, h.metadata)
 }
 

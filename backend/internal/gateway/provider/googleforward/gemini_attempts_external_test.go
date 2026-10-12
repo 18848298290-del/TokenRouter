@@ -25,7 +25,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/provider/googleforward"
 	gatewaytelemetry "github.com/TokenFlux/TokenRouter/internal/gateway/telemetry"
 	gatewaytestkit "github.com/TokenFlux/TokenRouter/internal/gateway/testkit"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog/testkit"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
+	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	gemininative "github.com/TokenFlux/TokenRouter/internal/upstream/gemini"
 )
@@ -1584,4 +1586,21 @@ func (r *rateLimit429ProviderRepoStub) SetRateLimited(_ context.Context, id int6
 	r.lastRateLimitID = id
 	r.lastRateLimitReset = resetAt
 	return nil
+}
+
+func TestGeminiMessagesForwardsThinkingBudget(t *testing.T) {
+	stub := &geminiCompatHTTPUpstreamStub{response: &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"candidates":[{"content":{"parts":[{"text":"answer"}]},"finishReason":"STOP"}]}`))}}
+	svc := newGeminiFixture(geminiDependencies{httpUpstream: stub, cfg: &googleforward.Options{}})
+	svc.Attributes = &routing.ModelAttributeService{Catalog: routing.ModelAttributeCatalog{View: testkit.OfflineView}}
+	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{ID: 1, Platform: "gemini", Type: "apikey", Credentials: map[string]any{"api_key": "test", "model_mapping": map[string]any{"alias": "gemini-2.5-flash"}}}}
+	body := []byte(`{"model":"alias","max_tokens":32000,"messages":[{"role":"user","content":"hi"}],"thinking":{"type":"enabled","budget_tokens":4096}}`)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+	_, err := svc.Forward(context.Background(), gatewayhttp.NewGoogleBoundary(c, svc.Options, false), provider, body)
+	require.NoError(t, err)
+	wire, err := io.ReadAll(stub.lastReq.Body)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"includeThoughts":true,"thinkingBudget":4096}`, gjson.GetBytes(wire, "generationConfig.thinkingConfig").Raw)
+	require.Contains(t, recorder.Body.String(), "answer")
 }

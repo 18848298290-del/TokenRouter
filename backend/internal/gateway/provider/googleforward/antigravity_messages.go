@@ -92,6 +92,16 @@ func (s *Antigravity) Forward(ctx context.Context, output Output, provider *gate
 	// 获取转换选项
 	// Antigravity 上游要求必须包含身份提示词，否则会返回 429
 	transformOpts := s.getClaudeTransformOptions(ctx)
+	attributes, attributesErr := gatewayprovider.ResolveModelAttributes(ctx, provider, mappedModel, s.Attributes, "gemini_generate_content")
+	if attributesErr != nil {
+		return nil, attributesErr
+	}
+	transformOpts.Capabilities = &attributes
+	transformOpts.Thinking, err = gatewayprovider.GeminiThinking(attributes, body)
+	if err != nil {
+		return nil, c.ClaudeError(http.StatusBadRequest, "invalid_request_error", err.Error())
+	}
+	transformOpts.ThinkingResolved = true
 	transformOpts.EnableIdentityPatch = true // 强制启用，Antigravity 上游必需
 
 	// 转换 Claude 请求为 Gemini 格式
@@ -174,7 +184,7 @@ func (s *Antigravity) Forward(ctx context.Context, output Output, provider *gate
 			},
 			SignatureEnabled:   s.Gateway.IsSignatureRectifierEnabled,
 			BudgetEnabled:      s.Gateway.IsBudgetRectifierEnabled,
-			TransformOptions:   s.getClaudeTransformOptions,
+			TransformOptions:   func(context.Context) antigravity.TransformOptions { return transformOpts },
 			LogConfig:          s.getLogConfig,
 			ErrorDetail:        s.getUpstreamErrorDetail,
 			ReadErrorBody:      s.readUpstreamErrorBody,

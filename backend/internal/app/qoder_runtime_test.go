@@ -16,7 +16,7 @@ func TestNewQoderGatewayServiceUsesInjectedRefreshAPI(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, tokens.StopContext(context.Background())) })
 	coordinator := &provider.OAuthRefreshAPI{}
 	refresh := provideQoderRequestRefresh(nil, tokens, coordinator, nil, nil)
-	runtime := provideQoderRuntime(tokens, nil, nil, nil)
+	runtime := provideQoderRuntime(tokens, nil, nil, nil, nil)
 	require.Same(t, coordinator, refresh.Coordinator)
 	require.Same(t, tokens, refresh.Tokens)
 	value := &provider.Record{ID: 1, Platform: provider.PlatformQoder, Type: provider.ProviderTypeCosy, Credentials: map[string]any{}}

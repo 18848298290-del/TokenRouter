@@ -16,6 +16,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/apikey"
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
@@ -61,8 +62,9 @@ type ExecutionProvider interface {
 	Name() string
 }
 type Candidate struct {
-	ID       int64
-	Priority int
+	AttributeTarget func(string) modelcatalog.Target
+	ID              int64
+	Priority        int
 	CandidateRules
 	ProtocolEnabled  func() bool
 	SupportsProvider func(string) bool
@@ -97,6 +99,7 @@ type PublicOptions struct {
 	DefaultResponseMimeType, DefaultImageSize                                                                                                                                     string
 }
 type Public struct {
+	Attributes *routing.ModelAttributeService
 	// ModelOutputModalities 按最终型号查询输出模态，nil 表示未知。
 	ModelOutputModalities  func(string) *[]string
 	Now                    func() time.Time
@@ -143,6 +146,7 @@ func (s *Public) Submit(ctx context.Context, owner BatchImageOwner, req BatchIma
 	if !s.Enabled() {
 		return nil, ErrBatchImageDisabled
 	}
+	attributeSession := s.Attributes.NewSession()
 	normalized, err := s.ValidateSubmitRequest(req)
 	if err != nil {
 		return nil, err
@@ -192,6 +196,9 @@ func (s *Public) Submit(ctx context.Context, owner BatchImageOwner, req BatchIma
 		groupMapping,
 	)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.validateModelAttributes(ctx, attributeSession, owner.GroupID, provider, upstreamModel, normalized); err != nil {
 		return nil, err
 	}
 	pricingRequest := normalized
@@ -630,6 +637,7 @@ func (s *Public) ListModels(ctx context.Context, owner BatchImageOwner) (*BatchI
 	}
 	// 多个来源可以映射到同一上游型号，每次查询复用它的模态结果。
 	outputs := make(map[string]*[]string)
+	attributeSession := s.Attributes.NewSession()
 	modelsByProvider := make(map[string]map[string]struct{})
 	for _, providerName := range BatchImageProviderSelectionOrder("") {
 		if !s.ProviderExists(providerName) {
@@ -662,7 +670,23 @@ func (s *Public) ListModels(ctx context.Context, owner BatchImageOwner) (*BatchI
 					continue
 				}
 				modalities, found := outputs[upstreamModel]
-				if !found && s.ModelOutputModalities != nil {
+				if s.Attributes != nil {
+					target := modelcatalog.Target{Platform: "gemini", Model: upstreamModel, ClientProtocol: "image_batches"}
+					if provider.AttributeTarget != nil {
+						target = provider.AttributeTarget(upstreamModel)
+					}
+					target.ClientProtocol = "image_batches"
+					var groupID int64
+					if owner.GroupID != nil {
+						groupID = *owner.GroupID
+					}
+					resolved, err := attributeSession.Resolve(ctx, groupID, target)
+					if err == nil {
+						modalities = resolved.Attributes.OutputModalities
+					} else {
+						modalities = nil
+					}
+				} else if !found && s.ModelOutputModalities != nil {
 					modalities = s.ModelOutputModalities(upstreamModel)
 					outputs[upstreamModel] = modalities
 				}
@@ -867,7 +891,7 @@ func (s *Public) ValidateSubmitRequest(req BatchImageSubmitRequest) (BatchImageS
 		if len(req.Items[i].Prompt) > s.MaxPromptChars() {
 			return req, ErrBatchImagePromptTooLong
 		}
-		referenceCount, inlineReferenceBytes, err := NormalizeBatchImageReferenceInputs(req.Model, &req.Items[i])
+		referenceCount, inlineReferenceBytes, err := NormalizeBatchImageReferenceInputs(&req.Items[i])
 		if err != nil {
 			return req, err
 		}
@@ -896,13 +920,9 @@ func (s *Public) ValidateSubmitRequest(req BatchImageSubmitRequest) (BatchImageS
 	return req, nil
 }
 
-func NormalizeBatchImageReferenceInputs(model string, item *BatchImageSubmitItem) (int, int, error) {
+func NormalizeBatchImageReferenceInputs(item *BatchImageSubmitItem) (int, int, error) {
 	if item == nil || len(item.ReferenceImages) == 0 {
 		return 0, 0, nil
-	}
-	maxRefs := MaxBatchImageReferenceImagesForModel(model)
-	if maxRefs <= 0 || len(item.ReferenceImages) > maxRefs {
-		return 0, 0, ErrBatchImageTooManyReferenceImages
 	}
 	out := make([]BatchImageReferenceInput, 0, len(item.ReferenceImages))
 	inlineBytes := 0
@@ -938,17 +958,6 @@ func BatchImageRepeatSuffixWidth(count int) int {
 		return 2
 	}
 	return len(strconv.Itoa(count))
-}
-
-func MaxBatchImageReferenceImagesForModel(model string) int {
-	model = strings.ToLower(strings.TrimSpace(model))
-	if strings.Contains(model, "pro-image") {
-		return 14
-	}
-	if strings.Contains(model, "flash-image") {
-		return 3
-	}
-	return 0
 }
 
 // ResolveBatchImageGroupModel 执行批量图片的分组映射和分组模型白名单。

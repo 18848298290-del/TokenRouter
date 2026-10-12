@@ -37,6 +37,7 @@ type ExchangeOptions struct {
 	Message, Detail                         func([]byte) string
 	Sanitize                                func(string) string
 	FilterThinking, FilterTools             func() []byte
+	ConvertRetry                            func([]byte) ([]byte, error)
 	ReplaceBody                             func([]byte)
 }
 type ExchangeResult struct {
@@ -118,7 +119,13 @@ func ExchangeMessages(ctx context.Context, options ExchangeOptions) (ExchangeRes
 					stageName = "thinking+tools"
 					signatureRetryStage = 2
 				}
-				retryGeminiReq, txErr := bridge.NativeConvertClaudeMessagesToGeminiGenerateContent(bridge.NativeGeminiOptions{DummyThoughtSignature: "skip_thought_signature_validator"}, strippedClaudeBody)
+				convert := options.ConvertRetry
+				if convert == nil {
+					convert = func(body []byte) ([]byte, error) {
+						return bridge.NativeConvertClaudeMessagesToGeminiGenerateContent(bridge.NativeGeminiOptions{DummyThoughtSignature: "skip_thought_signature_validator"}, body)
+					}
+				}
+				retryGeminiReq, txErr := convert(strippedClaudeBody)
 				if txErr == nil {
 					logger.LegacyPrintf("service.gemini_messages_compat", "Gemini provider %d: detected signature-related 400, retrying with downgraded Claude blocks (%s)", options.ProviderID, stageName)
 					options.ReplaceBody(retryGeminiReq)

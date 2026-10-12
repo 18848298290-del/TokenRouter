@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 )
@@ -23,12 +25,7 @@ const (
 	// Claude API 要求 max_tokens > thinking.budget_tokens，否则返回 400 错误。
 	MaxTokensBudgetPadding = 1000
 
-	// Gemini 2.5 Flash thinking budget 上限。
-	Gemini25FlashThinkingBudgetLimit = 24576
-
-	// 对于 Antigravity 的 Claude（budget-only）模型，该语义最终等价为 thinkingBudget=24576。
-	// 这里复用相同数值以保持行为一致。
-	ClaudeAdaptiveHighThinkingBudgetTokens = Gemini25FlashThinkingBudgetLimit
+	ClaudeAdaptiveHighThinkingBudgetTokens = modelcatalog.AntigravityAdaptiveBudget
 
 	// antigravityIdentity Antigravity identity 提示词。
 	antigravityIdentity = `<identity>
@@ -53,9 +50,7 @@ This information may or may not be relevant to the coding task, it is up for you
 	DummyThoughtSignature = bridge.DummyThoughtSignature
 
 	// buildGenerationConfig 构建 generationConfig。
-	defaultMaxOutputTokens    = 64000
-	maxOutputTokensUpperBound = 65000
-	maxOutputTokensClaude     = 64000
+	defaultMaxOutputTokens = modelcatalog.AntigravityDefaultOutputLimit
 )
 
 var (
@@ -64,6 +59,9 @@ var (
 )
 
 type TransformOptions struct {
+	Thinking            *bridge.GeminiThinkingConfig
+	ThinkingResolved    bool
+	Capabilities        *modelcatalog.Resolution
 	EnableIdentityPatch bool
 	// IdentityPatch 可选：自定义注入到 systemInstruction 开头的身份防护提示词；
 	// 为空时使用默认模板（包含 [IDENTITY_PATCH] 及 SYSTEM_PROMPT_BEGIN 标记）。
@@ -136,6 +134,9 @@ func TransformClaudeToGeminiWithOptions(claudeReq *ClaudeRequest, projectID, map
 
 	// 检测是否启用 thinking
 	isThinkingEnabled := claudeReq.Thinking != nil && (claudeReq.Thinking.Type == "enabled" || claudeReq.Thinking.Type == "adaptive")
+	if opts.ThinkingResolved {
+		isThinkingEnabled = opts.Thinking != nil && (!opts.Thinking.BudgetSet || opts.Thinking.ThinkingBudget != 0)
+	}
 
 	// 只有 Gemini 模型支持 dummy thought workaround
 	// Claude 模型通过 Vertex/Google API 需要有效的 thought signatures
@@ -170,7 +171,18 @@ func TransformClaudeToGeminiWithOptions(claudeReq *ClaudeRequest, projectID, map
 		reqCopy.Model = targetModel
 		reqForConfig = &reqCopy
 	}
-	generationConfig := buildGenerationConfig(reqForConfig)
+	if opts.ThinkingResolved {
+		reqCopy := *reqForConfig
+		reqCopy.Thinking = nil
+		if !strippedThinking && opts.Thinking != nil && opts.Thinking.BudgetSet && opts.Thinking.ThinkingBudget != 0 {
+			reqCopy.Thinking = &ThinkingConfig{Type: "enabled", BudgetTokens: opts.Thinking.ThinkingBudget}
+		}
+		reqForConfig = &reqCopy
+	}
+	generationConfig := buildGenerationConfig(reqForConfig, opts.Capabilities)
+	if opts.ThinkingResolved && !strippedThinking {
+		generationConfig.ThinkingConfig = opts.Thinking
+	}
 
 	// 4. 构建 tools
 	tools := buildTools(claudeReq.Tools)
@@ -184,6 +196,9 @@ func TransformClaudeToGeminiWithOptions(claudeReq *ClaudeRequest, projectID, map
 
 	// 针对 Gemini Reasoning 模型（如 gemini-3.1-pro-high 等）过滤强制空 ToolConfig
 	isReasoning := IsGeminiReasoningModel(targetModel)
+	if opts.Capabilities != nil {
+		isReasoning = opts.Capabilities.Rules.OmitEmptyToolConfig
+	}
 	if !isReasoning || len(tools) > 0 {
 		// 总是设置 toolConfig，与官方客户端一致
 		innerRequest.ToolConfig = &GeminiToolConfig{
@@ -340,33 +355,28 @@ func buildContents(messages []ClaudeMessage, toolIDToName map[string]string, isT
 	return bridge.BuildContents(messages, toolIDToName, isThinkingEnabled, allowDummyThought)
 }
 
-func maxOutputTokensLimit(model string) int {
-	if strings.HasPrefix(model, "claude-") {
-		return maxOutputTokensClaude
-	}
-	return maxOutputTokensUpperBound
-}
-
-// isAntigravityOpusHighTierModel 判断是否为高阶 Opus 模型（4.6+），
-// 用于 adaptive thinking 时覆写为高预算。
-func isAntigravityOpusHighTierModel(model string) bool {
-	lower := strings.ToLower(model)
-	return strings.HasPrefix(lower, "claude-opus-4-6") ||
-		strings.HasPrefix(lower, "claude-opus-4-7") ||
-		strings.HasPrefix(lower, "claude-opus-4-8")
-}
-
 // buildGenerationConfig 按模型设置生成参数，再转换为 Gemini 配置。
-func buildGenerationConfig(req *ClaudeRequest) *GeminiGenerationConfig {
+func buildGenerationConfig(req *ClaudeRequest, resolutions ...*modelcatalog.Resolution) *GeminiGenerationConfig {
+	resolved := (modelcatalog.View{}).Resolve(modelcatalog.Target{Platform: "antigravity", Model: req.Model}, modelcatalog.Attributes{})
+	if len(resolutions) > 0 && resolutions[0] != nil {
+		resolved = *resolutions[0]
+	}
+	thinking := req.Thinking != nil && (req.Thinking.Type == "enabled" || req.Thinking.Type == "adaptive")
+	resolved = resolved.ForRequest(modelcatalog.RequestState{Thinking: &thinking})
+	maxOutput := defaultMaxOutputTokens
+	if resolved.Attributes.OutputLimit != nil {
+		maxOutput = *resolved.Attributes.OutputLimit
+	}
 	options := bridge.InternalGeminiGenerationOptions{
-		DefaultOutputTokens: defaultMaxOutputTokens, MaxOutputTokens: maxOutputTokensLimit(req.Model),
-		ReasoningModel: IsGeminiReasoningModel(req.Model), StopSequences: DefaultStopSequences, BudgetPadding: MaxTokensBudgetPadding,
+		DefaultOutputTokens: min(defaultMaxOutputTokens, maxOutput), MaxOutputTokens: maxOutput,
+		OmitStopSequences: resolved.Rules.OmitStopSequences, StopSequences: DefaultStopSequences, BudgetPadding: resolved.Rules.BudgetPadding,
+		DropTemperature:        resolved.Attributes.Temperature != nil && !*resolved.Attributes.Temperature,
+		DropTopP:               resolved.Attributes.TopP != nil && !*resolved.Attributes.TopP,
+		DropTopK:               slices.Contains(resolved.Rules.DropFields, "top_k"),
+		AdaptiveThinkingBudget: resolved.Rules.AdaptiveThinkingBudget,
 	}
-	if isAntigravityOpusHighTierModel(req.Model) {
-		options.AdaptiveThinkingBudget = ClaudeAdaptiveHighThinkingBudgetTokens
-	}
-	if strings.Contains(req.Model, "gemini-2.5-flash") {
-		options.ThinkingBudgetLimit = Gemini25FlashThinkingBudgetLimit
+	if _, budget := resolved.Attributes.ReasoningBudget(); budget != nil {
+		options.ThinkingBudgetLimit = *budget
 	}
 	result, diagnostics := bridge.BuildInternalGeminiGenerationConfig(req, options)
 	for _, message := range diagnostics {
@@ -394,11 +404,5 @@ func buildTools(tools []ClaudeTool) []GeminiToolDeclaration {
 
 // IsGeminiReasoningModel 标记需要省略强制工具参数的上游型号。
 func IsGeminiReasoningModel(modelID string) bool {
-	lower := strings.ToLower(modelID)
-	for _, id := range []string{"gemini-2.5-flash-thinking", "gemini-3-pro-high", "gemini-3.1-pro-high", "gemini-3.6-flash-high", "gemini-3.6-flash-low", "gemini-3.6-flash-medium", "gemini-3.6-flash-tiered"} {
-		if strings.Contains(lower, id) {
-			return true
-		}
-	}
-	return false
+	return (modelcatalog.View{}).Resolve(modelcatalog.Target{Platform: "antigravity", Model: modelID}, modelcatalog.Attributes{}).Rules.OmitEmptyToolConfig
 }

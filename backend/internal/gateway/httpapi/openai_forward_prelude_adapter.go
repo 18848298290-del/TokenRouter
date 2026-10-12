@@ -3,10 +3,8 @@ package httpapi
 import (
 	"context"
 	"errors"
-	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/tidwall/gjson"
 
 	"github.com/TokenFlux/TokenRouter/internal/egress"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/media"
@@ -52,10 +50,6 @@ func (p openAIForwardPreludeAdapter) Begin() {
 	}
 }
 
-func (p openAIForwardPreludeAdapter) FilterNoneReasoning(body []byte) ([]byte, error) {
-	return gatewayprovider.FilterOpenAIResponsesNoneReasoningEffortForProvider(gatewayprovider.ExecutionProtocolRecord(p.provider), body)
-}
-
 func (p openAIForwardPreludeAdapter) ClearMappings() {
 	ClearGrokResponsesClientToolMapping(p.c)
 	ClearOpenAIResponsesClientToolMapping(p.c)
@@ -92,14 +86,6 @@ func (p openAIForwardPreludeAdapter) Reject(v forward.Rejection) {
 		SetOpsUpstreamError(p.c, v.Status, v.Message, "")
 	}
 	WriteOpenAIForwardRejection(p.c, v.Status, v.Type, v.Message, v.Param)
-}
-
-func (p openAIForwardPreludeAdapter) CompactEffort(body []byte) ([]byte, bool, error) {
-	if p.provider == nil || !p.provider.View().IsOpenAIOAuthLike() || !IsOpenAIResponsesCompactPath(p.c) {
-		return body, false, nil
-	}
-	requestedModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
-	return gatewayprovider.NormalizeOpenAICodexCompactReasoningEffort(body, gatewayprovider.ExecutionModelPolicy(p.provider).Mapped(requestedModel))
 }
 
 func (p openAIForwardPreludeAdapter) ToolSchemas(body []byte) ([]byte, bool, error) {

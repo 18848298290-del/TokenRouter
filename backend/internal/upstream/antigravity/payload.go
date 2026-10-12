@@ -238,7 +238,7 @@ func PreserveChatCompletionTokenLimit(request *protocolopenai.ChatCompletionsReq
 		limit = request.MaxCompletionTokens
 	}
 	if limit != nil && *limit > 0 {
-		claudeRequest.MaxTokens = min(*limit, 64000)
+		claudeRequest.MaxTokens = *limit
 	}
 }
 

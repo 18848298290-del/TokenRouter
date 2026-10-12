@@ -110,7 +110,10 @@ export function openCodeModelInfo(model: string, attributes?: ModelAttributes): 
   const result: Record<string, unknown> = { name: attributes?.display_name ?? model }
   if (!attributes) return result
   for (const key of ['attachment', 'reasoning', 'temperature', 'tool_call'] as const) {
-    if (attributes[key] !== undefined) result[key] = attributes[key]
+    if (attributes[key] !== undefined) {
+      const conditional = (key === 'temperature' || key === 'tool_call') && attributes.conditions?.[key]
+      result[key] = conditional ? false : attributes[key]
+    }
   }
   if (attributes.context && attributes.output_limit) {
     result.limit = { context: attributes.context, output: attributes.output_limit, ...(attributes.input_limit ? { input: attributes.input_limit } : {}) }

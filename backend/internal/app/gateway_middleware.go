@@ -11,6 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
+	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	"github.com/TokenFlux/TokenRouter/internal/server/middleware"
 )
@@ -24,12 +25,17 @@ func provideGatewayRouteMiddleware(
 	cfg *config.Config,
 	queue *ops.ErrorLogQueue,
 	clients *messageHTTPBindings,
+	attributes *routing.ModelAttributeService,
 ) gatewayhttp.RouteMiddleware {
 	var clientFallback gatewayhttp.ClientGroupFallbackResolver
 	if clients != nil {
 		clientFallback = clients.bindings.ClientGroupFallback
 	}
 	return gatewayhttp.RouteMiddleware{
+		ModelAttributes: func(c *gin.Context) {
+			c.Request = c.Request.WithContext(routing.WithModelAttributes(c.Request.Context(), attributes))
+			c.Next()
+		},
 		ClientGroupFallback:   clientFallback,
 		APIKeyAuth:            gin.HandlerFunc(apiKeyAuth),
 		GoogleAPIKeyAuth:      newGatewayAuthorization(apiKeyService, subscriptionService, cfg, true),

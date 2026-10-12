@@ -51,3 +51,28 @@ func TestAttributeMergeAndCommon(t *testing.T) {
 	require.False(t, *common.Reasoning)
 	require.Nil(t, common.InputModalities)
 }
+
+func TestCommonContradictoryConditions(t *testing.T) {
+	for name, conditions := range map[string][2]ParameterCondition{
+		"effort":   {{Efforts: []string{"none"}}, {Efforts: []string{"high"}}},
+		"thinking": {{Thinking: valuePointer(false)}, {Thinking: valuePointer(true)}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			left := Attributes{Temperature: valuePointer(true), Conditions: valuePointer(ParameterConditions{"temperature": conditions[0]})}
+			right := Attributes{Temperature: valuePointer(true), Conditions: valuePointer(ParameterConditions{"temperature": conditions[1]})}
+			common, different := Common([]Attributes{left, right})
+			require.True(t, different)
+			require.Equal(t, valuePointer(false), common.Temperature)
+			require.NotContains(t, *common.Conditions, "temperature")
+		})
+	}
+}
+
+func TestMergeMediaEmptyOverrides(t *testing.T) {
+	base := Attributes{Media: &MediaCapabilities{ImageSizes: []string{"1K", "2K"}, MaxReferenceImages: valuePointer(3)}}
+	result := Merge(base, Attributes{Media: &MediaCapabilities{ImageSizes: []string{}}})
+	require.NotNil(t, result.Media.ImageSizes)
+	require.Empty(t, result.Media.ImageSizes)
+	require.Equal(t, valuePointer(3), result.Media.MaxReferenceImages)
+	require.Equal(t, []string{"1K", "2K"}, base.Media.ImageSizes)
+}

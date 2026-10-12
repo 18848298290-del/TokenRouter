@@ -9,8 +9,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
-// Attributes 描述模型展示信息，网关准入和参数转换使用各自的规则。
-// 指针保留未知、显式 false 和空模态集合的区别。
+// Attributes 描述模型属性和可配置能力。指针区分未知、false 和空集合。
 // @project-doc docs/interfaces/model_catalog_and_marketplace.md#model_attributes
 type Attributes struct {
 	DisplayNameLocalization *locale.Update[string] `json:"display_name_localization,omitempty"`
@@ -25,6 +24,11 @@ type Attributes struct {
 	StructuredOutput        *bool                  `json:"structured_output,omitempty"`
 	Temperature             *bool                  `json:"temperature,omitempty"`
 	Attachment              *bool                  `json:"attachment,omitempty"`
+	TopP                    *bool                  `json:"top_p,omitempty"`
+	ReasoningOptions        *[]ReasoningOption     `json:"reasoning_options,omitempty"`
+	Interleaved             *Interleaved           `json:"interleaved,omitempty"`
+	Conditions              *ParameterConditions   `json:"conditions,omitempty"`
+	Media                   *MediaCapabilities     `json:"media,omitempty"`
 }
 
 // Presentation 是模型信息的展示值，不表达网关准入决策。
@@ -47,6 +51,16 @@ func (a Attributes) fields() map[string]json.RawMessage {
 func Merge(base, patch Attributes) Attributes {
 	fields := base.fields()
 	maps.Copy(fields, patch.fields())
+	if base.Media != nil && patch.Media != nil {
+		body, _ := json.Marshal(base.Media)
+		var media map[string]json.RawMessage
+		_ = json.Unmarshal(body, &media)
+		body, _ = json.Marshal(patch.Media)
+		var override map[string]json.RawMessage
+		_ = json.Unmarshal(body, &override)
+		maps.Copy(media, override)
+		fields["media"], _ = json.Marshal(media)
+	}
 	body, _ := json.Marshal(fields)
 	var result Attributes
 	_ = json.Unmarshal(body, &result)
@@ -70,6 +84,10 @@ func (c *Catalog) ApplyAttributeSupplement(model string, body json.RawMessage) e
 		return fmt.Errorf("invalid model attributes %s: %w", model, err)
 	}
 	key := normalize(model)
+	if public, exists := c.publicEntries[key]; exists && (supplement.Provider == "" || supplement.Provider == public.Provider) {
+		public = fillAttributeSupplement(public, *supplement.Attributes)
+		c.publicEntries[key] = public
+	}
 	entry, exists := c.Entries[key]
 	if c.Ambiguous[key] || (exists && supplement.Provider != "" && entry.Provider != supplement.Provider) {
 		return nil
@@ -77,13 +95,30 @@ func (c *Catalog) ApplyAttributeSupplement(model string, body json.RawMessage) e
 	if !exists {
 		entry = Entry{Model: model, Provider: supplement.Provider, Source: "local_supplement"}
 	}
-	entry.Attributes = Merge(*supplement.Attributes, entry.Attributes)
-	c.Entries[key] = entry
+	c.Entries[key] = fillAttributeSupplement(entry, *supplement.Attributes)
 	return nil
+}
+
+func fillAttributeSupplement(entry Entry, attributes Attributes) Entry {
+	known := entry.Attributes.fields()
+	entry.AttributeSources = maps.Clone(entry.AttributeSources)
+	if entry.AttributeSources == nil {
+		entry.AttributeSources = map[string]string{}
+	}
+	for field := range attributes.fields() {
+		if _, found := known[field]; !found {
+			entry.AttributeSources[field] = "local_supplement"
+		}
+	}
+	entry.Attributes = Merge(attributes, entry.Attributes)
+	return entry
 }
 
 // Validate 校验管理员编辑值；目录中的零长度由解析器转换为未知。
 func (a Attributes) Validate() error {
+	if err := validateCapabilities(a); err != nil {
+		return err
+	}
 	for key, value := range map[string]*int{"context": a.Context, "input_limit": a.InputLimit, "output_limit": a.OutputLimit} {
 		if value != nil && *value <= 0 {
 			return fmt.Errorf("%s must be positive", key)
@@ -123,6 +158,24 @@ func Common(values []Attributes) (Attributes, bool) {
 		result.StructuredOutput = commonBool(result.StructuredOutput, value.StructuredOutput)
 		result.Temperature = commonBool(result.Temperature, value.Temperature)
 		result.Attachment = commonBool(result.Attachment, value.Attachment)
+		result.TopP = commonBool(result.TopP, value.TopP)
+		result.ReasoningOptions = commonReasoningOptions(result.ReasoningOptions, value.ReasoningOptions)
+		var unavailable []string
+		result.Conditions, unavailable = commonConditions(result.Conditions, value.Conditions)
+		for _, field := range unavailable {
+			switch field {
+			case "temperature":
+				result.Temperature = valuePointer(false)
+			case "top_p":
+				result.TopP = valuePointer(false)
+			case "tool_call":
+				result.ToolCall = valuePointer(false)
+			}
+		}
+		result.Media = commonMedia(result.Media, value.Media)
+		if !equalInterleaved(result.Interleaved, value.Interleaved) {
+			result.Interleaved = nil
+		}
 		result.InputModalities = intersection(result.InputModalities, value.InputModalities)
 		result.OutputModalities = intersection(result.OutputModalities, value.OutputModalities)
 		if result.DisplayName == nil || value.DisplayName == nil || *result.DisplayName != *value.DisplayName {

@@ -86,6 +86,10 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 	if resolveModelErr != nil {
 		return resolveModelErr
 	}
+	firstClientMessage, resolveModelErr = p.ModelAttributes(ctx, 1, firstUpstreamModel, firstClientMessage)
+	if resolveModelErr != nil {
+		return resolveModelErr
+	}
 	// passthrough 的上下游 relay 分属两个 goroutine，逐轮模型快照必须原子发布。
 	var capturedSessionRequestedModel atomic.Pointer[string]
 	var capturedSessionRoutingModel atomic.Pointer[string]
@@ -388,6 +392,9 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 				}
 			}
 			out, blocked, policyErr := p.FastPolicy(ctx, turnNo, model, payload, eventType == "response.create")
+			if policyErr == nil && blocked == nil && isResponseCreate {
+				out, policyErr = p.ModelAttributes(ctx, turnNo, model, out)
+			}
 
 			// 通过策略检查的 response.create 使用 filter 后的 payload 更新 usageMeta，与首帧处理相同。
 			// 其他事件、策略拒绝和策略错误保持前一轮 metadata。

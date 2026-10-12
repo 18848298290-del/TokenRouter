@@ -24,6 +24,7 @@ type ModelAttributeRule struct {
 	ID         string                  `json:"id"`
 	Models     []string                `json:"models"`
 	Attributes modelcatalog.Attributes `json:"attributes"`
+	Match      *ModelAttributeMatch    `json:"match,omitempty"`
 }
 
 // ModelAttributeConfig 是可以被多个分组共享的属性档案。
@@ -51,6 +52,7 @@ type ModelAttributeRepository interface {
 
 // ModelAttributeCatalog 是管理员默认查询的只读端口。
 type ModelAttributeCatalog struct {
+	View       func() modelcatalog.View
 	Snapshot   func() ModelAttributeSnapshot
 	Lookup     func(string) modelcatalog.Attributes
 	Update     func() error
@@ -73,6 +75,7 @@ type ModelAttributeService struct {
 	Repo        ModelAttributeRepository
 	Catalog     ModelAttributeCatalog
 	Invalidator GroupAuthInvalidator
+	Catalogue   *RequestableCatalogue
 }
 
 func (s *ModelAttributeService) Save(ctx context.Context, config *ModelAttributeConfig) error {
@@ -83,15 +86,23 @@ func (s *ModelAttributeService) Save(ctx context.Context, config *ModelAttribute
 	seenModels := map[string]bool{}
 	for i := range config.Rules {
 		rule := &config.Rules[i]
+		if rule.Match != nil && *rule.Match == (ModelAttributeMatch{}) {
+			rule.Match = nil
+		}
+		if err := rule.Match.Validate(); err != nil {
+			return apperror.BadRequest("INVALID_ATTRIBUTE_MATCH", err.Error())
+		}
 		if len(rule.Models) == 0 {
 			return apperror.BadRequest("INVALID_ATTRIBUTE_RULE", "each rule requires a model")
 		}
 		for j, name := range rule.Models {
 			name = strings.TrimSpace(name)
-			if name == "" || strings.Contains(strings.TrimSuffix(name, "*"), "*") || seenModels[strings.ToLower(name)] {
+			matchJSON, _ := json.Marshal(rule.Match)
+			key := strings.ToLower(name) + ":" + string(matchJSON)
+			if name == "" || strings.Contains(strings.TrimSuffix(name, "*"), "*") || seenModels[key] {
 				return apperror.BadRequest("INVALID_ATTRIBUTE_RULE", "model patterns must be nonempty and unique, with an optional trailing wildcard")
 			}
-			seenModels[strings.ToLower(name)] = true
+			seenModels[key] = true
 			rule.Models[j] = name
 		}
 		if err := rule.Attributes.Validate(); err != nil {
@@ -198,11 +209,15 @@ func (s *ModelAttributeService) invalidate(ctx context.Context, groups []int64) 
 
 // ResolveModels 每个分组读取一次属性档案，按可请求结果中的最终模型生成展示属性。
 func (s *ModelAttributeService) ResolveModels(ctx context.Context, groupID int64, models []RequestableModel) (map[string]EffectiveModelAttributes, error) {
-	config, err := s.Repo.ForGroup(ctx, groupID)
-	if err != nil {
-		return nil, err
+	var config *ModelAttributeConfig
+	if s.Repo != nil {
+		var err error
+		config, err = s.Repo.ForGroup(ctx, groupID)
+		if err != nil {
+			return nil, err
+		}
 	}
-	return s.resolveModels(config, models, locale.FromContext(ctx)), nil
+	return s.resolveModels(s.viewForContext(ctx), config, models, locale.FromContext(ctx)), nil
 }
 
 // ResolveGroups 批量读取本次展示所需的属性档案，分组之间共享同一次数据库查询。
@@ -217,36 +232,44 @@ func (s *ModelAttributeService) ResolveGroups(ctx context.Context, groups map[in
 	if len(ids) == 0 {
 		return result, nil
 	}
-	configs, err := s.Repo.ForGroups(ctx, ids)
-	if err != nil {
-		return nil, err
+	configs := map[int64]*ModelAttributeConfig{}
+	if s.Repo != nil {
+		var err error
+		configs, err = s.Repo.ForGroups(ctx, ids)
+		if err != nil {
+			return nil, err
+		}
 	}
+	view := s.viewForContext(ctx)
 	for _, id := range ids {
-		result[id] = s.resolveModels(configs[id], groups[id], locale.FromContext(ctx))
+		result[id] = s.resolveModels(view, configs[id], groups[id], locale.FromContext(ctx))
 	}
 	return result, nil
 }
 
 // resolveModels 将档案规则叠加到最终上游模型的目录属性上。
-func (s *ModelAttributeService) resolveModels(config *ModelAttributeConfig, models []RequestableModel, language string) map[string]EffectiveModelAttributes {
+func (s *ModelAttributeService) resolveModels(view modelcatalog.View, config *ModelAttributeConfig, models []RequestableModel, language string) map[string]EffectiveModelAttributes {
 	var candidates func(string) []string
 	if s.Catalog.Candidates != nil {
 		candidates = s.Catalog.Candidates()
 	}
 	result := map[string]EffectiveModelAttributes{}
 	for _, model := range models {
-		names := model.UpstreamModels
-		if len(names) == 0 {
-			names = []string{model.ID}
+		routes := model.AttributeTargets
+		if len(routes) == 0 {
+			names := model.UpstreamModels
+			if len(names) == 0 {
+				names = []string{model.ID}
+			}
+			for _, name := range names {
+				routes = append(routes, modelcatalog.Target{Model: name})
+			}
 		}
-		values := make([]modelcatalog.Attributes, 0, len(names))
+		values := make([]modelcatalog.Attributes, 0, len(routes))
 		var searchTerms []string
 		var resolution *locale.Resolution
-		for _, name := range names {
-			base := s.Catalog.Lookup(name)
-			if config != nil && config.Status == StatusActive {
-				base = modelcatalog.Merge(base, config.match(name, candidates))
-			}
+		for _, target := range routes {
+			base := s.resolve(view, config, target, candidates).Attributes
 			if base.DisplayNameLocalization != nil {
 				searchTerms = append(searchTerms, locale.SearchTexts(base.DisplayNameLocalization.Content, func(text string) []string { return []string{text} })...)
 				value, actual := base.DisplayNameLocalization.Resolve(language)
@@ -264,13 +287,20 @@ func (s *ModelAttributeService) resolveModels(config *ModelAttributeConfig, mode
 	return result
 }
 
-func (c *ModelAttributeConfig) match(model string, expand func(string) []string) modelcatalog.Attributes {
+func (c *ModelAttributeConfig) match(model string, expand func(string) []string, targets ...modelcatalog.Target) modelcatalog.Attributes {
+	var target modelcatalog.Target
+	if len(targets) > 0 {
+		target = targets[0]
+	}
 	names := []string{strings.ToLower(strings.TrimSpace(model))}
 	if expand != nil {
 		names = append(names, expand(model)...)
 	}
 	for _, name := range names {
 		for _, rule := range c.Rules {
+			if !rule.Match.Matches(target) {
+				continue
+			}
 			for _, pattern := range rule.Models {
 				if strings.EqualFold(pattern, name) {
 					return rule.Attributes
@@ -279,6 +309,9 @@ func (c *ModelAttributeConfig) match(model string, expand func(string) []string)
 		}
 	}
 	for _, rule := range c.Rules {
+		if !rule.Match.Matches(target) {
+			continue
+		}
 		for _, pattern := range rule.Models {
 			if !strings.HasSuffix(pattern, "*") {
 				continue
@@ -300,6 +333,10 @@ func EnsureModelRuleIDs(config *ModelAttributeConfig) {
 			continue
 		}
 		body, _ := json.Marshal(config.Rules[i].Models)
+		if match := config.Rules[i].Match; match != nil && *match != (ModelAttributeMatch{}) {
+			scope, _ := json.Marshal(match)
+			body = append(body, scope...)
+		}
 		sum := sha256.Sum256(body)
 		config.Rules[i].ID = hex.EncodeToString(sum[:8])
 	}

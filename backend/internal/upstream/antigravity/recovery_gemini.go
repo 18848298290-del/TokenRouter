@@ -18,6 +18,7 @@ type GeminiRecoveryInput struct {
 	Body                                                []byte
 }
 type GeminiRecoveryOptions struct {
+	Prepare                           func(string, []byte) ([]byte, error)
 	Retry                             func([]byte) (*http.Response, error)
 	Do                                func(*http.Request) (*http.Response, error)
 	FallbackEnabled, SignatureEnabled func(context.Context) bool
@@ -59,7 +60,15 @@ func RecoverGemini(ctx context.Context, input GeminiRecoveryInput, resp *http.Re
 		if fallbackModel != "" && fallbackModel != mappedModel {
 			logger.LegacyPrintf("service.antigravity_gateway", "[Antigravity] Model not found (%s), retrying with fallback model %s (provider: %s)", mappedModel, fallbackModel, input.ProviderName)
 
-			fallbackWrapped, err := WrapV1InternalRequest(projectID, fallbackModel, injectedBody)
+			fallbackBody := injectedBody
+			if options.Prepare != nil {
+				var err error
+				fallbackBody, err = options.Prepare(fallbackModel, injectedBody)
+				if err != nil {
+					return result, err
+				}
+			}
+			fallbackWrapped, err := WrapV1InternalRequest(projectID, fallbackModel, fallbackBody)
 			if err == nil {
 				fallbackReq, err := NewAPIRequest(ctx, upstreamAction, accessToken, fallbackWrapped)
 				if err == nil {
@@ -100,6 +109,13 @@ func RecoverGemini(ctx context.Context, input GeminiRecoveryInput, resp *http.Re
 		logger.LegacyPrintf("service.antigravity_gateway", "Antigravity Gemini provider %d: detected signature-related 400, retrying with cleaned thought signatures", input.ProviderID)
 
 		cleanedInjectedBody := options.CleanSignatures(injectedBody)
+		if options.Prepare != nil {
+			var err error
+			cleanedInjectedBody, err = options.Prepare(mappedModel, cleanedInjectedBody)
+			if err != nil {
+				return result, err
+			}
+		}
 		retryWrappedBody, wrapErr := WrapV1InternalRequest(projectID, mappedModel, cleanedInjectedBody)
 		if wrapErr == nil {
 			retryResult, retryErr := options.Retry(retryWrappedBody)

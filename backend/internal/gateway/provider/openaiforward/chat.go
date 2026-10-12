@@ -130,6 +130,7 @@ func RunChat(ctx context.Context, body []byte, promptCacheKey, defaultMappedMode
 	// 2. 先解析最终模型，供兼容缓存键按上游模型族派生稳定种子。
 	billingModel := p.BillingModel(originalModel, defaultMappedModel)
 	upstreamModel := p.UpstreamModel(billingModel)
+	chatReq.Model = upstreamModel
 
 	promptCacheKey = strings.TrimSpace(promptCacheKey)
 	compatPromptCacheInjected := false

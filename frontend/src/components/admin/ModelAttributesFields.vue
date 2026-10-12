@@ -7,7 +7,7 @@
     </div>
     <label v-for="field in attributeLimits" :key="field">
       <span class="input-label">{{ t(`admin.modelAttributes.fields.${field}`) }}</span>
-      <input type="number" min="1" step="1" class="input" :value="modelValue[field] ?? ''" :placeholder="t('admin.modelAttributes.inherit')" @input="set(field, ($event.target as HTMLInputElement).value === '' ? undefined : Number(($event.target as HTMLInputElement).value))" />
+      <input type="number" min="1" step="1" class="input" :value="modelValue[field] ?? ''" :placeholder="inherited?.[field] === undefined ? t('admin.modelAttributes.inherit') : `${t('admin.modelAttributes.inherit')} (${inherited[field]})`" @input="set(field, ($event.target as HTMLInputElement).value === '' ? undefined : Number(($event.target as HTMLInputElement).value))" />
     </label>
     <div v-for="field in attributeCapabilities" :key="field">
       <label class="input-label">{{ t(`admin.modelAttributes.fields.${field}`) }}</label>
@@ -26,6 +26,7 @@
         </label>
       </div>
     </fieldset>
+    <ModelCapabilityFields class="sm:col-span-2" :model-value="modelValue" @update:model-value="emit('update:modelValue', $event)" />
   </div>
 </template>
 
@@ -36,9 +37,10 @@ import { originalContent } from '@/i18n/content'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Select from '@/components/common/Select.vue'
+import ModelCapabilityFields from './ModelCapabilityFields.vue'
 import { attributeCapabilities, attributeLimits, attributeModalities, type ModelAttributes } from '@/types/modelAttributes'
 
-const props = defineProps<{ modelValue: ModelAttributes }>()
+const props = defineProps<{ modelValue: ModelAttributes; inherited?: ModelAttributes }>()
 const emit = defineEmits<{ 'update:modelValue': [ModelAttributes] }>()
 const { t, locale } = useI18n()
 const booleanOptions = computed(() => [

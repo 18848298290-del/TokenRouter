@@ -5,12 +5,17 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/creative"
 	creativeprovider "github.com/TokenFlux/TokenRouter/internal/creative/provider"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
 type creativeCatalogProvider struct {
 	creative.CatalogProvider
 	policy ModelPolicy
+}
+
+func (a creativeCatalogProvider) AttributeTarget(model string) modelcatalog.Target {
+	return a.policy.Record.ModelAttributeTarget(model, "")
 }
 
 // CreativeCatalogProvider 按执行时的透传、平台归一化和一跳映射规则解析目录模型。

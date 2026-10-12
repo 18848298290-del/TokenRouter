@@ -49,6 +49,7 @@ func (h MessagesErrorOutput) StreamError(c *gin.Context, status int, errType, me
 
 // StreamErrorWithCode 旧文本输出委托 gateway/httpapi 的唯一实现。
 func (h MessagesErrorOutput) StreamErrorWithCode(c *gin.Context, status int, errType, code, message string, streamStarted bool) {
+	status, message = modelAttributeError(c, status, message)
 	WriteAnthropicStreamError(c, status, errType, code, message, streamStarted, MarkOpsStreamError)
 }
 

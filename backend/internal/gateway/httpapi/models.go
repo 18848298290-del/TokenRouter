@@ -41,8 +41,9 @@ type (
 	ModelsHandler struct {
 		RequestLifetime
 
-		backend ModelsBackend
-		catalog ModelsCatalog
+		backend    ModelsBackend
+		catalog    ModelsCatalog
+		attributes *routing.ModelAttributeService
 	}
 )
 
@@ -69,8 +70,12 @@ type grokModelListItem struct {
 	CreatedAt               string                      `json:"created_at"`
 }
 
-func NewModelsHandler(backend ModelsBackend, catalog ModelsCatalog) *ModelsHandler {
-	return &ModelsHandler{backend: backend, catalog: catalog}
+func NewModelsHandler(backend ModelsBackend, catalog ModelsCatalog, attributes ...*routing.ModelAttributeService) *ModelsHandler {
+	result := &ModelsHandler{backend: backend, catalog: catalog}
+	if len(attributes) > 0 {
+		result.attributes = attributes[0]
+	}
+	return result
 }
 
 // customListEnabled 从 routing 的分组规则读取自定义列表配置。
@@ -106,6 +111,7 @@ func (h *ModelsHandler) Models(c *gin.Context) {
 
 	// 按分组映射、提供商映射和分组白名单解析可请求模型。
 	resolution := h.backend.Resolve(c.Request.Context(), groupID, platform)
+	h.captureModelAttributes(c, groupID, resolution.Models, "")
 	availableModels := routing.RequestableModelIDs(resolution.Models)
 	if apiKey != nil && apiKey.Group != nil && customListEnabled(apiKey.Group) {
 		// 自定义列表取已通过分组策略和提供商校验的模型交集。
@@ -181,6 +187,7 @@ func (h *ModelsHandler) CompositeRequestableModels(c *gin.Context, apiKey *apike
 		}
 		groupID := group.ID
 		resolution := h.backend.Resolve(ctx, &groupID, requiredPlatform)
+		h.captureModelAttributes(c, &groupID, resolution.Models, binding.Prefix+"/")
 		available := routing.RequestableModelIDs(resolution.Models)
 		if customListEnabled(group) {
 			available = FilterModelsByCustomList(available, nil, group.ModelsListConfig.Models)
@@ -257,18 +264,10 @@ func (h *ModelsHandler) WriteGrokModelsList(c *gin.Context, modelIDs []string) {
 			Type:      "model",
 			CreatedAt: "",
 		}
-		if GrokModelSupportsConfigurableReasoning(modelID) {
+		attributes := h.displayAttributes(c, modelID)
+		if efforts := attributes.Efforts(); len(efforts) > 0 {
 			item.SupportsReasoningEffort = true
-			item.ReasoningEffort = "high"
-			efforts := []grokReasoningEffortOption{
-				{Value: "low", Label: "Low"},
-				{Value: "medium", Label: "Medium"},
-				{Value: "high", Label: "High", Default: true},
-			}
-			if h.catalog.GrokSupportsXHigh(modelID) {
-				efforts = append(efforts, grokReasoningEffortOption{Value: "xhigh", Label: "xHigh"})
-			}
-			item.ReasoningEfforts = efforts
+			item.ReasoningEffort, item.ReasoningEfforts = grokEffortOptions(efforts)
 		}
 		models = append(models, item)
 	}
@@ -364,15 +363,6 @@ func CustomModelsListAllowsModel(availablePatterns []string, model string) bool 
 		}
 	}
 	return false
-}
-
-func GrokModelSupportsConfigurableReasoning(modelID string) bool {
-	switch strings.ToLower(strings.TrimSpace(modelID)) {
-	case "grok-4.6", "grok-4.6-latest", "grok-4.5", "grok-4.5-latest", "grok", "grok-latest", "grok-build", "grok-build-latest", "grok-build-0.1":
-		return true
-	default:
-		return false
-	}
 }
 
 func CompositeGroupAvailableToUser(apiKey *apikey.APIKey, preferredSubscription *billing.UserSubscription, group *routing.Group) bool {

@@ -34,6 +34,38 @@ func RegisterModelAttributeRoutes(admin *gin.RouterGroup, h *ModelAttributeHandl
 	routes.GET("/defaults/model", h.Model)
 	routes.GET("/defaults/models", h.Models)
 	routes.POST("/defaults/update", h.Update)
+	routes.POST("/preview", h.Preview)
+}
+
+func (h *ModelAttributeHandler) Preview(c *gin.Context) {
+	var input struct {
+		GroupID        int64                         `json:"group_id"`
+		Model          string                        `json:"model"`
+		ClientProtocol string                        `json:"client_protocol"`
+		Config         *routing.ModelAttributeConfig `json:"config,omitempty"`
+	}
+	if err := httpx.BindJSONStrict(c, &input); err != nil || input.GroupID <= 0 || strings.TrimSpace(input.Model) == "" {
+		httpx.ErrorFrom(c, apperror.BadRequest("INVALID_ATTRIBUTE_PREVIEW", "group ID and model are required"))
+		return
+	}
+	if input.Config != nil {
+		for _, rule := range input.Config.Rules {
+			if err := rule.Attributes.Validate(); err != nil {
+				httpx.ErrorFrom(c, apperror.BadRequest("INVALID_MODEL_ATTRIBUTES", err.Error()))
+				return
+			}
+			if err := rule.Match.Validate(); err != nil {
+				httpx.ErrorFrom(c, apperror.BadRequest("INVALID_ATTRIBUTE_MATCH", err.Error()))
+				return
+			}
+		}
+	}
+	result, err := h.service.Preview(c.Request.Context(), input.GroupID, input.Model, input.ClientProtocol, input.Config)
+	if err != nil {
+		httpx.ErrorFrom(c, err)
+		return
+	}
+	httpx.Success(c, gin.H{"routes": result})
 }
 
 func attributeID(c *gin.Context) (int64, bool) {

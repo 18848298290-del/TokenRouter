@@ -455,7 +455,7 @@ func TestAnthropicToResponses_OutputConfigHigh(t *testing.T) {
 }
 
 func TestAnthropicToResponses_OutputConfigMax(t *testing.T) {
-	// GPT-5.2 的最高档是 xhigh。
+	// 未取得最终路线属性前，转换器保留客户端档位。
 	req := &protocolanthropic.AnthropicRequest{
 		Model:        "gpt-5.2",
 		MaxTokens:    1024,
@@ -466,7 +466,7 @@ func TestAnthropicToResponses_OutputConfigMax(t *testing.T) {
 	resp, err := AnthropicToResponses(req)
 	require.NoError(t, err)
 	require.NotNil(t, resp.Reasoning)
-	assert.Equal(t, "xhigh", resp.Reasoning.Effort)
+	assert.Equal(t, "max", resp.Reasoning.Effort)
 	assert.Equal(t, "auto", resp.Reasoning.Summary)
 }
 
@@ -811,7 +811,7 @@ func TestAnthropicToResponses_ToolWithNilSchema(t *testing.T) {
 	assert.JSONEq(t, `{}`, string(params["properties"]))
 }
 
-func TestAnthropicToResponses_TemperatureStrippedForReasoningModel(t *testing.T) {
+func TestAnthropicToResponses_SamplingPreservedBeforeResolution(t *testing.T) {
 	temp := 0.7
 	req := &protocolanthropic.AnthropicRequest{
 		Model:       "gpt-5.2",
@@ -823,17 +823,17 @@ func TestAnthropicToResponses_TemperatureStrippedForReasoningModel(t *testing.T)
 
 	resp, err := AnthropicToResponses(req)
 	require.NoError(t, err)
-	assert.Nil(t, resp.Temperature, "reasoning model: temperature must be stripped")
-	assert.Nil(t, resp.TopP, "reasoning model: top_p must be stripped")
+	assert.Equal(t, req.Temperature, resp.Temperature)
+	assert.Equal(t, req.TopP, resp.TopP)
 
-	// 序列化后的上游请求体不能包含这些字段。
+	// 路线参数处理发生在转换之后。
 	b, err := json.Marshal(resp)
 	require.NoError(t, err)
-	assert.NotContains(t, string(b), `"temperature"`)
-	assert.NotContains(t, string(b), `"top_p"`)
+	assert.Contains(t, string(b), `"temperature"`)
+	assert.Contains(t, string(b), `"top_p"`)
 }
 
-func TestAnthropicToResponses_TemperatureStrippedForAllGpt5Variants(t *testing.T) {
+func TestAnthropicToResponses_SamplingDoesNotGuessModelFamily(t *testing.T) {
 	temp := 1.0
 	models := []string{"gpt-5.2", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.5"}
 	for _, model := range models {
@@ -847,8 +847,8 @@ func TestAnthropicToResponses_TemperatureStrippedForAllGpt5Variants(t *testing.T
 			}
 			resp, err := AnthropicToResponses(req)
 			require.NoError(t, err)
-			assert.Nil(t, resp.Temperature, "model %s: temperature must be stripped", model)
-			assert.Nil(t, resp.TopP, "model %s: top_p must be stripped", model)
+			assert.Equal(t, req.Temperature, resp.Temperature)
+			assert.Equal(t, req.TopP, resp.TopP)
 		})
 	}
 }
@@ -1048,7 +1048,7 @@ func TestAnthropicToChatCompletionsRequest_ToolChoiceSpecificTool(t *testing.T) 
 	require.Equal(t, "get_weather", fn["name"])
 }
 
-func TestAnthropicToChatCompletionsRequest_TemperatureStrippedForReasoningModel(t *testing.T) {
+func TestAnthropicToChatCompletionsRequest_SamplingPreservedBeforeResolution(t *testing.T) {
 	temp := 0.7
 	topP := 0.9
 	req := &protocolanthropic.AnthropicRequest{
@@ -1061,8 +1061,8 @@ func TestAnthropicToChatCompletionsRequest_TemperatureStrippedForReasoningModel(
 
 	out, err := AnthropicToChatCompletionsRequest(req)
 	require.NoError(t, err)
-	require.Nil(t, out.Temperature, "temperature should be stripped for reasoning models")
-	require.Nil(t, out.TopP, "top_p should be stripped for reasoning models")
+	require.Equal(t, req.Temperature, out.Temperature)
+	require.Equal(t, req.TopP, out.TopP)
 }
 
 func TestAnthropicToChatCompletionsRequest_TemperaturePreservedForNonReasoningModel(t *testing.T) {
@@ -1107,7 +1107,7 @@ func TestAnthropicToChatCompletionsRequest_ReasoningEffortMapping(t *testing.T) 
 
 	out, err := AnthropicToChatCompletionsRequest(req)
 	require.NoError(t, err)
-	require.Equal(t, "xhigh", out.ReasoningEffort)
+	require.Equal(t, "max", out.ReasoningEffort)
 }
 
 func TestAnthropicToChatCompletionsRequest_ReasoningEffortMaxForGPT56(t *testing.T) {
@@ -1988,7 +1988,7 @@ func TestChatCompletionsToResponses_ParallelToolCalls(t *testing.T) {
 	}
 }
 
-func TestChatCompletionsToResponses_TemperatureStrippedForReasoningModel(t *testing.T) {
+func TestChatCompletionsToResponses_SamplingPreservedBeforeResolution(t *testing.T) {
 	temp := 0.7
 	req := &protocolopenai.ChatCompletionsRequest{
 		Model:       "gpt-5.2",
@@ -1999,14 +1999,14 @@ func TestChatCompletionsToResponses_TemperatureStrippedForReasoningModel(t *test
 
 	resp, err := ChatCompletionsToResponses(req)
 	require.NoError(t, err)
-	assert.Nil(t, resp.Temperature, "reasoning model: temperature must be stripped")
-	assert.Nil(t, resp.TopP, "reasoning model: top_p must be stripped")
+	assert.Equal(t, req.Temperature, resp.Temperature)
+	assert.Equal(t, req.TopP, resp.TopP)
 
-	// 发给上游的序列化请求体不能包含这些字段。
+	// 路线参数处理发生在转换之后。
 	b, err := json.Marshal(resp)
 	require.NoError(t, err)
-	assert.NotContains(t, string(b), `"temperature"`)
-	assert.NotContains(t, string(b), `"top_p"`)
+	assert.Contains(t, string(b), `"temperature"`)
+	assert.Contains(t, string(b), `"top_p"`)
 }
 
 func TestChatCompletionsToResponses_TemperaturePreservedForNonReasoningModel(t *testing.T) {

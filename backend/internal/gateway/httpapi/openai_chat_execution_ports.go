@@ -109,7 +109,11 @@ func (p *openAIChatExecutionAdapter) NormalizeBodyTier(body []byte) ([]byte, str
 }
 
 func (p *openAIChatExecutionAdapter) ChatToResponses(r *protocolopenai.ChatCompletionsRequest) (*protocolopenai.ResponsesRequest, error) {
-	return protocolbridge.ChatCompletionsToResponses(r, protocolforward.ConversionOptionsForModel(r.Model))
+	result, err := p.modelResolution(r.Model, r, "openai_responses")
+	if err != nil {
+		return nil, err
+	}
+	return protocolbridge.ChatCompletionsToResponses(r, gatewayprovider.ModelConversionOptions(result))
 }
 
 func (p *openAIChatExecutionAdapter) NormalizeRequestTier(r *protocolopenai.ResponsesRequest) {

@@ -1,41 +1,22 @@
 package ollama
 
 import (
-	"encoding/json"
-
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
+
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 )
 
 const (
-	MaxTokensCapExtraKey = "ollama_max_tokens_cap"
-	DefaultMaxTokensCap  = 65535
+	MaxTokensCapExtraKey = modelcatalog.OllamaOutputCapExtraKey
+	DefaultMaxTokensCap  = modelcatalog.OllamaDefaultOutputLimit
 )
 
 // MaxTokensCap 返回提供商配置的 max_tokens 上限。提供商为 nil 或 extra 中
 // 无该键时返回默认值；键值为数值类型（float64/int64/int/json.Number）时返回其整数
 // 值（0 或负数表示显式禁用 clamp）；其它类型回退默认值。
 func MaxTokensCap(value any, present bool) int64 {
-	if !present {
-		return DefaultMaxTokensCap
-	}
-
-	switch number := value.(type) {
-	case float64:
-		return int64(number)
-	case int64:
-		return number
-	case int:
-		return int64(number)
-	case json.Number:
-		parsed, err := number.Int64()
-		if err != nil {
-			return DefaultMaxTokensCap
-		}
-		return parsed
-	default:
-		return DefaultMaxTokensCap
-	}
+	return modelcatalog.OllamaOutputCap(value, present)
 }
 
 // ClampMaxTokens 把 body 中超过 cap 的 max_tokens / max_completion_tokens

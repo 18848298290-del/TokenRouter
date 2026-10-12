@@ -23,7 +23,7 @@ type RawFallbackPorts interface {
 	MessagesEffort(*protocolanthropic.AnthropicRequest, string, string) string
 	ThinkingFallback(*string, []byte, string) *string
 	ServiceTier([]byte) *string
-	NormalizeGLM([]byte, string) ([]byte, bool)
+	PrepareModel(context.Context, []byte) ([]byte, error)
 	ApplyEffort(context.Context, []byte) ([]byte, bool, error)
 	FastFallback(context.Context, string, []byte) ([]byte, error)
 	Debug(string, ...zap.Field)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/tidwall/gjson"
@@ -130,6 +131,23 @@ func TransformRequest(ctx context.Context, prepared *Prelude, profile Profile, p
 			upstreamModel = compactModel
 		}
 	}
+	attributes, attributesErr := p.ModelAttributes(ctx, upstreamModel, body, isCompactRequest)
+	if attributesErr != nil {
+		return nil, attributesErr
+	}
+	for _, field := range []string{"reasoning.effort", "reasoning_effort"} {
+		if effort := gjson.GetBytes(body, field); effort.Exists() {
+			if mapped := attributes.Rules.EffortAliases[effort.String()]; mapped != "" {
+				markPatchSet(field, mapped)
+			}
+		}
+	}
+	if attributes.Attributes.Temperature != nil && !*attributes.Attributes.Temperature {
+		markPatchDelete("temperature")
+	}
+	if attributes.Attributes.TopP != nil && !*attributes.Attributes.TopP {
+		markPatchDelete("top_p")
+	}
 	if billingModel != requestedModel {
 		p.Log("[OpenAI] Model mapping applied: %s -> %s (provider: %s, isCodexCLI: %v)", requestedModel, billingModel, profile.Name, isCodexCLI)
 	}
@@ -204,7 +222,8 @@ func TransformRequest(ctx context.Context, prepared *Prelude, profile Profile, p
 		p.Log("[OpenAI] /responses image_generation request inbound_model=%s mapped_model=%s provider_type=%s", requestView.Model, upstreamModel, profile.Type)
 	}
 
-	if p.IsCodexSparkModel(upstreamModel) && openai.OpenAIRequestBodyMayContainImageInput(body) {
+	imageToolsDisabled := attributes.Rules.ImageGenerationTool != nil && !*attributes.Rules.ImageGenerationTool
+	if imageToolsDisabled && attributes.Attributes.InputModalities != nil && !slices.Contains(*attributes.Attributes.InputModalities, "image") && openai.OpenAIRequestBodyMayContainImageInput(body) {
 		decoded, decodeErr := ensureReqBody()
 		if decodeErr != nil {
 			return nil, decodeErr
@@ -215,9 +234,8 @@ func TransformRequest(ctx context.Context, prepared *Prelude, profile Profile, p
 		}
 	}
 
-	// gpt-5.3-codex-spark 会以 HTTP 400（param=tools）拒绝生图工具。
-	// 在此统一剥离，确保 API Key 与 OAuth 路径不受生图功能开关影响。
-	if p.IsCodexSparkModel(upstreamModel) && p.OpenAIRequestBodyHasImageGenerationDeclaration(body) {
+	// 平台工具规则在分组生图策略之后应用。
+	if imageToolsDisabled && p.OpenAIRequestBodyHasImageGenerationDeclaration(body) {
 		decoded, decodeErr := ensureReqBody()
 		if decodeErr != nil {
 			return nil, decodeErr
@@ -303,7 +321,7 @@ func TransformRequest(ctx context.Context, prepared *Prelude, profile Profile, p
 		}
 	}
 
-	if !openai.SupportsVerbosity(upstreamModel) && gjson.GetBytes(body, "text.verbosity").Exists() {
+	if attributes.Rules.Verbosity != nil && !*attributes.Rules.Verbosity && gjson.GetBytes(body, "text.verbosity").Exists() {
 		markPatchDelete("text.verbosity")
 	}
 

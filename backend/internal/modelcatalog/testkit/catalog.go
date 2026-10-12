@@ -1,10 +1,41 @@
 package testkit
 
 import (
+	"encoding/json"
 	"slices"
+	"sync"
 
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 )
+
+// OfflineView 提供内嵌目录和补充资料组成的固定测试快照。
+var OfflineView = sync.OnceValue(func() modelcatalog.View {
+	body, err := modelcatalog.Offline()
+	if err != nil {
+		panic(err)
+	}
+	catalog, err := modelcatalog.Parse(body)
+	if err != nil {
+		panic(err)
+	}
+	supplements := make(map[string]json.RawMessage)
+	if err := json.Unmarshal(modelcatalog.Supplements(), &supplements); err != nil {
+		panic(err)
+	}
+	for model, value := range supplements {
+		if err := catalog.ApplyAttributeSupplement(model, value); err != nil {
+			panic(err)
+		}
+	}
+	for model, value := range supplements {
+		for _, alias := range catalog.FirstPartyAliases(model) {
+			if err := catalog.ApplyAttributeSupplement(alias, value); err != nil {
+				panic(err)
+			}
+		}
+	}
+	return catalog.View()
+})
 
 // Catalog 为目录使用方的测试提供可替换版本和明确条目。
 type Catalog struct {

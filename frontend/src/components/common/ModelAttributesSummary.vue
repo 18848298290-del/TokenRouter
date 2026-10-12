@@ -37,23 +37,41 @@
         class="inline-flex items-center gap-1 rounded-compact px-1.5 py-0.5"
         :class="chipClass"
         :data-capability="field"
-        :data-state="capabilityState(attributes[field])"
-        :title="`${t(`admin.modelAttributes.fields.${field}`)} · ${capabilityText(attributes[field])}`"
+        :data-state="capabilityState(attributes[field], field)"
+        :title="`${t(`admin.modelAttributes.fields.${field}`)} · ${capabilityText(attributes[field], field)}`"
       >
         <Icon :name="CAPABILITY_ICONS[field]" size="xs" class="h-3.5 w-3.5" :class="attributes[field] ? labelClass : mutedClass" />
         <span class="whitespace-nowrap" :class="attributes[field] ? valueClass : mutedClass">{{ t(`admin.modelAttributes.fields.${field}`) }}</span>
         <Icon
-          :name="STATE_ICONS[capabilityState(attributes[field])]"
+          :name="STATE_ICONS[capabilityState(attributes[field], field)]"
           size="xs"
           :stroke-width="2.5"
           :animate-on-hover="false"
           class="h-3.5 w-3.5"
           :class="attributes[field] ? checkClass : mutedClass"
           role="img"
-          :aria-label="capabilityText(attributes[field])"
+          :aria-label="capabilityText(attributes[field], field)"
         />
       </li>
     </ul>
+    <div v-if="attributes.reasoning_options !== undefined" class="space-y-2 border-t pt-3" :class="dividerClass">
+      <p :class="labelClass">{{ t('admin.modelAttributes.reasoningOptions') }}</p>
+      <p v-if="!attributes.reasoning_options.length" :class="mutedClass">{{ t('admin.modelAttributes.notAdjustable') }}</p>
+      <p v-for="option in attributes.reasoning_options" :key="option.type" :class="valueClass">
+        <template v-if="option.type === 'toggle'">{{ t('admin.modelAttributes.thinkingToggle') }}</template>
+        <template v-else-if="option.type === 'effort'">{{ t('admin.modelAttributes.efforts') }}: {{ option.values?.map(value => value ?? 'default').join(', ') || t('admin.modelAttributes.none') }}</template>
+        <template v-else>{{ t('admin.modelAttributes.tokenBudget') }}: {{ option.min ?? t('admin.modelAttributes.unknown') }} ~ {{ option.max ?? t('admin.modelAttributes.unknown') }}</template>
+      </p>
+    </div>
+    <dl v-if="attributes.conditions && Object.keys(attributes.conditions).length" class="space-y-2 border-t pt-3" :class="dividerClass">
+      <div v-for="(condition, field) in attributes.conditions" :key="field">
+        <dt :class="labelClass">{{ t(`admin.modelAttributes.fields.${field}`) }} · {{ t('admin.modelAttributes.conditions') }}</dt>
+        <dd :class="valueClass">{{ conditionText(condition) }}</dd>
+      </div>
+    </dl>
+    <p v-if="attributes.media?.video_operations?.length" :class="valueClass">{{ t('admin.modelAttributes.mediaFields.video_operations') }}: {{ attributes.media.video_operations.join(', ') }}</p>
+    <p v-if="attributes.media?.video_parameters?.length" :class="valueClass">{{ t('admin.modelAttributes.mediaFields.video_parameters') }}: {{ attributes.media.video_parameters.join(', ') }}</p>
+    <p v-if="attributes.media?.image_sizes?.length" :class="valueClass">{{ t('admin.modelAttributes.media') }}: {{ attributes.media.image_sizes.join(', ') }}</p>
   </div>
 </template>
 
@@ -65,7 +83,7 @@ import Icon from '@/components/icons/Icon.vue'
 import ModalityIcon from '@/components/common/ModalityIcon.vue'
 import type { IconName } from '@/components/icons/registry'
 import type { ModelModality } from '@/utils/modelCapabilities'
-import { attributeCapabilities, attributeLimits, attributeModalities, type ModelAttributes } from '@/types/modelAttributes'
+import { attributeCapabilities, attributeLimits, attributeModalities, type ModelAttributes, type ParameterCondition } from '@/types/modelAttributes'
 
 const props = withDefaults(defineProps<{
   attributes: ModelAttributes
@@ -76,13 +94,14 @@ const props = withDefaults(defineProps<{
 })
 const { t } = useI18n()
 
-type CapabilityState = 'supported' | 'unsupported' | 'unknown'
+type CapabilityState = 'supported' | 'unsupported' | 'unknown' | 'conditional'
 
 const CAPABILITY_ICONS: Record<typeof attributeCapabilities[number], IconName> = {
   reasoning: 'brain',
   tool_call: 'toolCall',
   structured_output: 'structuredOutput',
   temperature: 'temperature',
+  top_p: 'temperature',
   attachment: 'attachment',
 }
 
@@ -90,6 +109,7 @@ const STATE_ICONS: Record<CapabilityState, IconName> = {
   supported: 'check',
   unsupported: 'x',
   unknown: 'minus',
+  conditional: 'minus',
 }
 
 const isTooltip = computed(() => props.variant === 'tooltip')
@@ -125,12 +145,17 @@ function emptyModalityText(value: string[] | undefined) {
   return t(value === undefined ? 'admin.modelAttributes.unknown' : 'admin.modelAttributes.none')
 }
 
-function capabilityState(value: boolean | undefined): CapabilityState {
+function capabilityState(value: boolean | undefined, field?: typeof attributeCapabilities[number]): CapabilityState {
   if (value === undefined || value === null) return 'unknown'
+  if (value && (field === 'temperature' || field === 'top_p' || field === 'tool_call') && props.attributes.conditions?.[field]) return 'conditional'
   return value ? 'supported' : 'unsupported'
 }
 
-function capabilityText(value: boolean | undefined) {
-  return t(`admin.modelAttributes.${capabilityState(value)}`)
+function capabilityText(value: boolean | undefined, field?: typeof attributeCapabilities[number]) {
+  return t(`admin.modelAttributes.${capabilityState(value, field)}`)
+}
+function conditionText(condition: ParameterCondition | undefined) {
+  if (!condition) return ''
+  return [condition.efforts?.length ? `${t('admin.modelAttributes.efforts')}: ${condition.efforts.join(', ')}` : '', condition.thinking === undefined ? '' : t(`admin.modelAttributes.${condition.thinking ? 'thinkingOn' : 'thinkingOff'}`)].filter(Boolean).join(' · ')
 }
 </script>

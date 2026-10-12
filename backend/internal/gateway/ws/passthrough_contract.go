@@ -37,6 +37,7 @@ type PassthroughHooks struct {
 
 // PassthroughPort 的每个方法执行一次平台操作，透传流程管理重试和 turn 顺序。
 type PassthroughPort interface {
+	ModelAttributes(context.Context, int, string, []byte) ([]byte, error)
 	UsageDecoder
 	IsLite([]byte) bool
 	NormalizeLite([]byte) ([]byte, error)

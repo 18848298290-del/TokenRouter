@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/TokenFlux/TokenRouter/internal/infra/postgres"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/testutil/postgrescontainer"
 	"github.com/TokenFlux/TokenRouter/migrations"
@@ -87,4 +88,29 @@ func TestModelAttributeMigrationAndConcurrentAssociation(t *testing.T) {
 	var count int
 	require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM model_attribute_config_groups WHERE group_id=$1`, groupID).Scan(&count))
 	require.Zero(t, count)
+}
+
+func TestModelAttributeRulesJSONBRoundTrip(t *testing.T) {
+	db := postgrescontainer.New(t)
+	store := NewModelAttributeStore(db)
+	ctx := context.Background()
+	zero, maximum := 0, 24576
+	high := "high"
+	emptyOptions := []modelcatalog.ReasoningOption{}
+	options := []modelcatalog.ReasoningOption{{Type: "effort", Values: []*string{nil, &high}}, {Type: "budget_tokens", Min: &zero, Max: &maximum}}
+	conditions := modelcatalog.ParameterConditions{"temperature": {Efforts: []string{"none"}}}
+	value := &routing.ModelAttributeConfig{Name: "scoped-rules", Status: "active", Rules: []routing.ModelAttributeRule{
+		{ID: "empty", Models: []string{"model"}, Match: &routing.ModelAttributeMatch{Platform: "kimi", ProviderMode: "coding", Site: "global"}, Attributes: modelcatalog.Attributes{ReasoningOptions: &emptyOptions, Media: &modelcatalog.MediaCapabilities{Qualities: []string{}, MaxReferenceImages: &zero}}},
+		{ID: "controls", Models: []string{"model"}, Match: &routing.ModelAttributeMatch{Platform: "gemini", ProviderType: "service_account"}, Attributes: modelcatalog.Attributes{ReasoningOptions: &options, Conditions: &conditions}},
+	}}
+	require.NoError(t, store.Save(ctx, value))
+	loaded, err := store.Get(ctx, value.ID)
+	require.NoError(t, err)
+	require.Equal(t, value.Rules, loaded.Rules)
+	loaded.Rules[0].Attributes = modelcatalog.Attributes{}
+	require.NoError(t, store.Save(ctx, loaded))
+	cleared, err := store.Get(ctx, value.ID)
+	require.NoError(t, err)
+	require.Nil(t, cleared.Rules[0].Attributes.ReasoningOptions)
+	require.Nil(t, cleared.Rules[0].Attributes.Media)
 }

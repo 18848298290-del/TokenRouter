@@ -12,6 +12,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient"
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
+	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/gemini"
 )
 
@@ -38,12 +39,13 @@ func googleForwardOptions(cfg *config.Config) googleforward.Options {
 }
 
 // provideGeminiForward 为 Gemini 转发绑定共享的凭据、配额检查和健康记录组件。
-func provideGeminiForward(store gatewayadapter.ExecutionProviderStore, tokens *provider.GeminiTokenSource, health *provideradapter.UpstreamHealth, precheck *provider.GeminiPrecheck, transport httpclient.UpstreamTransport, filter *egress.CompiledHeaderFilter, cfg *config.Config, activity *gatewayRequestActivity) *googleforward.Gemini {
+func provideGeminiForward(store gatewayadapter.ExecutionProviderStore, tokens *provider.GeminiTokenSource, health *provideradapter.UpstreamHealth, precheck *provider.GeminiPrecheck, transport httpclient.UpstreamTransport, filter *egress.CompiledHeaderFilter, cfg *config.Config, activity *gatewayRequestActivity, attributes *routing.ModelAttributeService) *googleforward.Gemini {
 	daily := func() *int64 {
 		value := provider.GeminiDailyResetTime(time.Now(), geminiQuotaLocation()).Unix()
 		return &value
 	}
 	return &googleforward.Gemini{
+		Attributes:   attributes,
 		Options:      googleForwardOptions(cfg),
 		Tokens:       tokens,
 		Health:       health,
@@ -67,16 +69,17 @@ func provideGeminiExecutor(runtime *googleforward.Gemini) *gatewayhttp.GeminiExe
 // provideAntigravityForward 绑定动态设置读取函数，并与提供商探测共享重试和健康状态组件。
 func provideAntigravityForward(store gatewayadapter.ExecutionProviderStore, tokens *provider.AntigravityTokenSource, retry *provideradapter.AntigravityRetry, observer *provideradapter.AntigravityErrorObserver, transport httpclient.UpstreamTransport, readers *gatewayadapter.RuntimeReaders, sticky session.GatewayCache, cfg *config.Config, activity *gatewayRequestActivity) *googleforward.Antigravity {
 	return &googleforward.Antigravity{
-		Options:   googleForwardOptions(cfg),
-		Tokens:    tokens,
-		Retry:     retry,
-		Errors:    observer,
-		Store:     store,
-		Transport: transport,
-		Gateway:   readers.Gateway,
-		Routing:   readers.Routing,
-		Sticky:    sticky,
-		Enter:     activity.Enter,
+		Attributes: readers.Attributes,
+		Options:    googleForwardOptions(cfg),
+		Tokens:     tokens,
+		Retry:      retry,
+		Errors:     observer,
+		Store:      store,
+		Transport:  transport,
+		Gateway:    readers.Gateway,
+		Routing:    readers.Routing,
+		Sticky:     sticky,
+		Enter:      activity.Enter,
 	}
 }
 

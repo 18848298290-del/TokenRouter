@@ -44,17 +44,6 @@ func NormalizeModelID(model string) string {
 	return model
 }
 
-// grokReasoningModelID 只读识别推理能力，结果不得用于转发、查价或额度键。
-func grokReasoningModelID(model string) string {
-	model = strings.ToLower(strings.TrimSpace(model))
-	for _, prefix := range []string{"xai/", "x-ai/", "grok/"} {
-		if native, found := strings.CutPrefix(model, prefix); found {
-			return strings.TrimSpace(native)
-		}
-	}
-	return model
-}
-
 // ResolveGrokTextResponsesModelID 仅为空模型选用默认值，非空 ID 原样保留。
 func ResolveGrokTextResponsesModelID(model string, defaultText ...string) string {
 	return ResolveDefaultTextModel(model, defaultText...)

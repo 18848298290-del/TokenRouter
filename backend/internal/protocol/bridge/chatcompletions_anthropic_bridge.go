@@ -57,9 +57,10 @@ func AnthropicToChatCompletionsRequest(req *AnthropicRequest, options RequestOpt
 		Stream:   req.Stream,
 	}
 
-	// reasoning 模型（如 gpt-5.x）拒绝 temperature/top_p 采样参数。
-	if !options.DropSampling {
+	if !options.DropSampling && !options.DropTemperature {
 		out.Temperature = req.Temperature
+	}
+	if !options.DropSampling && !options.DropTopP {
 		out.TopP = req.TopP
 	}
 

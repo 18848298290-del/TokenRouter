@@ -22,6 +22,7 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
@@ -107,6 +108,7 @@ type PublicOptions struct {
 	DefaultImageSize                  string
 }
 type Public struct {
+	Attributes             *routing.ModelAttributeService
 	Now                    func() time.Time
 	Repo                   CreativeRunRepository
 	UserRepo               UserReader
@@ -141,8 +143,10 @@ type CreativeModelCapabilities struct {
 }
 
 type creativeModelRoute struct {
-	Platform, Model string
-	Operations      []string
+	Attributes          modelcatalog.Attributes
+	OperationAttributes map[string]modelcatalog.Attributes
+	Platform, Model     string
+	Operations          []string
 }
 
 // ValidatedCreativeParams 是校验通过的创建参数。
@@ -286,7 +290,10 @@ func (s *Public) ListModels(ctx context.Context, userID int64) (*CreativeModelsR
 		if err != nil {
 			return nil, err
 		}
-		routes := query.resolveModels(ctx, creativeSettingsModels(settings, group.ID))
+		routes, err := query.resolveModels(ctx, creativeSettingsModels(settings, group.ID))
+		if err != nil {
+			return nil, err
+		}
 		models := creativeModelsFromRoutes(routes)
 		if err != nil {
 			return nil, err
@@ -306,11 +313,11 @@ func (s *Public) ListModels(ctx context.Context, userID int64) (*CreativeModelsR
 			if finalModel == "" {
 				finalModel = model
 			}
-			imageSizes := CreativeImageSizesForModel(routes[model].Platform, finalModel)
+			imageSizes := creativeRouteImageSizes(routes[model])
 			if len(imageSizes) == 0 {
 				continue
 			}
-			capabilities := CreativeCapabilitiesForModel(routes[model].Platform, finalModel)
+			capabilities := CreativeCapabilitiesForModel(routes[model].Platform, finalModel, routes[model].Attributes)
 			pricingModel := s.BillingModel(ctx, group, model, finalModel)
 			if _, ok := s.ImageUnitPrice(ctx, group, pricingModel, imageSizes[0]); !ok {
 				continue
@@ -432,89 +439,55 @@ func CreativeDefaultImageSizesForPlatform(platform string) []string {
 	}
 }
 
-// CreativeCapabilitiesForModel 按平台与具体模型生成前端能力，未知能力始终返回空集合。
-func CreativeCapabilitiesForModel(platform, model string) CreativeModelCapabilities {
-	capabilities := CreativeModelCapabilities{
-		AspectRatios:       []string{},
-		Qualities:          []string{},
-		OutputFormats:      []string{},
-		BackgroundOptions:  []string{},
-		ThinkingLevels:     []string{},
-		MaxOutputCount:     1,
-		MaxReferenceImages: 1,
+// CreativeCapabilitiesForModel 将统一媒体能力整理为创作台参数。
+func CreativeCapabilitiesForModel(platform, model string, attributes ...modelcatalog.Attributes) CreativeModelCapabilities {
+	result := CreativeModelCapabilities{AspectRatios: []string{}, Qualities: []string{}, OutputFormats: []string{}, BackgroundOptions: []string{}, ThinkingLevels: []string{}, MaxOutputCount: 1, MaxReferenceImages: 1}
+	media := modelcatalog.MediaForModel(platform, model)
+	if len(attributes) > 0 {
+		media = attributes[0].Media
+		result.ThinkingLevels = attributes[0].Efforts()
 	}
-	normalizedPlatform := strings.TrimSpace(platform)
-	normalizedModel := CreativeNormalizedModelID(model)
-	switch normalizedPlatform {
-	case PlatformOpenAI:
-		if !upstream.IsGPTImageGenerationModel(normalizedModel) {
-			return capabilities
-		}
-		capabilities.AspectRatios = []string{"1:1", "4:3", "3:4", "16:9", "9:16"}
-		capabilities.Qualities = []string{"low", "medium", "high", "auto"}
-		capabilities.BackgroundOptions = []string{"auto", "opaque"}
-		if IsCreativeGPTImage2Model(normalizedModel) {
-			capabilities.BackgroundOptions = append(capabilities.BackgroundOptions, "transparent")
-		}
-		capabilities.MaxReferenceImages = 16
-	case PlatformGrok:
-		if !upstream.IsGrokImageGenerationModel(normalizedModel) {
-			return capabilities
-		}
-		capabilities.AspectRatios = []string{
-			"1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "2:1", "1:2",
-			"19.5:9", "9:19.5", "20:9", "9:20", "21:9", "5:2", "auto",
-		}
-		if normalizedModel == "grok-imagine-image-2.0" {
-			capabilities.Qualities = []string{"low", "medium"}
-		}
-		capabilities.MaxReferenceImages = 3
-	case PlatformGemini:
-		if !IsCreativeGeminiImageModel(normalizedModel) && !upstream.IsGeminiImageGenerationModel(normalizedModel) && !strings.Contains(normalizedModel, "image") {
-			return capabilities
-		}
-		capabilities.AspectRatios = []string{
-			"1:1", "1:4", "4:1", "1:8", "8:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9",
-		}
-		if IsCreativeGeminiThinkingLevelModel(normalizedModel) {
-			capabilities.ThinkingLevels = []string{"minimal", "high"}
-		}
-		capabilities.MaxReferenceImages = CreativeGeminiMaxReferenceImages(normalizedModel)
+	if media == nil {
+		return result
 	}
-	return capabilities
+	result.AspectRatios = append(result.AspectRatios, media.AspectRatios...)
+	result.Qualities = append(result.Qualities, media.Qualities...)
+	result.OutputFormats = append(result.OutputFormats, media.OutputFormats...)
+	result.BackgroundOptions = append(result.BackgroundOptions, media.BackgroundOptions...)
+	if media.MaxOutputCount != nil {
+		result.MaxOutputCount = *media.MaxOutputCount
+	}
+	if media.MaxReferenceImages != nil {
+		result.MaxReferenceImages = *media.MaxReferenceImages
+	}
+	return result
+}
+
+func creativeRouteImageSizes(route creativeModelRoute) []string {
+	if route.Attributes.Media != nil && route.Attributes.Media.ImageSizes != nil {
+		return append([]string(nil), route.Attributes.Media.ImageSizes...)
+	}
+	return CreativeImageSizesForModel(route.Platform, route.Model)
 }
 
 func CreativeNormalizedModelID(model string) string {
 	return strings.TrimPrefix(strings.ToLower(strings.TrimSpace(model)), "models/")
 }
 
-func IsCreativeGeminiThinkingLevelModel(model string) bool {
-	model = CreativeNormalizedModelID(model)
-	return strings.HasPrefix(model, "gemini-3.1-flash-image") || strings.HasPrefix(model, "gemini-3.1-flash-lite-image")
-}
-
 func CreativeGeminiMaxReferenceImages(model string) int {
-	model = CreativeNormalizedModelID(model)
-	switch {
-	case strings.HasPrefix(model, "gemini-3.1-flash-image"), strings.HasPrefix(model, "gemini-3.1-flash-lite-image"):
-		return 14
-	case strings.Contains(model, "pro-image"):
-		return 14
-	case strings.Contains(model, "flash-image"):
-		return 3
-	default:
-		return 1
+	if media := modelcatalog.MediaForModel(PlatformGemini, model); media != nil && media.MaxReferenceImages != nil {
+		return *media.MaxReferenceImages
 	}
+	return 1
 }
 
 // CreativeImageSizesForModel 返回实际候选模型支持的尺寸档位。
 // 尺寸由平台与模型能力决定，不依赖是否填写价格。
 func CreativeImageSizesForModel(platform, model string) []string {
-	sizes := CreativeDefaultImageSizesForPlatform(platform)
-	if platform == PlatformOpenAI && !IsCreativeGPTImage2Model(model) {
-		sizes = []string{"1K", "2K"}
+	if media := modelcatalog.MediaForModel(platform, model); media != nil {
+		return append([]string(nil), media.ImageSizes...)
 	}
-	return CreativeFilterImageSizesForModel(platform, model, sizes)
+	return CreativeDefaultImageSizesForPlatform(platform)
 }
 
 // CreativeFilterImageSizesForModel 按已知模型能力收窄各平台尺寸档位。
@@ -657,7 +630,7 @@ func (s *Public) creativeModelRoutes(ctx context.Context, group *GroupView) (map
 		return map[string]creativeModelRoute{}, err
 	}
 	configured := creativeSettingsModels(s.CreativeModelSettings(ctx), group.ID)
-	return query.resolveModels(ctx, query.candidates(configured)), nil
+	return query.resolveModels(ctx, query.candidates(configured))
 }
 
 // IsCreativeGeminiImageModel 按 Gemini 图片模型的命名约定识别显式白名单变体。
@@ -890,7 +863,10 @@ func (s *Public) ValidateCreateParams(ctx context.Context, userID int64, params 
 	if err != nil {
 		return nil, err
 	}
-	route, available := query.resolve(ctx, model)
+	route, available, err := query.resolve(ctx, model, false)
+	if err != nil {
+		return nil, err
+	}
 	if !available {
 		return nil, ErrCreativeInvalidModel
 	}
@@ -904,7 +880,10 @@ func (s *Public) ValidateCreateParams(ctx context.Context, userID int64, params 
 	if !operationAllowed {
 		return nil, ErrCreativeOperationUnsupported
 	}
-	capabilities := CreativeCapabilitiesForModel(route.Platform, finalModel)
+	if attrs, found := route.OperationAttributes[operation]; found {
+		route.Attributes = attrs
+	}
+	capabilities := CreativeCapabilitiesForModel(route.Platform, finalModel, route.Attributes)
 	if capabilities.MaxReferenceImages > 0 && len(params.SourceImages) > capabilities.MaxReferenceImages {
 		return nil, ErrCreativeInvalidParams
 	}
@@ -929,7 +908,7 @@ func (s *Public) ValidateCreateParams(ctx context.Context, userID int64, params 
 	if imageSize == "" {
 		imageSize = s.DefaultImageSize()
 	}
-	imageSize, supported := CreativeCanonicalOption(imageSize, CreativeImageSizesForModel(route.Platform, finalModel))
+	imageSize, supported := CreativeCanonicalOption(imageSize, creativeRouteImageSizes(route))
 	if !supported {
 		return nil, ErrCreativeInvalidParams
 	}

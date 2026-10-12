@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
+	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
 // entryRequestRecords 在提供商切换期间持有尚未完成的逻辑请求。
@@ -30,6 +31,7 @@ func newEntryRequestRecords(ctx context.Context) *entryRequestRecords {
 
 func (r *entryRequestRecords) newTurn(at time.Time) context.Context {
 	ctx := telemetry.WithChildRequest(r.root, telemetry.RequestRecord{RequestID: telemetry.NewRequestID(), State: "running", StartedAt: at.UTC()})
+	ctx = routing.RenewModelAttributes(ctx)
 	r.pending[telemetry.RequestIDValue(ctx)] = ctx
 	return ctx
 }
@@ -58,6 +60,7 @@ func (a *entryAttemptRecords) context(base context.Context, turn int) context.Co
 		a.turns[turn] = ctx
 	}
 	base = context.WithValue(base, telemetry.RequestID, telemetry.RequestIDValue(ctx))
+	base = routing.CopyModelAttributes(base, ctx)
 	return telemetry.CopyRequestCapture(base, ctx)
 }
 

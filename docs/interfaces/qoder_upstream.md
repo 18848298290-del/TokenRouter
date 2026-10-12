@@ -118,7 +118,7 @@ Qoder 提供商的 `model_mapping` 和其他平台使用相同的改写规则：
 
 ## 上下文窗口
 
-上下文的查找发生在提供商级的模型映射和公共别名解析之后。每次请求都按最终的路由和所选提供商的站点，选择验证过的最大上下文。故障转移选中另一个站点的提供商时，在重新构建 Qoder 载荷之前，重新计算能力。
+输入上限由 `modelcatalog/qoder.go` 的固定路由表提供，写入统一属性的 `input_limit`。有明确公共身份的模型继续读取目录的总上下文，auto、performance、efficient、lite 等动态档位的总上下文保持未知。每次请求在提供商映射和站点选择后解析属性，再叠加管理员覆盖。故障转移换站点时，使用同一请求快照重新计算目标路线。
 
 | 站点 | 最大输入 Token | 路由键 |
 | --- | ---: | --- |
@@ -130,7 +130,7 @@ Qoder 提供商的 `model_mapping` 和其他平台使用相同的改写规则：
 | 中国站 | 200,000 | `mmodel` |
 | 中国站 | 180,000 | `auto` |
 
-有官方运行时 `contextConfig` 的路由，把所选的上限写进 `model_config.max_input_tokens`、`chat_context.extra.ideModelConfigOverride.max_input_tokens` 和 `parameters.context_length`。最大值固定的路由只写 `model_config.max_input_tokens`。未知、隐藏或已经移除的原始路由键继续透传，使用保守的 200,000 Token 默认值，也不会收到编造的运行时上下文配置。
+有官方运行时 `contextConfig` 的路由，把所选的上限写进 `model_config.max_input_tokens`、`chat_context.extra.ideModelConfigOverride.max_input_tokens` 和 `parameters.context_length`。最大值固定的路由只写 `model_config.max_input_tokens`。未知 raw route 继续透传，输入上限使用 200,000 的执行默认值，来源标为 `execution_default`。
 
 TokenRouter 不读取客户端声明的上下文上限。Chat Completions、Responses 和 Anthropic Messages 里的输出 Token 字段只控制输出。客户端自己维护模型目录、压缩阈值和截断行为；`/v1/models` 和 `/models` 不公开非标准的上下文元数据。
 

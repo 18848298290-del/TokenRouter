@@ -38,6 +38,9 @@ func RegisterGatewayRoutes(engine *gin.Engine, endpoints RouteEndpoints, options
 		c.Header("Content-Language", "en")
 		c.Next()
 	})
+	if options.ModelAttributes != nil {
+		r.Use(options.ModelAttributes)
+	}
 	guards := NewRouteGuards(options)
 
 	requireGroupClientProtocol := guards.RequireGroupClientProtocol

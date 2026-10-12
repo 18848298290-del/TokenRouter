@@ -15,6 +15,7 @@ import (
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/provider/grokforward"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
@@ -42,7 +43,10 @@ func (a *grokForwardAdapter) options() grokforward.Options {
 	if a.s.Output.Options.MaxLineSize > 0 {
 		maxLine = a.s.Output.Options.MaxLineSize
 	}
-	return grokforward.Options{Codec: grok.BodyCodec{
+	return grokforward.Options{ResolveAttributes: func(ctx context.Context, model string) (modelcatalog.Attributes, error) {
+		result, err := gatewayprovider.ResolveModelAttributes(ctx, a.provider, model, a.s.Attributes, "openai_responses")
+		return result.Attributes, err
+	}, Codec: grok.BodyCodec{
 		NewID: uuid.NewString,
 	}, MaxLineSize: maxLine, Enter: a.s.Enter}
 }

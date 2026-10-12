@@ -52,13 +52,11 @@ type PreludePorts interface {
 	BlockGroupImages() bool
 	StripImages([]byte) ([]byte, bool, error)
 	Begin()
-	FilterNoneReasoning([]byte) ([]byte, error)
 	ClearMappings()
 	PrepareIdentity(context.Context) error
 	MatchTLS() egress.TLSFingerprintRouterMatchResult
 	ClientAllowed(context.Context, egress.TLSFingerprintRouterMatchResult, []byte) (bool, string)
 	Reject(Rejection)
-	CompactEffort([]byte) ([]byte, bool, error)
 	ToolSchemas([]byte) ([]byte, bool, error)
 	LiteHeader() bool
 	LitePayload([]byte) ([]byte, bool, string, error)
@@ -96,10 +94,6 @@ func PreparePrelude(ctx context.Context, body []byte, profile Profile, p Prelude
 		}
 	}
 	p.Begin()
-	body, err = p.FilterNoneReasoning(body)
-	if err != nil {
-		return nil, err
-	}
 	p.ClearMappings()
 	if err = p.PrepareIdentity(ctx); err != nil {
 		return nil, err
@@ -110,11 +104,7 @@ func PreparePrelude(ctx context.Context, body []byte, profile Profile, p Prelude
 		p.Reject(Rejection{Status: 403, Type: "forbidden_error", Message: message, PolicyDenied: true})
 		return nil, errors.New("openai oauth client policy restriction: client is not allowed")
 	}
-	if updated, changed, err := p.CompactEffort(body); err != nil {
-		return nil, err
-	} else if changed {
-		body = updated
-	}
+
 	if updated, changed, err := p.ToolSchemas(body); err != nil {
 		return nil, err
 	} else if changed {

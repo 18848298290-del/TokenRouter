@@ -78,4 +78,8 @@ describe('客户端配置', () => {
     expect(JSON.parse(openCode.content).provider.tokenrouter.models['custom-model']).toEqual({ name: 'custom-model', limit: { context: 100, output: 1 }, temperature: false })
     expect(buildClientConfig({ ...base, client: 'codex', protocol: 'openai_responses', attributes })).toEqual(buildClientConfig({ ...base, client: 'codex', protocol: 'openai_responses' }))
   })
+  it('OpenCode 把无法表达的条件能力导出为关闭', () => {
+    expect(openCodeModelInfo('gpt-6-sol', { temperature: true, tool_call: true, reasoning: true, conditions: { temperature: { thinking: false }, tool_call: { efforts: ['none'] } } })).toEqual({ name: 'gpt-6-sol', temperature: false, tool_call: false, reasoning: true })
+  })
+
 })

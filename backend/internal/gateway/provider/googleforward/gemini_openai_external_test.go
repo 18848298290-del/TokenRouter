@@ -21,7 +21,9 @@ import (
 	gatewayhttp "github.com/TokenFlux/TokenRouter/internal/gateway/httpapi"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/provider/googleforward"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog/testkit"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
+	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
@@ -580,3 +582,40 @@ func (r *geminiResponsesFailingStream) Read(p []byte) (int, error) {
 }
 
 func (r *geminiResponsesFailingStream) Close() error { return nil }
+
+func TestGeminiCompatibilityForwardsResolvedThinking(t *testing.T) {
+	for _, tc := range []struct {
+		name, model, body, want string
+		responses               bool
+	}{
+		{"chat budget", "gemini-2.5-flash", `{"model":"alias","messages":[{"role":"user","content":"hi"}],"reasoning_effort":"max"}`, `{"includeThoughts":true,"thinkingBudget":24576}`, false},
+		{"chat level", "gemini-3.1-pro-preview", `{"model":"alias","messages":[{"role":"user","content":"hi"}],"reasoning_effort":"xhigh"}`, `{"includeThoughts":true,"thinkingLevel":"high"}`, false},
+		{"responses disabled", "gemini-2.5-flash", `{"model":"alias","input":"hi","reasoning":{"effort":"none"}}`, `{"includeThoughts":false,"thinkingBudget":0}`, true},
+		{"unknown effort", "unlisted-model", `{"model":"alias","input":"hi","reasoning":{"effort":"future"}}`, `{"includeThoughts":true,"thinkingLevel":"future"}`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := &geminiCompatHTTPUpstreamStub{response: &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"candidates":[{"content":{"parts":[{"text":"answer"}]},"finishReason":"STOP"}]}`))}}
+			svc := newGeminiFixture(geminiDependencies{httpUpstream: stub, cfg: &googleforward.Options{}})
+			svc.Attributes = &routing.ModelAttributeService{Catalog: routing.ModelAttributeCatalog{View: testkit.OfflineView}}
+			provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{ID: 1, Platform: "gemini", Type: "apikey", Credentials: map[string]any{"api_key": "test", "model_mapping": map[string]any{"alias": tc.model}}}}
+			body := []byte(tc.body)
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+			output := gatewayhttp.NewGoogleBoundary(c, svc.Options, false)
+			var err error
+			if tc.responses {
+				_, err = svc.ForwardAsResponses(context.Background(), output, provider, body, nil)
+			} else {
+				_, err = svc.ForwardAsChatCompletions(context.Background(), output, provider, body)
+			}
+			require.NoError(t, err)
+			require.Equal(t, 1, stub.calls)
+			wire, err := io.ReadAll(stub.lastReq.Body)
+			require.NoError(t, err)
+			require.JSONEq(t, tc.want, gjson.GetBytes(wire, "generationConfig.thinkingConfig").Raw)
+			require.Contains(t, stub.lastReq.URL.Path, tc.model)
+			require.Contains(t, recorder.Body.String(), "answer")
+		})
+	}
+}

@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
 
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	protocolanthropic "github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
@@ -47,6 +48,7 @@ type QoderThinkingDirective struct {
 }
 
 type QoderPayloadRequest struct {
+	Capabilities    *modelcatalog.Resolution
 	Model           string
 	Site            Site
 	System          string
@@ -390,8 +392,8 @@ func BuildQoderPayloadWithOptions(request QoderPayloadRequest, sessionID string,
 	chatText["text"] = prompt
 	extraModelConfig["key"] = modelInfo.Key
 	extraModelConfig["source"] = modelInfo.Source
-	ApplyQoderContextCapability(payload, request.Site, modelInfo.Key)
-	ApplyQoderThinkingDirective(payload, request.Site, modelInfo.Key, request.Thinking)
+	ApplyQoderContextCapability(payload, request.Site, modelInfo.Key, request.Capabilities)
+	ApplyQoderThinkingDirective(payload, request.Site, modelInfo.Key, request.Thinking, request.Capabilities)
 	extraOriginalContent["text"] = prompt
 	payload["business"] = map[string]any{
 		"product":  "cli",
@@ -422,8 +424,15 @@ func BuildQoderPayloadWithOptions(request QoderPayloadRequest, sessionID string,
 
 // ApplyQoderContextCapability 按站点和最终 route 选择官方最高上下文档位。
 // 只有官方声明 contextConfig 的 route 才写入运行时覆盖，避免为固定上限或未知 route 伪造档位。
-func ApplyQoderContextCapability(payload map[string]any, site Site, modelKey string) {
+func ApplyQoderContextCapability(payload map[string]any, site Site, modelKey string, resolutions ...*modelcatalog.Resolution) {
 	capability := ContextCapabilityForSite(site, modelKey)
+	if len(resolutions) > 0 && resolutions[0] != nil {
+		value := resolutions[0]
+		if value.Attributes.InputLimit != nil {
+			capability.MaxInputTokens = *value.Attributes.InputLimit
+		}
+		capability.RuntimeSelectable = value.Rules.RuntimeContext
+	}
 	modelConfig, _ := payload["model_config"].(map[string]any)
 	modelConfig["max_input_tokens"] = capability.MaxInputTokens
 	if !capability.RuntimeSelectable {
@@ -444,8 +453,11 @@ func ApplyQoderContextCapability(payload map[string]any, site Site, modelKey str
 
 // ApplyQoderThinkingDirective 同步 Qoder 请求中重复出现的模型配置。
 // reasoning_effort=none 是官方客户端用于关闭可调 Thinking 的运行时覆盖值。
-func ApplyQoderThinkingDirective(payload map[string]any, site Site, modelKey string, directive QoderThinkingDirective) {
+func ApplyQoderThinkingDirective(payload map[string]any, site Site, modelKey string, directive QoderThinkingDirective, resolutions ...*modelcatalog.Resolution) {
 	capability := ThinkingCapabilityForSite(site, modelKey)
+	if len(resolutions) > 0 && resolutions[0] != nil {
+		capability = thinkingCapabilityFromAttributes(resolutions[0].Attributes)
+	}
 	if capability == ThinkingUnsupported {
 		return
 	}

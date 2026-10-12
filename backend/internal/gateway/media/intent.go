@@ -288,11 +288,7 @@ func (p ImageIntentPolicy) OpenAIRequestBodyImageGenerationToolNeedsNormalizatio
 			needsNormalization = true
 			return false
 		}
-		imageModel := strings.ToLower(strings.TrimSpace(item.Get("model").String()))
-		if strings.HasPrefix(imageModel, "gpt-image-2") && item.Get("input_fidelity").Exists() {
-			needsNormalization = true
-			return false
-		}
+
 		return true
 	})
 	return needsNormalization

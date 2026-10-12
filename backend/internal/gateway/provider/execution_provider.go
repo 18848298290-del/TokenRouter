@@ -6,6 +6,7 @@ import (
 
 	"github.com/TokenFlux/TokenRouter/internal/egress"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
@@ -14,8 +15,9 @@ import (
 // ExecutionProvider 保存提供商记录和本次请求的路线。
 // Route 用于本次请求，provider.Record 提供提供商规则。
 type ExecutionProvider struct {
-	Record provider.Record           `json:"-"`
-	Route  requeststate.AttemptRoute `json:"-"`
+	Capabilities *modelcatalog.Resolution  `json:"-"`
+	Record       provider.Record           `json:"-"`
+	Route        requeststate.AttemptRoute `json:"-"`
 }
 
 // BindExecutionHeaders 返回绑定提供商的 Header 设置函数，调用时读取最新字段。

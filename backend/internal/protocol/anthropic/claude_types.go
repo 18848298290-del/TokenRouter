@@ -14,17 +14,18 @@ const (
 
 // ClaudeRequest Claude Messages API 请求。
 type ClaudeRequest struct {
-	Model       string          `json:"model"`
-	Messages    []ClaudeMessage `json:"messages"`
-	MaxTokens   int             `json:"max_tokens,omitempty"`
-	System      json.RawMessage `json:"system,omitempty"` // string 或 []SystemBlock
-	Stream      bool            `json:"stream,omitempty"`
-	Temperature *float64        `json:"temperature,omitempty"`
-	TopP        *float64        `json:"top_p,omitempty"`
-	TopK        *int            `json:"top_k,omitempty"`
-	Tools       []ClaudeTool    `json:"tools,omitempty"`
-	Thinking    *ThinkingConfig `json:"thinking,omitempty"`
-	Metadata    *ClaudeMetadata `json:"metadata,omitempty"`
+	Model        string                 `json:"model"`
+	Messages     []ClaudeMessage        `json:"messages"`
+	MaxTokens    int                    `json:"max_tokens,omitempty"`
+	System       json.RawMessage        `json:"system,omitempty"` // string 或 []SystemBlock
+	Stream       bool                   `json:"stream,omitempty"`
+	Temperature  *float64               `json:"temperature,omitempty"`
+	TopP         *float64               `json:"top_p,omitempty"`
+	TopK         *int                   `json:"top_k,omitempty"`
+	Tools        []ClaudeTool           `json:"tools,omitempty"`
+	Thinking     *ThinkingConfig        `json:"thinking,omitempty"`
+	OutputConfig *AnthropicOutputConfig `json:"output_config,omitempty"`
+	Metadata     *ClaudeMetadata        `json:"metadata,omitempty"`
 }
 
 // ClaudeMessage Claude 消息。

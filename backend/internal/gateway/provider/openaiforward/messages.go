@@ -45,6 +45,7 @@ func RunMessages(ctx context.Context, body []byte, promptCacheKey, defaultMapped
 	// 2. Model mapping
 	billingModel := p.BillingModel(normalizedModel, defaultMappedModel)
 	upstreamModel := p.UpstreamModel(billingModel)
+	anthropicReq.Model = upstreamModel
 	promptCacheKey = strings.TrimSpace(promptCacheKey)
 	apiKeyID := p.APIKeyID()
 	anthropicDigestChain := ""

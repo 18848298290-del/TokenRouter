@@ -394,6 +394,7 @@
   "POST /api/v1/admin/groups/:id/duplicate",
   "POST /api/v1/admin/model-attributes/configs",
   "POST /api/v1/admin/model-attributes/defaults/update",
+  "POST /api/v1/admin/model-attributes/preview",
   "POST /api/v1/admin/openai/create-from-codex-pat",
   "POST /api/v1/admin/openai/create-from-oauth",
   "POST /api/v1/admin/openai/exchange-code",

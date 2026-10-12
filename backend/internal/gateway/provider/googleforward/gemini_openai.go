@@ -161,6 +161,14 @@ func (s *Gemini) forwardClaudeBodyAsOpenAICompat(
 	if err != nil {
 		return nil, c.GeminiOpenAICompatError(protocol, http.StatusBadRequest, "invalid_request_error", err.Error())
 	}
+	attributes, err := gatewayprovider.ResolveModelAttributes(ctx, provider, mappedModel, s.Attributes, "gemini_generate_content")
+	if err != nil {
+		return nil, err
+	}
+	geminiReq, err = applyGeminiModelParameters(geminiReq, originalBody, attributes, true)
+	if err != nil {
+		return nil, c.GeminiOpenAICompatError(protocol, http.StatusBadRequest, "invalid_request_error", err.Error())
+	}
 	geminiReq = ensureGeminiFunctionCallThoughtSignatures(geminiReq)
 
 	proxyURL := ""

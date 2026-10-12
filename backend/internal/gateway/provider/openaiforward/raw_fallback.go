@@ -38,6 +38,9 @@ func MessagesViaRawChat(ctx context.Context, body []byte, defaultMappedModel str
 		return nil, err
 	}
 	clientStream := anthropicReq.Stream
+	billingModel := p.BillingModel(originalModel, defaultMappedModel)
+	upstreamModel := p.UpstreamModel(billingModel)
+	anthropicReq.Model = upstreamModel
 
 	// 2. 将 Anthropic 请求直接转换为 Chat Completions。
 	chatReq, err := p.AnthropicToChat(&anthropicReq)
@@ -46,8 +49,6 @@ func MessagesViaRawChat(ctx context.Context, body []byte, defaultMappedModel str
 		return nil, fmt.Errorf("convert anthropic to chat completions: %w", err)
 	}
 
-	billingModel := p.BillingModel(anthropicReq.Model, defaultMappedModel)
-	upstreamModel := p.UpstreamModel(billingModel)
 	chatReq.Model = upstreamModel
 	chatReq.ReasoningEffort = p.MessagesEffort(&anthropicReq, upstreamModel, chatReq.ReasoningEffort)
 	chatReq.Stream = clientStream
@@ -64,8 +65,9 @@ func MessagesViaRawChat(ctx context.Context, body []byte, defaultMappedModel str
 	if err != nil {
 		return nil, fmt.Errorf("marshal chat completions request: %w", err)
 	}
-	if normalizedBody, normalized := p.NormalizeGLM(chatBody, upstreamModel); normalized {
-		chatBody = normalizedBody
+	chatBody, err = p.PrepareModel(ctx, chatBody)
+	if err != nil {
+		return nil, err
 	}
 	// Messages 桥只对客户端显式指定的推理强度执行分组超限策略。
 	if profile.OpenAI {

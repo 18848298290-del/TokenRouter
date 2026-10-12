@@ -12,7 +12,6 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 	protocolopenai "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
-	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
 const (
@@ -40,7 +39,7 @@ func Anthropic(body []byte) (int, error) {
 		return 0, fmt.Errorf("parse anthropic count_tokens request: model is required")
 	}
 
-	responsesReq, err := bridge.AnthropicToResponses(&anthropicReq, bridge.RequestOptions{DropSampling: capability.ResponsesBridgeDropsSampling(anthropicReq.Model), SupportsMaxEffort: capability.ResponsesBridgeSupportsMaxEffort(anthropicReq.Model)})
+	responsesReq, err := bridge.AnthropicToResponses(&anthropicReq, bridge.RequestOptions{SupportsMaxEffort: true})
 	if err != nil {
 		return 0, fmt.Errorf("convert anthropic request to responses: %w", err)
 	}

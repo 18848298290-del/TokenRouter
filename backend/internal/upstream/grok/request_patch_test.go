@@ -10,6 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
 	groktestkit "github.com/TokenFlux/TokenRouter/internal/upstream/grok/testkit"
 )
@@ -428,11 +430,14 @@ func mustMarshalJSONForTest(t *testing.T, value string) []byte {
 
 // TestQualifiedGrokReasoningPreservesModel 验证能力识别不会改写供应商限定 ID。
 func TestQualifiedGrokReasoningPreservesModel(t *testing.T) {
-	codec := BodyCodec{}
+	codec := BodyCodec{Attributes: func(model string) modelcatalog.Attributes {
+		return testkit.OfflineView().Resolve(modelcatalog.Target{Platform: "grok", Model: model}, modelcatalog.Attributes{}).Attributes
+	}}
 	for _, model := range []string{"grok-4.6", "xai/grok-4.6", "x-ai/grok-4.6", "grok/grok-4.6", "X-AI/GROK-4.6"} {
 		t.Run(model, func(t *testing.T) {
-			require.True(t, codec.GrokSupportsReasoningEffort(model))
-			require.True(t, codec.GrokSupportsXHighReasoningEffort(model))
+			known := model == "grok-4.6" || model == "xai/grok-4.6"
+			require.Equal(t, known, codec.GrokSupportsReasoningEffort(model))
+			require.Equal(t, known, codec.GrokSupportsXHighReasoningEffort(model))
 			responses, err := codec.PatchGrokResponsesBody([]byte(`{"model":"client-alias","input":"hello","reasoning":{"effort":"xhigh"}}`), model)
 			require.NoError(t, err)
 			require.Equal(t, model, gjson.GetBytes(responses, "model").String())
@@ -453,17 +458,19 @@ func TestQualifiedGrokReasoningPreservesModel(t *testing.T) {
 
 // TestQualifiedGrokReasoningKeepsCapabilityBounds 验证前缀不会扩大档位能力或生成隐式型号。
 func TestQualifiedGrokReasoningKeepsCapabilityBounds(t *testing.T) {
-	codec := BodyCodec{}
+	codec := BodyCodec{Attributes: func(model string) modelcatalog.Attributes {
+		return testkit.OfflineView().Resolve(modelcatalog.Target{Platform: "grok", Model: model}, modelcatalog.Attributes{}).Attributes
+	}}
 	for _, tc := range []struct {
 		model string
 		want  string
 	}{
 		{model: "xai/grok-4.5", want: "high"},
-		{model: "x-ai/grok-composer-2.5-fast"},
-		{model: "xai/grok-4.6-high"},
-		{model: "unknown/grok-4.6"},
-		{model: "xai/custom/grok-4.6"},
-		{model: "xai/gpt-5.6-sol"},
+		{model: "x-ai/grok-composer-2.5-fast", want: "xhigh"},
+		{model: "xai/grok-4.6-high", want: "xhigh"},
+		{model: "unknown/grok-4.6", want: "xhigh"},
+		{model: "xai/custom/grok-4.6", want: "xhigh"},
+		{model: "xai/gpt-5.6-sol", want: "xhigh"},
 	} {
 		t.Run(tc.model, func(t *testing.T) {
 			responses, err := codec.PatchGrokResponsesBody([]byte(`{"input":"hello","reasoning":{"effort":"xhigh"}}`), tc.model)

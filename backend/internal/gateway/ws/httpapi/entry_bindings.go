@@ -527,6 +527,7 @@ func (t *openAIWSEntryTarget) Run(ctx context.Context, client gatewayws.ClientSo
 		return errors.New("unsupported websocket HTTP frame adapter")
 	}
 	old := &gatewayws.OpenAIIngressHooks{
+		ContextForTurn:              hooks.ContextForTurn,
 		ClientLifecycleContext:      hooks.ClientLifecycleContext,
 		InitialRequestModel:         hooks.InitialRequestModel,
 		InitialTurnStartedAt:        hooks.InitialTurnStartedAt,

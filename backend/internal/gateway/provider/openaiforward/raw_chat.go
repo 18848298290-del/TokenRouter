@@ -44,8 +44,9 @@ func RunRawChat(ctx context.Context, body []byte, defaultMappedModel string, p R
 	if upstreamModel != originalModel {
 		upstreamBody = p.ReplaceModel(body, upstreamModel)
 	}
-	if normalizedBody, normalized := p.NormalizeGLM(upstreamBody, upstreamModel); normalized {
-		upstreamBody = normalizedBody
+	upstreamBody, err := p.PrepareModel(ctx, upstreamBody)
+	if err != nil {
+		return nil, err
 	}
 
 	// 4. 对 Chat 报文应用 Fast 策略。
@@ -63,10 +64,6 @@ func RunRawChat(ctx context.Context, body []byte, defaultMappedModel string, p R
 		}
 		upstreamBody = strippedBody
 	}
-	// GLM 归一化和 fast policy 都可能改写上游请求，Usage Log 必须读取最终值。
-	reasoningEffort := p.EffectiveEffort(upstreamBody, body, upstreamModel, billingModel, originalModel)
-	// 国产模型没有显式 effort 档位时，thinking 启用后补默认展示值。
-	reasoningEffort = p.ThinkingFallback(reasoningEffort, upstreamBody, billingModel)
 
 	// Grok Composer 不直接接受 image_url；仅在该场景通过 Grok Build 生成图片描述后转发纯文本。
 	token, tokenKind, err := p.RawCredential(ctx)
@@ -107,6 +104,10 @@ func RunRawChat(ctx context.Context, body []byte, defaultMappedModel string, p R
 		}
 	}
 	upstreamBody = p.OllamaBody(upstreamBody)
+
+	// 用量记录读取平台参数转换后的档位。
+	reasoningEffort := p.EffectiveEffort(upstreamBody, body, upstreamModel, billingModel, originalModel)
+	reasoningEffort = p.ThinkingFallback(reasoningEffort, upstreamBody, billingModel)
 
 	p.Debug("openai chat_completions raw: forwarding without protocol conversion",
 		zap.Int64("provider_id", profile.ID),

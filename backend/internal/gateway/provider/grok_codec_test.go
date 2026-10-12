@@ -12,6 +12,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog/testkit"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
@@ -26,7 +28,7 @@ func TestPatchGrokResponsesBodySetsMappedModelAndDropsUnsupportedFields(t *testi
 		"reasoning": {"effort": "high"}
 	}`)
 
-	patched, err := GrokBodyCodec().PatchGrokResponsesBody(body, "grok-4.3")
+	patched, err := grokAttributeCodec().PatchGrokResponsesBody(body, "grok-4.3")
 	require.NoError(t, err)
 	require.True(t, json.Valid(patched))
 	require.Equal(t, "grok-4.3", gjson.GetBytes(patched, "model").String())
@@ -77,7 +79,7 @@ func TestPatchGrokResponsesBodyDropsRedundantViewImageForCurrentInlineImage(t *t
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			patched, err := GrokBodyCodec().PatchGrokResponsesBody([]byte(tt.body), "grok-4.6")
+			patched, err := grokAttributeCodec().PatchGrokResponsesBody([]byte(tt.body), "grok-4.6")
 			require.NoError(t, err)
 			require.False(t, gjson.GetBytes(patched, `tools.#(name=="view_image")`).Exists())
 			require.Equal(t, "shell_command", gjson.GetBytes(patched, "tools.0.name").String())
@@ -113,7 +115,7 @@ func TestPatchGrokResponsesBodyKeepsNonRedundantViewImage(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			patched, err := GrokBodyCodec().PatchGrokResponsesBody([]byte(tt.body), "grok-4.6")
+			patched, err := grokAttributeCodec().PatchGrokResponsesBody([]byte(tt.body), "grok-4.6")
 			require.NoError(t, err)
 			require.Equal(t, "view_image", gjson.GetBytes(patched, "tools.0.name").String())
 		})
@@ -129,7 +131,7 @@ func TestPatchGrokResponsesBodyDropsViewImageOnlyToolMetadata(t *testing.T) {
 		"parallel_tool_calls":true
 	}`)
 
-	patched, err := GrokBodyCodec().PatchGrokResponsesBody(body, "grok-4.6")
+	patched, err := grokAttributeCodec().PatchGrokResponsesBody(body, "grok-4.6")
 	require.NoError(t, err)
 	require.False(t, gjson.GetBytes(patched, "tools").Exists())
 	require.False(t, gjson.GetBytes(patched, "tool_choice").Exists())
@@ -163,7 +165,7 @@ func TestPatchGrokResponsesBodySanitizesComposerReasoningParameters(t *testing.T
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			patched, err := GrokBodyCodec().PatchGrokResponsesBody(append([]byte(nil), bodyTemplate...), tt.upstreamModel)
+			patched, err := grokAttributeCodec().PatchGrokResponsesBody(append([]byte(nil), bodyTemplate...), tt.upstreamModel)
 			require.NoError(t, err)
 			require.True(t, json.Valid(patched))
 			require.Equal(t, tt.upstreamModel, gjson.GetBytes(patched, "model").String())
@@ -195,7 +197,7 @@ func TestPatchGrokResponsesBodyDropsGrok45ReasoningUnsupportedFields(t *testing.
 		"stop": ["done"]
 	}`)
 
-	patched, err := GrokBodyCodec().PatchGrokResponsesBody(body, "grok-4.5")
+	patched, err := grokAttributeCodec().PatchGrokResponsesBody(body, "grok-4.5")
 	require.NoError(t, err)
 	require.True(t, json.Valid(patched))
 	require.Equal(t, "grok-4.5", gjson.GetBytes(patched, "model").String())
@@ -217,7 +219,7 @@ func TestPatchGrokResponsesBodyKeepsPenaltyAndStopFieldsForNon45Models(t *testin
 		"stop": ["done"]
 	}`)
 
-	patched, err := GrokBodyCodec().PatchGrokResponsesBody(body, "grok-4.3")
+	patched, err := grokAttributeCodec().PatchGrokResponsesBody(body, "grok-4.3")
 	require.NoError(t, err)
 	require.True(t, json.Valid(patched))
 	require.Equal(t, "grok-4.3", gjson.GetBytes(patched, "model").String())
@@ -229,7 +231,7 @@ func TestPatchGrokResponsesBodyKeepsPenaltyAndStopFieldsForNon45Models(t *testin
 func TestPatchGrokResponsesBodyDropsLogprobsForGrok420Family(t *testing.T) {
 	t.Parallel()
 	body := []byte(`{"model":"grok-4.20-0309-reasoning","input":"hello","logprobs":true,"top_logprobs":5}`)
-	patched, err := GrokBodyCodec().PatchGrokResponsesBody(body, "grok-4.20-0309-reasoning")
+	patched, err := grokAttributeCodec().PatchGrokResponsesBody(body, "grok-4.20-0309-reasoning")
 	require.NoError(t, err)
 	require.False(t, gjson.GetBytes(patched, "logprobs").Exists())
 	require.False(t, gjson.GetBytes(patched, "top_logprobs").Exists())
@@ -252,7 +254,7 @@ func TestPatchGrokResponsesBodyNormalizesReasoningEffortAliases(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			patched, err := GrokBodyCodec().PatchGrokResponsesBody([]byte(tt.body), tt.upstreamModel)
+			patched, err := grokAttributeCodec().PatchGrokResponsesBody([]byte(tt.body), tt.upstreamModel)
 			require.NoError(t, err)
 			require.Equal(t, tt.want, gjson.GetBytes(patched, tt.path).String(), string(patched))
 			require.False(t, gjson.GetBytes(patched, "reasoningEffort").Exists())
@@ -261,7 +263,7 @@ func TestPatchGrokResponsesBodyNormalizesReasoningEffortAliases(t *testing.T) {
 }
 
 func TestPatchGrokResponsesBodyAddsDefaultFunctionParameters(t *testing.T) {
-	patched, err := GrokBodyCodec().PatchGrokResponsesBody(
+	patched, err := grokAttributeCodec().PatchGrokResponsesBody(
 		[]byte(`{"input":"hi","tools":[{"type":"function","name":"lookup","large_id":9007199254740993},{"type":"function","name":"wait","parameters":null}]}`),
 		"grok-4.5",
 	)
@@ -274,16 +276,16 @@ func TestPatchGrokResponsesBodyAddsDefaultFunctionParameters(t *testing.T) {
 }
 
 func TestNormalizeGrokChatReasoningEffort(t *testing.T) {
-	patched, err := GrokBodyCodec().NormalizeGrokChatReasoningEffort([]byte(`{"reasoningEffort":"ultra"}`), "grok-4.3")
+	patched, err := grokAttributeCodec().NormalizeGrokChatReasoningEffort([]byte(`{"reasoningEffort":"ultra"}`), "grok-4.3")
 	require.NoError(t, err)
 	require.Equal(t, "high", gjson.GetBytes(patched, "reasoning_effort").String())
 	require.False(t, gjson.GetBytes(patched, "reasoningEffort").Exists())
 
-	patched, err = GrokBodyCodec().NormalizeGrokChatReasoningEffort([]byte(`{"reasoning_effort":"xhigh"}`), "grok-4.6")
+	patched, err = grokAttributeCodec().NormalizeGrokChatReasoningEffort([]byte(`{"reasoning_effort":"xhigh"}`), "grok-4.6")
 	require.NoError(t, err)
 	require.Equal(t, "xhigh", gjson.GetBytes(patched, "reasoning_effort").String())
 
-	patched, err = GrokBodyCodec().NormalizeGrokChatReasoningEffort([]byte(`{"reasoning_effort":"high"}`), "grok-composer-2.5-fast")
+	patched, err = grokAttributeCodec().NormalizeGrokChatReasoningEffort([]byte(`{"reasoning_effort":"high"}`), "grok-composer-2.5-fast")
 	require.NoError(t, err)
 	require.False(t, gjson.GetBytes(patched, "reasoning_effort").Exists())
 }
@@ -301,7 +303,7 @@ func TestPatchGrokResponsesBodyDropsNestedUnsupportedFields(t *testing.T) {
 		"metadata": {"external_web_access": false, "large_id": 9007199254740993}
 	}`)
 
-	patched, err := GrokBodyCodec().PatchGrokResponsesBody(body, "grok-4.3")
+	patched, err := grokAttributeCodec().PatchGrokResponsesBody(body, "grok-4.3")
 	require.NoError(t, err)
 	require.True(t, json.Valid(patched))
 	require.False(t, strings.Contains(string(patched), "external_web_access"))
@@ -322,7 +324,7 @@ func TestPatchGrokResponsesBodyDropsToolChoiceWhenNoSupportedToolsRemain(t *test
 		"tool_choice": {"type": "namespace", "namespace": "functions"}
 	}`)
 
-	patched, err := GrokBodyCodec().PatchGrokResponsesBody(body, "grok-4.3")
+	patched, err := grokAttributeCodec().PatchGrokResponsesBody(body, "grok-4.3")
 	require.NoError(t, err)
 	require.True(t, json.Valid(patched))
 	require.False(t, gjson.GetBytes(patched, "tools").Exists())
@@ -338,7 +340,7 @@ func TestPatchGrokResponsesBodyRestoresCompactInput(t *testing.T) {
 		]
 	}`)
 
-	patched, err := GrokBodyCodec().PatchGrokResponsesBody(body, "grok-4.5")
+	patched, err := grokAttributeCodec().PatchGrokResponsesBody(body, "grok-4.5")
 	require.NoError(t, err)
 	require.Equal(t, "reasoning", gjson.GetBytes(patched, "input.0.type").String())
 	require.Equal(t, "grok-encrypted-state", gjson.GetBytes(patched, "input.0.encrypted_content").String())
@@ -536,8 +538,8 @@ func TestExtractGrokMediaVideoRequestIDPreservesExistingPrecedence(t *testing.T)
 
 func TestGrokCompactionBlobRecoveryStripsCompactionItem(t *testing.T) {
 	body := []byte(`{"model":"grok","input":[{"type":"compaction","id":"cmp_1","encrypted_content":"blob"},{"type":"message","role":"user","content":"hi"}]}`)
-	require.True(t, GrokBodyCodec().IsGrokInvalidEncryptedContentResponse(http.StatusUnprocessableEntity, []byte(`{"code":"invalid_compaction","error":"could not decode the compaction blob"}`)))
-	retry, changed, err := GrokBodyCodec().TrimGrokInvalidEncryptedContentRetryBody(body)
+	require.True(t, grokAttributeCodec().IsGrokInvalidEncryptedContentResponse(http.StatusUnprocessableEntity, []byte(`{"code":"invalid_compaction","error":"could not decode the compaction blob"}`)))
+	retry, changed, err := grokAttributeCodec().TrimGrokInvalidEncryptedContentRetryBody(body)
 	require.NoError(t, err)
 	require.True(t, changed)
 	require.Equal(t, "message", gjson.GetBytes(retry, "input.0.type").String())
@@ -556,7 +558,7 @@ func TestPatchGrokResponsesBody_StripsReasoningContentNull(t *testing.T) {
 		]
 	}`)
 
-	patched, err := GrokBodyCodec().PatchGrokResponsesBody(body, "grok-4.5")
+	patched, err := grokAttributeCodec().PatchGrokResponsesBody(body, "grok-4.5")
 	require.NoError(t, err)
 	require.True(t, json.Valid(patched))
 
@@ -582,7 +584,7 @@ func TestPatchGrokResponsesBody_KeepsReasoningContentNonNull(t *testing.T) {
 		]
 	}`)
 
-	patched, err := GrokBodyCodec().PatchGrokResponsesBody(body, "grok-4.5")
+	patched, err := grokAttributeCodec().PatchGrokResponsesBody(body, "grok-4.5")
 	require.NoError(t, err)
 
 	reasoning := gjson.GetBytes(patched, "input.0")
@@ -601,7 +603,7 @@ func TestPatchGrokResponsesBody_MultipleReasoningContentNull(t *testing.T) {
 		]
 	}`)
 
-	patched, err := GrokBodyCodec().PatchGrokResponsesBody(body, "grok-4.5")
+	patched, err := grokAttributeCodec().PatchGrokResponsesBody(body, "grok-4.5")
 	require.NoError(t, err)
 
 	items := gjson.GetBytes(patched, "input").Array()
@@ -618,20 +620,20 @@ func TestPatchGrokResponsesBodyCombinesAdditionalToolsAndDropsOrphanControls(t *
 		"tools":[{"type":"function","name":"lookup"}],
 		"tool_choice":"auto","parallel_tool_calls":true
 	}`)
-	patched, err := GrokBodyCodec().PatchGrokResponsesBody(body, "grok-4.5")
+	patched, err := grokAttributeCodec().PatchGrokResponsesBody(body, "grok-4.5")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), gjson.GetBytes(patched, "tools.#").Int())
 	require.Equal(t, "lookup", gjson.GetBytes(patched, "tools.0.name").String())
 	require.Equal(t, "message", gjson.GetBytes(patched, "input.0.type").String())
 
-	withoutTools, err := GrokBodyCodec().PatchGrokResponsesBody([]byte(`{"input":"hi","tool_choice":"auto","parallel_tool_calls":true}`), "grok-4.5")
+	withoutTools, err := grokAttributeCodec().PatchGrokResponsesBody([]byte(`{"input":"hi","tool_choice":"auto","parallel_tool_calls":true}`), "grok-4.5")
 	require.NoError(t, err)
 	require.False(t, gjson.GetBytes(withoutTools, "tool_choice").Exists())
 	require.False(t, gjson.GetBytes(withoutTools, "parallel_tool_calls").Exists())
 
 	for _, malformedTools := range []string{"null", `{}`, `"invalid"`} {
 		malformedBody := []byte(`{"input":"hi","tools":` + malformedTools + `,"tool_choice":"auto","parallel_tool_calls":true}`)
-		patched, err := GrokBodyCodec().PatchGrokResponsesBody(malformedBody, "grok-4.5")
+		patched, err := grokAttributeCodec().PatchGrokResponsesBody(malformedBody, "grok-4.5")
 		require.NoError(t, err)
 		require.False(t, gjson.GetBytes(patched, "tool_choice").Exists(), string(patched))
 		require.False(t, gjson.GetBytes(patched, "parallel_tool_calls").Exists(), string(patched))
@@ -643,13 +645,21 @@ func TestSanitizeGrokCompactionReplayBodyPreservesVisibleSummary(t *testing.T) {
 		"previous_response_id":"resp_stale",
 		"input":[{"type":"compaction","encrypted_content":"opaque","summary":[{"type":"summary_text","text":"visible history"}]},{"type":"message","role":"user","content":"continue"}]
 	}`)
-	patched, changed, err := GrokBodyCodec().SanitizeGrokCompactionReplayBody(body)
+	patched, changed, err := grokAttributeCodec().SanitizeGrokCompactionReplayBody(body)
 	require.NoError(t, err)
 	require.True(t, changed)
 	require.False(t, gjson.GetBytes(patched, "previous_response_id").Exists())
 	require.False(t, gjson.GetBytes(patched, `input.#(type=="reasoning")`).Exists())
 	require.Contains(t, gjson.GetBytes(patched, "input.0.content.0.text").String(), "visible history")
 	require.Equal(t, "continue", gjson.GetBytes(patched, "input.1.content").String())
-	require.True(t, GrokBodyCodec().IsGrokCompactionReplayDecodeError(http.StatusBadRequest, []byte(`{"error":{"message":"failed to deserialize compaction summary history"}}`)))
-	require.True(t, GrokBodyCodec().IsGrokCompactionReplayDecodeError(http.StatusBadRequest, []byte(`{"error":{"type":"invalid_request_error"},"detail":"could not decode compaction blob"}`)))
+	require.True(t, grokAttributeCodec().IsGrokCompactionReplayDecodeError(http.StatusBadRequest, []byte(`{"error":{"message":"failed to deserialize compaction summary history"}}`)))
+	require.True(t, grokAttributeCodec().IsGrokCompactionReplayDecodeError(http.StatusBadRequest, []byte(`{"error":{"type":"invalid_request_error"},"detail":"could not decode compaction blob"}`)))
+}
+
+func grokAttributeCodec() grok.BodyCodec {
+	codec := GrokBodyCodec()
+	codec.Attributes = func(model string) modelcatalog.Attributes {
+		return testkit.OfflineView().Resolve(modelcatalog.Target{Platform: "grok", Model: model}, modelcatalog.Attributes{}).Attributes
+	}
+	return codec
 }

@@ -21,91 +21,6 @@ func ollamaMaxTokensCapTestProvider(id int64, cap any) *ExecutionProvider {
 	return provider
 }
 
-func TestOllamaCloudMaxTokensClamp(t *testing.T) {
-	ollama := ollamaUsageProvider(101)
-
-	tests := []struct {
-		name     string
-		provider *ExecutionProvider
-		body     string
-		want     string
-		raw      bool // want 非法 JSON 时按原始字节比较
-	}{
-		{
-			name:     "max_tokens above default cap is clamped",
-			provider: ollama,
-			body:     `{"model":"gpt-oss:120b-cloud","max_tokens":70000}`,
-			want:     `{"model":"gpt-oss:120b-cloud","max_tokens":65535}`,
-		},
-		{
-			name:     "max_completion_tokens above default cap is clamped",
-			provider: ollama,
-			body:     `{"model":"gpt-oss:120b-cloud","max_completion_tokens":131072}`,
-			want:     `{"model":"gpt-oss:120b-cloud","max_completion_tokens":65535}`,
-		},
-		{
-			name:     "both fields above cap are clamped",
-			provider: ollama,
-			body:     `{"model":"m","max_tokens":80000,"max_completion_tokens":90000}`,
-			want:     `{"model":"m","max_tokens":65535,"max_completion_tokens":65535}`,
-		},
-		{
-			name:     "values at or below default cap are kept",
-			provider: ollama,
-			body:     `{"model":"m","max_tokens":65535,"max_completion_tokens":4096}`,
-			want:     `{"model":"m","max_tokens":65535,"max_completion_tokens":4096}`,
-		},
-		{
-			name:     "custom extra cap is applied",
-			provider: ollamaMaxTokensCapTestProvider(102, 32768),
-			body:     `{"model":"m","max_tokens":50000}`,
-			want:     `{"model":"m","max_tokens":32768}`,
-		},
-		{
-			name:     "extra cap zero disables clamping",
-			provider: ollamaMaxTokensCapTestProvider(103, 0),
-			body:     `{"model":"m","max_tokens":50000}`,
-			want:     `{"model":"m","max_tokens":50000}`,
-		},
-		{
-			name:     "non-numeric extra cap falls back to default",
-			provider: ollamaMaxTokensCapTestProvider(104, "abc"),
-			body:     `{"model":"m","max_tokens":100000}`,
-			want:     `{"model":"m","max_tokens":65535}`,
-		},
-		{
-			name:     "invalid json is left untouched",
-			provider: ollama,
-			body:     `{"model":"m","max_tokens":`,
-			want:     `{"model":"m","max_tokens":`,
-			raw:      true,
-		},
-		{
-			name:     "non-integer max_tokens is left untouched",
-			provider: ollama,
-			body:     `{"model":"m","max_tokens":1.5}`,
-			want:     `{"model":"m","max_tokens":1.5}`,
-		},
-		{
-			name:     "missing max_tokens is left untouched",
-			provider: ollama,
-			body:     `{"model":"m"}`,
-			want:     `{"model":"m"}`,
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			got := ClampOllamaCloudMaxTokens(test.provider, []byte(test.body))
-			if test.raw {
-				require.Equal(t, test.want, string(got))
-				return
-			}
-			require.JSONEq(t, test.want, string(got))
-		})
-	}
-}
-
 func TestOllamaCloudMaxTokensCap(t *testing.T) {
 	require.Equal(t, int64(65535), OllamaCloudMaxTokensCap(nil))
 	require.Equal(t, int64(65535), OllamaCloudMaxTokensCap(ollamaUsageProvider(201)))
@@ -133,16 +48,12 @@ func TestOllamaCloudMaxTokensCap(t *testing.T) {
 	}
 }
 
-// TestApplyOllamaCloudRawChatCompletionsRequestClampsMaxTokens 验证 max_tokens clamp
-// 已接入组合钩子 gatewayprovider.ApplyOllamaCloudRawChatCompletionsRequest，并遵循该钩子的提供商判定门槛
-// （gatewayprovider.IsOllamaCloudRawChatCompletionsProvider：platform openai + type apikey +
-// force_chat_completions + ollama.com 或 Ollama usage extra）。
-func TestApplyOllamaCloudRawChatCompletionsRequestClampsMaxTokens(t *testing.T) {
+func TestApplyOllamaCloudRawChatCompletionsRequestPreservesOutputBeforeResolution(t *testing.T) {
 	body := []byte(`{"model":"deepseek-chat","max_tokens":100000}`)
 
-	// Ollama Cloud 提供商（ollama.com + force_chat_completions）→ clamp 到 65535。
+	// 参数上限在最终能力解析后应用。
 	ollama := ollamaCloudRawChatCompletionsTestProvider()
-	require.JSONEq(t, `{"model":"deepseek-chat","max_tokens":65535}`,
+	require.JSONEq(t, `{"model":"deepseek-chat","max_tokens":100000}`,
 		string(ApplyOllamaCloudRawChatCompletionsRequest(ollama, body)))
 
 	// 官方 DeepSeek（api.deepseek.com + force_chat_completions）→ 字节级不变。

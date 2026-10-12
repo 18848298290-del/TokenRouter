@@ -135,10 +135,34 @@
                   @update:models="onModelsUpdate(item, $event)"
                 />
               </div>
-              <ModelAttributesFields v-model="item.attributes" />
+              <ModelAttributeRouteFields v-model="item.match" />
+              <ModelAttributesFields v-model="item.attributes" :inherited="ruleDefaults[item.id || item.models[0] || '']" />
+              <details v-if="ruleDefaults[item.id || item.models[0] || '']" class="text-sm">
+                <summary class="cursor-pointer text-gray-500 dark:text-dark-400">{{ t('admin.modelAttributes.defaultReference') }}</summary>
+                <ModelAttributesSummary class="mt-4" :attributes="ruleDefaults[item.id || item.models[0] || '']!" />
+              </details>
             </div>
           </template>
         </RuleListEditor>
+        <fieldset class="space-y-4 rounded-control border border-gray-200 p-4 dark:border-dark-600">
+          <legend class="px-1 text-sm font-medium">{{ t('admin.modelAttributes.preview') }}</legend>
+          <p class="text-xs text-gray-500 dark:text-dark-400">{{ t('admin.modelAttributes.previewHint') }}</p>
+          <div class="grid gap-4 sm:grid-cols-2">
+            <div><label class="input-label">{{ t('admin.modelAttributes.groups') }}</label><Select v-model="previewGroup" :options="previewGroups" /></div>
+            <label><span class="input-label">{{ t('admin.modelAttributes.previewModel') }}</span><input v-model="previewModel" class="input" /></label>
+          </div>
+          <button type="button" class="btn btn-secondary" :disabled="previewLoading || !previewGroup || !previewModel.trim()" @click="preview">{{ t('admin.modelAttributes.preview') }}</button>
+          <p v-if="previewError" role="alert" class="text-sm text-red-600">{{ previewError }}</p>
+          <p v-else-if="previewLoaded && !previewRoutes.length" class="text-sm text-gray-500 dark:text-dark-400">{{ t('admin.modelAttributes.previewEmpty') }}</p>
+          <div v-for="(route, index) in previewRoutes" :key="index" class="space-y-4 rounded-control border border-gray-200 p-4 dark:border-dark-600">
+            <p class="break-words text-sm">{{ route.target.model }} · {{ route.target.platform }} · {{ route.target.provider_type }} · {{ route.target.provider_mode }} · {{ route.target.site }} · {{ route.target.catalog_provider }} · {{ route.target.client_protocol }} / {{ route.target.upstream_protocol }}</p>
+            <ModelAttributesSummary :attributes="route.attributes" />
+            <details class="text-sm">
+              <summary class="cursor-pointer text-gray-500 dark:text-dark-400">{{ t('admin.modelAttributes.fieldSource') }}</summary>
+              <dl class="mt-4 space-y-2"><div v-for="(source, field) in route.sources" :key="field" class="flex flex-wrap justify-between gap-2"><dt>{{ attributeFieldLabel(field) }}</dt><dd>{{ source === 'models.dev' ? 'models.dev' : t(`admin.modelAttributes.sources.${source}`) }}</dd></div></dl>
+            </details>
+          </div>
+        </fieldset>
       </form>
       <template #footer><div class="flex justify-end gap-2"><button class="btn btn-secondary" @click="showEditor = false">{{ t('common.cancel') }}</button><button form="attribute-form" type="submit" class="btn btn-primary" :disabled="saving || groupsLoading">{{ t('common.save') }}</button></div></template>
     </BaseDialog>
@@ -172,17 +196,18 @@ import GroupBadge from '@/components/common/GroupBadge.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import Icon from '@/components/icons/Icon.vue'
 import ModelAttributesFields from '@/components/admin/ModelAttributesFields.vue'
+import ModelAttributeRouteFields from '@/components/admin/ModelAttributeRouteFields.vue'
 import ModelCatalogInfo from '@/components/admin/ModelCatalogInfo.vue'
 import ModelTagInput from '@/components/admin/pricing/ModelTagInput.vue'
 import ModelAttributesSummary from '@/components/common/ModelAttributesSummary.vue'
-import { modelAttributesAPI, type AttributeConfig, type AttributeRule, type DefaultAttributes } from '@/api/admin/modelAttributes'
+import { modelAttributesAPI, type AttributeConfig, type AttributeRule, type DefaultAttributes, type ResolvedAttributes } from '@/api/admin/modelAttributes'
 import { adminAPI } from '@/api/admin'
 import type { AdminGroup } from '@/types'
-import { attributeCapabilities } from '@/types/modelAttributes'
+import { attributeCapabilities, type ModelAttributes } from '@/types/modelAttributes'
 import { extractApiErrorMessage } from '@/utils/apiError'
 import { SEARCH_DEBOUNCE_MS } from '@/constants/ui'
 
-const { t } = useI18n()
+const { t, te } = useI18n()
 const activeTab = ref<'configs' | 'defaults'>('configs')
 const searchPlaceholder = computed(() => t(activeTab.value === 'configs'
   ? 'admin.modelAttributes.searchConfigs'
@@ -197,6 +222,12 @@ const groups = ref<AdminGroup[]>([])
 const detail = ref<DefaultAttributes | null>(null), deleting = ref<AttributeConfig | null>(null)
 const blank = (): AttributeConfig => ({ name: '', description: '', status: 'active', group_ids: [], rules: [] })
 const form = ref<AttributeConfig>(blank())
+const ruleDefaults = ref<Record<string, ModelAttributes>>({})
+const previewGroup = ref(''), previewModel = ref(''), previewError = ref('')
+const previewLoading = ref(false), previewLoaded = ref(false)
+const previewRoutes = ref<ResolvedAttributes[]>([])
+const previewGroups = computed(() => groups.value.map(group => ({ value: String(group.id), label: group.name })))
+let previewSequence = 0
 const editStatusOptions = computed(() => [{ value: 'active', label: t('common.active') }, { value: 'disabled', label: t('common.disabled') }])
 const statusOptions = computed(() => [{ value: '', label: t('admin.modelAttributes.allStatuses') }, ...editStatusOptions.value])
 const providerOptions = computed(() => [{ value: '', label: t('admin.modelAttributes.allProviders') }, ...providers.value.map(value => ({ value, label: value }))])
@@ -235,6 +266,14 @@ async function load() {
 }
 async function edit(config?: AttributeConfig) {
   form.value = config ? JSON.parse(JSON.stringify(config)) : blank()
+  ruleDefaults.value = {}
+  previewGroup.value = config?.group_ids[0] ? String(config.group_ids[0]) : ''
+  previewModel.value = config?.rules.flatMap(rule => rule.models).find(model => !model.includes('*')) ?? ''
+  previewRoutes.value = []
+  previewLoaded.value = false
+  previewError.value = ''
+  previewSequence++
+  previewLoading.value = false
   formError.value = ''
   showEditor.value = true
   groupsLoading.value = true
@@ -247,7 +286,7 @@ function moveRule(from: number, to: number) {
   if (item) form.value.rules.splice(to, 0, item)
 }
 
-// 与价格配置一致，只在新增模型且属性尚未填写时查询第一个新增模型。
+// 默认查询作为参考展示，保存值来自管理员填写的覆盖字段。
 async function onModelsUpdate(rule: AttributeRule, models: string[]) {
   const addedModels = models.filter(model => !rule.models.includes(model))
   rule.models = models
@@ -263,10 +302,34 @@ async function onModelsUpdate(rule: AttributeRule, models: string[]) {
       !showEditor.value || saving.value || !form.value.rules.includes(rule)
       || rule.models !== requestedModels || rule.attributes !== attributes
     ) return
-    rule.attributes = defaults
+    ruleDefaults.value[rule.id || model] = defaults
   } catch {
     // 目录查询失败时保留表单，用户仍可手动填写。
   }
+}
+
+async function preview() {
+  if (!previewGroup.value || !previewModel.value.trim() || previewLoading.value) return
+  const sequence = ++previewSequence
+  const groupID = Number(previewGroup.value), model = previewModel.value.trim()
+  const draft = JSON.stringify(form.value)
+  previewLoading.value = true
+  previewError.value = ''
+  try {
+    const result = await modelAttributesAPI.preview(groupID, model, JSON.parse(draft))
+    if (sequence !== previewSequence || !showEditor.value || draft !== JSON.stringify(form.value) || groupID !== Number(previewGroup.value) || model !== previewModel.value.trim()) return
+    previewRoutes.value = result.routes
+    previewLoaded.value = true
+  } catch (cause) {
+    if (sequence === previewSequence && showEditor.value) previewError.value = extractApiErrorMessage(cause, t('common.error'))
+  } finally {
+    if (sequence === previewSequence) previewLoading.value = false
+  }
+}
+
+function attributeFieldLabel(field: string) {
+  const key = field.startsWith('media.') ? `admin.modelAttributes.mediaFields.${field.slice(6)}` : `admin.modelAttributes.fields.${field}`
+  return te(key) ? t(key) : field
 }
 
 function addRule() {

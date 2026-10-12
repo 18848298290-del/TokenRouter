@@ -259,7 +259,6 @@ func prepareOpenAIWSHTTPBridgeBody(provider *gatewayprovider.ExecutionProvider, 
 	delete(body, "type")
 	delete(body, "generate")
 	delete(body, "previous_response_id")
-	gatewayprovider.DeleteOpenAIResponsesNoneReasoningEffortFromObject(gatewayprovider.ExecutionProtocolRecord(provider), body)
 	body["stream"] = true
 	return json.Marshal(body)
 }
