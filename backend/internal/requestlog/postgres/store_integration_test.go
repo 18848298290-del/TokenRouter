@@ -20,18 +20,39 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// lookupPlanNode captures scan types and relation names from PostgreSQL execution plans.
+// Request lookup must retain local ID scope while connecting child requests,
+// billing aliases, and retained historical sources. Migrated PostgreSQL
+// scenarios store real snapshots and business rows, then compare ordinary-user
+// and administrator visibility after replay, cleanup, and team-owner changes.
+//
+// Execution-plan cases populate large sparse-match fixtures and capture nested
+// SQL through auto_explain notices on a dedicated pq connection. Recreating the
+// billing expression index after table analysis leaves its new statistics
+// absent, exposing upgrade-sensitive planning. The old lookup function is
+// required to reproduce a usage scan before staged migration is checked under
+// custom and generic plans. Timing logs record fixture migration duration;
+// assertions inspect IDs and scan nodes rather than imposing a latency
+// threshold.
+
+// lookupPlanNode decodes recursive scan identity and execution counts from
+// explained PostgreSQL plans.
 type lookupPlanNode struct {
-	Type     string           `json:"Node Type"`
-	Relation string           `json:"Relation Name"`
-	Plans    []lookupPlanNode `json:"Plans"`
-	Loops    float64          `json:"Actual Loops"`
+	Type     string           `json:"Node Type"`     // explained execution node kind
+	Relation string           `json:"Relation Name"` // scanned database relation name
+	Plans    []lookupPlanNode `json:"Plans"`         // nested execution plan nodes
+	Loops    float64          `json:"Actual Loops"`  // actual node execution count
 }
 
-// TestStoreLookupWithoutBillingStatistics models an upgrade with table statistics but no new billing-index statistics.
+// TestStoreLookupWithoutBillingStatistics models table statistics with a
+// recreated unanalyzed billing index. It requires the older lookup's executed
+// usage scan, then checks staged repair, candidate identity, and selected scan
+// behavior under custom and generic plans.
 func TestStoreLookupWithoutBillingStatistics(t *testing.T) {
 	db := postgrescontainer.New(t)
 	ctx := t.Context()
+	// Analyze populated tables before recreating the billing expression index,
+	// leaving that new index without its own statistics while sparse lookup
+	// candidates remain realistic.
 	_, err := db.ExecContext(ctx, `
 ALTER TABLE usage_logs SET (autovacuum_enabled=false);
 INSERT INTO users(id,email,password_hash) VALUES (101,'large-lookup@requests.test','hash');
@@ -63,7 +84,9 @@ CREATE UNIQUE INDEX idx_usage_logs_billing_key_api_key ON usage_logs(COALESCE(bi
 	require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM pg_stats WHERE tablename='idx_usage_logs_billing_key_api_key'`).Scan(&statistics))
 	require.Zero(t, statistics)
 
-	// Restore the previous function to reproduce a usage-table scan, then apply the repair twice to the same fixture.
+	// Restore migration 294 on the unanalyzed-index fixture before applying
+	// migration 295, making the old executed scan a prerequisite for this repair
+	// comparison.
 	previous, err := migrations.FS.ReadFile("294_request_lookup_child_billing.sql")
 	require.NoError(t, err)
 	_, err = db.ExecContext(ctx, string(previous))
@@ -90,6 +113,8 @@ CREATE UNIQUE INDEX idx_usage_logs_billing_key_api_key ON usage_logs(COALESCE(bi
 	fix, err := migrations.FS.ReadFile("295_request_lookup_stages.sql")
 	require.NoError(t, err)
 	started := time.Now()
+	// Apply the staged lookup migration twice to the same populated fixture so
+	// replacement remains usable after repeated upgrade execution.
 	for range 2 {
 		_, err = db.ExecContext(ctx, string(fix))
 		require.NoError(t, err)
@@ -103,7 +128,12 @@ CREATE UNIQUE INDEX idx_usage_logs_billing_key_api_key ON usage_logs(COALESCE(bi
 			defer func() { require.NoError(t, conn.Close()) }()
 			_, err = conn.ExecContext(ctx, "SET plan_cache_mode="+mode)
 			require.NoError(t, err)
-			for _, test := range []struct{ search, candidate string }{
+			for _, test := range []struct {
+				// search and candidate pair supplied lookup text with one required resolved
+				// ID. Each case compares candidate membership before inspecting the
+				// executed nested SQL plans.
+				search, candidate string // search: supplied lookup text; candidate: required resolved request identifier
+			}{
 				{"request-1", "request-1"},
 				{"supplier-1", "request-1"},
 				{"client:request-1", "request-1"},
@@ -160,11 +190,23 @@ CREATE UNIQUE INDEX idx_usage_logs_billing_key_api_key ON usage_logs(COALESCE(bi
 	}
 }
 
-// captureLookupPlans uses auto_explain to capture executed SQL plans inside the lookup function.
+// captureLookupPlans executes one parameterized array query and collects its
+// nested auto_explain plans. Supply an exclusively used pq connection and
+// permit replacing its notice handler and session logging settings; the helper
+// leaves connection ownership with the caller.
+//
+// pq invokes notices synchronously, so messages are captured before query
+// return without a separate worker. Deferred cleanup disables duration logging
+// and clears the notice handler while other session options remain. Messages
+// containing the JSON opening are decoded into root plans, and the test
+// requires at least one captured plan before returning IDs and nodes.
 func captureLookupPlans(t *testing.T, conn *sql.Conn, query string, id string) ([]string, []lookupPlanNode) {
 	t.Helper()
 	ctx := t.Context()
 	var messages []string
+	// Replace notice handling on this dedicated connection; pq callbacks run
+	// synchronously with command processing so the collected messages precede
+	// query completion.
 	require.NoError(t, conn.Raw(func(raw any) error {
 		driverConn, ok := raw.(driver.Conn)
 		require.True(t, ok)
@@ -173,6 +215,8 @@ func captureLookupPlans(t *testing.T, conn *sql.Conn, query string, id string) (
 		})
 		return nil
 	}))
+	// Disable duration logging and remove this helper's notice handler after
+	// capture so later commands do not append into its completed message slice.
 	defer func() {
 		_, err := conn.ExecContext(ctx, "SET auto_explain.log_min_duration=-1")
 		require.NoError(t, err)
@@ -195,11 +239,13 @@ SET auto_explain.log_min_duration=0;`)
 	var plans []lookupPlanNode
 	for _, message := range messages {
 		start := strings.Index(message, "{\n")
+		// Skip notices without the plan JSON opening so setup or unrelated database
+		// messages do not become malformed execution-plan input.
 		if start < 0 {
 			continue
 		}
 		var entry struct {
-			Plan lookupPlanNode `json:"Plan"`
+			Plan lookupPlanNode `json:"Plan"` // decoded explained root node
 		}
 		require.NoError(t, json.Unmarshal([]byte(message[start:]), &entry))
 		plans = append(plans, entry.Plan)
@@ -208,7 +254,10 @@ SET auto_explain.log_min_duration=0;`)
 	return ids, plans
 }
 
-// TestStoreFindIncludesChildBillingAliases resolves pre-upgrade usage through the child's API key and excludes unrelated aliases.
+// TestStoreFindIncludesChildBillingAliases links creation and polling records
+// to a child carrying a historical billing key. Reapplied lookup migrations
+// retain one eligible child's usage while excluding unrelated alias and API-key
+// collisions.
 func TestStoreFindIncludesChildBillingAliases(t *testing.T) {
 	db := postgrescontainer.New(t)
 	ctx := t.Context()
@@ -227,7 +276,9 @@ VALUES(101,101,101,101,'grok-video:old-task',NULL,'model'),(202,202,202,101,'oth
 		{RequestID: "child", ParentRequestID: "created", UserID: 101, APIKeyID: 101, StartedAt: now, UpdatedAt: now, State: "completed", Aliases: []telemetry.RequestAlias{{Kind: "billing", Value: "grok-video:old-task"}}},
 		{RequestID: "unrelated", UserID: 202, StartedAt: now, UpdatedAt: now, State: "completed", Aliases: []telemetry.RequestAlias{{Kind: "caller", Value: "created"}}},
 	}))
-	// Repeated function replacement must retain lookup of existing parent-child relationships.
+	// Repeat both historical and staged lookup migrations after relationships are
+	// stored, checking that function replacement still resolves child billing
+	// aliases afterward.
 	for _, name := range []string{"294_request_lookup_child_billing.sql", "295_request_lookup_stages.sql"} {
 		migration, err := migrations.FS.ReadFile(name)
 		require.NoError(t, err)
@@ -251,7 +302,10 @@ VALUES(101,101,101,101,'grok-video:old-task',NULL,'model'),(202,202,202,101,'oth
 	}
 }
 
-// TestStoreLookupIsolationAndReplay checks aliases, ownership, and replay against migrated PostgreSQL.
+// TestStoreLookupIsolationAndReplay stores shared aliases before advancing one
+// snapshot and replaying stale data. It checks direct/admin ownership, retained
+// aliases, nanosecond model updates, current team-owner access, unknown-user
+// exclusion, and summary cleanup.
 func TestStoreLookupIsolationAndReplay(t *testing.T) {
 	db := postgrescontainer.New(t)
 	store := NewStore(db)
@@ -283,7 +337,9 @@ func TestStoreLookupIsolationAndReplay(t *testing.T) {
 	items, err = store.Find(ctx, "shared", 101, false)
 	require.NoError(t, err)
 	require.Len(t, items, 1)
-	// Nanosecond revisions distinguish updates below PostgreSQL timestamps' microsecond precision.
+	// Advance the revision by one nanosecond so the model update is
+	// distinguishable even when PostgreSQL's timestamp column rounds both times to
+	// microseconds.
 	completed.UpdatedAt = completed.UpdatedAt.Add(time.Nanosecond)
 	completed.Model = "latest"
 	require.NoError(t, store.Save(ctx, []telemetry.RequestRecord{completed}))
@@ -326,7 +382,10 @@ func TestStoreLookupIsolationAndReplay(t *testing.T) {
 	require.Empty(t, items)
 }
 
-// TestStoreBatchWriterFlushesFinalSnapshot checks shutdown draining and snapshot coalescing against PostgreSQL.
+// TestStoreBatchWriterFlushesFinalSnapshot coalesces running and failed
+// snapshots before stopping an inactive writer against PostgreSQL. The saved
+// result retains status, start, attempt, and alias lookup, while health reports
+// no pending records or failures.
 func TestStoreBatchWriterFlushesFinalSnapshot(t *testing.T) {
 	store := NewStore(postgrescontainer.New(t))
 	service := requestlog.NewService(store, 30, nil)
@@ -354,7 +413,10 @@ func TestStoreBatchWriterFlushesFinalSnapshot(t *testing.T) {
 	require.Zero(t, health.Failures)
 }
 
-// TestStoreLookupIndexesAndAliases checks historical IDs, ownership, and indexed sparse-ID lookup.
+// TestStoreLookupIndexesAndAliases stores current, child, historical, and
+// colliding-owner records alongside large diagnostic fixtures. It checks
+// resolved candidates, visible actual IDs, administrator expansion, and exact
+// Seq Scan rejection for historical log plan nodes.
 func TestStoreLookupIndexesAndAliases(t *testing.T) {
 	db := postgrescontainer.New(t)
 	ctx := t.Context()
@@ -384,9 +446,12 @@ ANALYZE usage_logs;`)
 		{RequestID: "child", ParentRequestID: "new-request", UserID: 101, StartedAt: now, UpdatedAt: now, State: "failed"},
 	}))
 	for _, test := range []struct {
-		search    string
-		candidate string
-		visible   []string
+		// search names the lookup input and candidate must occur in resolved IDs
+		// before Store.Find applies ownership. visible lists the actual detail IDs
+		// permitted for user one hundred one.
+		search    string   // supplied external or local lookup text
+		candidate string   // required resolved candidate identifier
+		visible   []string // expected ownership-filtered detail identifiers
 	}{
 		{"new-request", "new-request", []string{"new-request", "child", "client:legacy"}},
 		{"shared", "new-request", []string{"new-request", "child", "client:legacy"}},
@@ -425,7 +490,8 @@ ANALYZE usage_logs;`)
 	require.NoError(t, err)
 	require.Len(t, items, 4)
 
-	// Both historical log sources should use indexed ID lookup inside the function.
+	// Capture the nested lookup plans on one connection because the outer function
+	// call alone cannot identify how historical log tables are scanned.
 	conn, err := db.Conn(ctx)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, conn.Close()) }()
@@ -450,7 +516,10 @@ ANALYZE usage_logs;`)
 	}
 }
 
-// TestStoreExactIDIgnoresExternalCollisions checks exact lookup despite shared caller IDs and colliding upstream IDs.
+// TestStoreExactIDIgnoresExternalCollisions collides local IDs with another
+// request's caller and upstream identifiers. Exact and trimmed queries retain
+// their own references, shared aliases respect ownership, and parent lookup
+// includes the child while child lookup stays local.
 func TestStoreExactIDIgnoresExternalCollisions(t *testing.T) {
 	db := postgrescontainer.New(t)
 	ctx := t.Context()
@@ -498,7 +567,9 @@ VALUES ('local-first',101,502),('local-second',202,502);`)
 	require.Len(t, items, 1)
 	require.Equal(t, "local-first", items[0].RequestID)
 
-	// Parent-child links come from request snapshots; looking up a child stays within that child's ID scope.
+	// Add a child snapshot after collision checks to distinguish parent
+	// relationship expansion from exact child lookup, which should retain that
+	// child's own request scope.
 	require.NoError(t, store.Save(ctx, []telemetry.RequestRecord{{
 		RequestID: "child", ParentRequestID: "local-first", UserID: 101, StartedAt: now, UpdatedAt: now,
 		State: "completed", Aliases: []telemetry.RequestAlias{{Kind: "caller", Value: "shared"}},

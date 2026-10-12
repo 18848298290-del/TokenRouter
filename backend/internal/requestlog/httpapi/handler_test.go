@@ -16,28 +16,53 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/requestlog"
 )
 
+// Request diagnostic routes verify authenticated role before reading a
+// repository fixture, even when query parameters claim another user or
+// administrator access. The same identity scenarios exercise query, path, and
+// writer-health endpoints, with provider and alias metadata asserted for
+// successful detail reads.
+
+// requestRepositoryStub records authorized lookup arguments and returns one
+// fixed diagnostic detail.
 type requestRepositoryStub struct {
-	userID int64
-	admin  bool
-	calls  int
+	// userID and admin capture the most recent Find inputs, and calls counts
+	// repository reads. Each serial handler scenario owns its stub and inspects it
+	// after ServeHTTP returns.
+	userID int64 // captured authenticated user identifier
+	admin  bool  // captured trusted administrator flag
+	calls  int   // fixture lookup invocation count
 }
 
+// Save reports success without retaining snapshots in the HTTP authorization
+// fixture.
 func (r *requestRepositoryStub) Save(context.Context, []telemetry.RequestRecord) error { return nil }
 
+// Cleanup reports success without removing the fixed HTTP diagnostic fixture.
 func (r *requestRepositoryStub) Cleanup(context.Context, time.Time) error { return nil }
 
+// Find records userID, admin, and one call before returning fixed metadata with
+// provider, alias, attempt, error, and audit references. It ignores context and
+// lookup text; scenarios inspect arguments after handler completion.
 func (r *requestRepositoryStub) Find(_ context.Context, _ string, userID int64, admin bool) ([]requestlog.Detail, error) {
 	r.userID, r.admin = userID, admin
 	r.calls++
 	return []requestlog.Detail{{RequestRecord: telemetry.RequestRecord{RequestID: "request", UserID: 42, ProviderID: 99, Aliases: []telemetry.RequestAlias{{Kind: "upstream", Value: "supplier"}}, Attempts: []telemetry.RequestAttempt{{Number: 1, ProviderID: 99, RequestID: "supplier"}}}, Errors: []requestlog.Failure{{ID: 7, Status: 500}}, AuditIDs: []int64{8}}}, nil
 }
 
-// TestRequestDiagnosticsRequireAdmin checks authorization before reading details or writer health.
+// TestRequestDiagnosticsRequireAdmin exercises anonymous, user, and
+// administrator identities across query, path, and health routes. It checks
+// status, rejected-read counts, trusted lookup arguments, and successful
+// provider ID and alias count in the response.
 func TestRequestDiagnosticsRequireAdmin(t *testing.T) {
 	for _, test := range []struct {
-		name   string
+		// name identifies the case while role determines whether middleware installs
+		// user identity and its authorization role. status is the expected outcome
+		// shared by detail and health endpoints.
+		name string // authenticated identity scenario label
+		// role is the middleware role fixture. The empty string installs no identity;
+		// other values install UserID forty-two together with that exact role.
 		role   string
-		status int
+		status int // expected HTTP response status
 	}{
 		{"anonymous", "", http.StatusUnauthorized},
 		{"user", "user", http.StatusForbidden},
@@ -69,8 +94,8 @@ func TestRequestDiagnosticsRequireAdmin(t *testing.T) {
 				require.True(t, repo.admin)
 				require.Equal(t, 1, repo.calls)
 				var body struct {
-					Data struct {
-						Items []requestlog.Detail `json:"items"`
+					Data struct { // decoded response payload object
+						Items []requestlog.Detail `json:"items"` // returned diagnostic detail collection
 					} `json:"data"`
 				}
 				require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
