@@ -1,5 +1,5 @@
 interface:
   display_name: "Code Comments"
-  short_description: "Write accurate comments where readers need them"
+  short_description: "Require complete comments on handwritten code"
 policy:
   allow_implicit_invocation: true
