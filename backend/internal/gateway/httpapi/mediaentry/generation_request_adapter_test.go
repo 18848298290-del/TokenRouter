@@ -18,7 +18,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// TestImagesRetryKeepsMixedCandidatePool checks that a Grok attempt can retry on another platform.
+// TestImagesRetryKeepsMixedCandidatePool selects Grok and then OpenAI for one
+// ordinary Images request. The second selection sees the excluded first
+// provider, and usesGrok follows the current target rather than retaining the
+// first platform.
 func TestImagesRetryKeepsMixedCandidatePool(t *testing.T) {
 	groupID := int64(12)
 	calls := 0
@@ -27,6 +30,8 @@ func TestImagesRetryKeepsMixedCandidatePool(t *testing.T) {
 		require.Equal(t, groupID, *group)
 		require.Equal(t, "public-image", model)
 		platform := "grok"
+		// The second selected target changes platform after exclusion, modeling the
+		// image loop's shared candidate pool without invoking upstream execution or admission.
 		if calls == 2 {
 			_, ok := excluded[1]
 			require.True(t, ok)
@@ -46,7 +51,10 @@ func TestImagesRetryKeepsMixedCandidatePool(t *testing.T) {
 	require.Equal(t, 2, calls)
 }
 
-// TestCompleteGrokRecordsVideoTerminalState checks task state reporting even when there is no billable usage.
+// TestCompleteGrokRecordsVideoTerminalState completes running, successful,
+// failed and canceled video observations with no billable usage. Related task
+// records retain parent correlation and stable billing alias, with finish
+// time set for terminal states.
 func TestCompleteGrokRecordsVideoTerminalState(t *testing.T) {
 	for _, state := range []string{"running", "completed", "failed", "canceled"} {
 		t.Run(state, func(t *testing.T) {
@@ -59,7 +67,8 @@ func TestCompleteGrokRecordsVideoTerminalState(t *testing.T) {
 			tasks := media.NewVideoTasks(nil, nil, media.VideoOptions{})
 			runtime := New(Bindings{Dependencies: gatewayhttp.OpenAIDependencies{Gateway: true}, VideoTasks: func() *media.VideoTasks { return tasks }})
 			adapter := &generationRequestAdapter{h: runtime, apiKey: &apikey.APIKey{ID: 1}, selection: &gatewayadapter.SelectionResult{Provider: &gatewayadapter.ExecutionProvider{}}, endpoint: grok.GrokMediaEndpointVideoStatus, requestID: "video-1"}
-			// Convert once at the media result boundary and again at completion.
+			// Round-trip the video state through both result representations so telemetry
+			// still receives terminal task identity when the result carries zero usage.
 			value := generationResultView(&forward.OpenAIResult{VideoState: state})
 			adapter.completeGrok(ctx, value)
 			require.Equal(t, state, child.State)

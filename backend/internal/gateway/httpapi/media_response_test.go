@@ -13,9 +13,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// mediaReadFailure supplies a download body that immediately fails on
+// reading.
 type mediaReadFailure struct{}
 
-// TestMediaContentResponsePreservesRangeAndCommit checks download header filtering and the commit callback.
+// TestMediaContentResponsePreservesRangeAndCommit presents a partial video
+// response with a private upstream header. Range and length survive, the
+// private header is omitted, and the commit callback runs.
 func TestMediaContentResponsePreservesRangeAndCommit(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -31,14 +35,24 @@ func TestMediaContentResponsePreservesRangeAndCommit(t *testing.T) {
 	require.Empty(t, recorder.Header().Get("X-Secret"))
 }
 
+// Read returns a fixed download error before accepting any bytes.
 func (mediaReadFailure) Read([]byte) (int, error) { return 0, errors.New("download failed") }
-func (mediaReadFailure) Close() error             { return nil }
+
+// Close finishes the stateless failing body without another error.
+func (mediaReadFailure) Close() error { return nil }
+
+// TestMediaContentReadFailureRemainsVisible copies a video body that fails
+// immediately. The download writer returns that read error to its caller for
+// terminal handling.
 func TestMediaContentReadFailureRemainsVisible(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	err := WriteGrokMediaContentResponse(c, &http.Response{StatusCode: http.StatusOK, ContentLength: -1, Header: make(http.Header), Body: mediaReadFailure{}}, nil)
 	require.ErrorContains(t, err, "download failed")
 }
 
+// TestVoiceMissingBodyPreservesMethodDifference reads requests whose body
+// pointer is absent. GET returns empty input successfully, while POST reports
+// that a request body is required.
 func TestVoiceMissingBodyPreservesMethodDifference(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = &http.Request{Method: http.MethodGet}
@@ -50,6 +64,9 @@ func TestVoiceMissingBodyPreservesMethodDifference(t *testing.T) {
 	require.ErrorContains(t, err, "request body is required")
 }
 
+// TestIsExpectedGrokRealtimeClose supplies ordinary departure codes and a
+// policy violation from Realtime relay. The departure codes qualify for
+// completion, while the policy violation does not.
 func TestIsExpectedGrokRealtimeClose(t *testing.T) {
 	for _, status := range []coderws.StatusCode{
 		coderws.StatusNormalClosure,

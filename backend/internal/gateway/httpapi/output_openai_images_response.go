@@ -13,6 +13,26 @@ import (
 	upstreamopenai "github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// Image response readers need HTTP-specific body limits, error presentation
+// and output observations while parsing stays in the native image
+// implementation. Bound callbacks retain this request's writer and context,
+// including separate heartbeat-adjusted and physical byte counts used to
+// decide response commitment and safe retry.
+
+// ImageOptions binds image readers to a usable HTTP request and
+// response-output instance. Callbacks retain Gin and its writer, so callers
+// use them within this request's synchronous response handling. Configured
+// disabled response-header handling preserves the upstream content type where
+// the native reader supports that option.
+//
+// ReadBody applies the shared bounded response reader. ClassifyReadError reads
+// c.Request.Context() when invoked, so current HTTP cancellation is distinguished
+// from transport failure. Replacing c.Request changes the context consulted by
+// later classification. EmptyOutput supplies a same-provider-retryable 502
+// classification for missing images. Callers bind Backfill separately before
+// using the direct API Key nonstream reader, which invokes it
+// unconditionally. Header filtering, image error writing, timing settings and
+// diagnostic summaries remain bound to their shared output services.
 func (p *OpenAIResponseOutput) ImageOptions(c *gin.Context) upstreamopenai.ImageResponseOptions {
 	return upstreamopenai.ImageResponseOptions{
 		PreserveContentType: p.Options.Configured && !p.Options.ResponseHeadersEnabled,
@@ -24,6 +44,9 @@ func (p *OpenAIResponseOutput) ImageOptions(c *gin.Context) upstreamopenai.Image
 		},
 
 		ClassifyReadError: func(err error) error {
+			// Consult the current HTTP request context even when upstream execution is
+			// detached, so that request's cancellation prevents treating its read failure
+			// as recoverable transport evidence.
 			if upstreamopenai.ShouldClassifyUpstreamStreamReadError(err, httpclient.ErrResponseBodyTooLarge, c.Request.Context()) {
 				return upstreamopenai.NewUpstreamStreamReadError(err)
 			}

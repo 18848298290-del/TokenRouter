@@ -29,52 +29,110 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai/liveattestation"
 )
 
+// Live control reconnects load the saved provider and resolve current
+// credentials while reusing the encrypted attestation issued during creation.
+// Session storage, concurrency leases and WebSocket transport are
+// application-owned; short-lived Live service facades delegate creation,
+// controller handling and expiry to gateway/live.
+//
+// Every facade references the executor's same observer registry, so local
+// shutdown applies across previously constructed facades. Registration and
+// waiting are coordinated by ObserverState using the retained mutex, stopped
+// flag, cancel map and wait group. The transport adapters distinguish
+// ordinary close from reconnectable errors, and creation diagnostics retain
+// bounded status and error fields without serializing credential-bearing
+// request options.
+
 const (
+	// defaultLiveMaxSessionDuration bounds a call when no positive session duration
+	// is configured; Creator uses it for the logical record expiry time.
 	defaultLiveMaxSessionDuration = time.Hour
 
+	// chatGPTLiveCallsURL and chatGPTLiveSidebandBaseURL select creation and control
+	// transports for the same Codex Live service. The call ID is appended at dialing.
 	chatGPTLiveCallsURL        = "https://chatgpt.com/backend-api/codex/realtime/calls?intent=quicksilver&architecture=avas"
 	chatGPTLiveSidebandBaseURL = "wss://chatgpt.com/backend-api/codex"
 )
 
-// OpenAILiveOptions configures session duration and observer retry intervals.
+// OpenAILiveOptions supplies logical session duration and observer
+// store-retry timing.
 type OpenAILiveOptions struct {
-	MaxSessionDuration    time.Duration
+	// MaxSessionDuration supplies logical call lifetime. liveMaxSessionDuration
+	// selects the one-hour default when this configured value is nonpositive.
+	MaxSessionDuration time.Duration
+	// ObserverRetryInterval controls retries after observer store-read failures.
+	// The controller/dial retry helper uses its separate fixed one-second delay.
 	ObserverRetryInterval time.Duration
 }
 
-// LiveProviderSelection selects providers at session creation and revalidates routing models.
+// LiveProviderSelection supplies Live candidate admission and selected-target
+// model qualification.
 type LiveProviderSelection interface {
+	// SelectProviderWithSchedulerForCapability returns a selected target with
+	// ordinary provider admission evidence. Live creation requires an acquired
+	// candidate and usable cleanup; rejected or absent admission is presented as
+	// concurrency failure before upstream creation.
 	SelectProviderWithSchedulerForCapability(context.Context, *int64, string, string, string, map[int64]struct{}, egress.OpenAIUpstreamTransport, providercore.OpenAIEndpointCapability, bool, bool, ...string) (*gatewayprovider.SelectionResult, scheduler.PlatformDecision, error)
+	// ResolveOpenAIWSRoutingModelForProvider qualifies a concrete model for the
+	// selected provider and Live capability. It returns the group routing name
+	// or a qualification error; provider-specific mapping is performed
+	// separately afterward.
 	ResolveOpenAIWSRoutingModelForProvider(context.Context, *int64, *gatewayprovider.ExecutionProvider, string, providercore.OpenAIEndpointCapability) (string, error)
 }
 
-// OpenAILiveExecutor binds Live dependencies and observer registration to shared sessions, leases, and
-// transport.
+// OpenAILiveExecutor binds Live transport and shared application services
+// with local observer state.
 type OpenAILiveExecutor struct {
-	Options             OpenAILiveOptions
-	Requests            *OpenAIRequests
-	Selection           LiveProviderSelection
-	Routes              *gatewayprovider.RoutePlanner
-	Store               session.LiveCallStore
-	Leases              scheduler.LiveConcurrencyCache
-	Usage               *completion.Recorder
-	Dialer              openai.WSClientDialer
-	Attestation         liveattestation.Provider
-	AttestationCipher   identity.SecretEncryptor
-	Background          func(string, func()) bool
-	liveObserverMu      sync.Mutex
-	liveObserverStopped bool
-	liveObserverCancels map[string]context.CancelFunc
-	liveObserverWG      sync.WaitGroup
+	Options   OpenAILiveOptions             // configured Live execution timing
+	Requests  *OpenAIRequests               // shared credentials and request transport
+	Selection LiveProviderSelection         // shared Live provider qualification
+	Routes    *gatewayprovider.RoutePlanner // group model trace planning
+	// Store is optional at assembly; liveStore returns unavailable when absent.
+	// Creation and controller paths need a usable call store before proceeding.
+	Store session.LiveCallStore
+	// Leases supplies persistent session accounting. Missing binding causes
+	// creation to return unavailable before selecting and creating an upstream call.
+	Leases scheduler.LiveConcurrencyCache
+	// Usage records zero-cost Live observations when present. A nil recorder
+	// skips that write while the runtime still handles call and lease finalization.
+	Usage  *completion.Recorder
+	Dialer openai.WSClientDialer // shared upstream WebSocket dialer
+	// Attestation supplies the creation-time plaintext header. A missing provider
+	// produces a typed unavailable error before any upstream call is opened.
+	Attestation liveattestation.Provider
+	// AttestationCipher protects the generated header for saved sideband reuse.
+	// Creation and reconnect require this binding. The production Live cipher
+	// derives its key from the JWT secret and rejects another configured secret.
+	AttestationCipher identity.SecretEncryptor
+	// Background schedules the initial observer through application task tracking.
+	// liveCreatePorts.Observe invokes it after saving the created call record.
+	Background func(string, func()) bool
+	// liveObserverMu protects registration, liveObserverStopped and
+	// liveObserverCancels. ObserverState adds liveObserverWG under that same lock
+	// before shutdown begins waiting, and accepted cleanup removes its owner
+	// and decrements the wait count once.
+	liveObserverMu      sync.Mutex                    // observer registration state lock
+	liveObserverStopped bool                          // later observer registration disabled
+	liveObserverCancels map[string]context.CancelFunc // active owner cancellation callbacks
+	liveObserverWG      sync.WaitGroup                // accepted observer completion tracking
 }
 
+// liveSidebandReadError converts a normal upstream close to the session-ended
+// sentinel. Other errors, including nil, remain unchanged, letting
+// gateway/live separate finalized sessions from control connections eligible
+// for observer recovery.
 func liveSidebandReadError(err error) error {
+	// A normal upstream control close is terminal for Live accounting, so expose
+	// the call-ended sentinel that controller finalization recognizes before reconnecting.
 	if coderws.CloseStatus(err) == coderws.StatusNormalClosure {
 		return session.ErrLiveCallNotFound
 	}
 	return err
 }
 
+// liveOptionalID copies a positive identifier into a new optional scalar
+// pointer. Nonpositive input returns nil, matching usage-record fields where
+// absent team, group or subscription identifiers should be omitted.
 func liveOptionalID(value int64) *int64 {
 	if value <= 0 {
 		return nil
@@ -83,7 +141,9 @@ func liveOptionalID(value int64) *int64 {
 	return &result
 }
 
-// liveOptionalString returns a trimmed model-trace value or nil when empty.
+// liveOptionalString returns a new pointer to trimmed model-trace text when
+// present. Blank input returns nil, so usage fields represent missing
+// upstream or mapping evidence as absent optional values.
 func liveOptionalString(value string) *string {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -92,6 +152,9 @@ func liveOptionalString(value string) *string {
 	return &value
 }
 
+// liveStore returns the bound call store for Live runtime operations. A nil
+// executor or missing store returns ErrLiveUnavailable, allowing creation and
+// controller handling to report absent storage before using it.
 func (s *OpenAILiveExecutor) liveStore() (session.LiveCallStore, error) {
 	if s == nil || s.Store == nil {
 		return nil, session.ErrLiveUnavailable
@@ -99,6 +162,10 @@ func (s *OpenAILiveExecutor) liveStore() (session.LiveCallStore, error) {
 	return s.Store, nil
 }
 
+// liveConcurrencyCache returns the shared persistent Live lease cache for
+// runtime admission. A nil executor or missing cache returns
+// ErrLiveUnavailable, keeping session creation from proceeding with untracked
+// user and provider capacity.
 func (s *OpenAILiveExecutor) liveConcurrencyCache() (scheduler.LiveConcurrencyCache, error) {
 	if s == nil || s.Leases == nil {
 		return nil, session.ErrLiveUnavailable
@@ -106,6 +173,10 @@ func (s *OpenAILiveExecutor) liveConcurrencyCache() (scheduler.LiveConcurrencyCa
 	return s.Leases, nil
 }
 
+// liveMaxSessionDuration returns the configured positive logical session
+// lifetime. Nil executors and nonpositive values use one hour; Creator
+// derives call expiry and its separate storage lifetime from the returned
+// duration.
 func (s *OpenAILiveExecutor) liveMaxSessionDuration() time.Duration {
 	if s != nil && s.Options.MaxSessionDuration > 0 {
 		return s.Options.MaxSessionDuration
@@ -113,7 +184,10 @@ func (s *OpenAILiveExecutor) liveMaxSessionDuration() time.Duration {
 	return defaultLiveMaxSessionDuration
 }
 
-// Create runs Live session creation with provider selection and connection adapters.
+// Create delegates validated session creation through selected-target and
+// attestation adapters. Callers provide a usable executor and hold ordinary
+// user admission; gateway/live acquires its separate Live lease before
+// returning a stored session.
 func (s *OpenAILiveExecutor) Create(ctx context.Context, request *session.LiveCallRequest, identity session.LiveCallIdentity, userMaxConcurrency int) (*gatewaylive.Created, error) {
 	ports := &liveCreatePorts{service: s}
 	created, err := gatewaylive.NewCreator(s.liveRuntime(), ports, s.liveMaxSessionDuration()).Create(ctx, request, identity, userMaxConcurrency)
@@ -123,10 +197,15 @@ func (s *OpenAILiveExecutor) Create(ctx context.Context, request *session.LiveCa
 	return created, nil
 }
 
+// shouldFailoverLiveCreateError selects recovery for a failed provider
+// creation attempt. Classified HTTP failures use the existing OpenAI response
+// policy, while another credential or transport error permits selecting
+// another provider after lease cleanup.
 func (s *OpenAILiveExecutor) shouldFailoverLiveCreateError(err error) bool {
 	var upstreamErr *forwardcore.UpstreamFailoverError
 	if !errors.As(err, &upstreamErr) {
-		// Credential and transport errors can be specific to the current provider or proxy.
+		// Non-HTTP creation errors permit a different provider after the runtime
+		// releases its failed Live lease, preserving the normal candidate retry path.
 		return true
 	}
 	return gatewayprovider.ShouldFailoverOpenAIResponse(
@@ -136,6 +215,17 @@ func (s *OpenAILiveExecutor) shouldFailoverLiveCreateError(err error) bool {
 	)
 }
 
+// createUpstreamLiveCall opens one provider-specific call through native
+// OpenAI request handling. The request carries already resolved session
+// settings and a plaintext creation attestation; routing, credentials,
+// account headers and TLS callbacks are resolved for the supplied target.
+//
+// Native creation invokes stage diagnostics for preparation errors and the
+// bound HTTP failure constructor for status rejection. That constructor
+// clones response headers into the classified failure before native body
+// cleanup. Successful results expose the returned SDP, call ID and Location
+// to Creator, which installs saved ownership separately. Callers retain
+// provider and request storage throughout this synchronous exchange.
 func (s *OpenAILiveExecutor) createUpstreamLiveCall(ctx context.Context, provider *gatewayprovider.ExecutionProvider, request *session.LiveCallRequest, attestation string, tlsRouterMatch egress.TLSFingerprintRouterMatchResult) (*gatewaylive.Created, error) {
 	result, err := openai.CreateLiveCall(ctx, request, openai.LiveCreateOptions{
 		URL:         chatGPTLiveCallsURL,
@@ -168,6 +258,10 @@ func (s *OpenAILiveExecutor) createUpstreamLiveCall(ctx context.Context, provide
 	return &gatewaylive.Created{SDP: result.SDP, CallID: result.CallID, Location: result.Location}, nil
 }
 
+// logLiveCreateStageFailure records provider, stage and error type for
+// creation diagnostics. The error value is used for its concrete type label,
+// so this stage log does not print its potentially credential-bearing
+// message.
 func logLiveCreateStageFailure(ctx context.Context, providerID int64, stage string, err error) {
 	logging.FromContext(ctx).Warn(
 		"OpenAI Live 创建阶段失败",
@@ -177,6 +271,16 @@ func logLiveCreateStageFailure(ctx context.Context, providerID int64, stage stri
 	)
 }
 
+// logLiveUpstreamFailure records bounded HTTP rejection fields and selected
+// upstream headers. Error type, code and message prefer the nested error
+// object, then top-level fields; missing message finally checks detail.
+//
+// Every emitted text field passes the shared log normalizer and byte truncator,
+// with a longer budget for message text. This retains provider/status
+// correlation and request ID diagnostics while restricting each field's size.
+// The response body supplies structured diagnostic fields rather than a full
+// body dump, and callers pass captured headers before native response
+// cleanup.
 func logLiveUpstreamFailure(
 	ctx context.Context,
 	providerID int64,
@@ -200,6 +304,8 @@ func logLiveUpstreamFailure(
 		errorMessage = strings.TrimSpace(gjson.GetBytes(body, "detail").String())
 	}
 
+	// Limit normalized source prefixes to 120 bytes and message text to 300 bytes
+	// before adding the ellipsis, keeping each rejection diagnostic field bounded.
 	logging.FromContext(ctx).Warn(
 		"OpenAI Live 上游拒绝请求",
 		zap.Int64("provider_id", providerID),
@@ -215,7 +321,10 @@ func logLiveUpstreamFailure(
 	)
 }
 
-// applyLiveUpstreamRouting applies routed User-Agent, originator, and Live identity headers.
+// applyLiveUpstreamRouting applies a nonblank matched originator, routed
+// User-Agent and fixed Live identity headers in order. The native identity
+// helper then establishes Codex headers and session/thread IDs, with Live
+// alpha and beta-header rules.
 func (s *OpenAILiveExecutor) applyLiveUpstreamRouting(
 	ctx context.Context,
 	provider *gatewayprovider.ExecutionProvider,
@@ -231,6 +340,10 @@ func (s *OpenAILiveExecutor) applyLiveUpstreamRouting(
 	openai.ApplyLiveUpstreamIdentityHeaders(headers)
 }
 
+// liveSidebandHeaders prepares current provider authentication and the saved
+// attestation for a control connection. Credential, identity or decryption
+// errors return before headers are usable. Successful headers receive the
+// same Live routing and identity rules as creation.
 func (s *OpenAILiveExecutor) liveSidebandHeaders(
 	ctx context.Context,
 	provider *gatewayprovider.ExecutionProvider,
@@ -252,12 +365,17 @@ func (s *OpenAILiveExecutor) liveSidebandHeaders(
 	if err != nil {
 		return nil, err
 	}
+	// Reuse the issued creation header from encrypted session storage, keeping a
+	// reconnect on that call's attestation instead of generating another device token.
 	headers.Set(openai.LiveAttestationHeader, attestation)
 	s.applyLiveUpstreamRouting(ctx, provider, headers, tlsRouterMatch)
 	return headers, nil
 }
 
-// liveSidebandProvider loads the session-bound provider and checks Live capability.
+// liveSidebandProvider loads the call's saved provider and checks its current
+// Live endpoint capability. Nil records return not found; absent or
+// no-longer-supported providers return unavailable, while repository errors
+// remain available to controller recovery.
 func (s *OpenAILiveExecutor) liveSidebandProvider(ctx context.Context, record *session.LiveCallRecord) (*gatewayprovider.ExecutionProvider, error) {
 	if record == nil {
 		return nil, session.ErrLiveCallNotFound
@@ -272,7 +390,11 @@ func (s *OpenAILiveExecutor) liveSidebandProvider(ctx context.Context, record *s
 	return provider, nil
 }
 
-// dialLiveSidebandForProvider opens a control connection using an already-validated session provider.
+// dialLiveSidebandForProvider opens control transport for an already
+// qualified saved provider. It matches the creation-time User-Agent, prepares
+// current authentication and decrypted attestation, then passes proxy and
+// HTTP/1-compatible TLS selection to native dialing; callers close successful
+// connections.
 func (s *OpenAILiveExecutor) dialLiveSidebandForProvider(ctx context.Context, record *session.LiveCallRecord, provider *gatewayprovider.ExecutionProvider) (openai.LiveFrameConn, error) {
 	tlsRouterMatch := s.matchLiveTLSFingerprintRouter(provider, record.UserAgent)
 	headers, err := s.liveSidebandHeaders(ctx, provider, record, tlsRouterMatch)
@@ -283,7 +405,10 @@ func (s *OpenAILiveExecutor) dialLiveSidebandForProvider(ctx context.Context, re
 	return openai.DialLiveSideband(ctx, s.Dialer, chatGPTLiveSidebandBaseURL, record.CallID, headers, liveProviderProxyURL(provider), tlsProfile)
 }
 
-// matchLiveTLSFingerprintRouter selects TLS routing using the User-Agent recorded at session creation.
+// matchLiveTLSFingerprintRouter matches routing against the saved
+// creation-time User-Agent. Missing executor, router service, provider or
+// positive router ID returns an unmatched result, letting the shared request
+// configuration select its ordinary TLS policy.
 func (s *OpenAILiveExecutor) matchLiveTLSFingerprintRouter(provider *gatewayprovider.ExecutionProvider, userAgent string) egress.TLSFingerprintRouterMatchResult {
 	if s == nil || s.Requests.Routers == nil || provider == nil || provider.View().GetTLSFingerprintRouterID() <= 0 {
 		return egress.TLSFingerprintRouterMatchResult{}
@@ -291,7 +416,10 @@ func (s *OpenAILiveExecutor) matchLiveTLSFingerprintRouter(provider *gatewayprov
 	return s.Requests.Routers.MatchUserAgent(provider.View().GetTLSFingerprintRouterID(), userAgent)
 }
 
-// liveClientPolicyResult checks OAuth client restrictions using the session identity headers.
+// liveClientPolicyResult checks current provider client restrictions using
+// captured User-Agent and originator. A nil context uses Background; the
+// synthetic POST request exists for identity detection and performs no
+// network exchange itself.
 func (s *OpenAILiveExecutor) liveClientPolicyResult(
 	ctx context.Context,
 	provider *gatewayprovider.ExecutionProvider,
@@ -299,6 +427,8 @@ func (s *OpenAILiveExecutor) liveClientPolicyResult(
 	tlsRouterMatch egress.TLSFingerprintRouterMatchResult,
 ) providercore.CodexClientRestrictionDetectionResult {
 	if ctx == nil {
+		// Identity detection reads a synthetic request context. Background supplies
+		// a usable context when direct callers provide none for this local policy check.
 		ctx = context.Background()
 	}
 	request := (&http.Request{Method: http.MethodPost, Header: make(http.Header)}).WithContext(ctx)
@@ -307,12 +437,18 @@ func (s *OpenAILiveExecutor) liveClientPolicyResult(
 	return s.Requests.DetectClient(&gin.Context{Request: request}, provider, tlsRouterMatch)
 }
 
-// Lookup delegates session identity validation to the Live runtime.
+// Lookup delegates saved call, Key, funding subject and group validation to
+// Live storage handling. Missing or closed calls and identity mismatch retain
+// their runtime errors; expiry is handled by controller execution, rather
+// than this lookup.
 func (s *OpenAILiveExecutor) Lookup(ctx context.Context, callID string, identity session.LiveCallIdentity) (*session.LiveCallRecord, error) {
 	return s.liveRuntime().Lookup(ctx, callID, identity)
 }
 
-// rewriteLiveSidebandClientPayload applies Live session model rewriting.
+// rewriteLiveSidebandClientPayload applies saved Key rules and current
+// group/provider model resolution to a control payload. A nil provider
+// returns original bytes and empty observations; the Live rewriter retains
+// original bytes on validation or mapping errors.
 func (s *OpenAILiveExecutor) rewriteLiveSidebandClientPayload(ctx context.Context, record *session.LiveCallRecord, provider *gatewayprovider.ExecutionProvider, payload []byte) ([]byte, string, []string, error) {
 	if provider == nil {
 		return payload, "", nil, nil
@@ -320,12 +456,18 @@ func (s *OpenAILiveExecutor) rewriteLiveSidebandClientPayload(ctx context.Contex
 	return gatewaylive.RewriteClientPayload(ctx, record, liveModelResolver{service: s, provider: provider}, payload)
 }
 
-// liveRuntime binds the application-owned stores, leases, and observer registry to the Live service.
+// liveRuntime constructs a lightweight Live service facade referencing
+// application stores, leases and this executor's observer registry.
+// Construction starts no transport or observer; it passes current retry
+// timing and the shared client message limit.
 func (s *OpenAILiveExecutor) liveRuntime() *gatewaylive.Service {
 	return gatewaylive.New(livePorts{service: s}, s.Options.ObserverRetryInterval, openai.WSMessageReadLimitBytes)
 }
 
-// Proxy adapts the HTTP WebSocket to the frame interface used by gateway/live.
+// Proxy adapts an accepted client WebSocket to Live control execution for the
+// saved call. Nil downstream returns not found; HTTP retains client teardown
+// while gateway/live manages upstream controller ownership and observer
+// recovery.
 func (s *OpenAILiveExecutor) Proxy(ctx context.Context, record *session.LiveCallRecord, downstream *coderws.Conn) error {
 	if downstream == nil {
 		return session.ErrLiveCallNotFound
@@ -333,24 +475,39 @@ func (s *OpenAILiveExecutor) Proxy(ctx context.Context, record *session.LiveCall
 	return s.liveRuntime().ProxyLiveSideband(ctx, record, liveDownstreamFrames{downstream})
 }
 
+// observeLiveCall delegates saved-call monitoring through the shared Live
+// runtime facade.
 func (s *OpenAILiveExecutor) observeLiveCall(record *session.LiveCallRecord) {
 	s.liveRuntime().Observe(record)
 }
 
-// liveObserverState returns access to the shared observer registry.
+// liveObserverState returns references to the executor's shared observer
+// coordination fields. Every new runtime facade uses those same references,
+// allowing shutdown to stop existing observers and reject later registrations
+// through one registry.
 func (s *OpenAILiveExecutor) liveObserverState() gatewaylive.ObserverState {
 	return gatewaylive.ObserverState{Mutex: &s.liveObserverMu, Stopped: &s.liveObserverStopped, Cancels: &s.liveObserverCancels, Wait: &s.liveObserverWG}
 }
 
+// beginLiveObserver registers owner in the shared local observer registry and
+// returns a background context with cleanup. Callers use an owner unique among
+// active registrations and call accepted cleanup exactly once. Registration
+// after stopping returns false with no usable observer context.
 func (s *OpenAILiveExecutor) beginLiveObserver(owner string) (context.Context, func(), bool) {
 	return s.liveObserverState().Begin(owner)
 }
 
-// StopLiveObservers cancels registered local observers and waits for them through the Live observer state.
+// StopLiveObservers rejects later local registration, cancels current
+// observers and waits within the supplied context budget. Callers provide a
+// nonnil executor and context; stopping local observation leaves stored
+// remote call lifetime to the Live runtime.
 func (s *OpenAILiveExecutor) StopLiveObservers(ctx context.Context) error {
 	return s.liveObserverState().Stop(ctx)
 }
 
+// liveProviderProxyURL returns the saved provider's proxy URL when both proxy
+// ID and hydrated proxy are present. Missing provider or either proxy field
+// returns an empty URL for the shared transport configuration.
 func liveProviderProxyURL(value *gatewayprovider.ExecutionProvider) string {
 	if value == nil || value.Record.ProxyID == nil || value.Record.Proxy == nil {
 		return ""

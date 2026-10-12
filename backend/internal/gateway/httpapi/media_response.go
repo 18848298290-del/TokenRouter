@@ -16,12 +16,37 @@ import (
 	egressprovider "github.com/TokenFlux/TokenRouter/internal/egress/provider"
 )
 
-// ImageErrorResponse holds a sanitized client error and optional code and param fields.
+// Image JSON errors can arrive after whitespace has already committed HTTP
+// status 200. The image writer consults the heartbeat-adjusted byte count
+// before deciding whether a JSON error can still be appended; a reported
+// write means presentation was attempted, while underlying delivery remains
+// the response writer's result.
+//
+// Video content uses a small set of download headers, including range and
+// length information, before copying the body to the client. Content URLs
+// retain the incoming route family and escape a task identifier as one path
+// segment so a slash inside that identifier cannot become another route
+// component. Voice body reads and expected Realtime closure classification
+// serve the same HTTP media entry points.
+
+// ImageErrorResponse carries sanitized image error fields for HTTP JSON
+// presentation.
 type ImageErrorResponse struct {
-	Status                     int
+	// Status is requested when writing the error; a heartbeat may already have
+	// committed status 200, which the underlying writer retains.
+	Status int // requested HTTP status
+	// Code and Param are included when their trimmed values are nonempty. Type
+	// and Message are supplied by the caller and are written as provided.
+	// Type: supplied error category. Message: supplied client message.
+	// Code: optional error code. Param: optional parameter name.
 	Type, Message, Code, Param string
 }
 
+// WriteEmbeddingsUpstreamResponse presents buffered upstream bytes with their
+// HTTP status and filtered headers. Nil context or response, or a committed
+// writer, skips presentation. Content-Type comes from upstream when present
+// and defaults to application/json otherwise; the caller owns the
+// already-read response body and its closing.
 func WriteEmbeddingsUpstreamResponse(c *gin.Context, resp *http.Response, body []byte, filter *egress.CompiledHeaderFilter) {
 	if c == nil || resp == nil {
 		return
@@ -38,9 +63,14 @@ func WriteEmbeddingsUpstreamResponse(c *gin.Context, resp *http.Response, body [
 		c.Writer.Header().Set("Content-Type", "application/json")
 	}
 	c.Writer.WriteHeader(resp.StatusCode)
+	// Presentation errors stay with the HTTP writer; this adapter has no recovery
+	// result to return after committing the upstream status and headers.
 	_, _ = c.Writer.Write(body)
 }
 
+// WriteEmbeddingsError writes the supplied category and message in an OpenAI
+// error object. Callers provide a usable Gin context and decide whether an
+// existing response permits another JSON write.
 func WriteEmbeddingsError(c *gin.Context, statusCode int, errType, message string) {
 	c.JSON(statusCode, gin.H{
 		"error": gin.H{
@@ -50,6 +80,9 @@ func WriteEmbeddingsError(c *gin.Context, statusCode int, errType, message strin
 	})
 }
 
+// WriteGrokMediaErrorResponse writes trimmed error fields when the response
+// is still uncommitted. Missing context or writer, or any prior commitment,
+// skips presentation so an existing media response stays intact.
 func WriteGrokMediaErrorResponse(c *gin.Context, statusCode int, errType, message string) {
 	if c == nil || c.Writer == nil || c.Writer.Written() {
 		return
@@ -62,6 +95,11 @@ func WriteGrokMediaErrorResponse(c *gin.Context, statusCode int, errType, messag
 	})
 }
 
+// WriteGrokMediaContentResponse copies a video download with range and
+// content headers, returning the copy error. Context, response and response
+// body are required. The optional committed callback runs after setting
+// status and before copying bytes; the caller closes the upstream body after
+// this function returns.
 func WriteGrokMediaContentResponse(c *gin.Context, resp *http.Response, committed func()) error {
 	if c == nil || resp == nil || resp.Body == nil {
 		return fmt.Errorf("grok media content response is incomplete")
@@ -78,12 +116,16 @@ func WriteGrokMediaContentResponse(c *gin.Context, resp *http.Response, committe
 			c.Header(name, value)
 		}
 	}
+	// Explicit download headers take precedence. Supply known transport length
+	// and a generic binary type when upstream headers leave those values absent.
 	if strings.TrimSpace(c.Writer.Header().Get("Content-Length")) == "" && resp.ContentLength >= 0 {
 		c.Header("Content-Length", strconv.FormatInt(resp.ContentLength, 10))
 	}
 	if strings.TrimSpace(c.Writer.Header().Get("Content-Type")) == "" {
 		c.Header("Content-Type", "application/octet-stream")
 	}
+	// Notify optional commitment bookkeeping before copying so the owner treats a
+	// later read failure as a possibly partial download when choosing terminal handling.
 	c.Status(resp.StatusCode)
 	if committed != nil {
 		committed()
@@ -92,6 +134,10 @@ func WriteGrokMediaContentResponse(c *gin.Context, resp *http.Response, committe
 	return err
 }
 
+// ReadGrokVoiceBody reads the request body and returns its bytes or read
+// error. A missing body is accepted for GET and DELETE; other methods require
+// one. The HTTP caller supplies any size restriction and owns request
+// cleanup.
 func ReadGrokVoiceBody(c *gin.Context) ([]byte, error) {
 	if c == nil || c.Request == nil {
 		return nil, errors.New("request body is required")
@@ -105,10 +151,16 @@ func ReadGrokVoiceBody(c *gin.Context) ([]byte, error) {
 	return io.ReadAll(c.Request.Body)
 }
 
+// IsExpectedGrokRealtimeClose reports whether relay completion permits the
+// HTTP Realtime path to retain observed audio usage. Nil and normal,
+// going-away, no-status, or abnormal close codes qualify; other codes end
+// that completion path.
 func IsExpectedGrokRealtimeClose(err error) bool {
 	if err == nil {
 		return true
 	}
+	// The Realtime handler records observed audio for these ordinary departure
+	// codes, including missing or abnormal close frames after a connection ends.
 	switch coderws.CloseStatus(err) {
 	case coderws.StatusNormalClosure, coderws.StatusGoingAway,
 		coderws.StatusNoStatusRcvd, coderws.StatusAbnormalClosure:
@@ -118,10 +170,23 @@ func IsExpectedGrokRealtimeClose(err error) bool {
 	}
 }
 
+// WriteImageError attempts image error JSON when actual response content has
+// not already been written. Missing context, writer or value returns false.
+// Callers provide usable adjustedWritten and stopKeepalive callbacks; true
+// reports attempted presentation, because Gin does not return the underlying
+// write error.
+//
+// Heartbeat whitespace can commit HTTP status while leaving adjusted output
+// negative. That case stops further padding and writes the error object
+// within the committed response. A response with nonnegative adjusted output
+// is left intact. Code and Param are trimmed and included only when
+// populated; Type and Message retain their supplied values.
 func WriteImageError(c *gin.Context, value *ImageErrorResponse, adjustedWritten func() int, stopKeepalive func()) bool {
 	if c == nil || c.Writer == nil || value == nil {
 		return false
 	}
+	// Commitment from JSON padding still permits one final error document. The
+	// adjusted count prevents adding another document after actual media output.
 	if c.Writer.Written() && adjustedWritten() >= 0 {
 		return false
 	}
@@ -137,6 +202,15 @@ func WriteImageError(c *gin.Context, value *ImageErrorResponse, adjustedWritten 
 	return true
 }
 
+// GrokMediaContentProxyURL builds a relative download route for a nonblank
+// task identifier. Missing request data returns an empty string. Incoming
+// paths beginning with /v1/ select that prefix, while other paths select the
+// bare video route.
+//
+// The task identifier loses surrounding slashes and is path-escaped as one
+// segment before appending /content. This keeps an internal slash encoded in
+// the identifier, allowing generated status responses to refer back to the
+// same task through either registered route family.
 func GrokMediaContentProxyURL(c *gin.Context, requestID string) string {
 	if c == nil || c.Request == nil || c.Request.URL == nil || strings.TrimSpace(requestID) == "" {
 		return ""
@@ -145,5 +219,7 @@ func GrokMediaContentProxyURL(c *gin.Context, requestID string) string {
 	if strings.HasPrefix(c.Request.URL.Path, "/v1/") {
 		pathPrefix = "/v1"
 	}
+	// Escape the task as one segment before appending the content suffix so IDs
+	// containing internal slashes remain task identifiers in the generated route.
 	return pathPrefix + "/videos/" + url.PathEscape(strings.Trim(requestID, "/")) + "/content"
 }

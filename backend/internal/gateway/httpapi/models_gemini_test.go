@@ -14,6 +14,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// TestAppendAPIKeyAliasesToGeminiModelsJSON augments a resource with
+// eligible, missing-target and wildcard mappings. The exact eligible alias
+// inherits target description, and envelope pagination metadata survives the
+// augmentation.
 func TestAppendAPIKeyAliasesToGeminiModelsJSON(t *testing.T) {
 	body := (&ModelsHandler{}).AppendAPIKeyAliasesToGeminiModelsJSON([]byte(`{
 		"models":[{"name":"models/gemini-3.1-pro-preview","displayName":"Gemini Pro","description":"keep"}],
@@ -31,7 +35,10 @@ func TestAppendAPIKeyAliasesToGeminiModelsJSON(t *testing.T) {
 	require.Equal(t, "next", gjson.GetBytes(body, "nextPageToken").String())
 }
 
-// TestGeminiSingleModelSelectsOnlyBoundTarget checks the chosen composite group and exact alias target.
+// TestGeminiSingleModelSelectsOnlyBoundTarget queries a composite alias,
+// hidden custom-list model and missing prefix. Only the chosen binding's
+// requested name and exact target reach selected resolution; full catalogue
+// resolution stays unused.
 func TestGeminiSingleModelSelectsOnlyBoundTarget(t *testing.T) {
 	group := &routing.Group{ID: 7, Status: "active", AllowedProtocols: []protocol.ProtocolID{protocol.ProtocolGeminiGenerateContent}, ModelsListConfig: routing.GroupModelsListConfig{Enabled: true, Models: []string{"known"}}}
 	other := &routing.Group{ID: 8, Status: "active", AllowedProtocols: group.AllowedProtocols}
@@ -39,8 +46,8 @@ func TestGeminiSingleModelSelectsOnlyBoundTarget(t *testing.T) {
 		7: {Models: []routing.RequestableModel{{ID: "known", Protocols: group.AllowedProtocols}, {ID: "hidden", Protocols: group.AllowedProtocols}}},
 	}}
 	for _, tc := range []struct {
-		name   string
-		status int
+		name   string // requested public resource name
+		status int    // expected HTTP response status
 	}{{"chosen/alias", http.StatusOK}, {"chosen/hidden", http.StatusNotFound}, {"missing/known", http.StatusNotFound}} {
 		p.selectedModels = nil
 		p.resolvedPlatforms = nil

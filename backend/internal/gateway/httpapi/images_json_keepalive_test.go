@@ -16,6 +16,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// TestOpenAIImagesJSONKeepalive_PreservesValidJSONResponse waits for padding
+// before writing an image JSON document. The response stays parseable,
+// adjusted size tracks real output, and cleanup restores the original writer.
 func TestOpenAIImagesJSONKeepalive_PreservesValidJSONResponse(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -39,6 +42,9 @@ func TestOpenAIImagesJSONKeepalive_PreservesValidJSONResponse(t *testing.T) {
 	require.Same(t, originalWriter, c.Writer)
 }
 
+// TestOpenAIImagesJSONKeepalive_DisabledIsNoop uses a zero heartbeat interval
+// before writing a request error. Cleanup leaves the original writer
+// installed and the error retains its requested status.
 func TestOpenAIImagesJSONKeepalive_DisabledIsNoop(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -54,6 +60,9 @@ func TestOpenAIImagesJSONKeepalive_DisabledIsNoop(t *testing.T) {
 	require.Equal(t, "invalid request", gjson.Get(rec.Body.String(), "error.message").String())
 }
 
+// TestOpenAIImagesJSONKeepalive_FastErrorPreservesStatus writes an image
+// error before the first scheduled heartbeat. The error keeps status 400 and
+// reaches the client without preceding heartbeat whitespace.
 func TestOpenAIImagesJSONKeepalive_FastErrorPreservesStatus(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -73,6 +82,9 @@ func TestOpenAIImagesJSONKeepalive_FastErrorPreservesStatus(t *testing.T) {
 	require.Equal(t, "invalid size", gjson.Get(rec.Body.String(), "error.message").String())
 }
 
+// TestOpenAIImagesJSONKeepalive_LateErrorRemainsJSON waits until padding has
+// committed status 200 before writing an image error. The error retains its
+// code and message in a valid JSON document.
 func TestOpenAIImagesJSONKeepalive_LateErrorRemainsJSON(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -96,6 +108,10 @@ func TestOpenAIImagesJSONKeepalive_LateErrorRemainsJSON(t *testing.T) {
 	require.Equal(t, "request rejected", gjson.Get(rec.Body.String(), "error.message").String())
 }
 
+// TestOpenAIImagesJSONKeepalive_DoesNotBlockFailoverDetection observes a
+// response containing heartbeat whitespace alone. HTTP reports commitment
+// while the adjusted byte count stays -1, keeping actual-output detection
+// unchanged.
 func TestOpenAIImagesJSONKeepalive_DoesNotBlockFailoverDetection(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -112,6 +128,9 @@ func TestOpenAIImagesJSONKeepalive_DoesNotBlockFailoverDetection(t *testing.T) {
 	require.True(t, strings.TrimSpace(rec.Body.String()) == "")
 }
 
+// TestOpenAIImagesJSONKeepaliveWriter_NilGuards exercises a wrapper lacking
+// heartbeat state and an underlying writer. Its response methods remain
+// callable, hijacking fails, and close notification is already closed.
 func TestOpenAIImagesJSONKeepaliveWriter_NilGuards(t *testing.T) {
 	w := &openAIImagesJSONKeepaliveWriter{}
 	require.NotPanics(t, func() {
@@ -137,6 +156,10 @@ func TestOpenAIImagesJSONKeepaliveWriter_NilGuards(t *testing.T) {
 	}
 }
 
+// waitForOpenAIImagesJSONKeepalive waits up to one second for retained
+// heartbeat state to report a started response. It checks that state under
+// the heartbeat mutex, failing the test if installation or startup is
+// missing.
 func waitForOpenAIImagesJSONKeepalive(t *testing.T, c *gin.Context) {
 	t.Helper()
 	k := openAIImagesJSONKeepaliveFromContext(c)
@@ -148,16 +171,24 @@ func waitForOpenAIImagesJSONKeepalive(t *testing.T, c *gin.Context) {
 	}, time.Second, time.Millisecond)
 }
 
-// writeKeepaliveImageError writes errors using heartbeat state; execution tests cover provider error conversion.
+// writeKeepaliveImageError supplies heartbeat-adjusted size and stopping
+// callbacks to the image error writer. Provider error conversion is exercised
+// elsewhere; this helper presents the already sanitized error supplied by the
+// test.
 func writeKeepaliveImageError(c *gin.Context, in *ImageErrorResponse) bool {
 	return WriteImageError(c, in, func() int { return OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c) }, func() { StopOpenAIImagesJSONKeepaliveCommitted(c) })
 }
 
+// TestOpenAIImagesJSONKeepalive_KeepsOAuthNonStreamResponseValid delays an
+// OAuth SSE image result while JSON heartbeats run. The nonstreaming reader
+// returns one image and leaves a valid JSON response after the padding.
 func TestOpenAIImagesJSONKeepalive_KeepsOAuthNonStreamResponseValid(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
 
+	// Delay the pipe producer so the heartbeat commits padding before the OAuth
+	// terminal event arrives; closing the pipe lets the reader finish its stream.
 	reader, writer := io.Pipe()
 	go func() {
 		time.Sleep(20 * time.Millisecond)

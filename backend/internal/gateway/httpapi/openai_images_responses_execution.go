@@ -25,10 +25,42 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// OAuth image generation uses a fixed Responses main model and a separately
+// resolved image-tool model. Native conversion carries parsed prompts and
+// image inputs into that tool request, then returns Images JSON or
+// image-specific SSE events while preserving generation count, dimensions and
+// token observations.
+//
+// An HTTP rejection can recover an invalid Agent Identity task once before
+// ordinary health policy or final presentation. A read failure after HTTP
+// success has a separate decision: heartbeat-adjusted output determines
+// whether retry can still occur. Structured image-tool unavailability may
+// cool the provider's image scope, while missing images inferred from model
+// text leave that scope available. Provider retry classification remains
+// separate from already delivered output and positive partial-image
+// retention.
+
+// buildOpenAIImagesResponsesRequest delegates parsed image input to native
+// Responses conversion with the supplied tool model. Missing parsed input,
+// prompt or required editing images returns the native validation error
+// before an upstream request is built.
 func buildOpenAIImagesResponsesRequest(parsed *gatewaymedia.ImageRequest, toolModel string) ([]byte, error) {
 	return openai.BuildOpenAIImagesResponsesRequest(gatewaymedia.NativeImageRequest(parsed), toolModel)
 }
 
+// handleOpenAIImagesErrorResponse presents or classifies an HTTP image
+// failure using replayable response bytes. It records sanitized message
+// diagnostics and optional bounded body detail before the shared
+// response-failure resolver chooses Cyber, health, failover, configured
+// rewrite or native error output.
+//
+// Cyber classification presents warning output before returning its warning
+// identity. Other paths apply current provider policy before generic
+// response, failover and display rewriting; the policy decision retained by
+// callbacks supplies those later choices. Callers provide usable response,
+// selected provider and HTTP output dependencies. The optional first
+// requested model identifies model-specific policy, and native execution
+// closes the replay body after this synchronous handling.
 func (s *OpenAIImagesExecutor) handleOpenAIImagesErrorResponse(
 	ctx context.Context,
 	resp *http.Response,
@@ -43,6 +75,9 @@ func (s *OpenAIImagesExecutor) handleOpenAIImagesErrorResponse(
 	upstreamDetail := ""
 	if s.Output.Options.LogUpstreamErrorBody {
 		maxBytes := s.Output.Options.LogUpstreamErrorBodyMaxBytes
+		// Use the diagnostic default when no positive body-detail cap is
+		// configured. UTF-8-safe truncation bounds Ops detail while retaining the
+		// replay body for failure policy.
 		if maxBytes <= 0 {
 			maxBytes = 2048
 		}
@@ -63,6 +98,9 @@ func (s *OpenAIImagesExecutor) handleOpenAIImagesErrorResponse(
 	}
 
 	var decision providercore.UpstreamErrorDecision
+	// Keep warning presentation ahead of health and recovery choices; the
+	// resolver orders these callbacks so configured display rewriting cannot
+	// hide a selected failover decision.
 	return nil, gatewaymedia.ResolveImageResponseFailure(resp.StatusCode, upstreamMsg, gatewaymedia.ImageResponseFailurePorts{
 		CyberMessage: func() (string, bool) {
 			if !gatewayprovider.IsOpenAICyberWarningPayload(body, upstreamMsg) {
@@ -107,10 +145,28 @@ func (s *OpenAIImagesExecutor) handleOpenAIImagesErrorResponse(
 	})
 }
 
+// openAIImagesStreamPrefix returns the event prefix used for image generation
+// or editing. A nil parsed request uses the generation prefix; callers reuse
+// the result across partial and completed client SSE events.
 func openAIImagesStreamPrefix(parsed *gatewaymedia.ImageRequest) string {
 	return openai.OpenAIImagesStreamPrefix(gatewaymedia.NativeImageRequest(parsed))
 }
 
+// forwardOpenAIImagesOAuth builds and consumes one image-tool Responses
+// exchange for the selected target. Routed image and provider model names are
+// validated before attribute resolution, and missing routing input can use
+// the native image fallback. The main Responses model is separate from that
+// resolved image tool.
+//
+// The upstream context is detached before credentials and request
+// construction so client departure can leave billable image evidence
+// available. Detachment retains any server-abort signal and supplies a no-op
+// release hook. Native execution owns acquired-body and activity cleanup. A
+// matched invalid Agent Identity task can request one guarded recursive
+// attempt after recovery, rebuilding from parsed input; the recursive call
+// currently uses default TLS match arguments. HTTP failures retain their own
+// result path, while other outcomes pass observed image count and error to
+// ImageOutcome before returning media fields.
 func (s *OpenAIImagesExecutor) forwardOpenAIImagesOAuth(
 	ctx context.Context,
 	c *gin.Context,
@@ -138,6 +194,9 @@ func (s *OpenAIImagesExecutor) forwardOpenAIImagesOAuth(
 		provider.Record.Type,
 		len(parsed.Uploads),
 	)
+	// Retain execution after client departure so native reading can finish observed
+	// image and usage evidence. A supplied server-abort signal still permits
+	// application shutdown to cancel this work.
 	upstreamCtx, releaseUpstreamCtx := gatewayprovider.DetachUpstreamContext(ctx)
 	defer releaseUpstreamCtx()
 
@@ -150,6 +209,8 @@ func (s *OpenAIImagesExecutor) forwardOpenAIImagesOAuth(
 	if err != nil {
 		return nil, err
 	}
+	// Mark the already-built image request before generic Responses preparation,
+	// retaining its dedicated image-tool construction choices through shared request building.
 	upstreamCtx = openai.WithOpenAIImagesSelfBuiltRequest(upstreamCtx)
 	upstreamReq, err := s.Requests.Build(upstreamCtx, c, provider, responsesBody, token, true, parsed.StickySessionSeed(), false, tlsRouterMatch...)
 	if err != nil {
@@ -184,6 +245,7 @@ func (s *OpenAIImagesExecutor) forwardOpenAIImagesOAuth(
 		Do: func(req *http.Request) (*http.Response, error) {
 			upstreamStart := time.Now()
 			resp, err := s.Requests.Transport.DoWithTLS(req, proxyURL, provider.Record.ID, provider.Record.Concurrency, s.Requests.TLSProfile(provider, tlsRouterMatch...))
+			// Ops upstream timing uses whole milliseconds measured around this exchange.
 			SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 			return resp, err
 		},
@@ -211,8 +273,13 @@ func (s *OpenAIImagesExecutor) forwardOpenAIImagesOAuth(
 			httpFailure = true
 			upstreamMsg := ""
 			var decision providercore.UpstreamErrorDecision
+			// Preserve HTTP rejection as its own outcome while the resolver first
+			// tries identity recovery, then applies provider policy or final error
+			// output without counting generated images.
 			retry, err := gatewaymedia.ResolveImageFailure(gatewaymedia.ImageFailurePorts{
 				Recover: func() (bool, error) {
+					// Try task recovery before provider failure policy for this identity-specific
+					// rejection, using the request flag to keep recursive recovery bounded to once.
 					if requeststate.AgentTaskRecoveryTried(ctx) || !s.Requests.Identity.UsesAgentIdentity(ctx, provider) || !openai.IsAgentTaskInvalidHTTPResponse(resp.StatusCode, respBody) {
 						return false, nil
 					}
@@ -285,6 +352,8 @@ func (s *OpenAIImagesExecutor) forwardOpenAIImagesOAuth(
 		protocolID = protocol.ProtocolImagesEdits
 	}
 	result, err := (mediaprovider.Images{Options: *target}).Execute(upstreamCtx, upstream.AttemptInput{Protocol: protocolID, ResponseModel: requestModel, Stream: parsed.Stream}, ResponseSink{Writer: c.Writer})
+	// Native cleanup has finished before rebuilding after matched identity recovery.
+	// Mark the source context so another invalid task cannot recurse through recovery.
 	if retryAgent {
 		return s.forwardOpenAIImagesOAuth(requeststate.WithAgentTaskRecovery(ctx), c, provider, parsed, groupMappedModel)
 	}
@@ -298,13 +367,31 @@ func (s *OpenAIImagesExecutor) forwardOpenAIImagesOAuth(
 	return gatewayprovider.ImagesForwardResult(result, parsed, imageCount), err
 }
 
-// shouldCoolOpenAIImagesToolForError reports whether the error came from structured upstream data.
-// Callers check the error code before applying cooldown. Text-only model output can be prompt-dependent
-// and remains retryable without cooling each provider encountered during failover.
+// shouldCoolOpenAIImagesToolForError reports whether an image error lacks the
+// model-text synthesis marker. The unavailable-tool caller checks its code first
+// and treats an unmarked error as upstream capability evidence; nil and marked
+// errors skip cooldown.
 func shouldCoolOpenAIImagesToolForError(upstreamErr *openai.OpenAIImagesUpstreamError) bool {
 	return upstreamErr != nil && !upstreamErr.SynthesizedFromModelText
 }
 
+// handleOpenAIImagesOAuthResponseError applies selected-provider policy to
+// errors observed after successful HTTP exchange. Callers supply the
+// heartbeat-adjusted pre-read size; comparison with current real output
+// determines whether classified recovery can still return a failover error.
+// Unrecognized errors retain their original value.
+//
+// Classified body-transport failures synthesize a 502 diagnostic envelope and
+// clone response headers before cleanup. The bound image reader leaves
+// HTTP request cancellation, cancellation errors and response-size failures
+// unclassified.
+// Typed image errors use their own status and request ID, with header fallback
+// when that identity is absent.
+//
+// Structured unavailable-tool errors may write image-scope cooldown;
+// text-derived verdicts skip that write. Actual output change prevents
+// another attempt, and remaining retryable errors retain the current health
+// decision and same-provider policy.
 func (s *OpenAIImagesExecutor) handleOpenAIImagesOAuthResponseError(
 	ctx context.Context,
 	c *gin.Context,
@@ -317,8 +404,8 @@ func (s *OpenAIImagesExecutor) handleOpenAIImagesOAuthResponseError(
 ) error {
 	responseWritten := c != nil && c.Writer != nil && OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeResponse
 	if code, message, ok := openai.OpenAIUpstreamStreamReadErrorDetails(err); ok {
-		// Body transport failures after HTTP success remain retryable until image output starts.
-		// Clone headers for failover diagnostics after the response is released.
+		// A classified body failure supplies status-502 recovery evidence separately
+		// from HTTP success. Clone headers before response cleanup for later diagnostics.
 		headers := http.Header(nil)
 		requestID := ""
 		statusCode := http.StatusBadGateway
@@ -376,6 +463,8 @@ func (s *OpenAIImagesExecutor) handleOpenAIImagesOAuthResponseError(
 	headers := http.Header(nil)
 	if resp != nil {
 		headers = resp.Header.Clone()
+		// Use the HTTP request ID only when the typed image error supplies none,
+		// preserving event-level identity when both sources are present.
 		if requestID == "" {
 			requestID = strings.TrimSpace(resp.Header.Get("x-request-id"))
 		}
@@ -408,6 +497,8 @@ func (s *OpenAIImagesExecutor) handleOpenAIImagesOAuthResponseError(
 		Message: upstreamErr.ClientMessage(),
 	})
 
+	// The unavailable-tool code selects image-specific policy. Cooldown needs
+	// structured evidence; model-text inference still permits another provider before output.
 	if upstreamErr.Code == "image_generation_unavailable" {
 		if shouldCoolOpenAIImagesToolForError(upstreamErr) {
 			s.Cooldown.Apply(ctx, gatewayprovider.ExecutionRecord(provider))
@@ -428,6 +519,9 @@ func (s *OpenAIImagesExecutor) handleOpenAIImagesOAuthResponseError(
 	if !retryable || responseWritten {
 		return err
 	}
+	// Reapply health policy for the remaining retryable image errors before
+	// building the final failure, so same-provider permission reflects this
+	// branch's stop-scheduling decision.
 	shouldDisable := gatewayprovider.ApplyOpenAIResponseHealth(ctx, s.Output.Health, provider, upstreamErr.StatusCode, headers, responseBody, false, requestedModel).StopScheduling
 	return (gatewayprovider.OpenAIFailoverPolicy{Health: s.Output.Health}).NewProviderFailure(
 		provider,

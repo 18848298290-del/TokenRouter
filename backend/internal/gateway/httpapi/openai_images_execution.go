@@ -23,20 +23,46 @@ import (
 	upstreamopenai "github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// API Key image requests use the native Images endpoint while OAuth and
+// setup-token requests use a Responses image tool. Each branch resolves the
+// routed image spelling and final provider model separately before building
+// the selected protocol request, allowing output and completion to retain
+// their respective model observations.
+//
+// Image exchanges are detached from client cancellation so completed image
+// and token evidence can survive a disconnected downstream. Native execution
+// owns response-body cleanup and activity release; the HTTP adapter owns
+// failure policy and response presentation. Successful eligible transports
+// can use requested image count when no positive output count was observed,
+// while failed retention requires positive streaming image evidence. URL
+// backfill occurs after response usage and dimensions are observed, keeping
+// downloaded delivery bytes from redefining those measurements.
+
 const (
+	// openAIImagesGenerationsURL and openAIImagesEditsURL identify default Images
+	// operations; OpenAIRequests.ImagesURL can instead use the configured provider base.
 	openAIImagesGenerationsURL = "https://api.openai.com/v1/images/generations"
 	openAIImagesEditsURL       = "https://api.openai.com/v1/images/edits"
 )
 
-// OpenAIImagesExecutor executes one image attempt with request building, response output, and tool cooldown
-// dependencies.
+// OpenAIImagesExecutor binds one selected image exchange with HTTP output and
+// failure policy.
 type OpenAIImagesExecutor struct {
-	Requests *OpenAIRequests
-	Output   *OpenAIResponseOutput
+	Requests *OpenAIRequests       // shared credentials and request transport
+	Output   *OpenAIResponseOutput // bound image readers and HTTP policy
+	// Cooldown optionally writes confirmed image-tool unavailability. A nil
+	// cooldown service is accepted by Apply and leaves provider state unchanged.
 	Cooldown *provideradapter.ImageToolCooldown
-	Enter    func() (func(), error)
+	// Enter optionally tracks this exchange in application activity. Accepted
+	// cleanup runs after native response-body handling, including HTTP error replay.
+	Enter func() (func(), error)
 }
 
+// ForwardImages dispatches one parsed image attempt by exact provider type. A
+// nil parsed request returns an error; callers supply a usable executor, HTTP
+// context and selected provider. API Key uses direct Images, while OAuth and
+// setup-token use the Responses image branch. The dispatch currently calls
+// branch methods without forwarding its variadic TLS match arguments.
 func (s *OpenAIImagesExecutor) ForwardImages(
 	ctx context.Context,
 	c *gin.Context,
@@ -59,6 +85,20 @@ func (s *OpenAIImagesExecutor) ForwardImages(
 	return s.forwardOpenAIImagesAPIKey(ctx, c, provider, body, parsed, groupMappedModel)
 }
 
+// forwardOpenAIImagesAPIKey executes direct Images for the selected target
+// and returns retained media observations. Group mapping can replace the
+// parsed model before provider mapping, and both routed and final upstream
+// spellings are validated as image-family names. The forwarding body is
+// rebuilt with that final model and its original JSON or multipart content
+// type.
+//
+// Detachment removes client cancellation and deadlines before credential
+// resolution and exchange while retaining any server-abort signal. Its returned
+// release hook is a no-op. Native execution closes the response body before
+// releasing activity. HTTP rejection uses health and failover policy or final image
+// error presentation. Other outcomes retain image count through ImageOutcome,
+// including requested-count substitution on its eligible successful paths and
+// positive streaming image evidence after an error.
 func (s *OpenAIImagesExecutor) forwardOpenAIImagesAPIKey(
 	ctx context.Context,
 	c *gin.Context,
@@ -91,10 +131,9 @@ func (s *OpenAIImagesExecutor) forwardOpenAIImagesAPIKey(
 	if err != nil {
 		return nil, err
 	}
-	// Detach image generation from client cancellation so completion can return billable usage.
-	// DetachStreamUpstreamContext propagates cancellation for non-streaming requests, which can discard usage
-	// after upstream costs accrue.
-	// Upstream response-header waits remain bounded by ResponseHeaderTimeout.
+	// Continue the selected exchange after client departure so an image and its
+	// observed tokens can still reach completion. A retained server-abort signal can
+	// stop this work; header waits also use the transport's configured budget.
 	upstreamCtx, releaseUpstreamCtx := gatewayprovider.DetachUpstreamContext(ctx)
 	defer releaseUpstreamCtx()
 
@@ -113,6 +152,8 @@ func (s *OpenAIImagesExecutor) forwardOpenAIImagesAPIKey(
 	}
 
 	options := s.Output.ImageOptions(c)
+	// Native nonstream reading extracts usage and dimensions before invoking this
+	// delivery conversion, so downloaded image bytes cannot replace the observed billing data.
 	options.Backfill = func(body []byte) []byte { return s.backfillOpenAIImagesB64JSON(upstreamCtx, provider, parsed, body) }
 	var legacyHTTPResult *forwardcore.OpenAIResult
 	httpFailure := false
@@ -132,6 +173,7 @@ func (s *OpenAIImagesExecutor) forwardOpenAIImagesAPIKey(
 		Do: func(req *http.Request) (*http.Response, error) {
 			upstreamStart := time.Now()
 			resp, err := s.Requests.Transport.DoWithTLS(req, proxyURL, provider.Record.ID, provider.Record.Concurrency, s.Requests.TLSProfile(provider, tlsRouterMatch...))
+			// Ops upstream timing uses whole milliseconds measured around this exchange.
 			SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 			return resp, err
 		},
@@ -156,9 +198,14 @@ func (s *OpenAIImagesExecutor) forwardOpenAIImagesAPIKey(
 		RedactErrorBody: func(body []byte) []byte { return s.Requests.Identity.Redact(upstreamCtx, provider, body) },
 
 		HTTPError: func(resp *http.Response, respBody []byte) error {
+			// Native execution has closed the acquired body and installed redacted replay
+			// bytes. Preserve this HTTP failure path separately from successful image counting.
 			httpFailure = true
 			upstreamMsg := logredact.SanitizeUpstreamQueries(strings.TrimSpace(upstream.ExtractErrorMessage(respBody)))
 			shouldDisable := false
+			// Apply policy only after HTTP failure qualifies for failover. Keep
+			// access-state errors typed so the outer media attempt can select recovery
+			// from the rejection rather than count it as image output.
 			_, err := gatewaymedia.ResolveImageFailure(gatewaymedia.ImageFailurePorts{
 				Failover: func() bool {
 					return gatewayprovider.ShouldFailoverOpenAIResponse(resp.StatusCode, upstreamMsg, respBody)
@@ -213,6 +260,8 @@ func (s *OpenAIImagesExecutor) forwardOpenAIImagesAPIKey(
 	if httpFailure {
 		return legacyHTTPResult, err
 	}
+	// Requested-count substitution belongs to eligible successful transport paths.
+	// Failed attempts need positive streamed image evidence before retaining a result.
 	imageCount, retain := gatewaymedia.ImageOutcome(parsed.Stream, false, upstreamopenai.IsEventStreamResponse(result.UpstreamHeaders), parsed.N, result.ObservedImages, err)
 	if !retain {
 		return nil, err
@@ -220,6 +269,11 @@ func (s *OpenAIImagesExecutor) forwardOpenAIImagesAPIKey(
 	return gatewayprovider.ImagesForwardResult(result, parsed, imageCount), err
 }
 
+// buildOpenAIImagesRequest creates an authenticated Images POST for the
+// selected endpoint and provider base URL. Invalid target resolution returns
+// before request construction. Native building applies allowed client
+// headers, User-Agent and enabled provider overrides while retaining the
+// supplied body content type.
 func (s *OpenAIImagesExecutor) buildOpenAIImagesRequest(
 	ctx context.Context,
 	c *gin.Context,

@@ -18,7 +18,9 @@ import (
 	upstreamopenai "github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-// TestExtractImagesUpstreamError_IncompleteIsRetryable checks that truncated generation yields a retryable 502.
+// TestExtractImagesUpstreamError_IncompleteIsRetryable supplies an incomplete
+// response with max-output-token reason. Extraction returns a retryable 502,
+// the incomplete code, and diagnostic text containing that reason.
 func TestExtractImagesUpstreamError_IncompleteIsRetryable(t *testing.T) {
 	body := "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\"}}\n\n" +
 		"data: {\"type\":\"response.incomplete\",\"response\":{\"id\":\"resp_1\",\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"}}}\n\n"
@@ -41,7 +43,9 @@ func TestExtractImagesUpstreamError_IncompleteIsRetryable(t *testing.T) {
 	}
 }
 
-// TestExtractImagesUpstreamError_IncompleteContentFilterNotRetryable checks that content filtering yields a terminal 400.
+// TestExtractImagesUpstreamError_IncompleteContentFilterNotRetryable supplies
+// an incomplete event attributed to content filtering. Extraction returns a
+// terminal 400 classification that does not permit the tested image retry.
 func TestExtractImagesUpstreamError_IncompleteContentFilterNotRetryable(t *testing.T) {
 	body := "data: {\"type\":\"response.incomplete\",\"response\":{\"id\":\"r\",\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"content_filter\"}}}\n\n"
 	got := upstreamopenai.ExtractOpenAIImagesUpstreamError([]byte(body))
@@ -57,7 +61,9 @@ func TestExtractImagesUpstreamError_IncompleteContentFilterNotRetryable(t *testi
 	}
 }
 
-// TestExtractImagesUpstreamError_ErrorAndFailedUnchanged checks that a moderation error yields 400.
+// TestExtractImagesUpstreamError_ErrorAndFailedUnchanged supplies a
+// moderation-blocked error event in SSE data. The extracted image error keeps
+// status 400 for client policy presentation.
 func TestExtractImagesUpstreamError_ErrorAndFailedUnchanged(t *testing.T) {
 	errBody := "data: {\"type\":\"error\",\"error\":{\"type\":\"image_generation_user_error\",\"code\":\"moderation_blocked\",\"message\":\"rejected\"}}\n\n"
 	if got := upstreamopenai.ExtractOpenAIImagesUpstreamError([]byte(errBody)); got == nil || got.StatusCode != http.StatusBadRequest {
@@ -65,7 +71,9 @@ func TestExtractImagesUpstreamError_ErrorAndFailedUnchanged(t *testing.T) {
 	}
 }
 
-// TestSummarizeNoOutputBody_ExtractsDiagnostics checks diagnostics for a stream that ends before producing an image.
+// TestSummarizeNoOutputBody_ExtractsDiagnostics ends a stream after created
+// and in-progress events with no image. The summary retains its no-output
+// marker, final event type and observed response status.
 func TestSummarizeNoOutputBody_ExtractsDiagnostics(t *testing.T) {
 	body := "data: {\"type\":\"response.created\",\"response\":{\"id\":\"r\"}}\n\n" +
 		"data: {\"type\":\"response.in_progress\",\"response\":{\"id\":\"r\",\"status\":\"in_progress\"}}\n\n"
@@ -81,8 +89,11 @@ func TestSummarizeNoOutputBody_ExtractsDiagnostics(t *testing.T) {
 	}
 }
 
-// TestSummarizeNoOutputBody_IncompleteReasonAndTruncation checks the incomplete reason and oversized-body marker.
+// TestSummarizeNoOutputBody_IncompleteReasonAndTruncation supplies an
+// incomplete event with a large extra field. The diagnostic keeps its
+// incomplete reason and reports that the source body was truncated.
 func TestSummarizeNoOutputBody_IncompleteReasonAndTruncation(t *testing.T) {
+	// Oversized fixture text forces the summary to exercise its truncation marker.
 	long := strings.Repeat("x", 2000)
 	body := "data: {\"type\":\"response.incomplete\",\"response\":{\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"},\"junk\":\"" + long + "\"}}\n\n"
 	summary := upstreamopenai.SummarizeOpenAIImagesNoOutputBody([]byte(body))
@@ -94,11 +105,13 @@ func TestSummarizeNoOutputBody_IncompleteReasonAndTruncation(t *testing.T) {
 	}
 }
 
-// TestImagesOAuthNonStreaming_CompletedNoImageTriggersSameProviderRetry checks that empty completion permits a
-// same-provider retry.
-// The fixture reports a mini model and no generated images.
+// TestImagesOAuthNonStreaming_CompletedNoImageTriggersSameProviderRetry
+// reports successful completion with empty output and zero image-tool work.
+// The nonstreaming reader returns a same-provider-retryable 502
+// classification for the empty image result.
 func TestImagesOAuthNonStreaming_CompletedNoImageTriggersSameProviderRetry(t *testing.T) {
-	// The completed event has an empty output array.
+	// Empty output and zero tool work reproduce the reader's empty-image path,
+	// keeping it separate from text-derived unavailability and content refusal.
 	upstreamSSE := "event: response.created\n" +
 		"data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_x\",\"status\":\"in_progress\",\"model\":\"gpt-5.4-mini-2026-03-17\",\"output\":[]}}\n\n" +
 		"event: response.completed\n" +
@@ -132,7 +145,9 @@ func TestImagesOAuthNonStreaming_CompletedNoImageTriggersSameProviderRetry(t *te
 	}
 }
 
-// TestImagesOAuthNonStreaming_ContentRefusalReturns400NoRetry checks that a content refusal ends retries with 400.
+// TestImagesOAuthNonStreaming_ContentRefusalReturns400NoRetry supplies text
+// and terminal output describing a content refusal. The buffered reader
+// retains a client 400 message and returns no classified provider failover.
 func TestImagesOAuthNonStreaming_ContentRefusalReturns400NoRetry(t *testing.T) {
 	upstreamSSE := "event: response.created\n" +
 		"data: {\"type\":\"response.created\",\"response\":{\"id\":\"r\",\"status\":\"in_progress\",\"model\":\"gpt-5.4-mini\",\"output\":[]}}\n\n" +
@@ -167,6 +182,9 @@ func TestImagesOAuthNonStreaming_ContentRefusalReturns400NoRetry(t *testing.T) {
 	}
 }
 
+// TestImagesOAuthNonStreaming_TextFallbackReturnsCapabilityError supplies
+// ordinary text output instead of images. The buffered reader reports
+// image-generation unavailable with the tested retryable server-error status.
 func TestImagesOAuthNonStreaming_TextFallbackReturnsCapabilityError(t *testing.T) {
 	upstreamSSE := "event: response.created\n" +
 		"data: {\"type\":\"response.created\",\"response\":{\"id\":\"r\",\"status\":\"in_progress\",\"model\":\"gpt-5.4-mini\",\"output\":[]}}\n\n" +
@@ -195,6 +213,10 @@ func TestImagesOAuthNonStreaming_TextFallbackReturnsCapabilityError(t *testing.T
 	}
 }
 
+// TestImagesOAuthStreaming_TextFallbackReturnsCapabilityError supplies text
+// deltas and empty image completion. The streaming reader returns its
+// unavailable-image 502 while leaving the tested error event unflushed for
+// recovery.
 func TestImagesOAuthStreaming_TextFallbackReturnsCapabilityError(t *testing.T) {
 	upstreamSSE := "event: response.output_text.delta\n" +
 		"data: {\"type\":\"response.output_text.delta\",\"delta\":\"Here's a polished image prompt for your request.\"}\n\n" +
@@ -224,6 +246,10 @@ func TestImagesOAuthStreaming_TextFallbackReturnsCapabilityError(t *testing.T) {
 	}
 }
 
+// TestImagesOAuthStreaming_SplitSafetyRefusalReturns400 splits refusal text
+// across two deltas before empty terminal output. The streaming reader
+// recognizes the combined policy refusal and presents its tested 400 error
+// event.
 func TestImagesOAuthStreaming_SplitSafetyRefusalReturns400(t *testing.T) {
 	upstreamSSE := "event: response.output_text.delta\n" +
 		"data: {\"type\":\"response.output_text.delta\",\"delta\":\"安全系\"}\n\n" +
@@ -252,7 +278,9 @@ func TestImagesOAuthStreaming_SplitSafetyRefusalReturns400(t *testing.T) {
 	}
 }
 
-// TestExtractModelRefusal_EmptyWhenNoText checks that a response with no text has no refusal message.
+// TestExtractModelRefusal_EmptyWhenNoText supplies empty output with zero
+// image-tool tokens. Refusal extraction returns an empty message, leaving the
+// missing-image case distinct from observed refusal text.
 func TestExtractModelRefusal_EmptyWhenNoText(t *testing.T) {
 	body := "data: {\"type\":\"response.completed\",\"response\":{\"output\":[],\"tool_usage\":{\"image_gen\":{\"output_tokens\":0}}}}\n\n"
 	if refusal := upstreamopenai.ExtractOpenAIImagesModelRefusal([]byte(body)); refusal != "" {
@@ -260,12 +288,16 @@ func TestExtractModelRefusal_EmptyWhenNoText(t *testing.T) {
 	}
 }
 
+// TestParseOpenAIImagesSSEUsageBytes_ToolUsagePrecedenceAndFallback combines
+// valid, absent and malformed image-tool usage with top-level observations.
+// Valid tool data wins as one source; invalid tool fields retain the complete
+// fallback usage.
 func TestParseOpenAIImagesSSEUsageBytes_ToolUsagePrecedenceAndFallback(t *testing.T) {
 	fallback := openai.ForwardUsage{InputTokens: 3, ImageInputTokens: 2, OutputTokens: 4, ImageOutputTokens: 2}
 	tests := []struct {
-		name      string
-		toolUsage string
-		want      openai.ForwardUsage
+		name      string              // usage precedence case label
+		toolUsage string              // injected image-tool usage JSON
+		want      openai.ForwardUsage // expected retained token observations
 	}{
 		{
 			name:      "valid tool usage takes atomic precedence without mixing top-level image input",
@@ -301,6 +333,10 @@ func TestParseOpenAIImagesSSEUsageBytes_ToolUsagePrecedenceAndFallback(t *testin
 	}
 }
 
+// TestParseOpenAIImagesSSEUsageBytes_MalformedCompletedDoesNotOverrideUsage
+// records valid usage and then supplies a terminal payload with invalid
+// trailing text. Parsing keeps the prior token observations instead of
+// accepting the malformed replacement.
 func TestParseOpenAIImagesSSEUsageBytes_MalformedCompletedDoesNotOverrideUsage(t *testing.T) {
 	var usage openai.ForwardUsage
 
@@ -311,6 +347,9 @@ func TestParseOpenAIImagesSSEUsageBytes_MalformedCompletedDoesNotOverrideUsage(t
 	require.Equal(t, openai.ForwardUsage{InputTokens: 3, OutputTokens: 4, ImageOutputTokens: 2}, usage)
 }
 
+// TestExtractOpenAIImagesBillableCountFromJSONBytes_CompletedEvent feeds an
+// image-specific completion event to the output counter. Its encoded image is
+// counted once with the supplied terminal event shape.
 func TestExtractOpenAIImagesBillableCountFromJSONBytes_CompletedEvent(t *testing.T) {
 	body := []byte(`{"type":"image_generation.completed","b64_json":"ZmluYWw=","usage":{"input_tokens":10,"output_tokens":18}}`)
 
@@ -319,12 +358,16 @@ func TestExtractOpenAIImagesBillableCountFromJSONBytes_CompletedEvent(t *testing
 	require.Equal(t, 1, counter.Count())
 }
 
+// TestOpenAIImagesSSEErrorStatus compares image-stream error categories and
+// codes for standard failure classes. The fixture checks their mapped HTTP
+// status for rate, authentication, permission, missing model, moderation and
+// server cases.
 func TestOpenAIImagesSSEErrorStatus(t *testing.T) {
 	tests := []struct {
-		name    string
-		errType string
-		code    string
-		want    int
+		name    string // status mapping case label
+		errType string // supplied upstream error category
+		code    string // supplied upstream error code
+		want    int    // expected HTTP error status
 	}{
 		{name: "rate limit", errType: "rate_limit_error", want: http.StatusTooManyRequests},
 		{name: "auth", code: "invalid_api_key", want: http.StatusUnauthorized},
@@ -341,6 +384,10 @@ func TestOpenAIImagesSSEErrorStatus(t *testing.T) {
 	}
 }
 
+// TestCollectOpenAIImagesFromResponsesBody_FallsBackToOutputItemDone carries
+// image data in output-item completion while final output is empty.
+// Collection retains one image, its prompt and format, creation time and
+// terminal tool usage.
 func TestCollectOpenAIImagesFromResponsesBody_FallsBackToOutputItemDone(t *testing.T) {
 	body := []byte(
 		"data: {\"type\":\"response.created\",\"response\":{\"created_at\":1710000004}}\n\n" +
@@ -360,6 +407,9 @@ func TestCollectOpenAIImagesFromResponsesBody_FallsBackToOutputItemDone(t *testi
 	require.JSONEq(t, `{"images":1}`, string(usageRaw))
 }
 
+// TestCollectOpenAIImagesFromResponsesBody_MultilineSSE splits one completed
+// response across consecutive SSE data lines. Collection joins that payload
+// and retains the terminal image, timestamp, format and image-tool usage.
 func TestCollectOpenAIImagesFromResponsesBody_MultilineSSE(t *testing.T) {
 	body := []byte(
 		"data: {\"type\":\"response.completed\",\n" +

@@ -15,7 +15,25 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// Gemini model resources describe configured candidates that support the
+// Gemini generation protocol. Group protocol permission and custom display
+// lists constrain these names before concrete Key aliases are added, so
+// catalogue metadata cannot independently make a model available. Composite
+// bindings attach their saved prefix to the public resource name.
+//
+// Single-resource lookup validates the URL segment and selects one exact
+// configured composite prefix before checking only the requested name and
+// possible exact alias target. List and resource output restore public names
+// while taking capability metadata from an eligible target. JSON alias
+// augmentation copies the target object's fields before replacing its name
+// and displayName, keeping unrelated envelope and model metadata available to
+// clients.
+
 // @project-doc docs/domains/api_key_model_redirects.md#model_list_projection
+// GeminiV1BetaListModels writes locally requestable Gemini model resources
+// for the authenticated Key. It uses Google-shaped errors for missing
+// authentication or denied ordinary-group protocol permission; an unavailable
+// catalogue or uncovered composite subscription yields an empty list.
 func (h *ModelsHandler) GeminiV1BetaListModels(c *gin.Context) {
 	done, accepted := h.BeginRequest(c, "google")
 	if !accepted {
@@ -34,6 +52,18 @@ func (h *ModelsHandler) GeminiV1BetaListModels(c *gin.Context) {
 	c.JSON(http.StatusOK, GeminiModelsList{Models: models})
 }
 
+// GeminiV1BetaGetModel writes one eligible Gemini model resource under the
+// requested public name. It rejects blank, wildcard or unsafe URL segments
+// before model resolution. Composite lookup matches the saved prefix exactly
+// and then applies user, subscription and Gemini protocol permission for that
+// one group.
+//
+// Only the requested name and its configured exact alias target reach
+// ResolveSelected. Results are filtered by Gemini capability and the group's
+// custom list. When the public name is unavailable as a concrete model but
+// its alias target qualifies, metadata comes from that target while name and
+// displayName identify the requested alias or prefixed resource. Unresolved
+// resources return Google not found.
 func (h *ModelsHandler) GeminiV1BetaGetModel(c *gin.Context) {
 	done, accepted := h.BeginRequest(c, "google")
 	if !accepted {
@@ -80,6 +110,8 @@ func (h *ModelsHandler) GeminiV1BetaGetModel(c *gin.Context) {
 	if group != nil && group.AllowsClientProtocol(protocol.ProtocolGeminiGenerateContent) && h.backend.Available() {
 		forced, _ := h.backend.ForcedPlatform(c)
 		forced = strings.TrimSpace(forced)
+		// Limit resolution to this resource and its exact alias target. Full catalogue
+		// enumeration would add unrelated candidate work to every single-model lookup.
 		selected := []string{segment}
 		target, alias := key.ModelMapping[segment]
 		if alias {
@@ -97,6 +129,8 @@ func (h *ModelsHandler) GeminiV1BetaGetModel(c *gin.Context) {
 			visible[model.ID] = true
 		}
 		metadataID := segment
+		// An unavailable public alias can borrow its eligible target's capability
+		// metadata, then restore the public name without changing the target resolution.
 		if !visible[segment] && alias && visible[target] {
 			metadataID = target
 		}
@@ -113,7 +147,18 @@ func (h *ModelsHandler) GeminiV1BetaGetModel(c *gin.Context) {
 	WriteGoogleError(c, http.StatusNotFound, "Model is not available in this group")
 }
 
-// requestableGeminiModels combines group protocol permissions, candidate capabilities, and key aliases.
+// requestableGeminiModels builds the authenticated Key's ordered Gemini
+// resource list and reports whether presentation may continue. Denied
+// ordinary-group protocol permission writes a Google error and returns false.
+// Missing catalogue support returns an allocated empty list and true;
+// uncovered composite subscription also leaves that list empty.
+//
+// Each eligible group contributes concrete Gemini-capable IDs intersected
+// with its custom list, then available exact Key aliases. A prefix is
+// attached after target eligibility, and duplicate public IDs retain their
+// first occurrence. Alias resources borrow target metadata and display their
+// public identity, so capability fields remain tied to an actually eligible
+// model.
 func (h *ModelsHandler) requestableGeminiModels(c *gin.Context, key *apikey.APIKey) ([]GeminiModel, bool) {
 	models := make([]GeminiModel, 0)
 	if !key.IsComposite && (key.Group == nil || !key.Group.AllowsClientProtocol(protocol.ProtocolGeminiGenerateContent)) {
@@ -142,6 +187,8 @@ func (h *ModelsHandler) requestableGeminiModels(c *gin.Context, key *apikey.APIK
 			available = FilterModelsByCustomList(available, nil, group.ModelsListConfig.Models)
 		}
 		aliases := apikey.AvailableAPIKeyModelAliases(available, key.ModelMapping)
+		// Append aliases after group filtering, then prefix the public identity. This
+		// keeps copied capability metadata tied to an eligible target in that binding.
 		for _, modelID := range append(available, aliases...) {
 			publicID := modelID
 			if prefix != "" {
@@ -179,11 +226,24 @@ func (h *ModelsHandler) requestableGeminiModels(c *gin.Context, key *apikey.APIK
 	return models, true
 }
 
+// AppendAPIKeyAliasesToGeminiModelsJSON appends available exact Key aliases
+// to a Gemini JSON model list. Empty input or mapping, unsupported JSON
+// shape, or encoding failure returns the supplied body. Existing model order
+// and envelope fields remain represented when encoding succeeds.
+//
+// The first valid resource object for each target supplies alias metadata.
+// Its field map is copied, then name and displayName are replaced with the
+// alias; remaining RawMessage values are reused until serialization. Alias
+// enumeration depends on the initial target set, so newly appended aliases do
+// not make another mapping eligible. Wildcard sources and targets absent from
+// that initial set produce no added resource.
 func (h *ModelsHandler) AppendAPIKeyAliasesToGeminiModelsJSON(body []byte, mapping map[string]string) []byte {
 	if len(body) == 0 || len(mapping) == 0 {
 		return body
 	}
 	var payload map[string]json.RawMessage
+	// Unsupported or malformed list shapes retain the upstream bytes, allowing
+	// callers to present an unaugmented response rather than a reconstructed error.
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return body
 	}
@@ -194,6 +254,8 @@ func (h *ModelsHandler) AppendAPIKeyAliasesToGeminiModelsJSON(body []byte, mappi
 
 	modelIDs := make([]string, 0, len(models))
 	templates := make(map[string]map[string]json.RawMessage, len(models))
+	// Keep undecodable or blank names in the existing array but exclude them from
+	// the alias index, since an added resource needs an identifiable target.
 	for _, model := range models {
 		var name string
 		if err := json.Unmarshal(model["name"], &name); err != nil {
@@ -214,6 +276,8 @@ func (h *ModelsHandler) AppendAPIKeyAliasesToGeminiModelsJSON(body []byte, mappi
 		if !exists {
 			continue
 		}
+		// Copy the target field map before changing alias identity so the existing
+		// resource keeps its name and every additional upstream metadata field survives.
 		cloned := make(map[string]json.RawMessage, len(template))
 		maps.Copy(cloned, template)
 		cloned["name"], _ = json.Marshal("models/" + alias)
@@ -221,6 +285,8 @@ func (h *ModelsHandler) AppendAPIKeyAliasesToGeminiModelsJSON(body []byte, mappi
 		models = append(models, cloned)
 	}
 
+	// Publish a complete encoded envelope after both serialization steps succeed.
+	// Any encoding failure retains the supplied body instead of a partial augmentation.
 	encodedModels, err := json.Marshal(models)
 	if err != nil {
 		return body

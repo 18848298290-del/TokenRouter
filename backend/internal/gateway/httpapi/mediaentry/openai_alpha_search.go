@@ -24,26 +24,63 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
 )
 
-// alphaRequestAdapter handles HTTP output, platform recovery, and observation.
-// The media package orders provider attempts.
+// AlphaSearch keeps original request bytes beside group-mapped execution
+// bytes so successful completion can fingerprint the admitted payload while
+// platform requests use the selected route. A credential-bearing current
+// target is retained inside the request adapter; the media loop receives a
+// separate provider snapshot and recovery observations.
+//
+// Writer change determines whether another attempt could append incompatible
+// output. Scheduling feedback follows provider release, and successful nonnil
+// results contribute the WebSearchCalls unit supplied by ForwardAlphaSearch.
+// Completion captures the result, authentication, subscription and client
+// metadata before mandatory submission. The worker records that snapshot
+// after HTTP exit while same-provider and provider-switch retry counts remain
+// with the media loop.
+
+// alphaRequestAdapter retains request identity and the current provider
+// across serial AlphaSearch attempts.
 type alphaRequestAdapter struct {
-	h                           *Runtime
-	c                           *gin.Context
-	apiKey                      *apikey.APIKey
-	subscription                *billing.UserSubscription
-	groupMapping                routing.GroupMappingResult
+	h *Runtime // shared application media bindings
+	// c, apiKey and subscription retain admitted HTTP authentication and funding.
+	// Completion captures their recording values synchronously before submission,
+	// leaving request-local state with the HTTP owner throughout serial attempts.
+	c      *gin.Context   // current HTTP request context
+	apiKey *apikey.APIKey // current authenticated Key view
+	// subscription is optional resolved funding for this request. It is passed
+	// through completion capture rather than looked up after the platform response.
+	subscription *billing.UserSubscription
+	groupMapping routing.GroupMappingResult // retained group model mapping
+	// requestedModel keeps the parsed input name while sessionHash retains the
+	// selection identity supplied by HTTP entry; provider mapping happens later.
+	// requestedModel: parsed request model. sessionHash: retained selection hash.
 	requestedModel, sessionHash string
-	originalBody                []byte
-	userID                      int64
-	reqLog                      *zap.Logger
-	streamStarted               *bool
-	selection                   *gatewaycapture.SelectionResult
-	oauth429                    failover.OAuth429State
+	// originalBody shares the HTTP input bytes until synchronous completion capture.
+	// Callers keep them stable while mapped forwarding bytes are used independently.
+	originalBody []byte
+	userID       int64       // authenticated concurrency subject identifier
+	reqLog       *zap.Logger // request-scoped AlphaSearch diagnostic logger
+	// streamStarted shares admission output state with HTTP entry. Failure
+	// rendering dereferences it, so the request factory supplies a usable pointer.
+	streamStarted *bool
+	// selection is replaced at each selection. Later callbacks use this target
+	// with execution credentials instead of their informational provider snapshot.
+	selection *gatewaycapture.SelectionResult
+	oauth429  failover.OAuth429State // request-local OAuth recovery state
 }
 
-// recordAlphaSearchUsage bills a successful alpha/search as one WebSearchCalls unit
-// using the group price and multiplier.
-// The upstream supplies no usage field. Mandatory tasks run synchronously when the pool is full.
+// recordAlphaSearchUsage captures a nonnil successful search result for
+// mandatory recording. ForwardAlphaSearch supplies one WebSearchCalls unit;
+// completion prices that observation using the configured group price and
+// multiplier. Callers provide current Key, selected provider and resolved
+// subscription.
+//
+// Original request bytes supply the payload fingerprint, while the parsed
+// request model and observed upstream model supply separate group mapping
+// fields. Session, endpoint and network metadata are read before
+// CaptureOpenAI snapshots funding and provider data. The closure retains the
+// snapshot, recorder and separate logger, allowing worker recording to
+// proceed after the HTTP request ends without reading Gin state.
 func (h *Runtime) recordAlphaSearchUsage(
 	c *gin.Context,
 	apiKey *apikey.APIKey,
@@ -87,6 +124,8 @@ func (h *Runtime) recordAlphaSearchUsage(
 		zap.String("model", requestedModel),
 		zap.Int64("provider_id", provider.Record.ID),
 	)
+	// Capture completes before enqueueing. Retained snapshot and logger values
+	// let the worker record this admitted search without reading live HTTP context.
 	h.bindings.Common.Support.Submission.SubmitMandatory(c, func(ctx context.Context) {
 		if err := completionRecorder.Record(ctx, completionInput, true); err != nil {
 			completionLog.Error("openai_alpha_search.record_usage_failed", zap.Error(err))
@@ -94,6 +133,10 @@ func (h *Runtime) recordAlphaSearchUsage(
 	})
 }
 
+// SelectAlpha selects and retains an OpenAI AlphaSearch target under the
+// current Key group and session hash. Missing selection or provider returns
+// false with any error; successful results include that target's configured
+// same-provider retry allowance.
 func (p *alphaRequestAdapter) SelectAlpha(ctx context.Context, excluded map[int64]struct{}) (gatewaymedia.AlphaSelection, bool, error) {
 	selected, _, err := p.h.bindings.Common.Selection.SelectProviderWithSchedulerForCapability(ctx, p.apiKey.GroupID, "", p.sessionHash, p.requestedModel, excluded, egress.OpenAIUpstreamTransportHTTPSSE, providercore.OpenAIEndpointCapabilityAlphaSearch, false, false, capability.PlatformOpenAI)
 	p.selection = selected
@@ -103,10 +146,24 @@ func (p *alphaRequestAdapter) SelectAlpha(ctx context.Context, excluded map[int6
 	return gatewaymedia.AlphaSelection{Provider: gatewaycapture.ExecutionSnapshot(selected.Provider), RetryLimit: selected.Provider.View().GetPoolModeRetryCount()}, true, err
 }
 
+// AcquireAlpha obtains capacity for the retained target after successful
+// selection. The snapshot parameter is informational; the media loop releases
+// returned cleanup when forwarding ends before scheduling feedback or
+// completion.
 func (p *alphaRequestAdapter) AcquireAlpha(_ context.Context, _ gatewaymedia.AlphaSelection) (func(), bool) {
 	return p.h.bindings.Common.Support.AcquireResponsesProviderSlot(p.c, p.apiKey.GroupID, p.sessionHash, p.selection, false, p.streamStarted, p.reqLog)
 }
 
+// ForwardAlpha executes the retained target after applying current client
+// policy and TLS routing. Callers select and acquire first, supplying the
+// already group-mapped body. The platform result is converted into media
+// search fields with independent header maps.
+//
+// Writer size is sampled before and after policy and platform execution, so
+// even policy-produced output closes the observed retry window. Classified
+// upstream errors contribute retry failure evidence while retaining their
+// direct error. The media loop combines those observations with its own retry
+// counters and current client availability.
 func (p *alphaRequestAdapter) ForwardAlpha(ctx context.Context, _ gatewaymedia.AlphaSelection, body []byte) gatewaymedia.AlphaOutcome {
 	size := p.c.Writer.Size()
 	provider := p.selection.Provider
@@ -123,6 +180,10 @@ func (p *alphaRequestAdapter) ForwardAlpha(ctx context.Context, _ gatewaymedia.A
 	return outcome
 }
 
+// ReportAlpha records selected-target scheduling health using model
+// observations from the converted search result. Success passes no error;
+// failure retains the supplied error, and the media loop invokes feedback
+// after releasing provider capacity.
 func (p *alphaRequestAdapter) ReportAlpha(_ context.Context, _ gatewaymedia.AlphaSelection, result *gatewaymedia.AlphaResult, success bool, err error) {
 	provider := p.selection.Provider
 	if success {
@@ -132,25 +193,45 @@ func (p *alphaRequestAdapter) ReportAlpha(_ context.Context, _ gatewaymedia.Alph
 	p.h.bindings.Common.Selection.ReportOpenAIProviderScheduleResult(provider, openaiattempt.OpenAIProviderScheduleModel(p.c, provider, p.requestedModel, false, legacyAlphaResult(result)), false, nil, err)
 }
 
+// CompleteAlpha submits a nonnil successful search result with retained
+// original body and admitted funding. RunAlphaSearch guards result presence
+// before this callback; recording synchronously captures metadata before
+// mandatory asynchronous submission.
 func (p *alphaRequestAdapter) CompleteAlpha(_ context.Context, _ gatewaymedia.AlphaSelection, result *gatewaymedia.AlphaResult) {
 	p.h.recordAlphaSearchUsage(p.c, p.apiKey, p.selection.Provider, p.subscription, p.groupMapping, p.requestedModel, p.originalBody, legacyAlphaResult(result), p.userID)
 }
 
+// SwitchAlpha records a provider transition through the shared platform
+// observation callback.
 func (p *alphaRequestAdapter) SwitchAlpha(gatewaymedia.AlphaSelection) {
 	p.h.bindings.Platform.ReportSwitch()
 }
 
+// StopAlpha429 applies current-target OAuth recovery policy after transition
+// count advances. It retains mutable request-local oauth429 state across
+// attempts, so the loop invokes this callback serially before selecting
+// another provider.
 func (p *alphaRequestAdapter) StopAlpha429(_ gatewaymedia.AlphaSelection, status, count int) bool {
 	return p.h.bindings.Platform.Stop429(p.selection.Provider, status, count, &p.oauth429)
 }
+
+// AlphaClientGone reports shared HTTP failure handling's observed client
+// departure state.
 func (p *alphaRequestAdapter) AlphaClientGone() bool { return gatewayhttp.FailoverClientGone(p.c) }
+
+// ObserveAlpha records provider identity, phase timings and classified retry
+// stages for HTTP diagnostics. Retry, forward-canceled and switch events
+// require their failure observations; the media loop supplies those values
+// for these event kinds.
 func (p *alphaRequestAdapter) ObserveAlpha(e gatewaymedia.AlphaEvent) {
 	switch e.Kind {
 	case "selected":
 		gatewayhttp.SetOpsSelectedProvider(p.c, e.Provider.ID, e.Provider.Platform)
 	case "routing":
+		// Ops phase fields use whole milliseconds for the retained duration observations.
 		gatewayhttp.SetOpsLatencyMs(p.c, gatewayhttp.OpsRoutingLatencyMsKey, e.Elapsed.Milliseconds())
 	case "response":
+		// Keep response duration in the same millisecond unit as other Ops phase fields.
 		gatewayhttp.SetOpsLatencyMs(p.c, gatewayhttp.OpsResponseLatencyMsKey, e.Elapsed.Milliseconds())
 	case "select_canceled":
 		p.reqLog.Info("openai_alpha_search.provider_select_aborted_client_disconnected", zap.Error(e.Outcome.Err))
@@ -163,6 +244,18 @@ func (p *alphaRequestAdapter) ObserveAlpha(e gatewaymedia.AlphaEvent) {
 	}
 }
 
+// renderFailure presents terminal AlphaSearch selection, forwarding and
+// exhaustion outcomes. Nil leaves successful or adapter-handled output
+// intact. Initial selection checks shared business-error presentation before
+// local model diagnosis, while later selection can present its retained
+// classified failure.
+//
+// Generic forwarding errors are attempted only before writer change, keeping
+// an existing response document intact. Exhaustion delegates classified error
+// handling with its output-change flag. Capacity marking remains separate
+// from model denial, and logging uses the retained selected target. A usable
+// shared stream-state pointer and request logger are required by these
+// presentation paths.
 func (p *alphaRequestAdapter) renderFailure(f *gatewaymedia.AlphaFailure) {
 	if f == nil {
 		return
@@ -186,6 +279,8 @@ func (p *alphaRequestAdapter) renderFailure(f *gatewaymedia.AlphaFailure) {
 			gatewayhttp.DefaultOpenAIErrorOutput().WriteError(p.c, http.StatusBadGateway, "upstream_error", "Upstream request failed")
 		}
 	case "forward":
+		// A changed writer can already contain search output. Attempt the generic
+		// failure before output only so another JSON object cannot append to that response.
 		if !f.Outcome.OutputChanged {
 			gatewayhttp.DefaultOpenAIErrorOutput().WriteError(p.c, http.StatusBadGateway, "upstream_error", "Upstream request failed")
 		}
@@ -197,6 +292,10 @@ func (p *alphaRequestAdapter) renderFailure(f *gatewaymedia.AlphaFailure) {
 	}
 }
 
+// alphaResultView copies search identities, selected endpoint, duration and
+// call count into media observations. Nil input returns nil; upstream and
+// response header maps with their value slices are cloned for independent
+// retention.
 func alphaResultView(result *forwardcore.OpenAIResult) *gatewaymedia.AlphaResult {
 	if result == nil {
 		return nil
@@ -204,6 +303,10 @@ func alphaResultView(result *forwardcore.OpenAIResult) *gatewaymedia.AlphaResult
 	return &gatewaymedia.AlphaResult{RequestID: result.RequestID, Model: result.Model, UpstreamModel: result.UpstreamModel, UpstreamEndpoint: result.UpstreamEndpoint, Headers: http.Header(result.UpstreamHeaders).Clone(), ResponseHeaders: http.Header(result.ResponseHeaders).Clone(), Duration: result.Duration, Calls: result.WebSearchCalls}
 }
 
+// legacyAlphaResult copies media search observations into forwarding fields
+// used by scheduling and completion. Nil input returns nil; both header maps
+// are cloned while identities, duration and WebSearchCalls remain copied
+// values.
 func legacyAlphaResult(result *gatewaymedia.AlphaResult) *forwardcore.OpenAIResult {
 	if result == nil {
 		return nil

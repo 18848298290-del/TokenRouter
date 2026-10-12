@@ -6,6 +6,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestStandaloneSearchHTTPOrderAndResponse runs X search with alternate input
+// spelling and an excessive result limit. It protects admission order,
+// completion before release, normalized client output and the selected search
+// vendor label.
 func TestStandaloneSearchHTTPOrderAndResponse(t *testing.T) {
 	ports := &searchHTTPStub{authenticated: true, platform: "grok"}
 	c, response := searchContext(`{"input":" query ","max_results":99}`)
@@ -18,6 +22,11 @@ func TestStandaloneSearchHTTPOrderAndResponse(t *testing.T) {
 	require.JSONEq(t, `{"query":"query","results":[{"url":"https://source.test","title":"source","snippet":"snippet"}],"provider":"grok-native","max_results":20}`, response.Body.String())
 }
 
+// TestStandaloneSearchHTTPRejectsInOriginalOrder supplies malformed JSON,
+// incompatible field type, blank query and funding rejection. Parsing
+// failures stop before dependency access, the type-error message includes
+// grokStandaloneSearchRequest, and billing stops before moderation with
+// Retry-After seconds.
 func TestStandaloneSearchHTTPRejectsInOriginalOrder(t *testing.T) {
 	t.Run("parse before auth", func(t *testing.T) {
 		p := &searchHTTPStub{}
@@ -53,6 +62,10 @@ func TestStandaloneSearchHTTPRejectsInOriginalOrder(t *testing.T) {
 	})
 }
 
+// TestSearchOutputHeadersAndPerEventFlush writes one named search event
+// through the bound Gin writer. The response retains SSE headers and exact
+// event bytes; the recorder's Flushed flag confirms flushing after the
+// complete sequence.
 func TestSearchOutputHeadersAndPerEventFlush(t *testing.T) {
 	c, r := searchContext(`{}`)
 	out := SearchOutput{Context: c}

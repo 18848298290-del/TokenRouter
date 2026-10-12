@@ -52,9 +52,10 @@ type ResponsesWSCall struct {
 	Subject gatewayws.EntrySubject // authenticated user concurrency data
 	// Conn remains owned by ResponsesWebSocket, which closes it when RunEntry
 	// returns. Entry operations may read, write, or send close instructions meanwhile.
-	Conn                *coderws.Conn
-	Logger              *zap.Logger // request-scoped session diagnostic logger
-	ClientIP, UserAgent string      // client address and user-agent labels
+	Conn   *coderws.Conn
+	Logger *zap.Logger // request-scoped session diagnostic logger
+	// ClientIP: resolved client IP. UserAgent: trimmed User-Agent header.
+	ClientIP, UserAgent string
 }
 
 // ResponsesWSBackend connects HTTP authentication, diagnostics, and entry construction
