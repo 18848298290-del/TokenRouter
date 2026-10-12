@@ -2,6 +2,14 @@ package modelidentity
 
 import "github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 
+// Historical thinking blocks require the rules of the model receiving the
+// Anthropic body. Catalogue signature modes distinguish strict Anthropic
+// validation from upstreams that need unchanged passback, and unknown modes
+// leave the gateway's repair guards disabled.
+
+// Thinking protocol values tell request filters which signature handling the
+// resolved model family permits before forwarding historical blocks or retrying
+// rejected requests.
 const (
 	// ThinkingProtocolUnknown leaves thinking blocks intact when the protocol family is unknown.
 	ThinkingProtocolUnknown ThinkingProtocol = iota
@@ -18,10 +26,11 @@ const (
 // require the historical blocks to be replayed unchanged.
 type ThinkingProtocol int
 
-// ResolveThinkingProtocol infers thinking-block rules from the upstream model ID.
-//
-// Anthropic paths pass the mapped upstream model. Gemini Messages compatibility
-// retries pass the original client model because the filters modify the Anthropic body.
+// ResolveThinkingProtocol converts the catalogue's Anthropic-message signature
+// mode into a thinking policy. Anthropic forwarding supplies the mapped
+// upstream model, while Gemini Messages retry callers use the model parsed
+// from the Anthropic body they filter. Unrecognized signature modes return
+// ThinkingProtocolUnknown.
 func ResolveThinkingProtocol(modelID string) ThinkingProtocol {
 	rules := (modelcatalog.View{}).Resolve(modelcatalog.Target{Model: modelID, UpstreamProtocol: "anthropic_messages"}, modelcatalog.Attributes{}).Rules
 	switch rules.SignatureMode {
@@ -30,21 +39,26 @@ func ResolveThinkingProtocol(modelID string) ThinkingProtocol {
 	case "anthropic":
 		return ThinkingProtocolAnthropicStrict
 	default:
+		// Unrecognized signature modes retain historical blocks because the gateway
+		// has no catalogue rule authorizing strict Anthropic filtering for this model.
 		return ThinkingProtocolUnknown
 	}
 }
 
-// ShouldPreFilterThinkingBlocks reports whether invalid thinking blocks should be removed before forwarding.
+// ShouldPreFilterThinkingBlocks reports whether the resolved family uses strict
+// Anthropic signature validation.
 func ShouldPreFilterThinkingBlocks(modelID string) bool {
 	return ResolveThinkingProtocol(modelID) == ThinkingProtocolAnthropicStrict
 }
 
-// ShouldRectifyThinkingSignatureError reports whether the model permits signature repair after a 400 response.
+// ShouldRectifyThinkingSignatureError reports whether strict Anthropic rules
+// permit signature-error repair on retry.
 func ShouldRectifyThinkingSignatureError(modelID string) bool {
 	return ResolveThinkingProtocol(modelID) == ThinkingProtocolAnthropicStrict
 }
 
-// ShouldApplyRetryFilters reports whether retries may rewrite thinking and tool blocks.
+// ShouldApplyRetryFilters reports whether strict Anthropic rules permit
+// rewriting retry-sensitive thinking and tool blocks.
 func ShouldApplyRetryFilters(modelID string) bool {
 	return ResolveThinkingProtocol(modelID) == ThinkingProtocolAnthropicStrict
 }

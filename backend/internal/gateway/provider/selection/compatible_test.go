@@ -28,25 +28,33 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// noSlotSchedulerTestConcurrencyCache fails the test if auxiliary selection acquires a slot.
+// noSlotSchedulerTestConcurrencyCache records forbidden generation-slot
+// acquisition in auxiliary selection tests.
 type noSlotSchedulerTestConcurrencyCache struct {
-	schedulerTestConcurrencyCache
-	acquireCalls int
+	schedulerTestConcurrencyCache     // base compatible capacity fixture
+	acquireCalls                  int // forbidden acquisition call count
 }
 
+// groupAwareStubOpenAIProviderRepo supplies compatible records with explicit
+// group-membership filtering for isolation tests.
 type groupAwareStubOpenAIProviderRepo struct {
-	selectionProviderFixture
+	selectionProviderFixture // base prepared selection fixture
 }
 
-// openAICodexExtraListRepo detects unexpected writes during quota-read tests.
+// openAICodexExtraListRepo observes unexpected rate-limit writes during
+// compatible quota-read tests.
 type openAICodexExtraListRepo struct {
-	selectionProviderFixture
-	rateLimitCh chan time.Time
+	selectionProviderFixture // base configured provider fixture
+	// rateLimitCh is an optional write observation. SetRateLimited sends
+	// synchronously, so the test provides a buffer or receiver before permitting a
+	// write attempt.
+	rateLimitCh chan time.Time // observed reset-time write channel
 }
 
-// TestOpenAIGetSchedulableProvider_AppliesGrokFreeSoftGate checks the Free OAuth soft gate on compatible selection.
+// TestOpenAIGetSchedulableProvider_AppliesGrokFreeSoftGate reads an explicit
+// Free OAuth provider above its soft token threshold. Initial unknown usage
+// admits it, then the refreshed gate rejects the basic compatible lookup.
 func TestOpenAIGetSchedulableProvider_AppliesGrokFreeSoftGate(t *testing.T) {
-	// Exercise the basic selector's sticky lookup path.
 	cfg := &config.Config{}
 	cfg.Gateway.Grok.FreeQuotaSoftGateEnabled = true
 	cfg.Gateway.Grok.FreeQuotaTokenLimit = 500_000
@@ -72,6 +80,8 @@ func TestOpenAIGetSchedulableProvider_AppliesGrokFreeSoftGate(t *testing.T) {
 		NewAdvancedFreeQuota: factory,
 	}, cfg)
 
+	// Missing usage permits the first lookup while the tracked query refreshes.
+	// Later assertions wait for the observed quota gate before expecting rejection.
 	got, err := svc.getSchedulableProvider(context.Background(), provider.Record.ID)
 	require.NoError(t, err)
 	require.NotNil(t, got, "first sticky hit fail-opens while free-gate stats refresh")
@@ -82,6 +92,10 @@ func TestOpenAIGetSchedulableProvider_AppliesGrokFreeSoftGate(t *testing.T) {
 	}, 2*time.Second, 10*time.Millisecond, "OpenAI legacy sticky must apply free soft-gate after cache warm")
 }
 
+// TestOpenAISelectProviderWithLoadAwareness_FiltersUnschedulable gives the
+// higher-priority target an active global cooldown. Basic load-aware choice
+// returns the eligible backup, protecting provider scheduling state before
+// acquisition.
 func TestOpenAISelectProviderWithLoadAwareness_FiltersUnschedulable(t *testing.T) {
 	now := time.Now()
 	resetAt := now.Add(10 * time.Minute)
@@ -136,6 +150,10 @@ func TestOpenAISelectProviderWithLoadAwareness_FiltersUnschedulable(t *testing.T
 	}
 }
 
+// TestOpenAISelectProviderWithLoadAwareness_ImageRateLimitSkipsOnlyImageRequests
+// applies the image cooldown key to one target. Image intent chooses the backup
+// while text still uses that target, protecting request-specific model limit
+// scope.
 func TestOpenAISelectProviderWithLoadAwareness_ImageRateLimitSkipsOnlyImageRequests(t *testing.T) {
 	future := time.Now().Add(10 * time.Minute).Format(time.RFC3339)
 	groupID := int64(1)
@@ -196,6 +214,10 @@ func TestOpenAISelectProviderWithLoadAwareness_ImageRateLimitSkipsOnlyImageReque
 	}
 }
 
+// TestOpenAISelectProviderWithLoadAwareness_FiltersUnschedulableWhenNoConcurrencyService
+// removes capacity services while one target remains globally rate limited.
+// Basic selection still chooses the eligible backup, protecting status checks
+// on the non-batch path.
 func TestOpenAISelectProviderWithLoadAwareness_FiltersUnschedulableWhenNoConcurrencyService(t *testing.T) {
 	now := time.Now()
 	resetAt := now.Add(10 * time.Minute)
@@ -235,8 +257,6 @@ func TestOpenAISelectProviderWithLoadAwareness_FiltersUnschedulableWhenNoConcurr
 		Shared: Shared{},
 	}, nil)
 
-	// concurrencyService is nil, forcing the non-load-batch selection path.
-
 	selection, err := svc.SelectProviderWithLoadAwareness(context.Background(), &groupID, "", "gpt-5.2", nil)
 	if err != nil {
 		t.Fatalf("SelectProviderWithLoadAwareness error: %v", err)
@@ -252,6 +272,10 @@ func TestOpenAISelectProviderWithLoadAwareness_FiltersUnschedulableWhenNoConcurr
 	}
 }
 
+// TestOpenAISelectProviderForModelWithExclusions_StickyUnschedulableClearsSession
+// binds a disabled compatible target and supplies an eligible backup. Slot-free
+// choice deletes the stale affinity and records the backup binding for later
+// requests.
 func TestOpenAISelectProviderForModelWithExclusions_StickyUnschedulableClearsSession(t *testing.T) {
 	sessionHash := "session-1"
 	repo := selectionProviderFixture{
@@ -284,6 +308,10 @@ func TestOpenAISelectProviderForModelWithExclusions_StickyUnschedulableClearsSes
 	}
 }
 
+// TestOpenAISelectProviderForModelWithExclusions_StickyOutsideGroupClearsSession
+// binds a target outside the requested group beside a valid member. Selection
+// replaces that affinity with the member, protecting group membership during
+// sticky reuse.
 func TestOpenAISelectProviderForModelWithExclusions_StickyOutsideGroupClearsSession(t *testing.T) {
 	sessionHash := "session-outside-group"
 	groupID := int64(1001)
@@ -319,6 +347,10 @@ func TestOpenAISelectProviderForModelWithExclusions_StickyOutsideGroupClearsSess
 	}
 }
 
+// TestOpenAISelectProviderWithLoadAwareness_StickyUnschedulableClearsSession
+// binds a disabled target on the load-aware path. Selection returns the
+// eligible backup and replaces the stale session, protecting status checks
+// before sticky capacity use.
 func TestOpenAISelectProviderWithLoadAwareness_StickyUnschedulableClearsSession(t *testing.T) {
 	sessionHash := "session-2"
 	groupID := int64(1)
@@ -365,6 +397,10 @@ func TestOpenAISelectProviderWithLoadAwareness_StickyUnschedulableClearsSession(
 	}
 }
 
+// TestOpenAISelectProviderWithLoadAwareness_StickyOutsideGroupClearsSession
+// supplies an out-of-group binding while an admitted member has capacity.
+// Load-aware choice replaces that affinity with the member, protecting group
+// isolation during acquisition.
 func TestOpenAISelectProviderWithLoadAwareness_StickyOutsideGroupClearsSession(t *testing.T) {
 	sessionHash := "session-load-outside-group"
 	groupID := int64(1002)
@@ -409,6 +445,10 @@ func TestOpenAISelectProviderWithLoadAwareness_StickyOutsideGroupClearsSession(t
 	}
 }
 
+// TestOpenAISelectProviderForModelWithExclusions_NoModelSupport configures a
+// narrower model identity than the requested name. Slot-free selection returns
+// no provider and a model-support diagnostic, protecting unsupported-model
+// handling.
 func TestOpenAISelectProviderForModelWithExclusions_NoModelSupport(t *testing.T) {
 	repo := selectionProviderFixture{
 		providers: []gatewayprovider.ExecutionProvider{
@@ -442,6 +482,10 @@ func TestOpenAISelectProviderForModelWithExclusions_NoModelSupport(t *testing.T)
 	}
 }
 
+// TestOpenAISelectProviderWithLoadAwareness_LoadBatchErrorFallback injects a
+// batch-load read error with two eligible targets. Selection uses basic
+// priority ordering and binds the selected backup, protecting recovery from
+// unavailable load observations.
 func TestOpenAISelectProviderWithLoadAwareness_LoadBatchErrorFallback(t *testing.T) {
 	groupID := int64(1)
 	repo := selectionProviderFixture{
@@ -487,6 +531,10 @@ func TestOpenAISelectProviderWithLoadAwareness_LoadBatchErrorFallback(t *testing
 	}
 }
 
+// TestOpenAISelectProviderWithLoadAwareness_NoSlotFallbackWait gives an
+// eligible target a low observed load but failed slot acquisition. Selection
+// returns its wait plan, protecting queue fallback when observations and actual
+// capacity differ.
 func TestOpenAISelectProviderWithLoadAwareness_NoSlotFallbackWait(t *testing.T) {
 	groupID := int64(1)
 	repo := selectionProviderFixture{
@@ -524,6 +572,10 @@ func TestOpenAISelectProviderWithLoadAwareness_NoSlotFallbackWait(t *testing.T) 
 	}
 }
 
+// TestOpenAISelectProviderForModelWithExclusions_SetsStickyBinding supplies one
+// eligible target and an unbound session hash. Slot-free choice records that
+// provider under the compatible prefix, protecting affinity establishment after
+// selection.
 func TestOpenAISelectProviderForModelWithExclusions_SetsStickyBinding(t *testing.T) {
 	sessionHash := "bind"
 	repo := selectionProviderFixture{
@@ -550,6 +602,10 @@ func TestOpenAISelectProviderForModelWithExclusions_SetsStickyBinding(t *testing
 	}
 }
 
+// TestOpenAISelectProviderWithLoadAwareness_StickyWaitPlan fills the
+// session-bound provider's slot while its waiting count permits admission.
+// Selection returns a wait plan for that target, protecting short sticky
+// waiting before pool fallback.
 func TestOpenAISelectProviderWithLoadAwareness_StickyWaitPlan(t *testing.T) {
 	sessionHash := "sticky-wait"
 	groupID := int64(1)
@@ -588,6 +644,10 @@ func TestOpenAISelectProviderWithLoadAwareness_StickyWaitPlan(t *testing.T) {
 	}
 }
 
+// TestOpenAISelectProviderWithLoadAwareness_StickyCapacitySpilloverKeepsBinding
+// fills both the bound target's slot and its permitted queue. Another target
+// serves this request while the stored binding remains unchanged, protecting
+// temporary spillover affinity.
 func TestOpenAISelectProviderWithLoadAwareness_StickyCapacitySpilloverKeepsBinding(t *testing.T) {
 	sessionHash := "sticky-spillover"
 	groupID := int64(1)
@@ -634,6 +694,10 @@ func TestOpenAISelectProviderWithLoadAwareness_StickyCapacitySpilloverKeepsBindi
 	}
 }
 
+// TestOpenAISelectProviderWithLoadAwareness_PrefersLowerLoad supplies
+// equal-priority targets with different load observations. Basic load-aware
+// choice selects and binds the lower-load target, protecting candidate ordering
+// when capacity remains available.
 func TestOpenAISelectProviderWithLoadAwareness_PrefersLowerLoad(t *testing.T) {
 	groupID := int64(1)
 	repo := selectionProviderFixture{
@@ -672,6 +736,10 @@ func TestOpenAISelectProviderWithLoadAwareness_PrefersLowerLoad(t *testing.T) {
 	}
 }
 
+// TestOpenAISelectProviderForModelWithExclusions_StickyExcludedFallback marks
+// the session-bound provider excluded for this request. Selection chooses the
+// remaining eligible target, protecting request exclusions even when sticky
+// affinity is populated.
 func TestOpenAISelectProviderForModelWithExclusions_StickyExcludedFallback(t *testing.T) {
 	sessionHash := "excluded"
 	repo := selectionProviderFixture{
@@ -699,6 +767,10 @@ func TestOpenAISelectProviderForModelWithExclusions_StickyExcludedFallback(t *te
 	}
 }
 
+// TestOpenAISelectProviderForModelWithExclusions_KeepsCompatibleCrossPlatformSticky
+// binds an eligible Anthropic member in a compatible group beside OpenAI.
+// Selection returns the Anthropic member, which also has the higher priority
+// in this fixture's platform-neutral candidate pool.
 func TestOpenAISelectProviderForModelWithExclusions_KeepsCompatibleCrossPlatformSticky(t *testing.T) {
 	sessionHash := "non-openai"
 	repo := selectionProviderFixture{
@@ -725,6 +797,10 @@ func TestOpenAISelectProviderForModelWithExclusions_KeepsCompatibleCrossPlatform
 	}
 }
 
+// TestOpenAISelectProviderForModelWithExclusions_NoProviders supplies an empty
+// compatible pool and empty model input. Selection returns nil with the
+// no-provider diagnostic, protecting exhaustion even when model filtering is
+// absent.
 func TestOpenAISelectProviderForModelWithExclusions_NoProviders(t *testing.T) {
 	repo := selectionProviderFixture{providers: []gatewayprovider.ExecutionProvider{}}
 	cache := &schedulerTestGatewayCache{}
@@ -746,6 +822,9 @@ func TestOpenAISelectProviderForModelWithExclusions_NoProviders(t *testing.T) {
 	}
 }
 
+// TestOpenAISelectProviderWithLoadAwareness_NoCandidates makes the entire
+// configured pool currently rate limited. Selection returns an error and no
+// result, protecting eligibility exhaustion before a wait plan can be offered.
 func TestOpenAISelectProviderWithLoadAwareness_NoCandidates(t *testing.T) {
 	groupID := int64(1)
 	resetAt := time.Now().Add(1 * time.Hour)
@@ -776,6 +855,10 @@ func TestOpenAISelectProviderWithLoadAwareness_NoCandidates(t *testing.T) {
 	}
 }
 
+// TestOpenAISelectProviderWithLoadAwareness_AllFullWaitPlan supplies an
+// eligible pool reporting full load. Selection returns a wait plan, protecting
+// temporary capacity handling when the provider's hard qualification still
+// passes.
 func TestOpenAISelectProviderWithLoadAwareness_AllFullWaitPlan(t *testing.T) {
 	groupID := int64(1)
 	repo := selectionProviderFixture{
@@ -813,6 +896,10 @@ func TestOpenAISelectProviderWithLoadAwareness_AllFullWaitPlan(t *testing.T) {
 	}
 }
 
+// TestOpenAISelectProviderWithLoadAwareness_LoadBatchErrorNoAcquire combines
+// failed load observation with unavailable provider acquisition. Basic recovery
+// returns a wait plan, protecting capacity fallback after the batch path cannot
+// choose a slot.
 func TestOpenAISelectProviderWithLoadAwareness_LoadBatchErrorNoAcquire(t *testing.T) {
 	groupID := int64(1)
 	repo := selectionProviderFixture{
@@ -845,6 +932,10 @@ func TestOpenAISelectProviderWithLoadAwareness_LoadBatchErrorNoAcquire(t *testin
 	}
 }
 
+// TestOpenAISelectProviderWithLoadAwareness_MissingLoadInfo omits one eligible
+// provider from the batch observation map. Basic selection chooses that
+// provider under missing-load behavior, protecting optional observations during
+// otherwise valid candidate selection.
 func TestOpenAISelectProviderWithLoadAwareness_MissingLoadInfo(t *testing.T) {
 	groupID := int64(1)
 	repo := selectionProviderFixture{
@@ -880,6 +971,10 @@ func TestOpenAISelectProviderWithLoadAwareness_MissingLoadInfo(t *testing.T) {
 	}
 }
 
+// TestOpenAISelectProviderForModelWithExclusions_LeastRecentlyUsed supplies
+// equal-priority targets with different prior use timestamps. Slot-free
+// selection chooses the older record, protecting recency ordering after
+// priority ties.
 func TestOpenAISelectProviderForModelWithExclusions_LeastRecentlyUsed(t *testing.T) {
 	oldTime := time.Now().Add(-2 * time.Hour)
 	newTime := time.Now().Add(-1 * time.Hour)
@@ -905,6 +1000,10 @@ func TestOpenAISelectProviderForModelWithExclusions_LeastRecentlyUsed(t *testing
 	}
 }
 
+// TestOpenAISelectProviderWithLoadAwareness_PreferNeverUsed supplies
+// equal-priority, equal-load targets with present and missing use timestamps.
+// The never-used record is selected, protecting recency tie-breaking on basic
+// load-aware choice.
 func TestOpenAISelectProviderWithLoadAwareness_PreferNeverUsed(t *testing.T) {
 	groupID := int64(1)
 	lastUsed := time.Now().Add(-1 * time.Hour)
@@ -941,6 +1040,10 @@ func TestOpenAISelectProviderWithLoadAwareness_PreferNeverUsed(t *testing.T) {
 	}
 }
 
+// TestOpenAISelectProviderForModelWithExclusions_GroupMappedRestrictionRejectsEarly
+// maps the client name to a model absent from group policy. Selection returns a
+// group-restriction error, protecting early checks before provider eligibility
+// is resolved.
 func TestOpenAISelectProviderForModelWithExclusions_GroupMappedRestrictionRejectsEarly(t *testing.T) {
 	t.Parallel()
 
@@ -974,6 +1077,10 @@ func TestOpenAISelectProviderForModelWithExclusions_GroupMappedRestrictionReject
 	require.Contains(t, err.Error(), "group model restriction")
 }
 
+// TestOpenAISelectProviderForModelWithExclusions_UpstreamRestrictionSkipsDisallowedProvider
+// supplies two provider mappings but allows only the lower-priority final
+// identity. Selection chooses that provider, protecting upstream restrictions
+// after the group policy stage.
 func TestOpenAISelectProviderForModelWithExclusions_UpstreamRestrictionSkipsDisallowedProvider(t *testing.T) {
 	t.Parallel()
 
@@ -1013,6 +1120,10 @@ func TestOpenAISelectProviderForModelWithExclusions_UpstreamRestrictionSkipsDisa
 	require.Equal(t, int64(2), provider.Record.ID)
 }
 
+// TestOpenAISelectProviderForModelWithExclusions_StickyRestrictedUpstreamFallsBack
+// binds the provider whose final model is restricted. Selection clears its
+// affinity and chooses the allowed mapping, protecting group upstream policy
+// during sticky reuse.
 func TestOpenAISelectProviderForModelWithExclusions_StickyRestrictedUpstreamFallsBack(t *testing.T) {
 	t.Parallel()
 
@@ -1061,11 +1172,19 @@ func TestOpenAISelectProviderForModelWithExclusions_StickyRestrictedUpstreamFall
 	require.Equal(t, int64(2), cache.sessionBindings["openai:sticky-session"])
 }
 
+// AcquireProviderSlot counts forbidden auxiliary acquisition and returns a
+// fixture error. Tests expect this method to remain uncalled, making an
+// unexpected generation-slot request observable through both the error and
+// counter.
 func (c *noSlotSchedulerTestConcurrencyCache) AcquireProviderSlot(ctx context.Context, providerID int64, maxConcurrency int, requestID string) (bool, error) {
 	c.acquireCalls++
 	return false, errors.New("辅助选择不应申请并发槽")
 }
 
+// TestOpenAIGatewayService_SelectProviderForModelWithExclusions_AdvancedGroupSkipsConcurrencySlot
+// supplies an advanced group with an acquisition fixture that rejects every
+// call. Auxiliary selection returns a provider while the acquisition count
+// stays zero.
 func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_AdvancedGroupSkipsConcurrencySlot(t *testing.T) {
 	groupID := int64(10105)
 	ctx := requeststate.WithGroup(context.Background(), &routing.Group{
@@ -1098,6 +1217,10 @@ func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_AdvancedGroup
 	require.Zero(t, concurrencyCache.acquireCalls, "仅选提供商入口不得占用真实并发槽")
 }
 
+// TestOpenAIGatewayService_SelectProviderForTokenCount_DoesNotAcquireGenerationSlot
+// mixes platforms and endpoint capabilities with a full generation target.
+// Token counting selects the eligible requested-platform provider and makes no
+// generation-slot acquisition.
 func TestOpenAIGatewayService_SelectProviderForTokenCount_DoesNotAcquireGenerationSlot(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(10115)
@@ -1157,6 +1280,10 @@ func TestOpenAIGatewayService_SelectProviderForTokenCount_DoesNotAcquireGenerati
 	require.Empty(t, acquiredIDs, "token counting must not acquire a generation slot")
 }
 
+// TestOpenAIGatewayService_SelectProviderForModelWithExclusions_AutoPauseBy5hThreshold
+// places the preferred provider at its five-hour quota threshold. Selection
+// chooses the backup, protecting the threshold comparison before ordinary
+// priority selection.
 func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_AutoPauseBy5hThreshold(t *testing.T) {
 	ctx := context.Background()
 	primary := gatewayprovider.ExecutionProvider{
@@ -1186,6 +1313,10 @@ func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_AutoPauseBy5h
 	require.Equal(t, int64(35002), provider.Record.ID)
 }
 
+// TestOpenAIGatewayService_SelectProviderForModelWithExclusions_AllowsBelow5hThreshold
+// keeps the preferred provider below its five-hour quota threshold. Selection
+// retains that higher-priority target, protecting admission before the
+// configured pause limit is reached.
 func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_AllowsBelow5hThreshold(t *testing.T) {
 	ctx := context.Background()
 	primary := gatewayprovider.ExecutionProvider{
@@ -1215,6 +1346,10 @@ func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_AllowsBelow5h
 	require.Equal(t, int64(35101), provider.Record.ID)
 }
 
+// TestOpenAIGatewayService_SelectProviderForModelWithExclusions_AutoPauseBy7dThreshold
+// reaches the preferred target's seven-day utilization threshold while a backup
+// remains eligible. Selection returns that backup, protecting the independent
+// longer-window pause rule before ordinary priority choice.
 func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_AutoPauseBy7dThreshold(t *testing.T) {
 	ctx := context.Background()
 	primary := gatewayprovider.ExecutionProvider{
@@ -1244,6 +1379,10 @@ func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_AutoPauseBy7d
 	require.Equal(t, int64(35202), provider.Record.ID)
 }
 
+// TestOpenAIGatewayService_SelectProviderForModelWithExclusions_UnconfiguredThresholdKeepsLegacyBehavior
+// records high quota utilization with no effective pause threshold. The
+// preferred target stays selectable, protecting absent-configuration behavior
+// independently of raw usage percentages.
 func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_UnconfiguredThresholdKeepsLegacyBehavior(t *testing.T) {
 	ctx := context.Background()
 	primary := gatewayprovider.ExecutionProvider{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 35301, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey, Status: billing.StatusActive, Schedulable: true, Concurrency: 1, Priority: 0, Extra: map[string]any{"codex_5h_used_percent": 99.0, "codex_7d_used_percent": 99.0}}}
@@ -1259,6 +1398,10 @@ func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_UnconfiguredT
 	require.Equal(t, int64(35301), provider.Record.ID)
 }
 
+// TestOpenAIGatewayService_SelectProviderForModelWithExclusions_UsesGlobalDefaultThreshold
+// supplies a global pause threshold and no provider override. Selection rejects
+// the exhausted preferred target, protecting inheritance of request-captured
+// quota settings.
 func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_UsesGlobalDefaultThreshold(t *testing.T) {
 	ctx := gatewayprovider.WithQuotaAutoPauseSettings(context.Background(), ops.OpsOpenAIProviderQuotaAutoPauseSettings{DefaultThreshold5h: 0.95})
 	primary := gatewayprovider.ExecutionProvider{
@@ -1287,8 +1430,10 @@ func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_UsesGlobalDef
 	require.Equal(t, int64(35402), provider.Record.ID)
 }
 
-// TestOpenAIGatewayService_SelectProviderForModelWithExclusions_PerProviderDisableOverridesGlobalDefault checks that a provider's disable flag overrides the global threshold.
-// An unset provider threshold alone would inherit the global value.
+// TestOpenAIGatewayService_SelectProviderForModelWithExclusions_PerProviderDisableOverridesGlobalDefault
+// gives an exhausted target an explicit pause-disable flag. It remains selected
+// despite the global threshold, protecting per-provider override precedence for
+// that window.
 func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_PerProviderDisableOverridesGlobalDefault(t *testing.T) {
 	ctx := gatewayprovider.WithQuotaAutoPauseSettings(context.Background(), ops.OpsOpenAIProviderQuotaAutoPauseSettings{DefaultThreshold5h: 0.95})
 	// High usage and an unset threshold would normally trigger the global pause rule.
@@ -1320,7 +1465,10 @@ func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_PerProviderDi
 	require.Equal(t, int64(35701), provider.Record.ID)
 }
 
-// TestOpenAIGatewayService_SelectProviderForModelWithExclusions_PerWindowDisableScoped checks that disabling the 5h pause leaves the 7d pause active.
+// TestOpenAIGatewayService_SelectProviderForModelWithExclusions_PerWindowDisableScoped
+// disables five-hour pausing while seven-day utilization still exceeds its
+// threshold. Selection chooses the backup, protecting independent pause
+// configuration for each quota window.
 func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_PerWindowDisableScoped(t *testing.T) {
 	ctx := context.Background()
 	primary := gatewayprovider.ExecutionProvider{
@@ -1352,6 +1500,10 @@ func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_PerWindowDisa
 	require.Equal(t, int64(35802), provider.Record.ID, "7d auto-pause must still fire even though 5h is disabled")
 }
 
+// TestOpenAIGatewayService_SelectProviderForModelWithExclusions_StaleUsageWindowResetSkipsPause
+// gives an exhausted snapshot a reset time already passed. Selection permits
+// the preferred target, protecting stale-window admission that can obtain a
+// newer observation.
 func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_StaleUsageWindowResetSkipsPause(t *testing.T) {
 	ctx := context.Background()
 	// The reset time has passed, so cached usage is stale.
@@ -1384,6 +1536,10 @@ func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_StaleUsageWin
 	require.Equal(t, int64(35501), provider.Record.ID)
 }
 
+// TestOpenAIGatewayService_SelectProviderForModelWithExclusions_FreshUsageWindowStillPauses
+// gives the exhausted preferred target a future reset time. Selection chooses
+// the backup, protecting pause eligibility while that observed window remains
+// active.
 func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_FreshUsageWindowStillPauses(t *testing.T) {
 	ctx := context.Background()
 	// The exhausted window has not reset, so the provider remains paused.
@@ -1415,8 +1571,10 @@ func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_FreshUsageWin
 	require.Equal(t, int64(35602), provider.Record.ID)
 }
 
-// TestOpenAIGatewayService_SelectProviderForModelWithExclusions_StaleUsageSnapshotSkipsPause_Issue2994 checks that stale usage permits a probe request.
-// Snapshot age uses observation time; allowing traffic refreshes usage from response headers.
+// TestOpenAIGatewayService_SelectProviderForModelWithExclusions_StaleUsageSnapshotSkipsPause_Issue2994
+// keeps the quota reset in the future but ages the observation beyond validity.
+// Selection admits the preferred target, protecting snapshot-age handling
+// independently of reset time.
 func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_StaleUsageSnapshotSkipsPause_Issue2994(t *testing.T) {
 	ctx := context.Background()
 	primary := gatewayprovider.ExecutionProvider{
@@ -1450,8 +1608,10 @@ func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_StaleUsageSna
 	require.Equal(t, int64(35701), provider.Record.ID)
 }
 
-// TestOpenAIGatewayService_SelectProviderForModelWithExclusions_FreshExhaustedSnapshotStillPauses_Issue2994 checks that fresh exhausted quota still pauses the provider.
-// A fresh snapshot at 99% usage remains eligible for automatic pause.
+// TestOpenAIGatewayService_SelectProviderForModelWithExclusions_FreshExhaustedSnapshotStillPauses_Issue2994
+// supplies a fresh exhausted observation with a future reset. Selection rejects
+// the preferred target, protecting quota pausing when both snapshot and window
+// remain current.
 func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_FreshExhaustedSnapshotStillPauses_Issue2994(t *testing.T) {
 	ctx := context.Background()
 	primary := gatewayprovider.ExecutionProvider{
@@ -1484,6 +1644,10 @@ func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_FreshExhauste
 	require.Equal(t, int64(35802), provider.Record.ID)
 }
 
+// TestOpenAIGatewayService_SelectProviderForModelWithExclusions_SkipsFreshlyRateLimitedSnapshotCandidate
+// ranks a stale primary whose full snapshot record is now rate limited.
+// Selection chooses the backup, protecting fresh eligibility before returning
+// the target.
 func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_SkipsFreshlyRateLimitedSnapshotCandidate(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(10102)
@@ -1511,6 +1675,10 @@ func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_SkipsFreshlyR
 	require.Equal(t, int64(32002), provider.Record.ID)
 }
 
+// TestOpenAIGatewayService_SelectProviderForModelWithExclusions_ModelRateLimitOnlySkipsThatModel
+// cools down one model on the preferred provider. Requests for that model use
+// the backup while another model retains the primary, protecting model-specific
+// limit scope.
 func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_ModelRateLimitOnlySkipsThatModel(t *testing.T) {
 	ctx := context.Background()
 	resetAt := time.Now().Add(30 * time.Minute).Format(time.RFC3339)
@@ -1559,6 +1727,10 @@ func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_ModelRateLimi
 	require.Equal(t, int64(32101), provider.Record.ID)
 }
 
+// TestOpenAIGatewayService_SelectProviderForModelWithExclusions_DBRuntimeRecheckSkipsStaleCachedCandidate
+// leaves stale snapshots eligible while the database primary is rate limited.
+// Selection returns the database-valid backup, protecting full-record runtime
+// revalidation.
 func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_DBRuntimeRecheckSkipsStaleCachedCandidate(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(10104)
@@ -1589,6 +1761,10 @@ func TestOpenAIGatewayService_SelectProviderForModelWithExclusions_DBRuntimeRech
 	require.Equal(t, int64(34002), provider.Record.ID)
 }
 
+// TestOpenAIGatewayService_SelectProviderWithLoadAwareness_DBFreshGroupRecheckWaitsOnValidProvider
+// moves the primary into another database group while the valid backup is busy.
+// Selection waits on that backup, protecting membership revalidation before a
+// wait result.
 func TestOpenAIGatewayService_SelectProviderWithLoadAwareness_DBFreshGroupRecheckWaitsOnValidProvider(t *testing.T) {
 	ctx := context.Background()
 	groupID, otherGroupID := int64(10107), int64(10108)
@@ -1621,6 +1797,10 @@ func TestOpenAIGatewayService_SelectProviderWithLoadAwareness_DBFreshGroupRechec
 	require.Equal(t, staleBackup.Record.ID, selection.WaitPlan.ProviderID)
 }
 
+// TestOpenAIGatewayService_RecheckSelectedOpenAIProviderFromDB_KeepsGroupBoundary
+// supplies grouped and ungrouped records with absent or mismatched request
+// groups. Database recheck returns no target, protecting a positive matching
+// membership requirement.
 func TestOpenAIGatewayService_RecheckSelectedOpenAIProviderFromDB_KeepsGroupBoundary(t *testing.T) {
 	grouped := gatewayprovider.ExecutionProvider{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 34301, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey, Status: billing.StatusActive, Schedulable: true, Concurrency: 1, GroupIDs: []int64{99}}}
 	svc := newCompatibleSelectionForTest(CompatibleDependencies{
@@ -1656,6 +1836,10 @@ func TestOpenAIGatewayService_RecheckSelectedOpenAIProviderFromDB_KeepsGroupBoun
 	require.Nil(t, standardSvc.recheckSelectedOpenAIProviderFromDB(context.Background(), &ungrouped, nil, capability.PlatformOpenAI, "gpt-5.1", false, ""))
 }
 
+// TestOpenAIGatewayService_GetSchedulableProvider_ExhaustedCodexExtraDoesNotSetRateLimit
+// reads a target with exhausted quota extras and a future reset. Lookup returns
+// it with no persisted rate-limit write, protecting separation of quota
+// observations from runtime cooldown mutation.
 func TestOpenAIGatewayService_GetSchedulableProvider_ExhaustedCodexExtraDoesNotSetRateLimit(t *testing.T) {
 	resetAt := time.Now().Add(6 * 24 * time.Hour)
 	provider := gatewayprovider.ExecutionProvider{
@@ -1684,6 +1868,8 @@ func TestOpenAIGatewayService_GetSchedulableProvider_ExhaustedCodexExtraDoesNotS
 	require.NoError(t, err)
 	require.NotNil(t, fresh)
 	require.Nil(t, fresh.Record.RateLimitResetAt)
+	// Observe the buffered write channel for a bounded interval so an unexpected
+	// persistence callback remains visible even if the tested path schedules it asynchronously.
 	select {
 	case persisted := <-repo.rateLimitCh:
 		t.Fatalf("不应将已耗尽的 codex extra 提升为运行时限流状态: %v", persisted)
@@ -1691,6 +1877,10 @@ func TestOpenAIGatewayService_GetSchedulableProvider_ExhaustedCodexExtraDoesNotS
 	}
 }
 
+// TestOpenAIGatewayService_ListSchedulableProviders_FiltersThresholdBlockedProviders
+// supplies current quota observations above and below an effective scheduling
+// threshold. Candidate reads retain the eligible provider and record one health
+// pause action, protecting the bound threshold adapter.
 func TestOpenAIGatewayService_ListSchedulableProviders_FiltersThresholdBlockedProviders(t *testing.T) {
 	settingsRepo := settingstestkit.NewMemory()
 	settingsRepo.Data[providercore.SettingKeyProviderSchedulingThresholds] = `{"openai":85}`
@@ -1735,6 +1925,8 @@ func TestOpenAIGatewayService_ListSchedulableProviders_FiltersThresholdBlockedPr
 	require.Equal(t, 1, providerRepo.TempCalls)
 }
 
+// ListSchedulableByGroupIDAndPlatform returns fixture platform matches
+// belonging to the requested group.
 func (r groupAwareStubOpenAIProviderRepo) ListSchedulableByGroupIDAndPlatform(ctx context.Context, groupID int64, platform string) ([]gatewayprovider.ExecutionProvider, error) {
 	var result []gatewayprovider.ExecutionProvider
 	for _, acc := range r.providers {
@@ -1745,6 +1937,10 @@ func (r groupAwareStubOpenAIProviderRepo) ListSchedulableByGroupIDAndPlatform(ct
 	return result, nil
 }
 
+// ListSchedulableUngroupedByPlatform evaluates stored membership with a nil
+// request group. The membership predicate rejects all targets, so this
+// isolation fixture returns an empty pool for callers lacking an admitted
+// group.
 func (r groupAwareStubOpenAIProviderRepo) ListSchedulableUngroupedByPlatform(ctx context.Context, platform string) ([]gatewayprovider.ExecutionProvider, error) {
 	var result []gatewayprovider.ExecutionProvider
 	for _, acc := range r.providers {
@@ -1755,13 +1951,23 @@ func (r groupAwareStubOpenAIProviderRepo) ListSchedulableUngroupedByPlatform(ctx
 	return result, nil
 }
 
+// SetRateLimited sends the observed reset time synchronously to the optional
+// fixture channel. Nil channels are ignored; callers provide capacity or an
+// active receiver so an unexpected write can be observed without blocking the
+// test.
 func (r *openAICodexExtraListRepo) SetRateLimited(_ context.Context, _ int64, at time.Time) error {
 	if r.rateLimitCh != nil {
+		// This hook reports an unexpected persistence attempt to the waiting test.
+		// Use the caller-supplied buffer or receiver so observation can complete synchronously.
 		r.rateLimitCh <- at
 	}
 	return nil
 }
 
+// ListSchedulableByGroupIDAndPlatforms filters explicit membership and platform
+// before preparing target defaults. Returned values share source record
+// references, keeping membership isolation independent of fixture default
+// injection.
 func (r groupAwareStubOpenAIProviderRepo) ListSchedulableByGroupIDAndPlatforms(ctx context.Context, groupID int64, platforms []string) ([]gatewayprovider.ExecutionProvider, error) {
 	var result []gatewayprovider.ExecutionProvider
 	for i := range r.providers {
@@ -1773,6 +1979,9 @@ func (r groupAwareStubOpenAIProviderRepo) ListSchedulableByGroupIDAndPlatforms(c
 	return result, nil
 }
 
+// GetByID prepares a shallow matching target copy, then restores its supplied
+// GroupIDs. Missing targets return an error; referenced credentials and other
+// record data stay shared with the fixture source.
 func (r groupAwareStubOpenAIProviderRepo) GetByID(ctx context.Context, id int64) (*gatewayprovider.ExecutionProvider, error) {
 	for i := range r.providers {
 		if r.providers[i].Record.ID == id {
@@ -1786,6 +1995,10 @@ func (r groupAwareStubOpenAIProviderRepo) GetByID(ctx context.Context, id int64)
 	return nil, errors.New("provider not found")
 }
 
+// TestOpenAISelectProviderWithLoadAwareness_HydratesSelectedProviderFromSchedulerSnapshot
+// selects a lightweight candidate without its execution API key. The result
+// receives the full cached key, protecting credential hydration for
+// snapshot-only compatible selection.
 func TestOpenAISelectProviderWithLoadAwareness_HydratesSelectedProviderFromSchedulerSnapshot(t *testing.T) {
 	cache := &snapshotHydrationCache{
 		snapshot: []*gatewayprovider.ExecutionProvider{
@@ -1846,6 +2059,10 @@ func TestOpenAISelectProviderWithLoadAwareness_HydratesSelectedProviderFromSched
 	}
 }
 
+// TestOpenAINewAcquiredSelectionResult_ReleasesSlotWhenHydrationFails omits the
+// full record of an already acquired target. Preparation returns an error and
+// invokes release once, protecting capacity cleanup before exposing hydration
+// failure.
 func TestOpenAINewAcquiredSelectionResult_ReleasesSlotWhenHydrationFails(t *testing.T) {
 	cache := &snapshotHydrationCache{
 		providers: map[int64]*gatewayprovider.ExecutionProvider{},

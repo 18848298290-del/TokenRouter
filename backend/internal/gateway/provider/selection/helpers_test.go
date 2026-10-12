@@ -28,146 +28,230 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// The interface assertion keeps the Gemini group fixture aligned with the full
+// and lightweight reader methods required by selection.
 var _ Groups = (*mockGroupRepoForGemini)(nil)
 
+// grokFreeQuotaUsageRepoStub records quota usage reads and copies provider
+// statistics under its mutex.
 type grokFreeQuotaUsageRepoStub struct {
-	usage.UsageLogRepository
+	usage.UsageLogRepository // unused usage operations panic
 
-	mu      sync.Mutex
-	stats   map[int64]*usage.ProviderStats
-	err     error
-	calls   int
-	lastIDs []int64
-	start   time.Time
+	// mu serializes reads of stats and err with updates to calls, lastIDs, and
+	// start. Batch results copy each statistics value before releasing that query
+	// lock.
+	mu    sync.Mutex                     // batch query serialization
+	stats map[int64]*usage.ProviderStats // configured provider usage statistics
+	// err supplies the usage query failure. A nonnil value returns after the
+	// query trace updates and before any configured statistics are copied.
+	err     error     // configured usage-read failure
+	calls   int       // recorded batch query count
+	lastIDs []int64   // copied last requested identifiers
+	start   time.Time // requested usage-window start
 }
 
-// mockProviderRepoForPlatform supplies records for platform selection tests.
+// mockProviderRepoForPlatform supplies permissive platform candidates and
+// mutable full-read fixture targets.
 type mockProviderRepoForPlatform struct {
-	providers        []gatewayprovider.ExecutionProvider
-	providersByID    map[int64]*gatewayprovider.ExecutionProvider
-	listPlatformFunc func(ctx context.Context, platform string) ([]gatewayprovider.ExecutionProvider, error)
-	getByIDCalls     int
+	providers     []gatewayprovider.ExecutionProvider          // permissive platform candidate slice
+	providersByID map[int64]*gatewayprovider.ExecutionProvider // mutable full-read target pointers
+	// listPlatformFunc overrides default platform filtering when configured. Its
+	// returned pool and error let callers inject the scenario's candidate-read
+	// outcome.
+	listPlatformFunc func(ctx context.Context, platform string) ([]gatewayprovider.ExecutionProvider, error) // platform query override callback
+	getByIDCalls     int                                                                                     // full provider lookup count
 }
 
-// mockGatewayCacheForPlatform stores platform test session bindings and deletions.
+// mockGatewayCacheForPlatform records hash affinity and deletions for generic
+// platform selection tests.
 type mockGatewayCacheForPlatform struct {
-	sessionBindings map[string]int64
-	deletedSessions map[string]int
+	// sessionBindings supplies hash affinity and deletedSessions counts removal
+	// attempts for those hashes. Reads and writes share both maps; group and TTL
+	// inputs are ignored, so this fixture observes affinity and cleanup calls.
+	sessionBindings map[string]int64 // fixture hash provider affinity
+	deletedSessions map[string]int   // fixture hash removal counts
 }
 
+// mockGroupRepoForGateway supplies configured groups and counts full versus
+// lightweight reads.
 type mockGroupRepoForGateway struct {
-	groups           map[int64]*routing.Group
-	getByIDCalls     int
-	getByIDLiteCalls int
+	groups           map[int64]*routing.Group // configured group lookup pointers
+	getByIDCalls     int                      // full group lookup count
+	getByIDLiteCalls int                      // lightweight group lookup count
 }
 
+// mockConcurrencyCache supplies configurable slot outcomes and load
+// observations for generic scheduler tests.
 type mockConcurrencyCache struct {
-	acquireProviderCalls int
-	loadBatchCalls       int
-	acquireResults       map[int64]bool
-	loadBatchErr         error
-	loadMap              map[int64]*schedulercore.ProviderLoadInfo
-	waitCounts           map[int64]int
-	skipDefaultLoad      bool
+	acquireProviderCalls int            // provider acquisition attempt count
+	loadBatchCalls       int            // provider load batch count
+	acquireResults       map[int64]bool // configured provider admission outcomes
+	// loadBatchErr supplies the load query failure. A nonnil value returns
+	// after incrementing loadBatchCalls and before configured or idle observations
+	// are added to a result map.
+	loadBatchErr error // configured load-read failure
+	// loadMap and skipDefaultLoad control missing observations together:
+	// configured entries win, and a nonnil map with omission enabled keeps absent
+	// IDs missing for scheduler default handling.
+	loadMap         map[int64]*schedulercore.ProviderLoadInfo // shared provider load observations
+	waitCounts      map[int64]int                             // configured provider queue observations
+	skipDefaultLoad bool                                      // missing-load omission switch
 }
 
-// mockGroupRepoForGemini supplies groups and counts full and lightweight reads.
+// mockGroupRepoForGemini supplies configured groups, a default group, and
+// separate read counters.
 type mockGroupRepoForGemini struct {
-	groups           map[int64]*routing.Group
-	getByIDCalls     int
-	getByIDLiteCalls int
+	groups           map[int64]*routing.Group // configured Gemini group pointers
+	getByIDCalls     int                      // full Gemini lookup count
+	getByIDLiteCalls int                      // lightweight Gemini lookup count
 }
 
+// selectionFixtureGroups returns hydrated active groups for selectors using
+// default fixture admission.
 type selectionFixtureGroups struct{}
 
+// mixedGroupProviders filters explicit fixture memberships and records the
+// group IDs queried by selection.
 type mixedGroupProviders struct {
-	Providers
-	values       []gatewayprovider.ExecutionProvider
-	groupQueries []int64
+	Providers                                        // unused candidate reads panic
+	values       []gatewayprovider.ExecutionProvider // explicit group member fixtures
+	groupQueries []int64                             // requested group lookup trace
 }
 
+// openAISnapshotCacheStub separates cached candidate slices from full provider
+// reads in scheduler tests.
 type openAISnapshotCacheStub struct {
-	schedulercore.SnapshotCache
-	snapshotProviders []*gatewayprovider.ExecutionProvider
-	providersByID     map[int64]*gatewayprovider.ExecutionProvider
+	schedulercore.SnapshotCache // unused snapshot operations panic
+	// snapshotProviders and providersByID describe distinct reads: candidates can
+	// remain stale while later full lookups supply different records with the same
+	// persisted provider ID.
+	snapshotProviders []*gatewayprovider.ExecutionProvider         // cached candidate target pointers
+	providersByID     map[int64]*gatewayprovider.ExecutionProvider // full cached target pointers
 }
 
+// schedulerTestOpenAIProviderRepo supplies compatible fixture records and
+// prepares omitted selection defaults.
 type schedulerTestOpenAIProviderRepo struct {
-	gatewayprovider.ExecutionProviderStore
+	gatewayprovider.ExecutionProviderStore // unused provider operations panic
 
+	// providers holds the mutable compatible candidate slice.
 	providers []gatewayprovider.
 			ExecutionProvider
 }
 
+// schedulerGroupAwareOpenAIProviderRepo constrains compatible fixture queries
+// using existing stored group memberships.
 type schedulerGroupAwareOpenAIProviderRepo struct {
-	schedulerTestOpenAIProviderRepo
+	schedulerTestOpenAIProviderRepo // base compatible fixture reads
 }
 
+// schedulerTestConcurrencyCache supplies compatible slot and load observations
+// with optional acquisition/release traces.
 type schedulerTestConcurrencyCache struct {
-	schedulercore.ConcurrencyCache
-	loadBatchErr    error
-	loadMap         map[int64]*schedulercore.ProviderLoadInfo
-	acquireResults  map[int64]bool
-	waitCounts      map[int64]int
-	skipDefaultLoad bool
-	acquiredIDs     *[]int64
-	releasedIDs     *[]int64
+	schedulercore.ConcurrencyCache // unused capacity operations panic
+	// loadBatchErr supplies the compatible load query failure. A nonnil value
+	// returns before reading loadMap or constructing idle default observations.
+	loadBatchErr error // configured compatible load failure
+	// loadMap and skipDefaultLoad distinguish an absent observation from a fixture
+	// idle default. Explicit pointers remain shared; a nonnil map with omission
+	// enabled returns the configured subset.
+	loadMap         map[int64]*schedulercore.ProviderLoadInfo // shared compatible load observations
+	acquireResults  map[int64]bool                            // configured compatible slot outcomes
+	waitCounts      map[int64]int                             // configured compatible queue observations
+	skipDefaultLoad bool                                      // missing-load omission switch
+	// acquiredIDs and releasedIDs point to traces shared with the scenario.
+	// Value-receiver calls append through those pointers, keeping acquisition and
+	// cleanup order visible outside the cache copy.
+	acquiredIDs *[]int64 // shared acquired-provider trace pointer
+	releasedIDs *[]int64 // shared released-provider trace pointer
 }
 
+// schedulerTestGatewayCache records compatible hash bindings and deletion
+// attempts for picker tests.
 type schedulerTestGatewayCache struct {
-	sessionBindings map[string]int64
-	deletedSessions map[string]int
+	// sessionBindings stores compatible hash affinity, while deletedSessions
+	// traces best-effort removals. Both maps remain attached to this fixture as
+	// the picker updates and rereads the scenario's sticky decisions.
+	sessionBindings map[string]int64 // compatible hash provider bindings
+	deletedSessions map[string]int   // compatible hash removal counts
 }
 
+// advancedSchedulerSettingRepoStub supplies configured string settings while
+// rejecting unexpected store operations.
 type advancedSchedulerSettingRepoStub struct {
-	values map[string]string
+	values map[string]string // configured string setting inputs
 }
 
+// thresholdSelectionProviderRepoStub supplies platform candidates and embeds
+// health-mutation recording for threshold tests.
 type thresholdSelectionProviderRepoStub struct {
-	gatewaytestkit.HealthStoreRecorder
+	gatewaytestkit.HealthStoreRecorder // observed health mutation recorder
 
-	providers []gatewayprovider.ExecutionProvider
+	providers []gatewayprovider.ExecutionProvider // threshold platform candidate slice
 }
 
-// selectionProviderFixture implements the reads used by selection tests; unexpected embedded-interface calls fail.
+// selectionProviderFixture supplies prepared compatible records and leaves
+// unused reader operations unimplemented.
 type selectionProviderFixture struct {
-	Providers
-	providers []gatewayprovider.ExecutionProvider
+	Providers                                     // unused selection reads panic
+	providers []gatewayprovider.ExecutionProvider // prepared compatible fixture slice
 }
 
+// responseCacheFixture combines hash-affinity fixture operations with unused
+// response-cache methods for store tests.
 type responseCacheFixture struct {
-	stickyCacheFixture
-	session.GatewayCache
+	stickyCacheFixture   // hash affinity fixture operations
+	session.GatewayCache // unused response operations panic
 }
 
+// selectionConcurrencyFixture supplies compatible slot outcomes and load
+// observations for basic selection scenarios.
 type selectionConcurrencyFixture struct {
-	schedulercore.ConcurrencyCache
-	acquireResults  map[int64]bool
-	waitCounts      map[int64]int
-	loadBatchErr    error
-	loadMap         map[int64]*schedulercore.ProviderLoadInfo
-	skipDefaultLoad bool
+	schedulercore.ConcurrencyCache                // unused capacity operations panic
+	acquireResults                 map[int64]bool // configured basic slot outcomes
+	waitCounts                     map[int64]int  // configured basic queue observations
+	// loadBatchErr supplies the basic load query failure. A nonnil value
+	// returns before reading loadMap or constructing idle default observations.
+	loadBatchErr error // configured basic load failure
+	// loadMap and skipDefaultLoad control whether missing candidates receive idle
+	// values. Explicit observations retain their pointer identity, while omission
+	// requires both the switch and a nonnil map.
+	loadMap         map[int64]*schedulercore.ProviderLoadInfo // shared basic load observations
+	skipDefaultLoad bool                                      // missing-load omission switch
 }
 
-// hydrationProviderSource passes source read errors to provider hydration.
+// hydrationProviderSource converts repository execution targets to snapshot
+// records while retaining read errors.
 type hydrationProviderSource struct {
-	schedulercore.SnapshotProviderSource
-	source Providers
+	schedulercore.SnapshotProviderSource           // unused source operations panic
+	source                               Providers // repository hydration target reader
 }
 
-// snapshotHydrationCache supplies lightweight and full records to SnapshotService.
+// snapshotHydrationCache supplies separate lightweight candidates and full
+// records for provider hydration tests.
 type snapshotHydrationCache struct {
-	schedulercore.SnapshotCache
-	snapshot  []*gatewayprovider.ExecutionProvider
-	providers map[int64]*gatewayprovider.ExecutionProvider
+	schedulercore.SnapshotCache // unused hydration cache operations
+	// snapshot and providers separate lightweight candidate choice from later
+	// full-record hydration. Tests omit or change full records independently so
+	// selection completion can observe preparation failures.
+	snapshot  []*gatewayprovider.ExecutionProvider         // lightweight candidate target pointers
+	providers map[int64]*gatewayprovider.ExecutionProvider // full hydration target pointers
 }
 
-// stickyCacheFixture implements sticky lookups, writes, and cache misses for tests.
+// stickyCacheFixture stores hash bindings and deletion counts while accepting
+// expiration refresh calls.
 type stickyCacheFixture struct {
-	sessionBindings map[string]int64
-	deletedSessions map[string]int
+	// sessionBindings stores current and legacy hash affinity, and deletedSessions
+	// records removal calls for those keys. Expiration is unmodeled, so later
+	// reads continue to observe the fixture's stored provider until deletion.
+	sessionBindings map[string]int64 // stored hash provider affinity
+	deletedSessions map[string]int   // recorded hash removal counts
 }
 
+// availabilityRecords filters fixture records by supplied platforms, active
+// status, scheduling flag, and optional group. Group queries inspect
+// ProviderGroups, while includeGrouped allows grouped records in a request
+// lacking an explicit group.
 func (m *mockProviderRepoForPlatform) availabilityRecords(_ context.Context, groupID *int64, platforms []string, includeGrouped bool) ([]gatewayprovider.ExecutionProvider, error) {
 	platformSet := make(map[string]struct{}, len(platforms))
 	for _, platform := range platforms {
@@ -197,12 +281,17 @@ func (m *mockProviderRepoForPlatform) availabilityRecords(_ context.Context, gro
 	return result, nil
 }
 
-// isProviderRequestCompatible reduces the compatibility result to a boolean for assertions.
+// isProviderRequestCompatible returns the boolean part of the fixture's
+// compatible request eligibility result.
 func (s *compatiblePicker) isProviderRequestCompatible(ctx context.Context, provider *gatewayprovider.ExecutionProvider, req schedulercore.PlatformSelectionInput) bool {
 	compatible, _ := s.isProviderRequestCompatibleReason(ctx, provider, req)
 	return compatible
 }
 
+// diagnosticParameterDefaults returns scheduler defaults with supplied process
+// scoring and EWMA settings applied. Nil configuration retains built-ins;
+// positive Top-K overrides the count, while configured weights and normalized
+// sticky escape inputs replace their fixture defaults.
 func diagnosticParameterDefaults(cfg *config.Config) schedulercore.ParameterDefaults {
 	defaults := schedulercore.DefaultParameters()
 	if cfg == nil {
@@ -220,6 +309,10 @@ func diagnosticParameterDefaults(cfg *config.Config) schedulercore.ParameterDefa
 	return defaults
 }
 
+// GetProviderWindowStatsBatch records requested IDs and the window start under
+// the fixture mutex. Configured errors return before copying results, while
+// present statistics receive separate value pointers so readers do not mutate
+// fixture entries.
 func (r *grokFreeQuotaUsageRepoStub) GetProviderWindowStatsBatch(_ context.Context, providerIDs []int64, start time.Time) (map[int64]*usage.ProviderStats, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -239,6 +332,10 @@ func (r *grokFreeQuotaUsageRepoStub) GetProviderWindowStatsBatch(_ context.Conte
 	return result, nil
 }
 
+// newGrokFreeQuotaTestGate binds dynamic fixture settings, usage reads, and
+// tracked background submission to FreeQuotaGate. Callers supply cfg and a
+// background callback; the gate reads current Grok soft-budget options on each
+// observation.
 func newGrokFreeQuotaTestGate(cfg *config.Config, reader usage.UsageLogRepository, background func(string, func()) bool) *providercore.FreeQuotaGate {
 	return providercore.NewFreeQuotaGate(func() providercore.FreeQuotaOptions {
 		v := cfg.Gateway.Grok
@@ -248,6 +345,10 @@ func newGrokFreeQuotaTestGate(cfg *config.Config, reader usage.UsageLogRepositor
 	}, background, time.Now, nil, nil)
 }
 
+// healthyGrokOAuthGatewayTestProvider constructs an active Grok OAuth target
+// with fictitious credentials. Token expiry is beyond the refresh skew, and
+// callers supply the provider ID and access token needed by their eligibility
+// scenario.
 func healthyGrokOAuthGatewayTestProvider(id int64, token string) *gatewayprovider.ExecutionProvider {
 	return &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -268,10 +369,15 @@ func healthyGrokOAuthGatewayTestProvider(id int64, token string) *gatewayprovide
 	}
 }
 
-// freeQuotaFactoryForTest creates independent gate caches and waits for accepted refresh tasks during cleanup.
+// freeQuotaFactoryForTest returns a factory producing independent quota caches
+// from the same fixture readers. It tracks accepted refresh tasks and waits
+// during test cleanup, so background usage reads finish before fixture
+// teardown.
 func freeQuotaFactoryForTest(t *testing.T, cfg *config.Config, source usage.UsageLogRepository) func() *providercore.FreeQuotaGate {
 	var tasks sync.WaitGroup
 	t.Cleanup(tasks.Wait)
+	// Refresh queries outlive the initial gate check. Track every accepted task
+	// and wait during test cleanup so its fixture reads finish before teardown.
 	background := func(_ string, work func()) bool {
 		tasks.Go(func() { ; work() })
 		return true
@@ -279,11 +385,15 @@ func freeQuotaFactoryForTest(t *testing.T, cfg *config.Config, source usage.Usag
 	return func() *providercore.FreeQuotaGate { return newGrokFreeQuotaTestGate(cfg, source, background) }
 }
 
-// testConfig returns a zero-valued process configuration for tests.
+// testConfig returns a zero-valued process configuration for scenario-specific
+// fixture setup.
 func testConfig() *config.Config {
 	return &config.Config{}
 }
 
+// GetByID counts the lookup, prepares the stored fixture target, and returns
+// its pointer. Missing IDs return a provider-not-found error; fixture defaults
+// and referenced data remain visible to later reads.
 func (m *mockProviderRepoForPlatform) GetByID(ctx context.Context, id int64) (*gatewayprovider.ExecutionProvider, error) {
 	m.getByIDCalls++
 	if acc, ok := m.providersByID[id]; ok {
@@ -293,6 +403,9 @@ func (m *mockProviderRepoForPlatform) GetByID(ctx context.Context, id int64) (*g
 	return nil, errors.New("provider not found")
 }
 
+// ListSchedulableByPlatform invokes the configured query callback or filters
+// schedulable platform matches. The callback supplies its own pool or error,
+// while default results retain referenced data from the fixture records.
 func (m *mockProviderRepoForPlatform) ListSchedulableByPlatform(ctx context.Context, platform string) ([]gatewayprovider.ExecutionProvider, error) {
 	if m.listPlatformFunc != nil {
 		return m.listPlatformFunc(ctx, platform)
@@ -306,6 +419,10 @@ func (m *mockProviderRepoForPlatform) ListSchedulableByPlatform(ctx context.Cont
 	return result, nil
 }
 
+// ListSchedulableByGroupIDAndPlatform fills omitted memberships before the
+// fixture's platform query. Existing memberships remain present, and this
+// permissive query leaves actual group isolation to selector checks or a
+// group-aware fixture.
 func (m *mockProviderRepoForPlatform) ListSchedulableByGroupIDAndPlatform(ctx context.Context, groupID int64, platform string) ([]gatewayprovider.ExecutionProvider, error) {
 	for i := range m.providers {
 		prepareSelectionFixtureProvider(ctx, &m.providers[i], &groupID)
@@ -313,10 +430,14 @@ func (m *mockProviderRepoForPlatform) ListSchedulableByGroupIDAndPlatform(ctx co
 	return m.ListSchedulableByPlatform(ctx, platform)
 }
 
+// ListSchedulableByGroupID returns no targets for the unused platform-fixture
+// group query.
 func (m *mockProviderRepoForPlatform) ListSchedulableByGroupID(ctx context.Context, groupID int64) ([]gatewayprovider.ExecutionProvider, error) {
 	return nil, nil
 }
 
+// ListSchedulableByPlatforms returns schedulable fixture values in the supplied
+// platform set.
 func (m *mockProviderRepoForPlatform) ListSchedulableByPlatforms(ctx context.Context, platforms []string) ([]gatewayprovider.ExecutionProvider, error) {
 	var result []gatewayprovider.ExecutionProvider
 	platformSet := make(map[string]bool)
@@ -331,6 +452,10 @@ func (m *mockProviderRepoForPlatform) ListSchedulableByPlatforms(ctx context.Con
 	return result, nil
 }
 
+// ListSchedulableByGroupIDAndPlatforms fills omitted memberships before
+// multi-platform fixture lookup. The underlying permissive query retains
+// existing group metadata, allowing selector tests to provide their own
+// membership filtering scenarios.
 func (m *mockProviderRepoForPlatform) ListSchedulableByGroupIDAndPlatforms(ctx context.Context, groupID int64, platforms []string) ([]gatewayprovider.ExecutionProvider, error) {
 	for i := range m.providers {
 		prepareSelectionFixtureProvider(ctx, &m.providers[i], &groupID)
@@ -338,14 +463,25 @@ func (m *mockProviderRepoForPlatform) ListSchedulableByGroupIDAndPlatforms(ctx c
 	return m.ListSchedulableByPlatforms(ctx, platforms)
 }
 
+// ListSchedulableUngroupedByPlatform delegates the permissive platform fixture
+// query with memberships retained. Tests requiring ungrouped isolation use
+// selector validation or a group-aware reader, while this method supplies the
+// same configured platform records.
 func (m *mockProviderRepoForPlatform) ListSchedulableUngroupedByPlatform(ctx context.Context, platform string) ([]gatewayprovider.ExecutionProvider, error) {
 	return m.ListSchedulableByPlatform(ctx, platform)
 }
 
+// ListSchedulableUngroupedByPlatforms delegates permissive multi-platform
+// lookup with fixture memberships retained. Its returned record values continue
+// to share referenced data from the source pool used by these platform
+// scenarios.
 func (m *mockProviderRepoForPlatform) ListSchedulableUngroupedByPlatforms(ctx context.Context, platforms []string) ([]gatewayprovider.ExecutionProvider, error) {
 	return m.ListSchedulableByPlatforms(ctx, platforms)
 }
 
+// GetSessionProviderID reads a hash-keyed platform fixture binding. Group and
+// TTL behavior are unmodeled, and missing hashes return a cache-miss error for
+// the selector's sticky lookup handling.
 func (m *mockGatewayCacheForPlatform) GetSessionProviderID(ctx context.Context, groupID int64, sessionHash string) (int64, error) {
 	if id, ok := m.sessionBindings[sessionHash]; ok {
 		return id, nil
@@ -353,6 +489,9 @@ func (m *mockGatewayCacheForPlatform) GetSessionProviderID(ctx context.Context, 
 	return 0, errors.New("not found")
 }
 
+// SetSessionProviderID stores a provider by hash, allocating fixture storage
+// when needed. Group and TTL inputs are ignored, so subsequent assertions
+// inspect affinity rather than a real expiring Redis binding.
 func (m *mockGatewayCacheForPlatform) SetSessionProviderID(ctx context.Context, groupID int64, sessionHash string, providerID int64, ttl time.Duration) error {
 	if m.sessionBindings == nil {
 		m.sessionBindings = make(map[string]int64)
@@ -361,10 +500,17 @@ func (m *mockGatewayCacheForPlatform) SetSessionProviderID(ctx context.Context, 
 	return nil
 }
 
+// RefreshSessionTTL accepts refresh for the platform fixture and returns
+// success. Bindings have no expiration state here, leaving stored affinity
+// available for subsequent provider-choice and cleanup assertions.
 func (m *mockGatewayCacheForPlatform) RefreshSessionTTL(ctx context.Context, groupID int64, sessionHash string, ttl time.Duration) error {
 	return nil
 }
 
+// DeleteSessionProviderID records a hash deletion attempt and removes its
+// fixture binding. A nil binding map returns immediately; once present,
+// repeated removals remain visible in deletedSessions even after the binding is
+// absent.
 func (m *mockGatewayCacheForPlatform) DeleteSessionProviderID(ctx context.Context, groupID int64, sessionHash string) error {
 	if m.sessionBindings == nil {
 		return nil
@@ -377,6 +523,9 @@ func (m *mockGatewayCacheForPlatform) DeleteSessionProviderID(ctx context.Contex
 	return nil
 }
 
+// GetByID increments the full-group read count and returns the configured group
+// pointer. Missing IDs return ErrGroupNotFound, allowing admission and
+// optional-setting paths to distinguish absent fixture groups.
 func (m *mockGroupRepoForGateway) GetByID(ctx context.Context, id int64) (*routing.Group, error) {
 	m.getByIDCalls++
 	if g, ok := m.groups[id]; ok {
@@ -385,6 +534,9 @@ func (m *mockGroupRepoForGateway) GetByID(ctx context.Context, id int64) (*routi
 	return nil, routing.ErrGroupNotFound
 }
 
+// GetByIDLite increments the lightweight read count and returns the configured
+// group pointer. Missing IDs return ErrGroupNotFound, keeping its admission
+// lookup trace separate from full scheduling-setting reads.
 func (m *mockGroupRepoForGateway) GetByIDLite(ctx context.Context, id int64) (*routing.Group, error) {
 	m.getByIDLiteCalls++
 	if g, ok := m.groups[id]; ok {
@@ -393,6 +545,9 @@ func (m *mockGroupRepoForGateway) GetByIDLite(ctx context.Context, id int64) (*r
 	return nil, routing.ErrGroupNotFound
 }
 
+// AcquireProviderSlot counts acquisition calls and returns a configured
+// provider outcome when present. Missing outcomes admit the request, while the
+// fixture leaves real occupancy and request-ID ownership unmodeled.
 func (m *mockConcurrencyCache) AcquireProviderSlot(ctx context.Context, providerID int64, maxConcurrency int, requestID string) (bool, error) {
 	m.acquireProviderCalls++
 	if m.acquireResults != nil {
@@ -403,14 +558,24 @@ func (m *mockConcurrencyCache) AcquireProviderSlot(ctx context.Context, provider
 	return true, nil
 }
 
+// ReleaseProviderSlot accepts generic fixture cleanup and returns success.
+// Acquisition outcomes come from the configured map, so releasing does not
+// change occupancy or cause a later attempt's configured outcome to differ.
 func (m *mockConcurrencyCache) ReleaseProviderSlot(ctx context.Context, providerID int64, requestID string) error {
 	return nil
 }
 
+// GetProviderConcurrency returns zero occupancy for the generic concurrency
+// fixture. Slot outcomes and load observations are configured separately, so
+// this individual read supplies the idle default requested by callers.
 func (m *mockConcurrencyCache) GetProviderConcurrency(ctx context.Context, providerID int64) (int, error) {
 	return 0, nil
 }
 
+// GetProviderConcurrencyBatch builds a new map reporting zero occupancy for
+// each requested provider. Its values are fixture defaults, while independently
+// configured acquisition and load observations drive the scenario's capacity
+// decisions.
 func (m *mockConcurrencyCache) GetProviderConcurrencyBatch(ctx context.Context, providerIDs []int64) (map[int64]int, error) {
 	result := make(map[int64]int, len(providerIDs))
 	for _, providerID := range providerIDs {
@@ -419,14 +584,24 @@ func (m *mockConcurrencyCache) GetProviderConcurrencyBatch(ctx context.Context, 
 	return result, nil
 }
 
+// IncrementProviderWaitCount accepts fixture queue admission and returns true.
+// Waiting observations are supplied separately through waitCounts, so this call
+// leaves those configured values available unchanged for later selection
+// assertions.
 func (m *mockConcurrencyCache) IncrementProviderWaitCount(ctx context.Context, providerID int64, maxWait int) (bool, error) {
 	return true, nil
 }
 
+// DecrementProviderWaitCount accepts provider queue cleanup and returns success
+// in the fixture. Its waiting counts are configured observations, so cleanup
+// does not mutate the map used by later selection checks.
 func (m *mockConcurrencyCache) DecrementProviderWaitCount(ctx context.Context, providerID int64) error {
 	return nil
 }
 
+// GetProviderWaitingCount returns a configured provider wait count or zero when
+// missing. The value is a scenario observation and stays independent of fixture
+// queue increment or decrement calls.
 func (m *mockConcurrencyCache) GetProviderWaitingCount(ctx context.Context, providerID int64) (int, error) {
 	if m.waitCounts != nil {
 		if count, ok := m.waitCounts[providerID]; ok {
@@ -436,26 +611,46 @@ func (m *mockConcurrencyCache) GetProviderWaitingCount(ctx context.Context, prov
 	return 0, nil
 }
 
+// AcquireUserSlot returns admission success for the generic fixture's
+// user-capacity path. User occupancy is unmodeled here, letting
+// provider-selection tests concentrate on their configured provider slot and
+// load observations.
 func (m *mockConcurrencyCache) AcquireUserSlot(ctx context.Context, userID int64, maxConcurrency int, requestID string) (bool, error) {
 	return true, nil
 }
 
+// ReleaseUserSlot accepts user cleanup and returns success in the fixture. User
+// acquisition always admits, and this method retains no occupancy or request
+// ownership state for subsequent selection calls.
 func (m *mockConcurrencyCache) ReleaseUserSlot(ctx context.Context, userID int64, requestID string) error {
 	return nil
 }
 
+// GetUserConcurrency returns zero user occupancy for this fixture. User slots
+// always admit here, while provider acquisition and load observations are
+// configured separately for the scenario's capacity checks.
 func (m *mockConcurrencyCache) GetUserConcurrency(ctx context.Context, userID int64) (int, error) {
 	return 0, nil
 }
 
+// IncrementWaitCount returns successful user-wait admission for this fixture.
+// It stores no user queue state, allowing provider-selection scenarios to
+// concentrate on their configured provider load and waiting observations.
 func (m *mockConcurrencyCache) IncrementWaitCount(ctx context.Context, userID int64, maxWait int) (bool, error) {
 	return true, nil
 }
 
+// DecrementWaitCount accepts user-wait cleanup and returns success in this
+// fixture. User queue state is unmodeled, so the call leaves provider waiting
+// observations available for subsequent selection assertions.
 func (m *mockConcurrencyCache) DecrementWaitCount(ctx context.Context, userID int64) error {
 	return nil
 }
 
+// GetProvidersLoadBatch counts batch reads and returns configured load errors
+// before observations. Explicit load entries take precedence; skipDefaultLoad
+// with a configured map omits missing IDs, while other missing entries receive
+// new idle load values.
 func (m *mockConcurrencyCache) GetProvidersLoadBatch(ctx context.Context, providers []schedulercore.ProviderWithConcurrency) (map[int64]*schedulercore.ProviderLoadInfo, error) {
 	m.loadBatchCalls++
 	if m.loadBatchErr != nil {
@@ -487,18 +682,32 @@ func (m *mockConcurrencyCache) GetProvidersLoadBatch(ctx context.Context, provid
 	return result, nil
 }
 
+// CleanupExpiredProviderSlots accepts maintenance for the requested provider
+// and returns success. The fixture stores configured slot outcomes rather than
+// expiring request ownership, so cleanup does not change later scenario
+// admission.
 func (m *mockConcurrencyCache) CleanupExpiredProviderSlots(ctx context.Context, providerID int64) error {
 	return nil
 }
 
+// CleanupExpiredProviderSlotKeys accepts fixture-wide slot-key maintenance and
+// returns success. Expiring request keys are unmodeled, leaving configured
+// provider outcomes and load observations available unchanged for the selection
+// scenario.
 func (m *mockConcurrencyCache) CleanupExpiredProviderSlotKeys(ctx context.Context) error {
 	return nil
 }
 
+// CleanupStaleProcessSlots accepts process-slot maintenance and returns success
+// in this fixture. Process ownership is unmodeled, so the requested prefix does
+// not alter the provider outcomes used by later selection calls.
 func (m *mockConcurrencyCache) CleanupStaleProcessSlots(ctx context.Context, activeRequestPrefix string) error {
 	return nil
 }
 
+// GetUsersLoadBatch returns newly allocated idle load values for requested user
+// IDs. The fixture supplies zero occupancy, waiting, and load rate, keeping
+// user load independent of configured provider-capacity scenarios.
 func (m *mockConcurrencyCache) GetUsersLoadBatch(ctx context.Context, users []schedulercore.UserWithConcurrency) (map[int64]*schedulercore.UserLoadInfo, error) {
 	result := make(map[int64]*schedulercore.UserLoadInfo, len(users))
 	for _, user := range users {
@@ -512,6 +721,9 @@ func (m *mockConcurrencyCache) GetUsersLoadBatch(ctx context.Context, users []sc
 	return result, nil
 }
 
+// GetByID counts the full Gemini group lookup and returns configured pointers
+// first. Unconfigured ID one receives a fresh active hydrated default group,
+// while other missing IDs return a group-not-found error.
 func (m *mockGroupRepoForGemini) GetByID(ctx context.Context, id int64) (*routing.Group, error) {
 	m.getByIDCalls++
 	if g, ok := m.groups[id]; ok {
@@ -523,6 +735,9 @@ func (m *mockGroupRepoForGemini) GetByID(ctx context.Context, id int64) (*routin
 	return nil, errors.New("group not found")
 }
 
+// GetByIDLite counts lightweight Gemini group lookup separately from full
+// reads. Configured pointers win, ID one receives the default active hydrated
+// group, and other missing IDs return a lookup error.
 func (m *mockGroupRepoForGemini) GetByIDLite(ctx context.Context, id int64) (*routing.Group, error) {
 	m.getByIDLiteCalls++
 	if g, ok := m.groups[id]; ok {
@@ -534,7 +749,10 @@ func (m *mockGroupRepoForGemini) GetByIDLite(ctx context.Context, id int64) (*ro
 	return nil, errors.New("group not found")
 }
 
-// newGenericSelectionForTest creates a generic selector with fixture dependencies and configuration.
+// newGenericSelectionForTest fills missing fixture group and parameter readers
+// before constructing Generic. Supplied dependencies remain bound, while
+// selectionOptionsForTest translates optional process settings into the
+// selector's startup value.
 func newGenericSelectionForTest(deps GenericDependencies, cfg *config.Config) *Generic {
 	if deps.Groups == nil {
 		deps.Groups = selectionFixtureGroups{}
@@ -545,6 +763,10 @@ func newGenericSelectionForTest(deps GenericDependencies, cfg *config.Config) *G
 	return NewGeneric(deps, selectionOptionsForTest(cfg))
 }
 
+// selectionOptionsForTest starts with DefaultOptions and applies the supplied
+// scheduling and sticky migration configuration. Nil configuration retains
+// defaults; positive session and response TTL seconds convert to durations
+// while nonpositive values keep default lifetimes.
 func selectionOptionsForTest(cfg *config.Config) Options {
 	options := DefaultOptions()
 	if cfg == nil {
@@ -557,15 +779,20 @@ func selectionOptionsForTest(cfg *config.Config) Options {
 	options.ReadLegacySticky = ws.SessionHashReadOldFallback
 	options.WriteLegacySticky = ws.SessionHashDualWriteOld
 	if ws.StickySessionTTLSeconds > 0 {
+		// Startup configuration stores seconds; sticky callers consume a duration.
 		options.StickyTTL = time.Duration(ws.StickySessionTTLSeconds) * time.Second
 	}
 	if ws.StickyResponseIDTTLSeconds > 0 {
+		// Response affinity configuration stores seconds; bindings consume a duration.
 		options.ResponseTTL = time.Duration(ws.StickyResponseIDTTLSeconds) * time.Second
 	}
 	return options
 }
 
-// newGeminiSelectionForTest creates a Gemini selector with fixture dependencies.
+// newGeminiSelectionForTest supplies default fixture groups and parameters when
+// omitted before constructing Gemini. Existing quota, snapshot, feedback, and
+// cache bindings remain supplied by the scenario, with startup options
+// translated from cfg.
 func newGeminiSelectionForTest(deps GeminiDependencies, cfg *config.Config) *Gemini {
 	if deps.Groups == nil {
 		deps.Groups = selectionFixtureGroups{}
@@ -576,12 +803,14 @@ func newGeminiSelectionForTest(deps GeminiDependencies, cfg *config.Config) *Gem
 	return NewGemini(deps, selectionOptionsForTest(cfg))
 }
 
-// newCompatibleSelectionForTest supplies fixture parameters for compatible selection.
+// newCompatibleSelectionForTest supplies omitted fixture group, response-state,
+// and parameter dependencies before constructing Compatible. Response state
+// uses a GatewayCache when the bound sticky cache implements it; scenario-owned
+// dependencies remain attached.
 func newCompatibleSelectionForTest(deps CompatibleDependencies, cfg *config.Config) *Compatible {
 	if deps.Groups == nil {
 		deps.Groups = selectionFixtureGroups{}
 	}
-	// Create one response-ownership store for this selector when none is supplied.
 	if deps.Responses == nil {
 		cache, _ := deps.Cache.(session.GatewayCache)
 		deps.Responses = session.NewOpenAIWSStateStore(cache, gatewayprovider.LogOpenAIWSModeInfo)
@@ -592,7 +821,9 @@ func newCompatibleSelectionForTest(deps CompatibleDependencies, cfg *config.Conf
 	return NewCompatible(deps, selectionOptionsForTest(cfg))
 }
 
-// selectionFixtureGroupID returns the request's group ID or the selection fixture's default.
+// selectionFixtureGroupID returns a fixture group from request state, candidate
+// policy, or captured selection input in that order. If none is available it
+// allocates ID one, keeping default fixture targets in the same namespace.
 func selectionFixtureGroupID(ctx context.Context) *int64 {
 	if group, ok := requeststate.GroupFromContext(ctx); ok && group != nil {
 		return &group.ID
@@ -607,7 +838,15 @@ func selectionFixtureGroupID(ctx context.Context) *int64 {
 	return &id
 }
 
-// prepareSelectionFixtureProvider fills provider defaults, group membership, and model scope for selection tests.
+// prepareSelectionFixtureProvider fills omitted authentication, credential,
+// whitelist, and membership data on a fixture target. Nil input is ignored, and
+// existing model-whitelist or membership fields retain their supplied values.
+//
+// An empty resolved mapping supplies wildcard scope; otherwise its target names
+// populate the omitted whitelist. A missing group pointer comes from
+// selectionFixtureGroupID, and membership is added only when both stored
+// representations are empty. This makes permissive fixtures usable by current
+// selection rules while preserving deliberately restrictive scenario inputs.
 func prepareSelectionFixtureProvider(ctx context.Context, value *gatewayprovider.ExecutionProvider, groupID *int64) {
 	if value == nil {
 		return
@@ -638,14 +877,21 @@ func prepareSelectionFixtureProvider(ctx context.Context, value *gatewayprovider
 	}
 }
 
+// GetByID returns a fresh active hydrated fixture group for the requested
+// identifier.
 func (selectionFixtureGroups) GetByID(_ context.Context, id int64) (*routing.Group, error) {
 	return &routing.Group{ID: id, Hydrated: true, Status: routing.StatusActive}, nil
 }
 
+// GetByIDLite delegates construction of the default active hydrated fixture
+// group.
 func (s selectionFixtureGroups) GetByIDLite(ctx context.Context, id int64) (*routing.Group, error) {
 	return s.GetByID(ctx, id)
 }
 
+// GetByID returns a value copy of the matching mixed-group target with
+// referenced record data retained. Missing identifiers return an error, leaving
+// explicit fixture memberships unchanged for admission checks.
 func (s *mixedGroupProviders) GetByID(_ context.Context, id int64) (*gatewayprovider.ExecutionProvider, error) {
 	for i := range s.values {
 		if s.values[i].Record.ID == id {
@@ -656,6 +902,10 @@ func (s *mixedGroupProviders) GetByID(_ context.Context, id int64) (*gatewayprov
 	return nil, fmt.Errorf("provider %d missing", id)
 }
 
+// ListSchedulableByGroupIDAndPlatforms records the queried group and returns
+// explicit members in the supplied platform set. It filters GroupIDs rather
+// than provider runtime state, so scenarios provide the intended eligibility
+// fields.
 func (s *mixedGroupProviders) ListSchedulableByGroupIDAndPlatforms(_ context.Context, group int64, platforms []string) ([]gatewayprovider.ExecutionProvider, error) {
 	s.groupQueries = append(s.groupQueries, group)
 	var out []gatewayprovider.ExecutionProvider
@@ -667,15 +917,24 @@ func (s *mixedGroupProviders) ListSchedulableByGroupIDAndPlatforms(_ context.Con
 	return out, nil
 }
 
+// ListSchedulableByGroupIDAndPlatform delegates explicit fixture membership
+// lookup for one requested platform.
 func (s *mixedGroupProviders) ListSchedulableByGroupIDAndPlatform(ctx context.Context, group int64, platform string) ([]gatewayprovider.ExecutionProvider, error) {
 	return s.ListSchedulableByGroupIDAndPlatforms(ctx, group, []string{platform})
 }
 
+// mixedGroupProvider constructs an active API Key execution target in the
+// supplied group with one allowed model. It uses fictitious credentials,
+// concurrency two, and gateway record copying for cross-platform selection
+// fixtures.
 func mixedGroupProvider(id int64, platform, model string, groupID int64) gatewayprovider.ExecutionProvider {
 	value := providercore.Record{ID: id, Platform: platform, Type: capability.ProviderTypeAPIKey, Status: providercore.StatusActive, Schedulable: true, Concurrency: 2, GroupIDs: []int64{groupID}, Credentials: map[string]any{"api_key": "test-key", "model_whitelist": []string{model}}}
 	return *gatewayprovider.NewExecutionProvider(&value)
 }
 
+// withAdvancedSchedulerTestGroup installs an active hydrated advanced group
+// snapshot under the supplied ID. It uses requeststate's snapshot copying,
+// allowing picker fixtures to enter advanced mode with current admission data.
 func withAdvancedSchedulerTestGroup(ctx context.Context, groupID int64) context.Context {
 	return requeststate.WithGroup(ctx, &routing.Group{
 		ID: groupID,
@@ -686,6 +945,9 @@ func withAdvancedSchedulerTestGroup(ctx context.Context, groupID int64) context.
 	})
 }
 
+// GetByID prepares defaults on the matching compatible fixture element and
+// returns its pointer. Missing IDs return a provider-not-found error; the value
+// receiver still shares the source slice's element storage.
 func (r schedulerTestOpenAIProviderRepo) GetByID(ctx context.Context, id int64) (*gatewayprovider.ExecutionProvider, error) {
 	for i := range r.providers {
 		if r.providers[i].Record.ID == id {
@@ -696,10 +958,14 @@ func (r schedulerTestOpenAIProviderRepo) GetByID(ctx context.Context, id int64) 
 	return nil, errors.New("provider not found")
 }
 
+// ListSchedulableByGroupIDAndPlatform delegates compatible fixture group lookup
+// for a single platform.
 func (r schedulerTestOpenAIProviderRepo) ListSchedulableByGroupIDAndPlatform(ctx context.Context, groupID int64, platform string) ([]gatewayprovider.ExecutionProvider, error) {
 	return r.ListSchedulableByGroupIDAndPlatforms(ctx, groupID, []string{platform})
 }
 
+// ListSchedulableByPlatform returns compatible fixture values matching the
+// requested platform.
 func (r schedulerTestOpenAIProviderRepo) ListSchedulableByPlatform(ctx context.Context, platform string) ([]gatewayprovider.ExecutionProvider, error) {
 	var result []gatewayprovider.ExecutionProvider
 	for _, acc := range r.providers {
@@ -710,11 +976,18 @@ func (r schedulerTestOpenAIProviderRepo) ListSchedulableByPlatform(ctx context.C
 	return result, nil
 }
 
+// ListSchedulableUngroupedByPlatform delegates the permissive compatible
+// platform query with memberships retained. This fixture lets selection enforce
+// group rules, while tests needing strict repository isolation use the
+// group-aware variant.
 func (r schedulerTestOpenAIProviderRepo) ListSchedulableUngroupedByPlatform(ctx context.Context, platform string) ([]gatewayprovider.ExecutionProvider, error) {
 	return r.ListSchedulableByPlatform(ctx, platform)
 }
 
-// ListModelAvailabilityCandidates filters diagnosis candidates by stored configuration.
+// ListModelAvailabilityCandidates filters active schedulable fixture records by
+// platform and optional group membership. Missing request groups with
+// includeGrouped false fail the membership predicate, yielding an empty
+// diagnosis pool under this fixture.
 func (r schedulerTestOpenAIProviderRepo) ListModelAvailabilityCandidates(_ context.Context, groupID *int64, platforms []string, includeGrouped bool) ([]gatewayprovider.ExecutionProvider, error) {
 	platformSet := make(map[string]struct{}, len(platforms))
 	for _, platform := range platforms {
@@ -736,6 +1009,8 @@ func (r schedulerTestOpenAIProviderRepo) ListModelAvailabilityCandidates(_ conte
 	return result, nil
 }
 
+// ListSchedulableByGroupIDAndPlatform returns platform matches carrying the
+// requested stored group membership.
 func (r schedulerGroupAwareOpenAIProviderRepo) ListSchedulableByGroupIDAndPlatform(ctx context.Context, groupID int64, platform string) ([]gatewayprovider.ExecutionProvider, error) {
 	var result []gatewayprovider.ExecutionProvider
 	for _, acc := range r.providers {
@@ -746,6 +1021,9 @@ func (r schedulerGroupAwareOpenAIProviderRepo) ListSchedulableByGroupIDAndPlatfo
 	return result, nil
 }
 
+// ListSchedulableUngroupedByPlatform uses the membership predicate with a nil
+// requested group. That predicate rejects every candidate, so this group-aware
+// fixture produces an empty ungrouped pool for selection.
 func (r schedulerGroupAwareOpenAIProviderRepo) ListSchedulableUngroupedByPlatform(ctx context.Context, platform string) ([]gatewayprovider.ExecutionProvider, error) {
 	var result []gatewayprovider.ExecutionProvider
 	for _, acc := range r.providers {
@@ -756,6 +1034,9 @@ func (r schedulerGroupAwareOpenAIProviderRepo) ListSchedulableUngroupedByPlatfor
 	return result, nil
 }
 
+// AcquireProviderSlot appends the provider to an optional acquisition trace
+// before returning its configured outcome. Missing entries admit, and trace
+// slice pointers retain updates even through this fixture's value receiver.
 func (c schedulerTestConcurrencyCache) AcquireProviderSlot(ctx context.Context, providerID int64, maxConcurrency int, requestID string) (bool, error) {
 	if c.acquiredIDs != nil {
 		*c.acquiredIDs = append(*c.acquiredIDs, providerID)
@@ -768,6 +1049,9 @@ func (c schedulerTestConcurrencyCache) AcquireProviderSlot(ctx context.Context, 
 	return true, nil
 }
 
+// ReleaseProviderSlot appends the provider to an optional release trace and
+// returns success. It keeps configured acquisition outcomes unchanged, allowing
+// tests to observe cleanup order independently of later slot decisions.
 func (c schedulerTestConcurrencyCache) ReleaseProviderSlot(ctx context.Context, providerID int64, requestID string) error {
 	if c.releasedIDs != nil {
 		*c.releasedIDs = append(*c.releasedIDs, providerID)
@@ -775,6 +1059,10 @@ func (c schedulerTestConcurrencyCache) ReleaseProviderSlot(ctx context.Context, 
 	return nil
 }
 
+// GetProvidersLoadBatch returns configured compatible load errors or a new
+// observation map. Explicit load pointers remain shared; skipDefaultLoad with a
+// configured map omits missing IDs, while other misses receive idle default
+// entries.
 func (c schedulerTestConcurrencyCache) GetProvidersLoadBatch(ctx context.Context, providers []schedulercore.ProviderWithConcurrency) (map[int64]*schedulercore.ProviderLoadInfo, error) {
 	if c.loadBatchErr != nil {
 		return nil, c.loadBatchErr
@@ -800,6 +1088,9 @@ func (c schedulerTestConcurrencyCache) GetProvidersLoadBatch(ctx context.Context
 	return out, nil
 }
 
+// GetProviderWaitingCount returns the configured compatible wait observation or
+// zero for a missing entry. Its value is independent of acquisition outcomes,
+// so tests can model slot and queue capacity separately.
 func (c schedulerTestConcurrencyCache) GetProviderWaitingCount(ctx context.Context, providerID int64) (int, error) {
 	if c.waitCounts != nil {
 		if count, ok := c.waitCounts[providerID]; ok {
@@ -809,6 +1100,9 @@ func (c schedulerTestConcurrencyCache) GetProviderWaitingCount(ctx context.Conte
 	return 0, nil
 }
 
+// GetSessionProviderID reads a compatible hash binding from the fixture map.
+// Missing hashes return a cache-miss error; group and TTL inputs are unused
+// because these tests inspect selection affinity.
 func (c *schedulerTestGatewayCache) GetSessionProviderID(ctx context.Context, groupID int64, sessionHash string) (int64, error) {
 	if id, ok := c.sessionBindings[sessionHash]; ok {
 		return id, nil
@@ -816,6 +1110,9 @@ func (c *schedulerTestGatewayCache) GetSessionProviderID(ctx context.Context, gr
 	return 0, errors.New("not found")
 }
 
+// SetSessionProviderID writes a compatible hash binding, allocating fixture
+// storage if needed. Group and TTL inputs are ignored, so subsequent calls
+// observe the provider chosen by the scenario without expiration.
 func (c *schedulerTestGatewayCache) SetSessionProviderID(ctx context.Context, groupID int64, sessionHash string, providerID int64, ttl time.Duration) error {
 	if c.sessionBindings == nil {
 		c.sessionBindings = make(map[string]int64)
@@ -824,10 +1121,16 @@ func (c *schedulerTestGatewayCache) SetSessionProviderID(ctx context.Context, gr
 	return nil
 }
 
+// RefreshSessionTTL accepts compatible fixture refresh calls and returns
+// success. The fixture stores provider affinity with no expiration state,
+// leaving the binding available for later selection and migration assertions.
 func (c *schedulerTestGatewayCache) RefreshSessionTTL(ctx context.Context, groupID int64, sessionHash string, ttl time.Duration) error {
 	return nil
 }
 
+// DeleteSessionProviderID removes a compatible hash binding and records the
+// removal attempt. Nil binding maps are ignored; populated maps retain deletion
+// counts even when a repeated call finds no binding.
 func (c *schedulerTestGatewayCache) DeleteSessionProviderID(ctx context.Context, groupID int64, sessionHash string) error {
 	if c.sessionBindings == nil {
 		return nil
@@ -840,24 +1143,38 @@ func (c *schedulerTestGatewayCache) DeleteSessionProviderID(ctx context.Context,
 	return nil
 }
 
+// SetSessionOwnerGroupID returns successful owner admission for the compatible
+// cache fixture. It stores no owner state, allowing selection tests to bind
+// sessions without exercising persistence of user/source ownership.
 func (c *schedulerTestGatewayCache) SetSessionOwnerGroupID(ctx context.Context, userID int64, source, sessionHash string, groupID int64, ttl time.Duration) (bool, error) {
 	return true, nil
 }
 
+// GetSessionOwnerGroupID returns a cache-miss error because the fixture retains
+// no owner records. Callers using ownership lookup therefore observe an absent
+// binding even after its permissive owner write.
 func (c *schedulerTestGatewayCache) GetSessionOwnerGroupID(ctx context.Context, userID int64, source, sessionHash string) (int64, error) {
 	return 0, errors.New("not found")
 }
 
+// RefreshSessionOwnerTTL accepts owner expiration refresh and returns success
+// in this fixture. Owner records are unmodeled, so this optional cleanup
+// operation changes no affinity or ownership result returned to selection.
 func (c *schedulerTestGatewayCache) RefreshSessionOwnerTTL(ctx context.Context, userID int64, source, sessionHash string, ttl time.Duration) error {
 	return nil
 }
 
+// newSchedulerTestOpenAIWSV2Config configures a one-hour response affinity
+// lifetime for compatible fixtures.
 func newSchedulerTestOpenAIWSV2Config() *config.Config {
 	cfg := &config.Config{}
 	cfg.Gateway.OpenAIWS.StickyResponseIDTTLSeconds = 3600
 	return cfg
 }
 
+// Get wraps the fixture's configured string value in a Setting record. Missing
+// keys retain GetValue's error, letting runtime parameter readers apply their
+// defaults for unavailable settings.
 func (s *advancedSchedulerSettingRepoStub) Get(ctx context.Context, key string) (*settings.Setting, error) {
 	value, err := s.GetValue(ctx, key)
 	if err != nil {
@@ -866,6 +1183,9 @@ func (s *advancedSchedulerSettingRepoStub) Get(ctx context.Context, key string) 
 	return &settings.Setting{Key: key, Value: value}, nil
 }
 
+// GetValue returns a configured string setting or ErrSettingNotFound for absent
+// fixture storage or keys. Callers can distinguish missing configuration from
+// supplied empty or false values during runtime policy resolution.
 func (s *advancedSchedulerSettingRepoStub) GetValue(_ context.Context, key string) (string, error) {
 	if s == nil || s.values == nil {
 		return "", settings.ErrSettingNotFound
@@ -877,13 +1197,22 @@ func (s *advancedSchedulerSettingRepoStub) GetValue(_ context.Context, key strin
 	return value, nil
 }
 
+// Set panics when a test requests a setting write through this read fixture.
+// Scenario setup mutates values directly, so a call identifies an unexpected
+// service-side persistence operation.
 func (s *advancedSchedulerSettingRepoStub) Set(context.Context, string, string) error {
 	panic("unexpected call to Set")
 }
 
+// GetMultiple returns the configured subset of requested settings using
+// background-context GetValue reads. Missing keys are omitted so runtime
+// settings can retain defaults; the fixture does not propagate those lookup
+// errors.
 func (s *advancedSchedulerSettingRepoStub) GetMultiple(_ context.Context, keys []string) (map[string]string, error) {
 	result := make(map[string]string, len(keys))
 	for _, key := range keys {
+		// Missing runtime settings leave their configured defaults in effect. Omit
+		// those keys from this batch result rather than failing every setting read.
 		if value, err := s.GetValue(context.Background(), key); err == nil {
 			result[key] = value
 		}
@@ -891,18 +1220,31 @@ func (s *advancedSchedulerSettingRepoStub) GetMultiple(_ context.Context, keys [
 	return result, nil
 }
 
+// SetMultiple panics when a test requests batch setting persistence through
+// this read fixture. Scenarios configure values directly, making any invocation
+// an observable unexpected store operation.
 func (s *advancedSchedulerSettingRepoStub) SetMultiple(context.Context, map[string]string) error {
 	panic("unexpected call to SetMultiple")
 }
 
+// GetAll panics for unbounded setting reads through this fixture. Runtime
+// parameter tests use key-specific reads, so invoking this method identifies an
+// unexpected dependency call in the tested path.
 func (s *advancedSchedulerSettingRepoStub) GetAll(context.Context) (map[string]string, error) {
 	panic("unexpected call to GetAll")
 }
 
+// Delete panics when setting deletion reaches this read fixture. Tests retain
+// their configured values directly, allowing an unexpected service-side
+// mutation to fail at the attempted dependency call.
 func (s *advancedSchedulerSettingRepoStub) Delete(context.Context, string) error {
 	panic("unexpected call to Delete")
 }
 
+// newAdvancedSchedulerParametersForTest binds process defaults with optional
+// sticky-weight and subscription-priority setting strings. Its compatibility
+// string is ignored; the first two variadic values populate those respective
+// keys when nonempty.
 func newAdvancedSchedulerParametersForTest(cfg *config.Config, _ string, values ...string) *schedulercore.Parameters {
 	repo := &advancedSchedulerSettingRepoStub{
 		values: map[string]string{},
@@ -916,6 +1258,10 @@ func newAdvancedSchedulerParametersForTest(cfg *config.Config, _ string, values 
 	return schedulercore.NewParameters(schedulercore.NewSettingsRuntime(schedulercore.Diagnostics{}), repo, diagnosticParameterDefaults(cfg))
 }
 
+// GetSnapshot wraps shallow fixture target copies after preparing omitted
+// defaults for the bucket group. Empty candidates return no available snapshot;
+// populated results retain referenced record data until the snapshot reader
+// decodes them.
 func (s *openAISnapshotCacheStub) GetSnapshot(ctx context.Context, bucket schedulercore.SchedulerBucket) ([]schedulercore.SnapshotProvider, bool, error) {
 	if len(s.snapshotProviders) == 0 {
 		return nil, false, nil
@@ -932,6 +1278,9 @@ func (s *openAISnapshotCacheStub) GetSnapshot(ctx context.Context, bucket schedu
 	return out, true, nil
 }
 
+// GetProvider wraps a shallow copy of the configured full target after
+// preparing defaults. Missing maps or records return nil without error, and
+// referenced credential data remains shared with the fixture input.
 func (s *openAISnapshotCacheStub) GetProvider(ctx context.Context, providerID int64) (schedulercore.SnapshotProvider, error) {
 	if s.providersByID == nil {
 		return nil, nil
@@ -945,6 +1294,10 @@ func (s *openAISnapshotCacheStub) GetProvider(ctx context.Context, providerID in
 	return codec.WrapRecord(&cloned.Record), nil
 }
 
+// ListSchedulableByGroupIDAndPlatforms prepares omitted defaults on source
+// elements before filtering platform and group membership. Returned record
+// values share referenced data with the source slice, retaining fixture updates
+// for later reads.
 func (r schedulerTestOpenAIProviderRepo) ListSchedulableByGroupIDAndPlatforms(ctx context.Context, groupID int64, platforms []string) ([]gatewayprovider.ExecutionProvider, error) {
 	var result []gatewayprovider.ExecutionProvider
 	for i := range r.providers {
@@ -956,6 +1309,9 @@ func (r schedulerTestOpenAIProviderRepo) ListSchedulableByGroupIDAndPlatforms(ct
 	return result, nil
 }
 
+// ListSchedulableByGroupIDAndPlatforms checks explicit membership and platform
+// before preparing the compatible fixture element. It therefore retains group
+// isolation even when omitted defaults would otherwise add fixture membership.
 func (r schedulerGroupAwareOpenAIProviderRepo) ListSchedulableByGroupIDAndPlatforms(ctx context.Context, groupID int64, platforms []string) ([]gatewayprovider.ExecutionProvider, error) {
 	var result []gatewayprovider.ExecutionProvider
 	for i := range r.providers {
@@ -967,6 +1323,9 @@ func (r schedulerGroupAwareOpenAIProviderRepo) ListSchedulableByGroupIDAndPlatfo
 	return result, nil
 }
 
+// GetByID prepares a shallow matching target copy while restoring its supplied
+// GroupIDs afterward. Missing records return an error, and references other
+// than the copied struct fields remain shared with the source fixture.
 func (r schedulerGroupAwareOpenAIProviderRepo) GetByID(ctx context.Context, id int64) (*gatewayprovider.ExecutionProvider, error) {
 	for i := range r.providers {
 		if r.providers[i].Record.ID == id {
@@ -980,6 +1339,8 @@ func (r schedulerGroupAwareOpenAIProviderRepo) GetByID(ctx context.Context, id i
 	return nil, errors.New("provider not found")
 }
 
+// ListSchedulableByPlatform returns threshold fixture targets matching the
+// supplied platform.
 func (r *thresholdSelectionProviderRepoStub) ListSchedulableByPlatform(_ context.Context, platform string) ([]gatewayprovider.ExecutionProvider, error) {
 	filtered := make([]gatewayprovider.ExecutionProvider, 0, len(r.providers))
 	for _, provider := range r.providers {
@@ -990,15 +1351,25 @@ func (r *thresholdSelectionProviderRepoStub) ListSchedulableByPlatform(_ context
 	return filtered, nil
 }
 
+// ListSchedulableByGroupIDAndPlatform delegates threshold fixture lookup and
+// ignores the requested group. Platform matches remain permissive so the health
+// threshold scenario controls candidate membership independently of its
+// mutation recorder.
 func (r *thresholdSelectionProviderRepoStub) ListSchedulableByGroupIDAndPlatform(ctx context.Context, _ int64, platform string) ([]gatewayprovider.ExecutionProvider, error) {
 	return r.ListSchedulableByPlatform(ctx, platform)
 }
 
+// ListSchedulableUngroupedByPlatform delegates the threshold fixture's
+// permissive platform lookup. It retains stored memberships and candidate
+// state, letting the scenario observe scheduling-threshold effects through the
+// embedded health recorder.
 func (r *thresholdSelectionProviderRepoStub) ListSchedulableUngroupedByPlatform(ctx context.Context, platform string) ([]gatewayprovider.ExecutionProvider, error) {
 	return r.ListSchedulableByPlatform(ctx, platform)
 }
 
-// responseSelectionOptions sets session and response TTLs while leaving scheduling waits at zero.
+// responseSelectionOptions sets one-hour session and response lifetimes for
+// continuation fixtures. Scheduling wait fields remain zero until a scenario
+// supplies them, allowing tests to choose the specific queue behavior.
 func responseSelectionOptions() Options {
 	return Options{
 		StickyTTL:   time.Hour,
@@ -1006,10 +1377,15 @@ func responseSelectionOptions() Options {
 	}
 }
 
+// responseSelectionParameters constructs default scoring settings for
+// response-chain fixture selectors.
 func responseSelectionParameters() *schedulercore.Parameters {
 	return schedulercore.NewParameters(schedulercore.NewSettingsRuntime(schedulercore.Diagnostics{}), nil, diagnosticParameterDefaults(&config.Config{}))
 }
 
+// GetByID prepares the matching fixture target in the shared source slice and
+// returns its pointer. Missing identifiers return an error, and supplied
+// defaults remain visible to later queries despite the value receiver.
 func (r selectionProviderFixture) GetByID(ctx context.Context, id int64) (*gatewayprovider.ExecutionProvider, error) {
 	for i := range r.providers {
 		if r.providers[i].Record.ID == id {
@@ -1020,6 +1396,8 @@ func (r selectionProviderFixture) GetByID(ctx context.Context, id int64) (*gatew
 	return nil, errors.New("provider not found")
 }
 
+// ListSchedulableByPlatform returns fixture values matching the requested
+// compatible platform.
 func (r selectionProviderFixture) ListSchedulableByPlatform(_ context.Context, platform string) ([]gatewayprovider.ExecutionProvider, error) {
 	var out []gatewayprovider.ExecutionProvider
 	for _, value := range r.providers {
@@ -1030,30 +1408,52 @@ func (r selectionProviderFixture) ListSchedulableByPlatform(_ context.Context, p
 	return out, nil
 }
 
+// ListSchedulableByGroupIDAndPlatform delegates prepared fixture membership
+// lookup for one platform.
 func (r selectionProviderFixture) ListSchedulableByGroupIDAndPlatform(ctx context.Context, groupID int64, platform string) ([]gatewayprovider.ExecutionProvider, error) {
 	return r.ListSchedulableByGroupIDAndPlatforms(ctx, groupID, []string{platform})
 }
 
+// ListSchedulableUngroupedByPlatform delegates the permissive compatible
+// platform query and retains supplied memberships. Selector admission checks or
+// a stricter group-aware source establish isolation in scenarios requiring it.
 func (r selectionProviderFixture) ListSchedulableUngroupedByPlatform(ctx context.Context, platform string) ([]gatewayprovider.ExecutionProvider, error) {
 	return r.ListSchedulableByPlatform(ctx, platform)
 }
 
+// GetSessionProviderID delegates continuation affinity reads to the embedded
+// sticky fixture. Group inputs remain ignored, missing hashes return the same
+// cache-miss error, and current/legacy key selection stays with the scheduler
+// caller.
 func (c *responseCacheFixture) GetSessionProviderID(ctx context.Context, group int64, key string) (int64, error) {
 	return c.stickyCacheFixture.GetSessionProviderID(ctx, group, key)
 }
 
+// SetSessionProviderID delegates continuation affinity writes to the embedded
+// sticky fixture. The provider is stored by hash with group and TTL inputs
+// ignored, so later assertions can inspect selection affinity.
 func (c *responseCacheFixture) SetSessionProviderID(ctx context.Context, group int64, key string, id int64, ttl time.Duration) error {
 	return c.stickyCacheFixture.SetSessionProviderID(ctx, group, key, id, ttl)
 }
 
+// RefreshSessionTTL delegates continuation expiration calls to the embedded
+// sticky fixture. That cache retains hash bindings and returns success without
+// expiration state, leaving the stored provider available to subsequent
+// selection reads.
 func (c *responseCacheFixture) RefreshSessionTTL(ctx context.Context, group int64, key string, ttl time.Duration) error {
 	return c.stickyCacheFixture.RefreshSessionTTL(ctx, group, key, ttl)
 }
 
+// DeleteSessionProviderID delegates continuation binding cleanup to the
+// embedded sticky fixture. Populated binding maps record the hash's deletion
+// attempt and remove affinity, while a nil binding map is ignored.
 func (c *responseCacheFixture) DeleteSessionProviderID(ctx context.Context, group int64, key string) error {
 	return c.stickyCacheFixture.DeleteSessionProviderID(ctx, group, key)
 }
 
+// AcquireProviderSlot returns the fixture's configured provider outcome or
+// admits when missing. The inputs for max concurrency and request ID are
+// ignored, leaving capacity behavior under scenario control.
 func (c selectionConcurrencyFixture) AcquireProviderSlot(_ context.Context, id int64, _ int, _ string) (bool, error) {
 	if value, ok := c.acquireResults[id]; ok {
 		return value, nil
@@ -1061,14 +1461,25 @@ func (c selectionConcurrencyFixture) AcquireProviderSlot(_ context.Context, id i
 	return true, nil
 }
 
+// ReleaseProviderSlot accepts continuation fixture capacity cleanup and returns
+// success. Configured acquisition outcomes remain the source of later
+// decisions, with no real occupancy state changed by this fixture call.
 func (selectionConcurrencyFixture) ReleaseProviderSlot(context.Context, int64, string) error {
 	return nil
 }
 
+// GetProviderWaitingCount returns the fixture map's count, using zero for a
+// missing provider. This request-local fixture observation is independent of
+// configured slot outcomes, allowing scenarios to vary queue capacity
+// separately.
 func (c selectionConcurrencyFixture) GetProviderWaitingCount(_ context.Context, id int64) (int, error) {
 	return c.waitCounts[id], nil
 }
 
+// GetProvidersLoadBatch returns configured errors or compatible candidate
+// observations. Explicit load pointers are shared; skipDefaultLoad with a map
+// retains only known IDs, while other missing candidates receive new idle
+// loads.
 func (c selectionConcurrencyFixture) GetProvidersLoadBatch(ctx context.Context, providers []schedulercore.ProviderWithConcurrency) (map[int64]*schedulercore.ProviderLoadInfo, error) {
 	if c.loadBatchErr != nil {
 		return nil, c.loadBatchErr
@@ -1094,11 +1505,18 @@ func (c selectionConcurrencyFixture) GetProvidersLoadBatch(ctx context.Context, 
 	return out, nil
 }
 
+// GetByID wraps the source execution record for scheduler snapshot hydration.
+// It retains the source error with the converted record, allowing preparation
+// tests to exercise full-read failures.
 func (s hydrationProviderSource) GetByID(ctx context.Context, id int64) (schedulercore.SnapshotProvider, error) {
 	value, err := s.source.GetByID(ctx, id)
 	return codec.WrapRecord(gatewayprovider.ExecutionRecord(value)), err
 }
 
+// ListSchedulableByGroupIDAndPlatforms prepares omitted defaults before
+// filtering requested platform and group membership. Returned values share
+// referenced record data with the fixture source, letting full reads observe
+// the same scenario configuration.
 func (r selectionProviderFixture) ListSchedulableByGroupIDAndPlatforms(ctx context.Context, groupID int64, platforms []string) ([]gatewayprovider.ExecutionProvider, error) {
 	var result []gatewayprovider.ExecutionProvider
 	for i := range r.providers {
@@ -1110,6 +1528,10 @@ func (r selectionProviderFixture) ListSchedulableByGroupIDAndPlatforms(ctx conte
 	return result, nil
 }
 
+// GetSnapshot prepares default membership on the fixture's candidate pointers
+// before wrapping them for a present snapshot. Callers retain those source
+// pointers, and the cache reports availability even for an empty candidate
+// slice.
 func (c *snapshotHydrationCache) GetSnapshot(ctx context.Context, bucket schedulercore.SchedulerBucket) ([]schedulercore.SnapshotProvider, bool, error) {
 	out := make([]schedulercore.SnapshotProvider, 0, len(c.snapshot))
 	for _, v := range c.snapshot {
@@ -1119,11 +1541,18 @@ func (c *snapshotHydrationCache) GetSnapshot(ctx context.Context, bucket schedul
 	return out, true, nil
 }
 
+// GetProvider prepares omitted defaults on the configured full target before
+// snapshot wrapping. Missing IDs remain nil without error, allowing the
+// selection completion path to observe a provider absent during hydration.
 func (c *snapshotHydrationCache) GetProvider(ctx context.Context, id int64) (schedulercore.SnapshotProvider, error) {
 	prepareSelectionFixtureProvider(ctx, c.providers[id], nil)
 	return codec.WrapRecord(gatewayprovider.ExecutionRecord(c.providers[id])), nil
 }
 
+// newHydrationSnapshotForTest binds the fixture cache with an optional
+// repository-backed provider source. Missing source leaves hydration
+// cache-only, while configured not-found errors and gateway diagnostics support
+// failure scenarios.
 func newHydrationSnapshotForTest(cache *snapshotHydrationCache, source Providers) *schedulercore.SnapshotService {
 	var read schedulercore.SnapshotProviderSource
 	if source != nil {
@@ -1132,6 +1561,9 @@ func newHydrationSnapshotForTest(cache *snapshotHydrationCache, source Providers
 	return schedulercore.NewSnapshotService(cache, nil, read, nil, nil, schedulercore.SnapshotBindings{ProviderNotFound: providercore.ErrProviderNotFound, GroupNotFound: routing.ErrGroupNotFound, Diagnostics: schedulercore.Diagnostics{Logf: logging.LegacyPrintf, Event: logging.Event}})
 }
 
+// GetSessionProviderID reads a hash binding and returns a cache-miss error when
+// absent. Group inputs are ignored by this fixture, while callers exercise the
+// scheduler's current and legacy hash selection rules.
 func (c *stickyCacheFixture) GetSessionProviderID(_ context.Context, _ int64, key string) (int64, error) {
 	if id, ok := c.sessionBindings[key]; ok {
 		return id, nil
@@ -1139,6 +1571,9 @@ func (c *stickyCacheFixture) GetSessionProviderID(_ context.Context, _ int64, ke
 	return 0, errors.New("not found")
 }
 
+// SetSessionProviderID writes the provider by hash and allocates fixture
+// storage when absent. Group and TTL inputs are ignored, so repeated reads
+// inspect affinity decisions rather than expiring Redis state.
 func (c *stickyCacheFixture) SetSessionProviderID(_ context.Context, _ int64, key string, id int64, _ time.Duration) error {
 	if c.sessionBindings == nil {
 		c.sessionBindings = map[string]int64{}
@@ -1147,10 +1582,16 @@ func (c *stickyCacheFixture) SetSessionProviderID(_ context.Context, _ int64, ke
 	return nil
 }
 
+// RefreshSessionTTL accepts sticky fixture refresh calls and returns success.
+// The fixture holds hash affinity with no expiration data, allowing current and
+// legacy binding tests to inspect the same stored provider afterward.
 func (*stickyCacheFixture) RefreshSessionTTL(context.Context, int64, string, time.Duration) error {
 	return nil
 }
 
+// DeleteSessionProviderID removes hash affinity while counting deletion
+// attempts in the fixture. Missing binding maps return immediately, while
+// populated maps record repeated removals even after the hash has no provider.
 func (c *stickyCacheFixture) DeleteSessionProviderID(_ context.Context, _ int64, key string) error {
 	if c.sessionBindings == nil {
 		return nil

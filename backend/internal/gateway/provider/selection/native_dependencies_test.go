@@ -13,6 +13,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// TestResolveProviderUpstreamModel_Antigravity resolves a supported Claude name
+// through an Antigravity target. The current default mapping returns the
+// expected complete identity, protecting shared gateway model resolution.
 func TestResolveProviderUpstreamModel_Antigravity(t *testing.T) {
 	t.Parallel()
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, Platform: capability.PlatformAntigravity}}
@@ -21,6 +24,9 @@ func TestResolveProviderUpstreamModel_Antigravity(t *testing.T) {
 	require.Equal(t, "claude-sonnet-4-6", got)
 }
 
+// TestResolveProviderUpstreamModel_Antigravity_Unsupported passes an unknown
+// model with no explicit Antigravity allowlist. The name passes through
+// unchanged, protecting the default mapping's unmatched-name behavior.
 func TestResolveProviderUpstreamModel_Antigravity_Unsupported(t *testing.T) {
 	t.Parallel()
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{LoadLocation: time.LoadLocation, Platform: capability.PlatformAntigravity}}
@@ -28,6 +34,9 @@ func TestResolveProviderUpstreamModel_Antigravity_Unsupported(t *testing.T) {
 	require.Equal(t, "totally-unknown-model", got, "空白名单允许未命中映射的模型按请求名称通过")
 }
 
+// TestResolveProviderUpstreamModel_NonAntigravity supplies an Anthropic target
+// with no custom mapping. Upstream resolution retains the incoming name,
+// protecting direct model identity for the ordinary provider path.
 func TestResolveProviderUpstreamModel_NonAntigravity(t *testing.T) {
 	t.Parallel()
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, Platform: capability.PlatformAnthropic}}
@@ -35,6 +44,10 @@ func TestResolveProviderUpstreamModel_NonAntigravity(t *testing.T) {
 	require.Equal(t, "claude-sonnet-4-6", got, "no mapping = passthrough")
 }
 
+// TestResolveProviderUpstreamModel_AnthropicOAuthAppliesMappingBeforeNormalization
+// maps a client alias to an Anthropic OAuth model. Resolution returns that
+// configured target, protecting the order of provider mapping and platform
+// normalization.
 func TestResolveProviderUpstreamModel_AnthropicOAuthAppliesMappingBeforeNormalization(t *testing.T) {
 	t.Parallel()
 	provider := &gatewayprovider.ExecutionProvider{
@@ -51,6 +64,10 @@ func TestResolveProviderUpstreamModel_AnthropicOAuthAppliesMappingBeforeNormaliz
 	require.Equal(t, "claude-sonnet-4-5", got)
 }
 
+// TestResolveProviderUpstreamModel_BedrockUsesRegionalFinalModel supplies a
+// US-region Bedrock target and a public Claude alias. Resolution returns the
+// regional inference identity, protecting final model routing for that
+// configured region.
 func TestResolveProviderUpstreamModel_BedrockUsesRegionalFinalModel(t *testing.T) {
 	t.Parallel()
 	provider := &gatewayprovider.ExecutionProvider{
@@ -68,6 +85,10 @@ func TestResolveProviderUpstreamModel_BedrockUsesRegionalFinalModel(t *testing.T
 	require.Equal(t, "us.anthropic.claude-sonnet-4-5-20250929-v1:0", got)
 }
 
+// TestResolveProviderUpstreamModel_AntigravityUsesThinkingContext resolves
+// Sonnet with thinking enabled in request state. The resulting thinking
+// identity is returned, protecting context-sensitive model normalization before
+// forwarding.
 func TestResolveProviderUpstreamModel_AntigravityUsesThinkingContext(t *testing.T) {
 	t.Parallel()
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, Platform: capability.PlatformAntigravity}}
@@ -77,12 +98,16 @@ func TestResolveProviderUpstreamModel_AntigravityUsesThinkingContext(t *testing.
 	require.Equal(t, "claude-sonnet-4-5-thinking", got)
 }
 
+// TestGatewayAnthropicProviderSupportMapsBeforePlatformNormalization supplies
+// OAuth and service-account targets using the same mapped Claude version. Their
+// final identities match their allowlists and retain each authentication path's
+// normalization.
 func TestGatewayAnthropicProviderSupportMapsBeforePlatformNormalization(t *testing.T) {
 	tests := []struct {
-		name           string
-		providerType   string
-		finalModel     string
-		whitelistModel string
+		name           string // named authentication scenario
+		providerType   string // provider authentication kind
+		finalModel     string // expected upstream identity
+		whitelistModel string // configured allowed identity
 	}{
 		{
 			name:           "OAuth",

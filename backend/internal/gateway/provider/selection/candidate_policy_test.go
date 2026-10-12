@@ -9,7 +9,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestMixedGroupImageCandidateUsesFinalMappedModel checks that image aliases resolve to image models even with a wildcard allowlist.
+// TestMixedGroupImageCandidateUsesFinalMappedModel maps an image alias through
+// a wildcard provider scope. A text target is rejected and an image-generation
+// target passes, protecting final-model checks during image selection.
 func TestMixedGroupImageCandidateUsesFinalMappedModel(t *testing.T) {
 	selector := NewCompatible(CompatibleDependencies{}, DefaultOptions())
 	value := mixedGroupProvider(1, capability.PlatformOpenAI, "*", 91)

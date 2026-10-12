@@ -13,16 +13,41 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// Scheduling diagnostics explain provider scores using the parameters and
+// feedback bound to production selectors. Before scoring, the adapter supplies
+// group, cost-window, RPM, and quota settings needed by platform eligibility
+// checks; candidate observation does not acquire a provider slot or register a
+// session.
+//
+// Compatible providers use protocol model rules, quota pauses, credential and
+// model blocks, proxy quarantine, shadow parent health, and upstream group
+// restrictions. Other targets use the generic selector's quota and model checks
+// when available. Each branch reports its first platform rejection reason,
+// keeping provider-specific policy with the execution record while the
+// scheduler builds credential-free diagnostic results.
+
+// GetOverview delegates the provider's scoring overview to a fresh diagnostic
+// core. Callers supply the constructed Diagnostics instance; the returned
+// result and source errors describe the provider's groups and effective
+// advanced scheduling settings.
 func (s *Diagnostics) GetOverview(ctx context.Context, id int64) (*policy.AdvancedSchedulerScoreDiagnosticResponse, error) {
 	core, _ := s.diagnosticCore()
 	return core.GetOverview(ctx, id)
 }
 
+// GetDetail delegates a scoring simulation for the provider and supplied group
+// request. The core uses a fresh target association scope with the
+// production-bound settings and feedback, then returns its detail or source
+// error.
 func (s *Diagnostics) GetDetail(ctx context.Context, id int64, request policy.AdvancedSchedulerScoreDiagnosticRequest) (*policy.AdvancedSchedulerScoreDiagnosticResponse, error) {
 	core, _ := s.diagnosticCore()
 	return core.GetDetail(ctx, id, request)
 }
 
+// effectiveSettings reads global runtime settings and resolves the group's
+// advanced overrides through Parameters. Missing diagnostics or parameter
+// bindings use Parameters defaults, and basic or absent groups supply empty
+// override values.
 func (s *Diagnostics) effectiveSettings(ctx context.Context, group *routing.Group) (policy.EffectiveSettings, policy.RuntimeSettings) {
 	var parameters *schedulercore.Parameters
 	if s != nil {
@@ -32,6 +57,10 @@ func (s *Diagnostics) effectiveSettings(ctx context.Context, group *routing.Grou
 	return parameters.Effective(ctx, schedulerGroupOverrides(group)), runtime
 }
 
+// prepareEligibilityContext supplies group and batch cost/RPM observations
+// through the bound generic selector, then compatible quota settings when a
+// group exists. A nil Diagnostics value passes context through for callers with
+// no adapter.
 func (s *Diagnostics) prepareEligibilityContext(ctx context.Context, group *routing.Group, providers []gatewayprovider.ExecutionProvider) context.Context {
 	if s == nil {
 		return ctx
@@ -47,6 +76,17 @@ func (s *Diagnostics) prepareEligibilityContext(ctx context.Context, group *rout
 	return ctx
 }
 
+// diagnosticPlatformFilterReason returns the first platform-specific diagnostic
+// rejection, or empty when those gates pass. Callers supply a usable target and
+// group after the core's general hard filters; the requested model is trimmed
+// before inspection.
+//
+// Compatible targets check model scheduling, quota pause, and model support
+// before credential, proxy, shadow, and upstream-group rules. Generic targets
+// use the bound selector's model, quota, cost-window, RPM, and upstream
+// restrictions, including sticky allowance from the request. Without that
+// selector, protocol-record model rules supply the remaining checks; now is
+// unused here because those helpers read their own timing inputs.
 func (s *Diagnostics) diagnosticPlatformFilterReason(
 	ctx context.Context,
 	provider *gatewayprovider.ExecutionProvider,

@@ -9,7 +9,10 @@ import (
 	schedulercore "github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// TestSchedulerRuntimeBindingKeepsSharedState checks that all three selectors and diagnostics share feedback and settings.
+// TestSchedulerRuntimeBindingKeepsSharedState constructs all selectors and
+// diagnostics from the same application feedback and parameters. Pointer
+// identity checks protect shared observations and setting resolution across
+// production and diagnostic entry points.
 func TestSchedulerRuntimeBindingKeepsSharedState(t *testing.T) {
 	feedback := schedulercore.NewRuntimeStats(time.Now)
 	settings := schedulercore.NewParameters(schedulercore.NewSettingsRuntime(schedulercore.Diagnostics{}), nil, schedulercore.DefaultParameters())

@@ -19,16 +19,20 @@ import (
 	schedulercore "github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// groupAwareMockProviderRepo adds group filtering to mockProviderRepoForPlatform.
-// allProviders holds the source records; group queries filter ProviderGroups.
+// groupAwareMockProviderRepo filters fixture records by platform and stored
+// ProviderGroups membership.
 type groupAwareMockProviderRepo struct {
-	*mockProviderRepoForPlatform
+	*mockProviderRepoForPlatform // full-read platform fixture
+	// allProviders shares the source slice indexed by the embedded fixture.
+	// Candidate query results retain referenced record data from that same fixture input.
 	allProviders []gatewayprovider.
-
-		// ListSchedulableUngroupedByPlatform returns providers with no ProviderGroups for one platform.
-		ExecutionProvider
+			ExecutionProvider
 }
 
+// TestAdvancedSchedulerCoreSelectsNonOpenAIGroupAndMarksResult supplies an
+// advanced Gemini group and one eligible target to the generic core. The result
+// is marked advanced, while separately prepared basic results retain basic
+// feedback classification.
 func TestAdvancedSchedulerCoreSelectsNonOpenAIGroupAndMarksResult(t *testing.T) {
 	groupID := int64(42)
 	group := &routing.Group{ID: groupID, SchedulerType: routing.GroupSchedulerTypeAdvanced}
@@ -56,6 +60,10 @@ func TestAdvancedSchedulerCoreSelectsNonOpenAIGroupAndMarksResult(t *testing.T) 
 	require.False(t, basicSelection.AdvancedScheduler)
 }
 
+// ListSchedulableUngroupedByPlatform returns schedulable fixture records
+// matching platform with no ProviderGroups entries. The fixture defines
+// ungrouped status from that slice, and returned values retain referenced
+// record data.
 func (m *groupAwareMockProviderRepo) ListSchedulableUngroupedByPlatform(ctx context.Context, platform string) ([]gatewayprovider.ExecutionProvider, error) {
 	var result []gatewayprovider.ExecutionProvider
 	for _, acc := range m.allProviders {
@@ -66,7 +74,10 @@ func (m *groupAwareMockProviderRepo) ListSchedulableUngroupedByPlatform(ctx cont
 	return result, nil
 }
 
-// ListSchedulableUngroupedByPlatforms returns ungrouped providers across the requested platforms.
+// ListSchedulableUngroupedByPlatforms returns schedulable fixture records in
+// the supplied platform set with empty ProviderGroups. Selection tests use that
+// fixture definition of ungrouped membership, while record references remain
+// shared.
 func (m *groupAwareMockProviderRepo) ListSchedulableUngroupedByPlatforms(ctx context.Context, platforms []string) ([]gatewayprovider.ExecutionProvider, error) {
 	platformSet := make(map[string]bool, len(platforms))
 	for _, p := range platforms {
@@ -81,7 +92,8 @@ func (m *groupAwareMockProviderRepo) ListSchedulableUngroupedByPlatforms(ctx con
 	return result, nil
 }
 
-// ListSchedulableByGroupIDAndPlatform returns members of the specified group on one platform.
+// ListSchedulableByGroupIDAndPlatform returns schedulable fixture members
+// matching one requested platform.
 func (m *groupAwareMockProviderRepo) ListSchedulableByGroupIDAndPlatform(ctx context.Context, groupID int64, platform string) ([]gatewayprovider.ExecutionProvider, error) {
 	var result []gatewayprovider.ExecutionProvider
 	for _, acc := range m.allProviders {
@@ -92,7 +104,8 @@ func (m *groupAwareMockProviderRepo) ListSchedulableByGroupIDAndPlatform(ctx con
 	return result, nil
 }
 
-// ListSchedulableByGroupIDAndPlatforms returns members of the specified group across platforms.
+// ListSchedulableByGroupIDAndPlatforms returns schedulable fixture members
+// across the supplied platform set.
 func (m *groupAwareMockProviderRepo) ListSchedulableByGroupIDAndPlatforms(ctx context.Context, groupID int64, platforms []string) ([]gatewayprovider.ExecutionProvider, error) {
 	platformSet := make(map[string]bool, len(platforms))
 	for _, p := range platforms {
@@ -107,7 +120,8 @@ func (m *groupAwareMockProviderRepo) ListSchedulableByGroupIDAndPlatforms(ctx co
 	return result, nil
 }
 
-// providerBelongsToGroup checks fixture group membership.
+// providerBelongsToGroup reports whether the fixture's ProviderGroups contains
+// the supplied group identifier.
 func providerBelongsToGroup(acc gatewayprovider.ExecutionProvider, groupID int64) bool {
 	for _, ag := range acc.Record.ProviderGroups {
 		if ag.GroupID == groupID {
@@ -117,7 +131,9 @@ func providerBelongsToGroup(acc gatewayprovider.ExecutionProvider, groupID int64
 	return false
 }
 
-// newGroupAwareMockRepo creates a repository fixture with group-aware queries.
+// newGroupAwareMockRepo indexes fixture targets for full reads while retaining
+// their candidate source slice. The repository and allProviders share that
+// slice, so fixture setup updates remain visible to both query paths.
 func newGroupAwareMockRepo(providers []gatewayprovider.ExecutionProvider) *groupAwareMockProviderRepo {
 	byID := make(map[int64]*gatewayprovider.ExecutionProvider, len(providers))
 	for i := range providers {
@@ -132,8 +148,11 @@ func newGroupAwareMockRepo(providers []gatewayprovider.ExecutionProvider) *group
 	}
 }
 
+// TestGroupIsolation_UngroupedKey_ShouldNotScheduleGroupedProviders supplies
+// grouped targets but omits the request group. Forced-platform selection
+// returns no target, protecting the requirement for an admitted group before
+// candidate lookup.
 func TestGroupIsolation_UngroupedKey_ShouldNotScheduleGroupedProviders(t *testing.T) {
-	// A nil group ID must fail even when the pool contains grouped providers.
 	ctx := context.Background()
 
 	providers := []gatewayprovider.ExecutionProvider{
@@ -156,8 +175,11 @@ func TestGroupIsolation_UngroupedKey_ShouldNotScheduleGroupedProviders(t *testin
 	require.Nil(t, acc)
 }
 
+// TestGroupIsolation_GroupedKey_ShouldNotScheduleUngroupedProviders requests a
+// positive group against fixtures with no memberships. Selection returns an
+// error and nil provider, protecting group membership during forced-platform
+// choice.
 func TestGroupIsolation_GroupedKey_ShouldNotScheduleUngroupedProviders(t *testing.T) {
-	// Group 100 cannot select from a pool containing only ungrouped providers.
 	ctx := context.Background()
 	groupID := int64(100)
 
@@ -181,8 +203,10 @@ func TestGroupIsolation_GroupedKey_ShouldNotScheduleUngroupedProviders(t *testin
 	require.Nil(t, acc)
 }
 
+// TestGroupIsolation_UngroupedKey_RejectsUngroupedProviders mixes grouped and
+// ungrouped records while omitting the request group. The request is rejected,
+// protecting admission even when otherwise eligible ungrouped candidates exist.
 func TestGroupIsolation_UngroupedKey_RejectsUngroupedProviders(t *testing.T) {
-	// An unspecified group is rejected even when providers exist.
 	ctx := context.Background()
 
 	providers := []gatewayprovider.ExecutionProvider{
@@ -209,8 +233,11 @@ func TestGroupIsolation_UngroupedKey_RejectsUngroupedProviders(t *testing.T) {
 	require.Nil(t, acc)
 }
 
+// TestGroupIsolation_GroupedKey_ShouldOnlyScheduleMatchingGroupProviders mixes
+// another group, an ungrouped target, and one requested-group member. Selection
+// chooses the matching member, protecting candidate isolation across stored
+// memberships.
 func TestGroupIsolation_GroupedKey_ShouldOnlyScheduleMatchingGroupProviders(t *testing.T) {
-	// A mixed pool must select a member of the requested group 100.
 	ctx := context.Background()
 	groupID := int64(100)
 
@@ -239,12 +266,13 @@ func TestGroupIsolation_GroupedKey_ShouldOnlyScheduleMatchingGroupProviders(t *t
 	require.Equal(t, int64(3), acc.Record.ID, "应选中分组 100 内的提供商 ID=3")
 }
 
+// TestGroupIsolation_RequiresExplicitGroup uses a permissive platform fixture
+// containing both membership kinds. A nil group still returns no target,
+// protecting the selector's admission gate independently of repository
+// filtering.
 func TestGroupIsolation_RequiresExplicitGroup(t *testing.T) {
-	// An explicit group is required before querying a provider pool.
-	// The openai platform exercises selection with a forced platform.
 	ctx := context.Background()
 
-	// Both grouped and ungrouped records still require an explicit request group.
 	providers := []gatewayprovider.ExecutionProvider{
 		{Record: providercore.Record{
 			Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 1, Platform: capability.PlatformOpenAI, Priority: 2, Status: billing.StatusActive, Schedulable: true,
@@ -269,17 +297,18 @@ func TestGroupIsolation_RequiresExplicitGroup(t *testing.T) {
 
 	svc := newGenericSelectionForTest(GenericDependencies{Reads: Reads{Providers: repo}, Shared: Shared{Cache: cache}}, &config.Config{})
 
-	// Reject nil groupID before reading a provider pool.
 	acc, err := svc.selectProviderForModelWithPlatform(ctx, nil, "", "", nil, capability.PlatformOpenAI)
 	require.Error(t, err, "请求必须明确绑定分组")
 	require.Nil(t, acc)
 }
 
+// TestGroupIsolation_RejectsImplicitGroupedProvider supplies a provider whose
+// stored membership names a group but leaves the request group nil. Selection
+// rejects it, protecting admission from inferring group authority from
+// candidate records.
 func TestGroupIsolation_RejectsImplicitGroupedProvider(t *testing.T) {
-	// Grouped providers do not make a nil groupID request eligible.
 	ctx := context.Background()
 
-	// The caller supplies the target group; provider memberships filter candidates.
 	providers := []gatewayprovider.ExecutionProvider{
 		{Record: providercore.Record{
 			Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 1, Platform: capability.PlatformOpenAI, Priority: 1, Status: billing.StatusActive, Schedulable: true,
@@ -304,11 +333,15 @@ func TestGroupIsolation_RejectsImplicitGroupedProvider(t *testing.T) {
 	require.Nil(t, acc)
 }
 
+// ptr returns a pointer to the supplied value for fixture fields.
 func ptr[T any](v T) *T {
 	return &v
 }
 
-// TestGatewayService_SelectProviderForModelWithPlatform_Anthropic checks selection with the Anthropic platform forced.
+// TestGatewayService_SelectProviderForModelWithPlatform_Anthropic supplies
+// Anthropic and Antigravity candidates under a forced Anthropic platform. Basic
+// slot-free selection returns the highest-priority Anthropic target, protecting
+// platform filtering before ordering.
 func TestGatewayService_SelectProviderForModelWithPlatform_Anthropic(t *testing.T) {
 	ctx := context.Background()
 
@@ -335,7 +368,10 @@ func TestGatewayService_SelectProviderForModelWithPlatform_Anthropic(t *testing.
 	require.Equal(t, capability.PlatformAnthropic, acc.Record.Platform, "应只返回 anthropic 平台提供商")
 }
 
-// TestGatewayService_SelectProviderForModelWithPlatform_Antigravity checks selection with the Antigravity platform forced.
+// TestGatewayService_SelectProviderForModelWithPlatform_Antigravity supplies
+// multiple platforms while forcing Antigravity for the request. Selection
+// returns its eligible member, protecting forced-platform filtering within the
+// requested group.
 func TestGatewayService_SelectProviderForModelWithPlatform_Antigravity(t *testing.T) {
 	ctx := context.Background()
 
@@ -361,7 +397,10 @@ func TestGatewayService_SelectProviderForModelWithPlatform_Antigravity(t *testin
 	require.Equal(t, capability.PlatformAntigravity, acc.Record.Platform, "应只返回 antigravity 平台提供商")
 }
 
-// TestGatewayService_SelectProviderForModelWithPlatform_PriorityAndLastUsed checks priority and least-recently-used ordering.
+// TestGatewayService_SelectProviderForModelWithPlatform_PriorityAndLastUsed
+// supplies equal-priority Anthropic targets with different past use timestamps.
+// Selection chooses the older target, protecting recency ordering after the
+// priority tie.
 func TestGatewayService_SelectProviderForModelWithPlatform_PriorityAndLastUsed(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
@@ -387,6 +426,10 @@ func TestGatewayService_SelectProviderForModelWithPlatform_PriorityAndLastUsed(t
 	require.Equal(t, int64(2), acc.Record.ID, "同优先级应选择最久未用的提供商")
 }
 
+// TestGatewayService_SelectProviderForModelWithPlatform_GeminiOAuthPreference
+// supplies equal-priority Gemini API Key and OAuth records. The never-used
+// OAuth target wins, protecting basic authentication preference on the
+// forced-platform path.
 func TestGatewayService_SelectProviderForModelWithPlatform_GeminiOAuthPreference(t *testing.T) {
 	ctx := context.Background()
 
@@ -411,7 +454,10 @@ func TestGatewayService_SelectProviderForModelWithPlatform_GeminiOAuthPreference
 	require.Equal(t, int64(2), acc.Record.ID, "同优先级且未使用时应优先选择OAuth提供商")
 }
 
-// TestGatewayService_SelectProviderForModelWithPlatform_NoAvailableProviders checks an empty candidate pool.
+// TestGatewayService_SelectProviderForModelWithPlatform_NoAvailableProviders
+// supplies an empty candidate pool under a forced Anthropic platform. Selection
+// returns nil with ErrNoAvailableProviders, protecting typed exhaustion
+// handling for this slot-free model entry.
 func TestGatewayService_SelectProviderForModelWithPlatform_NoAvailableProviders(t *testing.T) {
 	ctx := context.Background()
 
@@ -430,7 +476,10 @@ func TestGatewayService_SelectProviderForModelWithPlatform_NoAvailableProviders(
 	require.ErrorIs(t, err, schedulercore.ErrNoAvailableProviders)
 }
 
-// TestGatewayService_SelectProviderForModelWithPlatform_AllExcluded checks selection when all providers are excluded.
+// TestGatewayService_SelectProviderForModelWithPlatform_AllExcluded excludes
+// every configured Anthropic fixture target from the current request. Selection
+// returns no provider, protecting request exclusions before priority or sticky
+// choice.
 func TestGatewayService_SelectProviderForModelWithPlatform_AllExcluded(t *testing.T) {
 	ctx := context.Background()
 
@@ -455,15 +504,18 @@ func TestGatewayService_SelectProviderForModelWithPlatform_AllExcluded(t *testin
 	require.Nil(t, acc)
 }
 
-// TestGatewayService_SelectProviderForModelWithPlatform_Schedulability checks provider schedulability filtering.
+// TestGatewayService_SelectProviderForModelWithPlatform_Schedulability varies
+// active cooldowns, overload, status, and manual scheduling flags. Selection
+// skips currently unavailable targets and admits expired overloads, protecting
+// record-state gates before ordering.
 func TestGatewayService_SelectProviderForModelWithPlatform_Schedulability(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
 
 	tests := []struct {
-		name       string
-		providers  []gatewayprovider.ExecutionProvider
-		expectedID int64
+		name       string                              // named scheduling-state scenario
+		providers  []gatewayprovider.ExecutionProvider // configured candidate fixture pool
+		expectedID int64                               // expected selected provider identifier
 	}{
 		{
 			name: "过载提供商被跳过",
@@ -529,7 +581,10 @@ func TestGatewayService_SelectProviderForModelWithPlatform_Schedulability(t *tes
 	}
 }
 
-// TestGatewayService_SelectProviderForModelWithPlatform_StickySession checks sticky selection under a forced platform.
+// TestGatewayService_SelectProviderForModelWithPlatform_StickySession varies
+// bound provider platform, exclusions, and status under a forced platform.
+// Eligible affinity wins, while unusable bindings advance to an eligible target
+// in that platform.
 func TestGatewayService_SelectProviderForModelWithPlatform_StickySession(t *testing.T) {
 	ctx := context.Background()
 
@@ -633,6 +688,10 @@ func TestGatewayService_SelectProviderForModelWithPlatform_StickySession(t *test
 	})
 }
 
+// TestGatewayService_SelectProviderForModelWithPlatform_RoutedStickySessionClears
+// binds a disabled target included in the group model-routing list. Selection
+// deletes that binding and chooses the usable preferred member, protecting
+// affinity cleanup within routing shortcuts.
 func TestGatewayService_SelectProviderForModelWithPlatform_RoutedStickySessionClears(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(10)
@@ -685,6 +744,10 @@ func TestGatewayService_SelectProviderForModelWithPlatform_RoutedStickySessionCl
 	require.Equal(t, int64(2), cache.sessionBindings["session-123"])
 }
 
+// TestGatewayService_SelectProviderForModelWithPlatform_RoutedStickySessionHit
+// gives the bound target membership in the model-preferred provider list.
+// The returned ID matches that member, which also has the highest priority in
+// this fixture's eligible pool.
 func TestGatewayService_SelectProviderForModelWithPlatform_RoutedStickySessionHit(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(11)
@@ -735,6 +798,9 @@ func TestGatewayService_SelectProviderForModelWithPlatform_RoutedStickySessionHi
 	require.Equal(t, int64(1), acc.Record.ID)
 }
 
+// TestGatewayService_SelectProviderForModelWithPlatform_RoutedFallbackToNormal
+// lists a missing provider as the model preference. Selection falls back to the
+// group's normal eligible pool, protecting unavailable preference handling.
 func TestGatewayService_SelectProviderForModelWithPlatform_RoutedFallbackToNormal(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(12)
@@ -777,6 +843,10 @@ func TestGatewayService_SelectProviderForModelWithPlatform_RoutedFallbackToNorma
 	require.Equal(t, int64(1), acc.Record.ID)
 }
 
+// TestGatewayService_SelectProviderForModelWithPlatform_NoModelSupport supplies
+// a narrower Anthropic identity list than the requested model. Selection
+// returns a typed group-model rejection with available names, protecting
+// configured-support diagnosis.
 func TestGatewayService_SelectProviderForModelWithPlatform_NoModelSupport(t *testing.T) {
 	ctx := context.Background()
 
@@ -815,6 +885,10 @@ func TestGatewayService_SelectProviderForModelWithPlatform_NoModelSupport(t *tes
 	require.Contains(t, err.Error(), "Available models: claude-3-5-haiku-20241022")
 }
 
+// TestGatewayService_SelectProviderForModelWithPlatform_ModelRateLimitedNotGroupUnsupported
+// cools down a supporting provider beside one lacking the model. Exhaustion
+// remains ErrNoAvailableProviders, protecting the distinction between current
+// capacity and configured model absence.
 func TestGatewayService_SelectProviderForModelWithPlatform_ModelRateLimitedNotGroupUnsupported(t *testing.T) {
 	ctx := context.Background()
 	resetAt := time.Now().Add(10 * time.Minute).Format(time.RFC3339)
@@ -866,6 +940,10 @@ func TestGatewayService_SelectProviderForModelWithPlatform_ModelRateLimitedNotGr
 	require.ErrorIs(t, err, schedulercore.ErrNoAvailableProviders)
 }
 
+// TestGatewayService_SelectProviderForModelWithPlatform_GeminiPreferOAuth
+// supplies equal-priority Gemini targets with different authentication kinds.
+// The never-used OAuth record is selected, protecting this alternate
+// forced-platform entry's tie preference.
 func TestGatewayService_SelectProviderForModelWithPlatform_GeminiPreferOAuth(t *testing.T) {
 	ctx := context.Background()
 
@@ -890,6 +968,10 @@ func TestGatewayService_SelectProviderForModelWithPlatform_GeminiPreferOAuth(t *
 	require.Equal(t, int64(2), acc.Record.ID)
 }
 
+// TestGatewayService_SelectProviderForModelWithPlatform_GeminiAPIKeyModelMappingFilter
+// gives API Key targets different configured models. Selection chooses the
+// supporting target or reports the complete available-model list, protecting
+// mapped-model candidate filtering.
 func TestGatewayService_SelectProviderForModelWithPlatform_GeminiAPIKeyModelMappingFilter(t *testing.T) {
 	ctx := context.Background()
 
@@ -945,6 +1027,9 @@ func TestGatewayService_SelectProviderForModelWithPlatform_GeminiAPIKeyModelMapp
 	require.Contains(t, err.Error(), "Available models: gemini-2.5-flash, gemini-2.5-pro")
 }
 
+// TestGatewayService_SelectProviderForModelWithPlatform_StickyInGroup binds a
+// provider with the requested stored membership. The returned ID matches the
+// bound member, which also wins priority order in this eligible fixture pool.
 func TestGatewayService_SelectProviderForModelWithPlatform_StickyInGroup(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(50)
@@ -972,6 +1057,10 @@ func TestGatewayService_SelectProviderForModelWithPlatform_StickyInGroup(t *test
 	require.Equal(t, int64(1), acc.Record.ID)
 }
 
+// TestGatewayService_SelectProviderForModelWithPlatform_StickyModelMismatchFallback
+// binds a provider whose configured scope lacks the requested model. Selection
+// chooses the supporting backup, protecting request-model eligibility before
+// sticky reuse.
 func TestGatewayService_SelectProviderForModelWithPlatform_StickyModelMismatchFallback(t *testing.T) {
 	ctx := context.Background()
 
@@ -1007,6 +1096,10 @@ func TestGatewayService_SelectProviderForModelWithPlatform_StickyModelMismatchFa
 	require.Equal(t, int64(2), acc.Record.ID)
 }
 
+// TestGatewayService_SelectProviderForModelWithPlatform_PreferNeverUsed
+// supplies equal-priority targets with present and missing use timestamps. The
+// never-used target wins, protecting the nil-recency preference of basic
+// ordering.
 func TestGatewayService_SelectProviderForModelWithPlatform_PreferNeverUsed(t *testing.T) {
 	ctx := context.Background()
 	lastUsed := time.Now().Add(-1 * time.Hour)
@@ -1032,6 +1125,10 @@ func TestGatewayService_SelectProviderForModelWithPlatform_PreferNeverUsed(t *te
 	require.Equal(t, int64(2), acc.Record.ID)
 }
 
+// TestGatewayService_SelectProviderForModelWithPlatform_NoProviders requests an
+// empty model from an empty forced-platform pool. Selection still returns
+// ErrNoAvailableProviders and no target, protecting exhaustion when model
+// filtering is skipped.
 func TestGatewayService_SelectProviderForModelWithPlatform_NoProviders(t *testing.T) {
 	ctx := context.Background()
 	repo := &mockProviderRepoForPlatform{
@@ -1049,12 +1146,17 @@ func TestGatewayService_SelectProviderForModelWithPlatform_NoProviders(t *testin
 	require.ErrorIs(t, err, schedulercore.ErrNoAvailableProviders)
 }
 
+// TestLegacySchedulers_FilterUpstreamRestrictedProvidersInEveryShortcut
+// supplies allowed and blocked provider mappings under sticky and
+// model-preferred shortcuts. Both forced-platform and mixed-pool paths choose
+// the allowed final identity, protecting upstream group restriction across
+// those routes.
 func TestLegacySchedulers_FilterUpstreamRestrictedProvidersInEveryShortcut(t *testing.T) {
 	testCases := []struct {
-		name                string
-		mixed               bool
-		modelRoutingEnabled bool
-		sessionHash         string
+		name                string // named shortcut scenario
+		mixed               bool   // mixed-pool selection path flag
+		modelRoutingEnabled bool   // preferred-provider routing switch
+		sessionHash         string // fixture sticky-session hash
 	}{
 		{name: "单平台普通粘性", sessionHash: "sticky"},
 		{name: "单平台路由粘性", modelRoutingEnabled: true, sessionHash: "sticky"},
@@ -1156,22 +1258,27 @@ func TestLegacySchedulers_FilterUpstreamRestrictedProvidersInEveryShortcut(t *te
 	}
 }
 
-// selectProviderForModelWithPlatform selects through the generic scheduler with a forced platform.
+// selectProviderForModelWithPlatform invokes the shared generic core with a
+// forced platform in tests. It restores the execution target from this
+// invocation's lookup and propagates the slot-free selection error.
 func (s *Generic) selectProviderForModelWithPlatform(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, platform string) (*gatewayprovider.ExecutionProvider, error) {
 	core, scope := s.genericSelector()
 	selected, err := core.SelectPlatform(ctx, groupID, sessionHash, requestedModel, excludedIDs, platform)
 	return scope.oldProvider(selected), err
 }
 
-// selectProviderWithMixedScheduling selects across the group's platforms.
-// An empty platform argument permits all group members.
+// selectProviderWithMixedScheduling invokes the generic core with an empty
+// platform filter in tests. The nativePlatform compatibility input is unused,
+// allowing eligible members from all group platforms to participate.
 func (s *Generic) selectProviderWithMixedScheduling(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, nativePlatform string) (*gatewayprovider.ExecutionProvider, error) {
 	core, scope := s.genericSelector()
 	selected, err := core.SelectPlatform(ctx, groupID, sessionHash, requestedModel, excludedIDs, "")
 	return scope.oldProvider(selected), err
 }
 
-// loads builds fixture loads; the selector performs scoring and slot acquisition.
+// loads converts fixture provider/load pairs through this invocation's target
+// lookup. Nil input remains nil; load pointers stay shared and each provider
+// receives the same association used when the core returns its selection.
 func (g *projectionScope) loads(values []providerWithLoad) []schedulercore.FlowLoad {
 	if values == nil {
 		return nil

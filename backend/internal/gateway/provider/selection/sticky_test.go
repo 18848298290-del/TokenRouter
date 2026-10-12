@@ -22,6 +22,10 @@ import (
 	schedulercore "github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// guardianAffinityTestContext constructs an HTTP request carrying guardian and
+// parent-thread metadata for affinity tests. The HTTP adapter parses the
+// headers into request context so selection receives the same validated hashes
+// as production.
 func guardianAffinityTestContext(t *testing.T, model, subagent, parentHeader, metadata string) context.Context {
 	t.Helper()
 
@@ -38,6 +42,10 @@ func guardianAffinityTestContext(t *testing.T, model, subagent, parentHeader, me
 	return gatewayhttp.WithOpenAIGuardianParentAffinity(context.Background(), c, nil, model)
 }
 
+// TestOpenAIProviderSchedulerGuardianAffinitySelectsParent binds a parent
+// session before dispatching a guardian review request. Selection uses the
+// parent's provider, and a later child binding attempt leaves the parent
+// affinity intact.
 func TestOpenAIProviderSchedulerGuardianAffinitySelectsParent(t *testing.T) {
 	parentID := "22222222-2222-4222-8222-222222222222"
 	parentHash, _ := schedulercore.DeriveSessionHashes(parentID)
@@ -71,11 +79,15 @@ func TestOpenAIProviderSchedulerGuardianAffinitySelectsParent(t *testing.T) {
 		selection.ReleaseFunc()
 	}
 
-	// A child request must leave the parent's binding intact.
+	// The child carries a preserve-parent hint from validated guardian metadata.
+	// Calling the ordinary bind API with the parent hash must respect that hint.
 	require.NoError(t, svc.BindStickySession(ctx, &groupID, parentHash, 39002))
 	require.Equal(t, int64(39001), cache.sessionBindings["openai:"+parentHash])
 }
 
+// TestGetStickySessionProviderID_FallbackToLegacyKey populates only the legacy
+// session key while legacy reads are enabled. Selection resolves that provider
+// and increments the shared fallback attempt and hit counters.
 func TestGetStickySessionProviderID_FallbackToLegacyKey(t *testing.T) {
 	stats := &schedulercore.StickyStats{}
 	beforeFallbackTotal, beforeFallbackHit, _ := stats.Snapshot()
@@ -100,6 +112,9 @@ func TestGetStickySessionProviderID_FallbackToLegacyKey(t *testing.T) {
 	require.Equal(t, beforeFallbackHit+1, afterFallbackHit)
 }
 
+// TestSetStickySessionProviderID_DualWriteOldEnabled supplies current and
+// legacy hashes with dual writing enabled. Both keys receive the same provider
+// and the shared dual-write counter records the completed migration write.
 func TestSetStickySessionProviderID_DualWriteOldEnabled(t *testing.T) {
 	stats := &schedulercore.StickyStats{}
 	_, _, beforeDualWriteTotal := stats.Snapshot()
@@ -120,6 +135,9 @@ func TestSetStickySessionProviderID_DualWriteOldEnabled(t *testing.T) {
 	require.Equal(t, beforeDualWriteTotal+1, afterDualWriteTotal)
 }
 
+// TestSetStickySessionProviderID_DualWriteOldDisabled supplies a legacy hash
+// while migration writes are disabled. Only the current key receives the
+// provider, protecting the selector's configured write policy for the binding.
 func TestSetStickySessionProviderID_DualWriteOldDisabled(t *testing.T) {
 	cache := &stickyCacheFixture{sessionBindings: map[string]int64{}}
 	svc := NewCompatible(CompatibleDependencies{Shared: Shared{

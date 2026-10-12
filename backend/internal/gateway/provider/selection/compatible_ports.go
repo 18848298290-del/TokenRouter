@@ -14,7 +14,28 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
-// platformSelector creates a per-call target lookup while sharing caches, Grok quota observations, and EWMA statistics.
+// Compatible scheduling needs provider policy and credentials again after
+// ranking candidate metadata. One invocation-scoped lookup associates every
+// candidate, fresh read, and database read with its exact execution target, so
+// same-ID records stay distinct through rechecks and completion.
+//
+// The adapter binds shared concurrency, performance statistics, sticky state,
+// and the advanced picker's Grok quota cache to scheduler.PlatformSelector.
+// Protocol, privacy, parent health, model, and transport callbacks read their
+// associated target at the stage the core requests. Credential hydration and
+// result conversion use the same lookup, carrying release handles and wait
+// plans back to the gateway after selection.
+
+// platformSelector builds a compatible scheduler adapter with a new per-call
+// target lookup. Callers supply a picker with its constructed Compatible
+// service; optional repository, cache, and snapshot flags describe which reads
+// the core can perform.
+//
+// Callbacks convert target records through the returned scope before invoking
+// platform eligibility and hydration. Statistics, metrics, concurrency, and the
+// picker's published free-quota gate remain shared across invocations. The
+// scope distinguishes repeated persisted IDs so a selected database record
+// resolves to that record when the gateway restores the result.
 func (s *compatiblePicker) platformSelector() (*schedulercore.PlatformSelector, *projectionScope) {
 	scope := &projectionScope{providers: map[uint64]*gatewayprovider.ExecutionProvider{}, groups: map[uint64]*routing.Group{}}
 	available := s != nil && s.service != nil

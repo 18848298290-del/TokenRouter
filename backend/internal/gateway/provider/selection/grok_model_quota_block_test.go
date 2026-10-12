@@ -11,6 +11,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// TestGrokModelQuotaBlock_FiltersOnlyNamedModel records a quota block for one
+// Grok model on one provider. Filtering removes that candidate while a
+// different model and another provider remain eligible.
 func TestGrokModelQuotaBlock_FiltersOnlyNamedModel(t *testing.T) {
 	id := time.Now().UnixNano()%1_000_000 + 5000
 	providercore.MarkGrokModelQuotaBlock(id, "grok-4.5", time.Now().Add(time.Hour))
@@ -27,6 +30,9 @@ func TestGrokModelQuotaBlock_FiltersOnlyNamedModel(t *testing.T) {
 	require.Equal(t, id+1, filtered[0].Record.ID)
 }
 
+// TestGrokModelQuotaBlockFiltersMappedUpstreamModel maps a client wildcard to a
+// blocked Grok upstream model. Selection excludes the alias through its final
+// scheduling identity, preventing a mapping from bypassing the block.
 func TestGrokModelQuotaBlockFiltersMappedUpstreamModel(t *testing.T) {
 	id := time.Now().UnixNano()%1_000_000 + 7000
 	providercore.MarkGrokModelQuotaBlock(id, "grok-4.5", time.Now().Add(time.Hour))

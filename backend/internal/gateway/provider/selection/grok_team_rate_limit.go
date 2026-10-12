@@ -8,12 +8,23 @@ import (
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// Grok OAuth providers in one team share observed model cooldowns in the
+// provider package. Filtering resolves each candidate's scheduling model before
+// the team check and compacts survivors into the incoming slice, preserving
+// their relative order and shared record data.
+
+// isGrokTeamModelRateLimited delegates the team and model cooldown lookup to
+// provider rules. Nil, non-Grok-OAuth, and missing-team providers return false
+// under those rules; now determines whether the observed deadline remains
+// active.
 func isGrokTeamModelRateLimited(provider *gatewayprovider.ExecutionProvider, model string, now time.Time) bool {
 	return providercore.IsGrokTeamModelRateLimited(gatewayprovider.ExecutionRecord(provider), model, now)
 }
 
-// filterGrokTeamModelRateLimitedProviders removes candidates whose team is cooling down for the mapped model.
-// Providers without a team ID pass. Filtering reuses the input slice backing array.
+// filterGrokTeamModelRateLimitedProviders removes providers whose team is
+// cooling down for their mapped scheduling model. It reuses the input slice's
+// backing array, so callers relinquish its prior contents; an entirely filtered
+// nonempty pool returns nil.
 func filterGrokTeamModelRateLimitedProviders(providers []gatewayprovider.ExecutionProvider, model string, now time.Time) []gatewayprovider.ExecutionProvider {
 	if len(providers) == 0 || strings.TrimSpace(model) == "" {
 		return providers

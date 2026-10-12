@@ -21,26 +21,38 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/policy"
 )
 
+// advancedSchedulerDiagnosticSourceStub supplies separate overview records and
+// eligible pools to diagnostic tests.
 type advancedSchedulerDiagnosticSourceStub struct {
-	provider  *gatewayprovider.ExecutionProvider
-	group     *routing.Group
-	providers []gatewayprovider.ExecutionProvider
-	pool      []gatewayprovider.ExecutionProvider
+	provider *gatewayprovider.ExecutionProvider // diagnostic detail target
+	group    *routing.Group                     // configured scoring group
+	// providers includes the diagnostic source pool, while pool supplies its
+	// schedulable scoring subset. Tests vary them separately to verify complete exclusion counts.
+	providers []gatewayprovider.ExecutionProvider // unpaged diagnostic source pool
+	pool      []gatewayprovider.ExecutionProvider // eligible scoring candidate pool
 }
 
+// advancedSchedulerDiagnosticConcurrencyCache records batch load requests and
+// returns idle provider observations.
 type advancedSchedulerDiagnosticConcurrencyCache struct {
-	schedulercore.ConcurrencyCache
-	requests [][]schedulercore.ProviderWithConcurrency
+	schedulercore.ConcurrencyCache                                           // unused slot operations panic
+	requests                       [][]schedulercore.ProviderWithConcurrency // copied load request batches
 }
 
-// diagnosticWindowCache returns fixture usage in batch reads and errors on individual reads.
+// diagnosticWindowCache supplies configured batch cost observations for
+// diagnostic window eligibility tests.
 type diagnosticWindowCache struct {
-	billing.WindowCostCache
-	costs map[int64]float64
+	billing.WindowCostCache                   // unused cache operations panic
+	costs                   map[int64]float64 // configured provider window costs
 }
 
+// diagnosticWindowSource returns empty usage windows when diagnostic cache
+// fixtures need a source.
 type diagnosticWindowSource struct{}
 
+// GetProvidersLoadBatch records a copied batch input and returns idle loads
+// keyed by provider ID. The recorded slice stays independent of caller changes,
+// allowing assertions on the effective load denominator.
 func (c *advancedSchedulerDiagnosticConcurrencyCache) GetProvidersLoadBatch(_ context.Context, providers []schedulercore.ProviderWithConcurrency) (map[int64]*schedulercore.ProviderLoadInfo, error) {
 	c.requests = append(c.requests, append([]schedulercore.ProviderWithConcurrency(nil), providers...))
 	result := make(map[int64]*schedulercore.ProviderLoadInfo, len(providers))
@@ -50,14 +62,21 @@ func (c *advancedSchedulerDiagnosticConcurrencyCache) GetProvidersLoadBatch(_ co
 	return result, nil
 }
 
+// GetProvider returns the source fixture's configured target pointer for
+// diagnostic detail tests.
 func (s *advancedSchedulerDiagnosticSourceStub) GetProvider(_ context.Context, _ int64) (*gatewayprovider.ExecutionProvider, error) {
 	return s.provider, nil
 }
 
+// GetGroup returns the source fixture's configured group pointer for diagnostic
+// settings tests.
 func (s *advancedSchedulerDiagnosticSourceStub) GetGroup(_ context.Context, _ int64) (*routing.Group, error) {
 	return s.group, nil
 }
 
+// ListProvidersForSchedulerScoreFilter prepares each fixture target for the
+// requested group and returns its candidate slice. A nonpositive group uses the
+// configured group when present; other filters are ignored by this fixture.
 func (s *advancedSchedulerDiagnosticSourceStub) ListProvidersForSchedulerScoreFilter(ctx context.Context, _, _, _, _ string, groupID int64, _ string) ([]gatewayprovider.ExecutionProvider, error) {
 	if groupID <= 0 && s.group != nil {
 		groupID = s.group.ID
@@ -68,6 +87,10 @@ func (s *advancedSchedulerDiagnosticSourceStub) ListProvidersForSchedulerScoreFi
 	return s.providers, nil
 }
 
+// ListSchedulableProvidersForAdvancedSchedulerScore prepares the fixture's
+// eligible pool using the supplied group. Its platform argument is ignored, and
+// the same slice storage is returned for the diagnostic core's candidate
+// calculations.
 func (s *advancedSchedulerDiagnosticSourceStub) ListSchedulableProvidersForAdvancedSchedulerScore(ctx context.Context, groupID *int64, _ string) ([]gatewayprovider.ExecutionProvider, error) {
 	for i := range s.pool {
 		prepareSelectionFixtureProvider(ctx, &s.pool[i], groupID)
@@ -75,18 +98,27 @@ func (s *advancedSchedulerDiagnosticSourceStub) ListSchedulableProvidersForAdvan
 	return s.pool, nil
 }
 
+// advancedSchedulerDiagnosticBool returns a pointer used to represent a
+// supplied boolean override.
 func advancedSchedulerDiagnosticBool(value bool) *bool {
 	return &value
 }
 
+// advancedSchedulerDiagnosticInt returns a pointer used to represent a supplied
+// integer override.
 func advancedSchedulerDiagnosticInt(value int) *int {
 	return &value
 }
 
+// advancedSchedulerDiagnosticFloat returns a pointer used to represent a
+// supplied scoring weight.
 func advancedSchedulerDiagnosticFloat(value float64) *float64 {
 	return &value
 }
 
+// findAdvancedSchedulerDiagnosticMetric returns the first fixture metric
+// matching key. Missing entries return nil, and the result points into the
+// supplied slice so assertions inspect the exact diagnostic metric.
 func findAdvancedSchedulerDiagnosticMetric(metrics []policy.AdvancedSchedulerScoreDiagnosticMetric, key string) *policy.AdvancedSchedulerScoreDiagnosticMetric {
 	for index := range metrics {
 		if metrics[index].Key == key {
@@ -96,6 +128,9 @@ func findAdvancedSchedulerDiagnosticMetric(metrics []policy.AdvancedSchedulerSco
 	return nil
 }
 
+// findAdvancedSchedulerDiagnosticSetting returns the first effective-setting
+// entry matching key. Missing entries return nil; populated results point into
+// the supplied diagnostic slice for source and value assertions.
 func findAdvancedSchedulerDiagnosticSetting(settings []policy.AdvancedSchedulerScoreDiagnosticSetting, key string) *policy.AdvancedSchedulerScoreDiagnosticSetting {
 	for index := range settings {
 		if settings[index].Key == key {
@@ -105,6 +140,9 @@ func findAdvancedSchedulerDiagnosticSetting(settings []policy.AdvancedSchedulerS
 	return nil
 }
 
+// findAdvancedSchedulerDiagnosticPolicy returns the first diagnostic policy
+// signal matching key. Missing signals return nil, while populated results
+// point into the caller's slice for the fixture's policy-state assertions.
 func findAdvancedSchedulerDiagnosticPolicy(signals []policy.AdvancedSchedulerScoreDiagnosticPolicySignal, key string) *policy.AdvancedSchedulerScoreDiagnosticPolicySignal {
 	for index := range signals {
 		if signals[index].Key == key {
@@ -114,6 +152,10 @@ func findAdvancedSchedulerDiagnosticPolicy(signals []policy.AdvancedSchedulerSco
 	return nil
 }
 
+// TestAdvancedSchedulerScoreDiagnosticService_UsesActualFormulaAndSafeDTO sets
+// explicit group weights and sticky bonus with a credential-bearing target.
+// Detail exposes the production formula, probabilities, neutral signals, and
+// setting sources while serialized output excludes credentials.
 func TestAdvancedSchedulerScoreDiagnosticService_UsesActualFormulaAndSafeDTO(t *testing.T) {
 	group := &routing.Group{
 		ID:   301,
@@ -175,6 +217,7 @@ func TestAdvancedSchedulerScoreDiagnosticService_UsesActualFormulaAndSafeDTO(t *
 	require.NotNil(t, result.Detail)
 	require.True(t, result.Detail.Eligible)
 	require.NotNil(t, result.Detail.Score)
+	// Floating score and probability arithmetic can round at the sixth decimal.
 	require.InDelta(t, 2.5, result.Detail.Score.BaseScore, 0.000001)
 	require.InDelta(t, 3, result.Detail.Score.StickyBonus, 0.000001)
 	require.InDelta(t, 5.5, result.Detail.Score.FinalScore, 0.000001)
@@ -189,12 +232,14 @@ func TestAdvancedSchedulerScoreDiagnosticService_UsesActualFormulaAndSafeDTO(t *
 	require.NotNil(t, loadMetric)
 	require.True(t, loadMetric.Neutral)
 	require.False(t, loadMetric.Available)
+	// Allow sixth-decimal rounding when checking the neutral floating load factor.
 	require.InDelta(t, 0.5, loadMetric.NormalizedValue, 0.000001)
 
 	errorMetric := findAdvancedSchedulerDiagnosticMetric(result.Detail.Metrics, "error_rate")
 	require.NotNil(t, errorMetric)
 	require.True(t, errorMetric.Neutral)
 	require.Equal(t, "0%（未观测）", errorMetric.RawValue)
+	// Allow sixth-decimal rounding when checking the unobserved floating health factor.
 	require.InDelta(t, 1.0, errorMetric.NormalizedValue, 0.000001)
 	require.Contains(t, errorMetric.Normalization, "错误率按 0% 计算")
 
@@ -210,6 +255,10 @@ func TestAdvancedSchedulerScoreDiagnosticService_UsesActualFormulaAndSafeDTO(t *
 	require.NotContains(t, strings.ToLower(string(payload)), "access_token")
 }
 
+// TestAdvancedSchedulerScoreDiagnosticService_UsesProcessConfigBeforeFallback
+// supplies process-level Top-K and priority weight with an advanced group.
+// Detail uses those values and reports their source, protecting process
+// defaults before runtime or group overrides.
 func TestAdvancedSchedulerScoreDiagnosticService_UsesProcessConfigBeforeFallback(t *testing.T) {
 	group := &routing.Group{ID: 501, Name: "advanced", SchedulerType: routing.GroupSchedulerTypeAdvanced}
 	target := &gatewayprovider.ExecutionProvider{
@@ -245,6 +294,7 @@ func TestAdvancedSchedulerScoreDiagnosticService_UsesProcessConfigBeforeFallback
 	require.NoError(t, err)
 	require.NotNil(t, result.Detail)
 	require.NotNil(t, result.Detail.Score)
+	// Process-weight scoring uses floating arithmetic with sixth-decimal rounding tolerance.
 	require.InDelta(t, 4, result.Detail.Score.BaseScore, 0.000001)
 	require.Equal(t, 1, result.Detail.CandidatePool.TopK)
 	prioritySetting := findAdvancedSchedulerDiagnosticSetting(result.Detail.EffectiveSettings, "weight_priority")
@@ -252,6 +302,10 @@ func TestAdvancedSchedulerScoreDiagnosticService_UsesProcessConfigBeforeFallback
 	require.Equal(t, "process_default", prioritySetting.Source)
 }
 
+// TestAdvancedSchedulerScoreDiagnosticService_HardStickyForcesProviderOutsideTopK
+// gives the sticky provider a lower rank with weighted stickiness disabled.
+// Diagnostics retain its rank but show forced selection probability and the
+// hard-affinity policy state.
 func TestAdvancedSchedulerScoreDiagnosticService_HardStickyForcesProviderOutsideTopK(t *testing.T) {
 	group := &routing.Group{
 		ID:   701,
@@ -298,6 +352,10 @@ func TestAdvancedSchedulerScoreDiagnosticService_HardStickyForcesProviderOutside
 	require.Equal(t, "forced_first", signal.State)
 }
 
+// TestAdvancedSchedulerScoreDiagnosticService_SubscriptionPriorityUsesSubscriptionPool
+// places a regular target beside an eligible ChatGPT subscription with
+// subscription priority enabled. Detail marks the regular target deferred and
+// computes candidates and exclusions from the subscription pool.
 func TestAdvancedSchedulerScoreDiagnosticService_SubscriptionPriorityUsesSubscriptionPool(t *testing.T) {
 	group := &routing.Group{
 		ID:   801,
@@ -339,6 +397,10 @@ func TestAdvancedSchedulerScoreDiagnosticService_SubscriptionPriorityUsesSubscri
 	require.Equal(t, "active_pool", signal.State)
 }
 
+// TestAdvancedSchedulerScoreDiagnosticService_CountsMoreThanOneThousandExcludedProviders
+// supplies one active target and more than a thousand inactive records. Detail
+// counts the entire unpaged source pool, protecting complete exclusion totals
+// beyond pagination-sized fixtures.
 func TestAdvancedSchedulerScoreDiagnosticService_CountsMoreThanOneThousandExcludedProviders(t *testing.T) {
 	group := &routing.Group{ID: 901, Name: "advanced", SchedulerType: routing.GroupSchedulerTypeAdvanced}
 	target := &gatewayprovider.ExecutionProvider{
@@ -363,6 +425,10 @@ func TestAdvancedSchedulerScoreDiagnosticService_CountsMoreThanOneThousandExclud
 	require.Equal(t, 1001, result.Detail.CandidatePool.ExclusionReasons["provider_inactive"])
 }
 
+// TestAdvancedSchedulerScoreDiagnosticService_StableSortsLargeCandidatePool
+// supplies a reverse-ordered pool with repeated priorities and priority-only
+// scores. Diagnostic candidates retain stable priority-then-ID ordering across
+// every returned record.
 func TestAdvancedSchedulerScoreDiagnosticService_StableSortsLargeCandidatePool(t *testing.T) {
 	group := &routing.Group{
 		ID: 1001, Name: "advanced", SchedulerType: routing.GroupSchedulerTypeAdvanced,
@@ -403,6 +469,10 @@ func TestAdvancedSchedulerScoreDiagnosticService_StableSortsLargeCandidatePool(t
 	}
 }
 
+// TestAdvancedSchedulerScoreDiagnosticService_LoadUsesEffectiveLoadFactor
+// configures an effective load factor different from hard concurrency. The
+// batch load request uses that factor, protecting the denominator passed to
+// diagnostic normalization.
 func TestAdvancedSchedulerScoreDiagnosticService_LoadUsesEffectiveLoadFactor(t *testing.T) {
 	cache := &advancedSchedulerDiagnosticConcurrencyCache{}
 	diagnostics := withDiagnosticParameters(newDiagnosticsForTest(nil, schedulercore.NewConcurrencyService(cache, schedulercore.Diagnostics{
@@ -419,6 +489,10 @@ func TestAdvancedSchedulerScoreDiagnosticService_LoadUsesEffectiveLoadFactor(t *
 	require.Equal(t, []schedulercore.ProviderWithConcurrency{{ID: provider.Record.ID, MaxConcurrency: 7}}, cache.requests[0])
 }
 
+// TestAdvancedSchedulerScoreDiagnosticService_FiltersModelRuntimeBlock gives a
+// Gemini target a future cooldown for the requested model. Hard-filter
+// diagnosis reports model_runtime_blocked, protecting model-specific runtime
+// eligibility in score explanations.
 func TestAdvancedSchedulerScoreDiagnosticService_FiltersModelRuntimeBlock(t *testing.T) {
 	group := &routing.Group{ID: 1201, SchedulerType: routing.GroupSchedulerTypeAdvanced}
 	provider := &gatewayprovider.ExecutionProvider{
@@ -440,6 +514,10 @@ func TestAdvancedSchedulerScoreDiagnosticService_FiltersModelRuntimeBlock(t *tes
 	require.Equal(t, "model_runtime_blocked", reason)
 }
 
+// TestAdvancedSchedulerScoreDiagnosticService_EscapedStickyUsesRegularWindowCostGate
+// drives sticky escape with failed feedback and usage inside the sticky
+// reserve. Detail applies the ordinary window limit and reports escaped
+// affinity, protecting eligibility after escape.
 func TestAdvancedSchedulerScoreDiagnosticService_EscapedStickyUsesRegularWindowCostGate(t *testing.T) {
 	group := &routing.Group{
 		ID: 1301, SchedulerType: routing.GroupSchedulerTypeAdvanced,
@@ -484,11 +562,16 @@ func TestAdvancedSchedulerScoreDiagnosticService_EscapedStickyUsesRegularWindowC
 	require.Equal(t, "escaped", signal.State)
 }
 
-// newDiagnosticsForTest creates a read-only diagnostic service for tests.
+// newDiagnosticsForTest constructs diagnostics with the supplied source and
+// optional concurrency service.
 func newDiagnosticsForTest(source DiagnosticSource, concurrency *schedulercore.ConcurrencyService) *Diagnostics {
 	return NewDiagnostics(source, Shared{Concurrency: concurrency}, nil, nil)
 }
 
+// withDiagnosticParameters installs Parameters using the first optional process
+// configuration on the supplied fixture. Omitted configuration uses default
+// parameter inputs, and the same Diagnostics pointer is returned for fluent
+// test setup.
 func withDiagnosticParameters(value *Diagnostics, configs ...*config.Config) *Diagnostics {
 	var cfg *config.Config
 	if len(configs) > 0 {
@@ -498,6 +581,9 @@ func withDiagnosticParameters(value *Diagnostics, configs ...*config.Config) *Di
 	return value
 }
 
+// GetWindowCostBatch copies configured costs for requested provider IDs into a
+// new map. Unknown IDs are omitted, allowing the billing guard to exercise its
+// missing-observation path in diagnostic fixtures.
 func (c *diagnosticWindowCache) GetWindowCostBatch(_ context.Context, ids []int64) (map[int64]float64, error) {
 	out := make(map[int64]float64)
 	for _, id := range ids {
@@ -508,7 +594,9 @@ func (c *diagnosticWindowCache) GetWindowCostBatch(_ context.Context, ids []int6
 	return out, nil
 }
 
-// providers converts fixture candidates to diagnostic records and preserves nil input.
+// providers converts fixture target pointers through this diagnostic scope
+// while preserving nil input. Each conversion receives its associated target
+// ID, and populated results use fresh pointer slice storage.
 func (s *diagnosticScope) providers(values []*gatewayprovider.ExecutionProvider) []*schedulercore.DiagnosticProvider {
 	if values == nil {
 		return nil
@@ -520,10 +608,14 @@ func (s *diagnosticScope) providers(values []*gatewayprovider.ExecutionProvider)
 	return out
 }
 
+// GetWindow supplies a zero-cost window result for an individual diagnostic
+// fixture read.
 func (diagnosticWindowSource) GetWindow(context.Context, int64, time.Time) (*billing.WindowCostStats, error) {
 	return &billing.WindowCostStats{}, nil
 }
 
+// GetWindows supplies an empty batched usage result for diagnostic cache-miss
+// fixture reads.
 func (diagnosticWindowSource) GetWindows(context.Context, []int64, time.Time) (map[int64]*billing.WindowCostStats, error) {
 	return map[int64]*billing.WindowCostStats{}, nil
 }

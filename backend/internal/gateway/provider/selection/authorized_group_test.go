@@ -13,21 +13,30 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// authorizedGroupReader returns configured groups and records selection's
+// requested lookup IDs.
 type authorizedGroupReader struct {
-	groups  map[int64]*routing.Group
-	readIDs []int64
+	groups  map[int64]*routing.Group // fixture group records
+	readIDs []int64                  // ordered lookup trace
 }
 
+// GetByID appends id to the read trace and returns the configured group
+// pointer. Missing IDs produce nil without error so selection's missing-group
+// handling remains observable in the fixture.
 func (r *authorizedGroupReader) GetByID(_ context.Context, id int64) (*routing.Group, error) {
 	r.readIDs = append(r.readIDs, id)
 	return r.groups[id], nil
 }
 
+// GetByIDLite shares the full-read fixture and its lookup trace.
 func (r *authorizedGroupReader) GetByIDLite(ctx context.Context, id int64) (*routing.Group, error) {
 	return r.GetByID(ctx, id)
 }
 
-// TestSelectorsNeverFollowClientFallbackWithoutAdmission checks that selectors reject fallback groups lacking entry admission.
+// TestSelectorsNeverFollowClientFallbackWithoutAdmission gives each selector a
+// Claude Code-only source group with a fallback. Selection rejects unauthorized
+// target IDs, then accepts that target after matching admission state is
+// supplied.
 func TestSelectorsNeverFollowClientFallbackWithoutAdmission(t *testing.T) {
 	sourceID, targetID := int64(91), int64(92)
 	source := &routing.Group{ID: sourceID, Hydrated: true, Status: routing.StatusActive, ClaudeCodeOnly: true, FallbackGroupID: &targetID}
@@ -70,6 +79,10 @@ func TestSelectorsNeverFollowClientFallbackWithoutAdmission(t *testing.T) {
 	}
 }
 
+// TestCurrentSelectionGroupRejectsPlanMismatchWithoutGroupSnapshot supplies an
+// admitted route plan with no group snapshot. A different requested ID still
+// returns ErrGroupNotAllowed, proving the plan constrains selection
+// independently of hydration.
 func TestCurrentSelectionGroupRejectsPlanMismatchWithoutGroupSnapshot(t *testing.T) {
 	authorized, other := int64(91), int64(92)
 	ctx := requeststate.WithRoutePlan(context.Background(), routing.Plan(routing.PlanInput{GroupID: &authorized}))
@@ -77,7 +90,10 @@ func TestCurrentSelectionGroupRejectsPlanMismatchWithoutGroupSnapshot(t *testing
 	require.ErrorIs(t, err, apikey.ErrGroupNotAllowed)
 }
 
-// TestCurrentSelectionGroupRejectsUnhydratedGroupMismatch checks that even partial group snapshots constrain the authorized ID.
+// TestCurrentSelectionGroupRejectsUnhydratedGroupMismatch supplies a partial
+// group snapshot and an unrelated requested ID. Selection rejects the mismatch
+// before invoking the reader, protecting admission even when group settings are
+// incomplete.
 func TestCurrentSelectionGroupRejectsUnhydratedGroupMismatch(t *testing.T) {
 	authorized, other := int64(91), int64(92)
 	ctx := requeststate.WithGroup(context.Background(), &routing.Group{ID: authorized})

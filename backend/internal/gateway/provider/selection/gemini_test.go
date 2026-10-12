@@ -19,20 +19,31 @@ import (
 	schedulercore "github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// mockProviderRepoForGemini supplies provider records for Gemini tests.
+// mockProviderRepoForGemini supplies mutable provider fixtures and optional
+// query overrides for Gemini selection.
 type mockProviderRepoForGemini struct {
-	providers          []gatewayprovider.ExecutionProvider
-	providersByID      map[int64]*gatewayprovider.ExecutionProvider
-	listByGroupFunc    func(ctx context.Context, groupID int64, platforms []string) ([]gatewayprovider.ExecutionProvider, error)
-	listByPlatformFunc func(ctx context.Context, platforms []string) ([]gatewayprovider.ExecutionProvider, error)
+	providers     []gatewayprovider.ExecutionProvider          // default candidate source slice
+	providersByID map[int64]*gatewayprovider.ExecutionProvider // mutable full-read fixture pointers
+	// listByGroupFunc replaces the default membership preparation and group query
+	// when configured, supplying the pool or error for that selection scenario.
+	listByGroupFunc func(ctx context.Context, groupID int64, platforms []string) ([]gatewayprovider.ExecutionProvider, error) // group query override callback
+	// listByPlatformFunc overrides default schedulability and multi-platform
+	// filtering when present, letting the scenario supply the query's pool or error.
+	listByPlatformFunc func(ctx context.Context, platforms []string) ([]gatewayprovider.ExecutionProvider, error) // multi-platform query override callback
 }
 
-// mockGatewayCacheForGemini stores Gemini test session bindings.
+// mockGatewayCacheForGemini records session bindings and removals for Gemini
+// affinity assertions.
 type mockGatewayCacheForGemini struct {
-	sessionBindings map[string]int64
-	deletedSessions map[string]int
+	// sessionBindings stores current hash affinity, while deletedSessions records
+	// removal attempts for those hashes. Group and TTL inputs are ignored by this fixture.
+	sessionBindings map[string]int64 // fixture hash provider bindings
+	deletedSessions map[string]int   // fixture hash deletion counts
 }
 
+// GetByID prepares defaults on the stored Gemini fixture and returns its
+// pointer. Missing IDs return a provider-not-found error, while referenced
+// record data remains owned by the mutable fixture.
 func (m *mockProviderRepoForGemini) GetByID(ctx context.Context, id int64) (*gatewayprovider.ExecutionProvider, error) {
 	if acc, ok := m.providersByID[id]; ok {
 		prepareSelectionFixtureProvider(ctx, acc, nil)
@@ -41,6 +52,8 @@ func (m *mockProviderRepoForGemini) GetByID(ctx context.Context, id int64) (*gat
 	return nil, errors.New("provider not found")
 }
 
+// ListSchedulableByPlatform returns schedulable fixture values matching one
+// requested platform.
 func (m *mockProviderRepoForGemini) ListSchedulableByPlatform(ctx context.Context, platform string) ([]gatewayprovider.ExecutionProvider, error) {
 	var result []gatewayprovider.ExecutionProvider
 	for _, acc := range m.providers {
@@ -51,18 +64,25 @@ func (m *mockProviderRepoForGemini) ListSchedulableByPlatform(ctx context.Contex
 	return result, nil
 }
 
+// ListSchedulableByGroupIDAndPlatform prepares default memberships before the
+// fixture's platform query. Existing group metadata is retained, and the query
+// filters platform rather than enforcing group isolation itself.
 func (m *mockProviderRepoForGemini) ListSchedulableByGroupIDAndPlatform(ctx context.Context, groupID int64, platform string) ([]gatewayprovider.ExecutionProvider, error) {
-	// This fixture filters by platform and ignores groupID.
 	for i := range m.providers {
 		prepareSelectionFixtureProvider(ctx, &m.providers[i], &groupID)
 	}
 	return m.ListSchedulableByPlatform(ctx, platform)
 }
 
+// ListSchedulableByGroupID supplies an empty result for this unused fixture
+// query.
 func (m *mockProviderRepoForGemini) ListSchedulableByGroupID(ctx context.Context, groupID int64) ([]gatewayprovider.ExecutionProvider, error) {
 	return nil, nil
 }
 
+// ListSchedulableByPlatforms invokes the configured query override when present
+// or filters schedulable platform matches. Returned record values retain their
+// referenced data, letting scenarios inject pool errors or candidate lists.
 func (m *mockProviderRepoForGemini) ListSchedulableByPlatforms(ctx context.Context, platforms []string) ([]gatewayprovider.ExecutionProvider, error) {
 	if m.listByPlatformFunc != nil {
 		return m.listByPlatformFunc(ctx, platforms)
@@ -80,6 +100,10 @@ func (m *mockProviderRepoForGemini) ListSchedulableByPlatforms(ctx context.Conte
 	return result, nil
 }
 
+// ListSchedulableByGroupIDAndPlatforms uses its query override or prepares
+// fixture memberships before multi-platform lookup. The default query leaves
+// actual group validation to selection, while override scenarios can model
+// isolated pools.
 func (m *mockProviderRepoForGemini) ListSchedulableByGroupIDAndPlatforms(ctx context.Context, groupID int64, platforms []string) ([]gatewayprovider.ExecutionProvider, error) {
 	if m.listByGroupFunc != nil {
 		return m.listByGroupFunc(ctx, groupID, platforms)
@@ -90,14 +114,25 @@ func (m *mockProviderRepoForGemini) ListSchedulableByGroupIDAndPlatforms(ctx con
 	return m.ListSchedulableByPlatforms(ctx, platforms)
 }
 
+// ListSchedulableUngroupedByPlatform delegates the fixture's platform query
+// with stored memberships retained. Group-isolation scenarios therefore rely on
+// selector checks or a group-aware source, while this adapter supplies
+// permissive candidates.
 func (m *mockProviderRepoForGemini) ListSchedulableUngroupedByPlatform(ctx context.Context, platform string) ([]gatewayprovider.ExecutionProvider, error) {
 	return m.ListSchedulableByPlatform(ctx, platform)
 }
 
+// ListSchedulableUngroupedByPlatforms delegates the multi-platform fixture
+// query with existing memberships retained. Optional platform-query callbacks
+// still take precedence, so callers can supply the pool or read failure needed
+// for their scenario.
 func (m *mockProviderRepoForGemini) ListSchedulableUngroupedByPlatforms(ctx context.Context, platforms []string) ([]gatewayprovider.ExecutionProvider, error) {
 	return m.ListSchedulableByPlatforms(ctx, platforms)
 }
 
+// GetSessionProviderID reads the hash-keyed Gemini fixture binding without
+// group or expiry handling. Missing hashes return a cache-miss error so
+// selection can exercise its ordinary sticky miss path.
 func (m *mockGatewayCacheForGemini) GetSessionProviderID(ctx context.Context, groupID int64, sessionHash string) (int64, error) {
 	if id, ok := m.sessionBindings[sessionHash]; ok {
 		return id, nil
@@ -105,6 +140,9 @@ func (m *mockGatewayCacheForGemini) GetSessionProviderID(ctx context.Context, gr
 	return 0, errors.New("not found")
 }
 
+// SetSessionProviderID allocates the fixture map if needed and stores the
+// provider by hash. Group and TTL inputs are ignored, so tests assert provider
+// affinity rather than expiration.
 func (m *mockGatewayCacheForGemini) SetSessionProviderID(ctx context.Context, groupID int64, sessionHash string, providerID int64, ttl time.Duration) error {
 	if m.sessionBindings == nil {
 		m.sessionBindings = make(map[string]int64)
@@ -113,10 +151,16 @@ func (m *mockGatewayCacheForGemini) SetSessionProviderID(ctx context.Context, gr
 	return nil
 }
 
+// RefreshSessionTTL accepts Gemini fixture refresh calls and returns success.
+// This fixture models hash affinity with no expiration state, so refresh leaves
+// its provider bindings available for subsequent selection assertions.
 func (m *mockGatewayCacheForGemini) RefreshSessionTTL(ctx context.Context, groupID int64, sessionHash string, ttl time.Duration) error {
 	return nil
 }
 
+// DeleteSessionProviderID removes a hash-keyed fixture binding and records its
+// deletion count. A missing binding map is ignored, and repeated calls remain
+// visible in the count once that map exists.
 func (m *mockGatewayCacheForGemini) DeleteSessionProviderID(ctx context.Context, groupID int64, sessionHash string) error {
 	if m.sessionBindings == nil {
 		return nil
@@ -129,7 +173,10 @@ func (m *mockGatewayCacheForGemini) DeleteSessionProviderID(ctx context.Context,
 	return nil
 }
 
-// TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_GeminiPlatform checks selection from the Gemini fixture pool.
+// TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_GeminiPlatform
+// supplies a mixed fixture pool with an eligible Gemini target first in
+// priority order. Slot-free selection returns that target, protecting basic
+// candidate ordering in the admitted group.
 func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_GeminiPlatform(t *testing.T) {
 	ctx := context.Background()
 
@@ -158,6 +205,10 @@ func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_Gemini
 	require.Equal(t, capability.PlatformGemini, acc.Record.Platform, "无分组时应只返回 gemini 平台提供商")
 }
 
+// TestGeminiMessagesCompatService_GroupResolution_ReusesContextGroup supplies a
+// valid hydrated request group and a provider pool. Selection returns a target
+// without either repository group read, protecting reuse of admitted request
+// settings.
 func TestGeminiMessagesCompatService_GroupResolution_ReusesContextGroup(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(7)
@@ -191,6 +242,10 @@ func TestGeminiMessagesCompatService_GroupResolution_ReusesContextGroup(t *testi
 	require.Equal(t, 0, groupRepo.getByIDLiteCalls)
 }
 
+// TestGeminiMessagesCompatService_AdvancedGroupUsesGenericScore gives the
+// higher-priority provider failures and the lower-priority provider successful
+// feedback. Error-only advanced scoring chooses the healthy target, protecting
+// shared scheduler observations after hard eligibility.
 func TestGeminiMessagesCompatService_AdvancedGroupUsesGenericScore(t *testing.T) {
 	groupID := int64(71)
 	ctx := requeststate.WithGroup(context.Background(), &routing.Group{
@@ -233,6 +288,9 @@ func TestGeminiMessagesCompatService_AdvancedGroupUsesGenericScore(t *testing.T)
 	require.Equal(t, int64(2), provider.Record.ID, "高级分组应在既有硬过滤后按通用错误率评分选择")
 }
 
+// TestGeminiMessagesCompatService_GroupResolution_UsesLiteFetch omits valid
+// group context and supplies a lightweight group reader. Selection performs one
+// lightweight lookup and no full read, protecting the admission lookup path.
 func TestGeminiMessagesCompatService_GroupResolution_UsesLiteFetch(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(7)
@@ -263,14 +321,17 @@ func TestGeminiMessagesCompatService_GroupResolution_UsesLiteFetch(t *testing.T)
 	require.Equal(t, 1, groupRepo.getByIDLiteCalls)
 }
 
-// TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_GroupHasNoPlatformPreference checks an Antigravity candidate in a group with no platform preference.
+// TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_GroupHasNoPlatformPreference
+// supplies Gemini and Antigravity group members with equal priority. Basic
+// choice returns the first eligible member, protecting platform-neutral group
+// candidate admission.
 func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_GroupHasNoPlatformPreference(t *testing.T) {
 	ctx := context.Background()
 
 	repo := &mockProviderRepoForGemini{
 		providers: []gatewayprovider.ExecutionProvider{
-			{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 1, Platform: capability.PlatformGemini, Priority: 1, Status: billing.StatusActive, Schedulable: true}},      // Lower-priority candidate.
-			{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 2, Platform: capability.PlatformAntigravity, Priority: 1, Status: billing.StatusActive, Schedulable: true}}, // Preferred candidate.
+			{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 1, Platform: capability.PlatformGemini, Priority: 1, Status: billing.StatusActive, Schedulable: true}},      // First equal-priority candidate.
+			{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 2, Platform: capability.PlatformAntigravity, Priority: 1, Status: billing.StatusActive, Schedulable: true}}, // Second equal-priority candidate.
 		},
 		providersByID: map[int64]*gatewayprovider.ExecutionProvider{},
 	}
@@ -295,7 +356,9 @@ func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_GroupH
 	require.Equal(t, capability.PlatformGemini, acc.Record.Platform, "分组不按平台排除合格提供商")
 }
 
-// TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_OAuthPreferred checks the OAuth tie-break preference.
+// TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_OAuthPreferred
+// supplies never-used Gemini API Key and OAuth records with equal priority. The
+// OAuth record wins the tie, protecting basic authentication preference.
 func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_OAuthPreferred(t *testing.T) {
 	ctx := context.Background()
 
@@ -322,7 +385,9 @@ func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_OAuthP
 	require.Equal(t, capability.ProviderTypeOAuth, acc.Record.Type)
 }
 
-// TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_NoAvailableProviders checks an empty provider pool.
+// TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_NoAvailableProviders
+// supplies an empty Gemini candidate pool. Selection returns an error and nil
+// provider, protecting exhaustion handling before a target is forwarded.
 func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_NoAvailableProviders(t *testing.T) {
 	ctx := context.Background()
 
@@ -342,7 +407,10 @@ func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_NoAvai
 	require.Contains(t, err.Error(), "no available")
 }
 
-// TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_StickySession checks session stickiness.
+// TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_StickySession
+// varies prefixed bindings, cross-platform support, misses, and disabled
+// targets. Eligible affinity wins, while invalid bindings are replaced through
+// ordinary priority selection.
 func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_StickySession(t *testing.T) {
 	ctx := context.Background()
 
@@ -454,6 +522,10 @@ func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_Sticky
 	})
 }
 
+// TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_ForcePlatformKeepsGroupBoundary
+// supplies a forced Antigravity platform and an empty requested-group query.
+// Selection rejects the request, protecting group isolation even when a global
+// platform fixture has candidates.
 func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_ForcePlatformKeepsGroupBoundary(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(9)
@@ -485,6 +557,10 @@ func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_ForceP
 	require.Nil(t, acc)
 }
 
+// TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_NoModelSupport
+// configures only an older Gemini identity in the provider fixture. Selection
+// returns a typed group-model rejection with available names, protecting
+// configured-model diagnosis.
 func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_NoModelSupport(t *testing.T) {
 	ctx := context.Background()
 
@@ -524,6 +600,10 @@ func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_NoMode
 	require.Contains(t, err.Error(), "Available models: gemini-1.0-pro")
 }
 
+// TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_ModelRateLimitedNotGroupUnsupported
+// supplies a supporting provider cooling down and another provider lacking the
+// model. Exhaustion remains a capacity-style error, protecting the distinction
+// between configured support and temporary unavailability.
 func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_ModelRateLimitedNotGroupUnsupported(t *testing.T) {
 	ctx := context.Background()
 	resetAt := time.Now().Add(10 * time.Minute).Format(time.RFC3339)
@@ -577,6 +657,10 @@ func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_ModelR
 	require.Contains(t, err.Error(), "supporting model")
 }
 
+// TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_StickyMixedScheduling
+// binds a compatible Antigravity group member with a retained mixed-scheduling
+// flag. Selection reuses that provider, protecting cross-platform affinity when
+// current eligibility permits it.
 func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_StickyMixedScheduling(t *testing.T) {
 	ctx := context.Background()
 	repo := &mockProviderRepoForGemini{
@@ -603,6 +687,10 @@ func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_Sticky
 	require.Equal(t, int64(1), acc.Record.ID)
 }
 
+// TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_IgnoresRetiredMixedSchedulingFlag
+// supplies an eligible Antigravity group member with no mixed-scheduling flag.
+// Its priority wins, protecting platform-neutral membership under current
+// selection policy.
 func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_IgnoresRetiredMixedSchedulingFlag(t *testing.T) {
 	ctx := context.Background()
 	repo := &mockProviderRepoForGemini{
@@ -627,6 +715,10 @@ func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_Ignore
 	require.Equal(t, int64(1), acc.Record.ID)
 }
 
+// TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_ExcludedProvider
+// marks the higher-priority Gemini target excluded for this request. Selection
+// returns the remaining eligible provider, protecting the request's
+// failed-provider set.
 func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_ExcludedProvider(t *testing.T) {
 	ctx := context.Background()
 	repo := &mockProviderRepoForGemini{
@@ -652,6 +744,10 @@ func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_Exclud
 	require.Equal(t, int64(2), acc.Record.ID)
 }
 
+// TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_ListError
+// injects a provider query failure through the fixture override. Selection
+// returns nil with the wrapped query error, protecting failure propagation from
+// candidate reads.
 func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_ListError(t *testing.T) {
 	ctx := context.Background()
 	repo := &mockProviderRepoForGemini{
@@ -671,6 +767,10 @@ func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_ListEr
 	require.Contains(t, err.Error(), "query providers failed")
 }
 
+// TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_PreferOAuth
+// supplies equal-priority Gemini records with different authentication kinds.
+// The OAuth target wins when both lack use timestamps, protecting the basic
+// tie-breaking preference.
 func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_PreferOAuth(t *testing.T) {
 	ctx := context.Background()
 	repo := &mockProviderRepoForGemini{
@@ -695,6 +795,9 @@ func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_Prefer
 	require.Equal(t, int64(2), acc.Record.ID)
 }
 
+// TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_PreferLeastRecentlyUsed
+// supplies equal-priority targets with different past use timestamps. Selection
+// returns the older target, protecting recency ordering after priority ties.
 func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_PreferLeastRecentlyUsed(t *testing.T) {
 	ctx := context.Background()
 	oldTime := time.Now().Add(-2 * time.Hour)
@@ -721,12 +824,15 @@ func TestGeminiMessagesCompatService_SelectProviderForModelWithExclusions_Prefer
 	require.Equal(t, int64(2), acc.Record.ID)
 }
 
-// TestGeminiPlatformRouting_DocumentRouteDecision checks platform-based forwarding decisions.
+// TestGeminiPlatformRouting_DocumentRouteDecision models the handler's Gemini
+// and Antigravity dispatch using the selected platform. Each fixture chooses
+// its expected service name, protecting the documented dispatch distinction
+// represented by this test.
 func TestGeminiPlatformRouting_DocumentRouteDecision(t *testing.T) {
 	tests := []struct {
-		name            string
-		platform        string
-		expectedService string // gemini selects ForwardNative; antigravity selects ForwardGemini.
+		name            string // named platform scenario
+		platform        string // selected dispatch platform
+		expectedService string // expected forwarding service name
 	}{
 		{
 			name:            "Gemini平台走ForwardNative",
@@ -742,10 +848,7 @@ func TestGeminiPlatformRouting_DocumentRouteDecision(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation:
-
-			// Model the handler's platform dispatch.
-			time.LoadLocation, Platform: tt.platform}}
+			provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, Platform: tt.platform}}
 
 			var serviceName string
 			if provider.Record.Platform == capability.PlatformAntigravity {
@@ -760,14 +863,18 @@ func TestGeminiPlatformRouting_DocumentRouteDecision(t *testing.T) {
 	}
 }
 
+// TestGeminiMessagesCompatService_isModelSupportedByProvider varies default,
+// custom, missing, and empty model inputs for Gemini and Antigravity records.
+// Support follows mapping and allowlist behavior, protecting these
+// provider-layer eligibility cases.
 func TestGeminiMessagesCompatService_isModelSupportedByProvider(t *testing.T) {
 	svc := newGeminiSelectionForTest(GeminiDependencies{Reads: Reads{}, Shared: Shared{}}, nil)
 
 	tests := []struct {
-		name     string
-		provider *gatewayprovider.ExecutionProvider
-		model    string
-		expected bool
+		name     string                             // named support scenario
+		provider *gatewayprovider.ExecutionProvider // provider model policy fixture
+		model    string                             // requested support identity
+		expected bool                               // expected support decision
 	}{
 		{
 			name:     "Antigravity平台-支持gemini模型",

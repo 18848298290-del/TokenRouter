@@ -14,6 +14,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// TestGatewayHotpathHelpers_CacheTTLAndStickyContext supplies present, missing,
+// and mismatched request prefetch hints. Sticky identifiers and cost
+// observations are reused only for their matching group or provider keys.
 func TestGatewayHotpathHelpers_CacheTTLAndStickyContext(t *testing.T) {
 	t.Run("prefetched_sticky_provider_id_from_context", func(t *testing.T) {
 		require.Equal(t, int64(0), prefetchedStickyProviderIDFromContext(context.TODO(), nil))
@@ -54,8 +57,10 @@ func TestGatewayHotpathHelpers_CacheTTLAndStickyContext(t *testing.T) {
 	})
 }
 
-// TestShouldClearStickySession tests sticky session clearing via IsSchedulable() delegation
-// plus model-level rate limiting.
+// TestShouldClearStickySession varies provider status, expiry, model cooldown,
+// and quota configuration. Binding invalidation follows schedulability and the
+// requested model's active cooldown, while nil and inapplicable OAuth quota
+// cases remain usable.
 func TestShouldClearStickySession(t *testing.T) {
 	now := time.Now()
 	future := now.Add(1 * time.Hour)
@@ -67,10 +72,10 @@ func TestShouldClearStickySession(t *testing.T) {
 	longRateLimitReset := now.Add(30 * time.Second).Format(time.RFC3339)
 
 	tests := []struct {
-		name           string
-		provider       *gatewayprovider.ExecutionProvider
-		requestedModel string
-		want           bool
+		name           string                             // named clearing scenario
+		provider       *gatewayprovider.ExecutionProvider // provider eligibility fixture
+		requestedModel string                             // requested cooldown identity
+		want           bool                               // expected binding invalidation
 	}{
 		{name: "nil provider", provider: nil, requestedModel: "", want: false},
 		{name: "status error", provider: &gatewayprovider.ExecutionProvider{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, Status: providercore.StatusError, Schedulable: true}}, requestedModel: "", want: true},

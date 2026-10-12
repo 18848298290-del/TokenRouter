@@ -18,13 +18,17 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler/rediscache/codec"
 )
 
-// selectionSnapshotFixture supplies cached snapshots separately from database recheck records.
+// selectionSnapshotFixture supplies cached provider copies separately from
+// database revalidation targets.
 type selectionSnapshotFixture struct {
-	schedulercore.SnapshotCache
-	providersByID map[int64]*gatewayprovider.ExecutionProvider
+	schedulercore.SnapshotCache                                              // unused snapshot calls panic
+	providersByID               map[int64]*gatewayprovider.ExecutionProvider // cached continuation target fixtures
 }
 
-// selectPreviousResponseForTest prepares context and model mapping for response-chain selection.
+// selectPreviousResponseForTest supplies candidate and group-privacy hints
+// before continuation lookup. It applies one group mapping to the client's
+// name, then passes the resolved routing model and Compact requirement to
+// response selection.
 func selectPreviousResponseForTest(s *Compatible, ctx context.Context, group *int64, previous, model string, excluded map[int64]struct{}, compact bool) (*gatewayprovider.SelectionResult, error) {
 	ctx = s.withCandidatePolicy(ctx, group, "")
 	ctx = s.withOpenAIGroupPrivacyRequirement(ctx, group)
@@ -32,6 +36,9 @@ func selectPreviousResponseForTest(s *Compatible, ctx context.Context, group *in
 	return s.selectProviderByPreviousResponseIDForCapability(ctx, group, previous, model, excluded, "", compact)
 }
 
+// GetProvider returns a shallow copy of the configured provider record wrapped
+// for snapshot decoding. Missing IDs return nil without error; referenced
+// record data stays shared with the fixture's input.
 func (s *selectionSnapshotFixture) GetProvider(_ context.Context, id int64) (schedulercore.SnapshotProvider, error) {
 	value := s.providersByID[id]
 	if value == nil {
@@ -41,6 +48,9 @@ func (s *selectionSnapshotFixture) GetProvider(_ context.Context, id int64) (sch
 	return codec.WrapRecord(&copy), nil
 }
 
+// TestOpenAIGatewayService_SelectProviderByPreviousResponseID_Hit binds an
+// eligible API Key provider to a prior response. Continuation acquires its slot
+// and returns the same provider, protecting response affinity during selection.
 func TestOpenAIGatewayService_SelectProviderByPreviousResponseID_Hit(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(23)
@@ -90,6 +100,10 @@ func TestOpenAIGatewayService_SelectProviderByPreviousResponseID_Hit(t *testing.
 	}
 }
 
+// TestOpenAIGatewayService_SelectProviderByPreviousResponseID_QuotaAutoPausedMiss
+// exceeds a configured quota threshold on the response-bound provider.
+// Selection returns no target and retains the binding so a later eligible
+// continuation can resume.
 func TestOpenAIGatewayService_SelectProviderByPreviousResponseID_QuotaAutoPausedMiss(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(23)
@@ -140,6 +154,10 @@ func TestOpenAIGatewayService_SelectProviderByPreviousResponseID_QuotaAutoPaused
 	require.Equal(t, provider.Record.ID, boundProviderID)
 }
 
+// TestOpenAIGatewayService_SelectProviderByPreviousResponseID_RateLimitedMiss
+// gives the response-bound provider an active global cooldown. Continuation
+// rejects it and removes the binding, protecting stale-affinity cleanup for an
+// unschedulable target.
 func TestOpenAIGatewayService_SelectProviderByPreviousResponseID_RateLimitedMiss(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(23)
@@ -187,6 +205,10 @@ func TestOpenAIGatewayService_SelectProviderByPreviousResponseID_RateLimitedMiss
 	require.Zero(t, boundProviderID)
 }
 
+// TestOpenAIGatewayService_SelectProviderByPreviousResponseID_DBRuntimeRecheckRateLimitedMiss
+// leaves a usable snapshot while the database record is rate limited.
+// Revalidation rejects the target and deletes its prior-response binding before
+// continuation dispatch.
 func TestOpenAIGatewayService_SelectProviderByPreviousResponseID_DBRuntimeRecheckRateLimitedMiss(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(24)
@@ -254,6 +276,10 @@ func TestOpenAIGatewayService_SelectProviderByPreviousResponseID_DBRuntimeRechec
 	require.Zero(t, boundProviderID)
 }
 
+// TestOpenAIGatewayService_SelectProviderByPreviousResponseID_Excluded places
+// the response-bound provider in the current request's exclusion set. Selection
+// returns no target, protecting request exclusions before continuation slot
+// acquisition.
 func TestOpenAIGatewayService_SelectProviderByPreviousResponseID_Excluded(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(23)
@@ -296,6 +322,10 @@ func TestOpenAIGatewayService_SelectProviderByPreviousResponseID_Excluded(t *tes
 	require.Nil(t, selection)
 }
 
+// TestOpenAIGatewayService_SelectProviderByPreviousResponseID_APIKeyForceHTTPHit
+// binds an API Key target configured to force HTTP. Continuation still chooses
+// that key/project, protecting response state created under its API
+// credentials.
 func TestOpenAIGatewayService_SelectProviderByPreviousResponseID_APIKeyForceHTTPHit(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(23)
@@ -344,6 +374,10 @@ func TestOpenAIGatewayService_SelectProviderByPreviousResponseID_APIKeyForceHTTP
 	}
 }
 
+// TestOpenAIGatewayService_SelectProviderByPreviousResponseID_OAuthHTTPOnlyCannotResumeWS
+// supplies an OAuth target forced to HTTP with a prior-response binding. The
+// target is rejected, protecting WebSocket continuation requirements for that
+// authentication path.
 func TestOpenAIGatewayService_SelectProviderByPreviousResponseID_OAuthHTTPOnlyCannotResumeWS(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(23)
@@ -386,6 +420,10 @@ func TestOpenAIGatewayService_SelectProviderByPreviousResponseID_OAuthHTTPOnlyCa
 	require.Nil(t, selection, "OAuth HTTP fallback cannot preserve WSv2 continuation state")
 }
 
+// TestOpenAIGatewayService_SelectProviderByPreviousResponseID_BusyKeepsSticky
+// fills the bound provider while another target has capacity. Selection returns
+// a wait plan for the bound provider, protecting continuation affinity during
+// temporary slot exhaustion.
 func TestOpenAIGatewayService_SelectProviderByPreviousResponseID_BusyKeepsSticky(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(23)
@@ -465,6 +503,10 @@ func TestOpenAIGatewayService_SelectProviderByPreviousResponseID_BusyKeepsSticky
 	require.Equal(t, int64(21), selection.WaitPlan.ProviderID)
 }
 
+// TestOpenAIGatewayService_SelectProviderByPreviousResponseID_CapabilityMismatchKeepsSticky
+// requests embeddings from a response-bound text target. Selection returns no
+// target while retaining the binding, protecting affinity from request-specific
+// endpoint capability rejection.
 func TestOpenAIGatewayService_SelectProviderByPreviousResponseID_CapabilityMismatchKeepsSticky(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(25)

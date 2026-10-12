@@ -13,12 +13,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// probePricingStore supplies group policy reads for probe tests.
+// probePricingStore supplies empty persisted configurations for group-policy
+// probe tests.
 type probePricingStore struct {
-	routing.PricingConfigRepository
+	routing.PricingConfigRepository // unused repository calls panic
 }
 
-// TestProbeSelectPreservesGroupMappedModel covers a public alias that differs from the provider allowlist.
+// TestProbeSelectPreservesGroupMappedModel supplies a client alias and a
+// second-hop trap for both selectors. Probe targets retain one group mapping
+// for later provider testing, and restricted intermediate names cannot be
+// reintroduced.
 func TestProbeSelectPreservesGroupMappedModel(t *testing.T) {
 	for _, selector := range []string{"compatible", "generic"} {
 		for _, mapped := range []bool{false, true} {
@@ -29,7 +33,8 @@ func TestProbeSelectPreservesGroupMappedModel(t *testing.T) {
 				if mapped {
 					groupModel = "gemini-3.8-flash-tiered"
 					mapping[requested] = groupModel
-					// The second rule must not apply another mapping in the same stage.
+					// A second rule turns the intermediate name into a trap. Applying
+					// group mapping twice would produce a target the provider cannot serve.
 					mapping[groupModel] = "wrong-second-hop"
 				}
 				group := &routing.Group{ID: 59, RoutingPolicy: routing.GroupRoutingPolicy{
@@ -70,6 +75,8 @@ func TestProbeSelectPreservesGroupMappedModel(t *testing.T) {
 	}
 }
 
+// ListAll returns no persisted pricing configurations for the probe
+// group-policy fixture.
 func (probePricingStore) ListAll(context.Context) ([]routing.PricingConfig, error) {
 	return nil, nil
 }

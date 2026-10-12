@@ -2,11 +2,14 @@ package modelidentity
 
 import "testing"
 
+// TestResolveThinkingProtocol resolves strict, passback, and unknown families
+// through the catalogue's Anthropic-message rules. Complete family matches
+// select their policy while embedded names and empty inputs remain unknown.
 func TestResolveThinkingProtocol(t *testing.T) {
 	tests := []struct {
-		name  string
-		model string
-		want  ThinkingProtocol
+		name  string           // named protocol scenario
+		model string           // catalogue model input
+		want  ThinkingProtocol // expected signature policy
 	}{
 		{name: "claude strict", model: "claude-sonnet-4-5", want: ThinkingProtocolAnthropicStrict},
 		{name: "opus strict", model: "opus-4-5", want: ThinkingProtocolAnthropicStrict},
@@ -33,6 +36,10 @@ func TestResolveThinkingProtocol(t *testing.T) {
 	}
 }
 
+// TestThinkingProtocolGuards compares strict Anthropic prefiltering with
+// passback and unknown model families. Strict prefiltering activates, passback
+// prefiltering and signature repair stay disabled, and unknown-model retry
+// filtering stays disabled.
 func TestThinkingProtocolGuards(t *testing.T) {
 	if !ShouldPreFilterThinkingBlocks("claude-sonnet-4-5") {
 		t.Fatal("Anthropic strict 模型应执行预过滤")

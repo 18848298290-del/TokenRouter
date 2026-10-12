@@ -30,51 +30,77 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// usageLogWindowBatchRepoStub supplies distinct batch and individual usage
+// results with atomic read counters.
 type usageLogWindowBatchRepoStub struct {
-	usage.UsageLogRepository
+	usage.UsageLogRepository // unused usage operations panic
 
-	batchResult map[int64]*usage.ProviderStats
-	batchErr    error
-	batchCalls  atomic.Int64
+	// batchResult, batchErr, and batchCalls describe grouped usage reads, while
+	// singleResult, singleErr, and singleCalls describe individual recovery reads.
+	// Returned statistics pointers stay shared with these configured inputs.
+	batchResult map[int64]*usage.ProviderStats // shared batched usage result pointers
+	// batchErr supplies the grouped usage failure. A nonnil value is returned
+	// after incrementing batchCalls and before consulting batchResult.
+	batchErr   error        // configured batch usage failure
+	batchCalls atomic.Int64 // atomic batch read count
 
-	singleResult map[int64]*usage.ProviderStats
-	singleErr    error
-	singleCalls  atomic.Int64
+	singleResult map[int64]*usage.ProviderStats // shared individual usage result pointers
+	// singleErr supplies the individual usage failure. A nonnil value returns
+	// after incrementing singleCalls and bypasses both configured results and the
+	// fresh zero-statistics result.
+	singleErr   error        // configured individual usage failure
+	singleCalls atomic.Int64 // atomic individual read count
 }
 
+// sessionLimitCacheHotpathStub supplies batch window costs and records cache
+// writes for prefetch scenarios.
 type sessionLimitCacheHotpathStub struct {
-	billing.WindowCostCache
+	billing.WindowCostCache // unused window cache operations
 
-	batchData map[int64]float64
-	batchErr  error
+	batchData map[int64]float64 // configured provider window cost observations
+	// batchErr supplies the cost-cache query failure. A nonnil value returns
+	// before reading batchData or allocating the requested-observation result map.
+	batchErr error // configured cost batch failure
 
-	setData map[int64]float64
-	setErr  error
+	setData map[int64]float64 // recorded provider cost writes
+	// setErr supplies the cache-publication failure. A nonnil value returns
+	// before allocating or updating setData, leaving the fixture write trace intact.
+	setErr error // configured cost write failure
 }
 
+// stickyGatewayCacheHotpathStub supplies one sticky target and counts reads for
+// prefetch reuse assertions.
 type stickyGatewayCacheHotpathStub struct {
-	session.GatewayCache
+	session.GatewayCache // unused ownership operations panic
 
-	stickyID int64
-	getCalls atomic.Int64
+	stickyID int64        // configured sticky provider identifier
+	getCalls atomic.Int64 // atomic sticky lookup count
 }
 
-// sessionLimitReleaseCacheStub records unregister calls to verify session release.
+// sessionLimitReleaseCacheStub records per-provider session removal calls or
+// returns a configured failure.
 type sessionLimitReleaseCacheStub struct {
-	schedulercore.SessionLimitCache
+	schedulercore.SessionLimitCache // unused registration operations panic
 
-	unregistered map[int64][]string
-	err          error
+	unregistered map[int64][]string // recorded provider session removal calls
+	// err supplies the unregister failure. A nonnil value returns before
+	// appending to unregistered, so failed removals leave no entry in that trace.
+	err error // configured session removal failure
 }
 
+// TestCollectSelectionFailureStats supplies one provider for each diagnostic
+// rejection category and one passing target. The resulting counts partition the
+// whole pool, protecting exclusive category accounting for these separately
+// constructed outcomes.
 func TestCollectSelectionFailureStats(t *testing.T) {
 	svc := NewGeneric(GenericDependencies{}, DefaultOptions())
 	model := "gpt-5.4"
 	resetAt := time.Now().Add(2 * time.Minute).Format(time.RFC3339)
 
 	providers := []gatewayprovider.
-		// excluded
 		ExecutionProvider{
+		// This record otherwise passes the diagnostic gates. Its explicit request
+		// exclusion makes it contribute to the excluded count in this fixture.
 		{
 			Record: providercore.Record{
 				Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 1,
@@ -169,6 +195,10 @@ func TestCollectSelectionFailureStats(t *testing.T) {
 	}
 }
 
+// TestDiagnoseSelectionFailure_UnschedulableDetail disables scheduling on an
+// otherwise active provider. Diagnosis reports the unschedulable category and
+// record-state detail, protecting the specific explanation emitted for this
+// otherwise eligible fixture's disabled scheduling state.
 func TestDiagnoseSelectionFailure_UnschedulableDetail(t *testing.T) {
 	svc := NewGeneric(GenericDependencies{}, DefaultOptions())
 	acc := &gatewayprovider.ExecutionProvider{
@@ -189,6 +219,10 @@ func TestDiagnoseSelectionFailure_UnschedulableDetail(t *testing.T) {
 	}
 }
 
+// TestDiagnoseSelectionFailure_ModelRateLimitedDetail records a future cooldown
+// for the requested model. Diagnosis reports model_rate_limited with a
+// remaining-duration detail, protecting the explanation for temporary model
+// unavailability.
 func TestDiagnoseSelectionFailure_ModelRateLimitedDetail(t *testing.T) {
 	svc := NewGeneric(GenericDependencies{}, DefaultOptions())
 	model := "gpt-5.4"
@@ -218,9 +252,10 @@ func TestDiagnoseSelectionFailure_ModelRateLimitedDetail(t *testing.T) {
 	}
 }
 
+// TestGetSchedulableProvider_AppliesGrokFreeSoftGate supplies explicit Free
+// OAuth usage above the configured soft threshold. Initial unknown usage admits
+// the target, then tracked refresh makes the generic lookup reject it.
 func TestGetSchedulableProvider_AppliesGrokFreeSoftGate(t *testing.T) {
-	// After cache warmup, sticky and direct lookups must reject Free OAuth providers over the soft limit.
-	// The first lookup fails open and schedules refresh; subsequent lookups use the cached result.
 	cfg := &config.Config{}
 	cfg.Gateway.Grok.FreeQuotaSoftGateEnabled = true
 	cfg.Gateway.Grok.FreeQuotaTokenLimit = 500_000
@@ -239,7 +274,8 @@ func TestGetSchedulableProvider_AppliesGrokFreeSoftGate(t *testing.T) {
 	usageRepo := &grokFreeQuotaUsageRepoStub{stats: map[int64]*usage.ProviderStats{
 		provider.Record.ID: {Tokens: 480_000}, // above 95% of 500k
 	}}
-	// Reset the shared free-quota cache to isolate the test.
+	// This gate owns an independent usage cache. Track its accepted background
+	// queries so test cleanup waits for fixture reads after the first admission check.
 	var tasks sync.WaitGroup
 	t.Cleanup(tasks.Wait)
 	gate := newGrokFreeQuotaTestGate(cfg, usageRepo, func(_ string, work func()) bool {
@@ -258,12 +294,22 @@ func TestGetSchedulableProvider_AppliesGrokFreeSoftGate(t *testing.T) {
 	}, 2*time.Second, 10*time.Millisecond, "over free soft-gate sticky hit must miss after cache warm")
 }
 
+// advancedSchedulerRegressionBool returns a pointer representing a supplied
+// boolean group override.
 func advancedSchedulerRegressionBool(value bool) *bool { return &value }
 
+// advancedSchedulerRegressionInt returns a pointer representing a supplied
+// integer group override.
 func advancedSchedulerRegressionInt(value int) *int { return &value }
 
+// advancedSchedulerRegressionFloat returns a pointer representing a supplied
+// scoring-weight override.
 func advancedSchedulerRegressionFloat(value float64) *float64 { return &value }
 
+// advancedSchedulerRegressionOverrides returns explicit zero weights with
+// weighted stickiness and Top-K one. Callers change individual fields for each
+// scenario, allowing the tests to distinguish supplied zero overrides from
+// inheritance.
 func advancedSchedulerRegressionOverrides() routing.GroupAdvancedSchedulerOverrides {
 	return routing.GroupAdvancedSchedulerOverrides{
 		StickyWeightedEnabled:  advancedSchedulerRegressionBool(true),
@@ -280,6 +326,10 @@ func advancedSchedulerRegressionOverrides() routing.GroupAdvancedSchedulerOverri
 	}
 }
 
+// advancedSchedulerRegressionGroup creates an active hydrated advanced group
+// with supplied overrides. The platform compatibility input is unused, so the
+// fixture's group mode applies independently of later forced-platform
+// filtering.
 func advancedSchedulerRegressionGroup(id int64, platform string, overrides routing.GroupAdvancedSchedulerOverrides) *routing.Group {
 	return &routing.Group{
 		ID: id, Name: "advanced", Status: billing.StatusActive, Hydrated: true,
@@ -287,6 +337,10 @@ func advancedSchedulerRegressionGroup(id int64, platform string, overrides routi
 	}
 }
 
+// advancedSchedulerRegressionProviderRepo retains the candidate slice and
+// indexes its element pointers for full reads. Fixture modifications remain
+// visible through both queries, letting tests supply the same records to
+// ranking and hydration.
 func advancedSchedulerRegressionProviderRepo(providers []gatewayprovider.ExecutionProvider) *mockProviderRepoForPlatform {
 	repo := &mockProviderRepoForPlatform{providers: providers, providersByID: make(map[int64]*gatewayprovider.ExecutionProvider, len(providers))}
 	for index := range repo.providers {
@@ -295,6 +349,10 @@ func advancedSchedulerRegressionProviderRepo(providers []gatewayprovider.Executi
 	return repo
 }
 
+// TestGatewayAdvancedSchedulerKeepsFullLoadCandidatesForWaitAndNoSlotSelection
+// supplies eligible providers with full load and failed acquisition. Advanced
+// generation returns a wait plan, while auxiliary selection chooses from that
+// pool without another slot acquisition.
 func TestGatewayAdvancedSchedulerKeepsFullLoadCandidatesForWaitAndNoSlotSelection(t *testing.T) {
 	overrides := advancedSchedulerRegressionOverrides()
 	overrides.WeightPriority = advancedSchedulerRegressionFloat(1)
@@ -343,6 +401,10 @@ func TestGatewayAdvancedSchedulerKeepsFullLoadCandidatesForWaitAndNoSlotSelectio
 	require.Equal(t, acquireCalls, concurrencyCache.acquireProviderCalls, "无槽选择不得申请真实并发槽")
 }
 
+// TestGatewayAdvancedSchedulerForcePlatformUsesGroupOverrides forces
+// Antigravity inside an advanced group whose override favors lower load.
+// Selection and result feedback follow that group policy, protecting
+// forced-platform scheduling and observation alignment.
 func TestGatewayAdvancedSchedulerForcePlatformUsesGroupOverrides(t *testing.T) {
 	overrides := advancedSchedulerRegressionOverrides()
 	overrides.WeightLoad = advancedSchedulerRegressionFloat(1)
@@ -386,6 +448,10 @@ func TestGatewayAdvancedSchedulerForcePlatformUsesGroupOverrides(t *testing.T) {
 	require.Zero(t, svc.advancedSchedulerStats().FeedbackSnapshot(14011).ErrorSamples)
 }
 
+// TestGatewayAdvancedSchedulerWeightedStickyKeepsStickyOnlyProvider puts the
+// bound provider's cost inside its reserved sticky allowance. Advanced weighted
+// selection retains that eligible candidate, protecting sticky reserve handling
+// before score-based choice.
 func TestGatewayAdvancedSchedulerWeightedStickyKeepsStickyOnlyProvider(t *testing.T) {
 	overrides := advancedSchedulerRegressionOverrides()
 	overrides.WeightSessionSticky = advancedSchedulerRegressionFloat(1)
@@ -428,6 +494,10 @@ func TestGatewayAdvancedSchedulerWeightedStickyKeepsStickyOnlyProvider(t *testin
 	require.True(t, selection.AdvancedScheduler)
 }
 
+// TestGatewayAdvancedSchedulerEscapesNonOpenAIHardSticky raises failure
+// feedback beyond the group's escape threshold for a Gemini binding. Advanced
+// choice uses the healthy member while retaining the stored affinity,
+// protecting request-local escape.
 func TestGatewayAdvancedSchedulerEscapesNonOpenAIHardSticky(t *testing.T) {
 	overrides := advancedSchedulerRegressionOverrides()
 	overrides.StickyWeightedEnabled = advancedSchedulerRegressionBool(false)
@@ -475,6 +545,9 @@ func TestGatewayAdvancedSchedulerEscapesNonOpenAIHardSticky(t *testing.T) {
 	require.True(t, selection.AdvancedScheduler)
 }
 
+// TestIsProviderInGroup varies absent groups, nil providers, and one or several
+// stored memberships. A positive matching request group is required, protecting
+// selection from implicit membership or ungrouped admission.
 func TestIsProviderInGroup(t *testing.T) {
 	svc := newGenericSelectionForTest(GenericDependencies{Reads: Reads{}, Shared: Shared{}},
 
@@ -484,10 +557,10 @@ func TestIsProviderInGroup(t *testing.T) {
 	groupID200 := int64(200)
 
 	tests := []struct {
-		name     string
-		provider *gatewayprovider.ExecutionProvider
-		groupID  *int64
-		expected bool
+		name     string                             // named eligibility scenario
+		provider *gatewayprovider.ExecutionProvider // configured provider policy fixture
+		groupID  *int64                             // requested fixture group identifier
+		expected bool                               // expected eligibility result
 	}{
 		// A request with no group ID.
 		{
@@ -557,6 +630,10 @@ func TestIsProviderInGroup(t *testing.T) {
 	}
 }
 
+// TestSelectProviderForModelWithExclusions_UsesAdmittedFallbackGroupForGroupRestriction
+// supplies matching fallback group state and route plan as admission inputs.
+// Slot-free selection returns the expected provider for the model allowed by
+// that fixture's group policy.
 func TestSelectProviderForModelWithExclusions_UsesAdmittedFallbackGroupForGroupRestriction(t *testing.T) {
 	t.Parallel()
 
@@ -611,7 +688,6 @@ func TestSelectProviderForModelWithExclusions_UsesAdmittedFallbackGroupForGroupR
 		Shared: Shared{GroupPolicies: pricingConfigSvc},
 	}, testConfig())
 
-	// Entry admission has authorized the fallback; selection uses its final group and model rules.
 	ctx := requeststate.WithGroup(context.Background(), groupRepo.groups[fallbackID])
 	ctx = requeststate.WithRoutePlan(ctx, routing.Plan(routing.PlanInput{Group: groupRepo.groups[fallbackID]}))
 	provider, err := svc.SelectProviderForModelWithExclusions(ctx, &fallbackID, "", "claude-sonnet-4-6", nil)
@@ -620,6 +696,10 @@ func TestSelectProviderForModelWithExclusions_UsesAdmittedFallbackGroupForGroupR
 	require.Equal(t, int64(1), provider.Record.ID)
 }
 
+// TestSelectProviderWithLoadAwareness_UsesAdmittedFallbackGroupForGroupRestriction
+// supplies matching fallback group state and route plan as admission inputs.
+// Load-aware selection returns the expected provider for the model allowed by
+// that fixture's group policy.
 func TestSelectProviderWithLoadAwareness_UsesAdmittedFallbackGroupForGroupRestriction(t *testing.T) {
 	t.Parallel()
 
@@ -674,7 +754,6 @@ func TestSelectProviderWithLoadAwareness_UsesAdmittedFallbackGroupForGroupRestri
 		Shared: Shared{GroupPolicies: pricingConfigSvc},
 	}, testConfig())
 
-	// Entry admission has authorized the fallback; selection uses its final group and model rules.
 	ctx := requeststate.WithGroup(context.Background(), groupRepo.groups[fallbackID])
 	ctx = requeststate.WithRoutePlan(ctx, routing.Plan(routing.PlanInput{Group: groupRepo.groups[fallbackID]}))
 	result, err := svc.SelectProviderWithLoadAwareness(ctx, &fallbackID, "", "claude-sonnet-4-6", nil, "", 0)
@@ -684,6 +763,10 @@ func TestSelectProviderWithLoadAwareness_UsesAdmittedFallbackGroupForGroupRestri
 	require.Equal(t, int64(1), result.Provider.Record.ID)
 }
 
+// TestIsModelSupportedByProviderWithContext_QoderUsesGroupMappedProviderLayerModel
+// maps a client alias through group and Qoder provider names. Support checks
+// the allowed final identity, protecting model-stage order in provider
+// eligibility.
 func TestIsModelSupportedByProviderWithContext_QoderUsesGroupMappedProviderLayerModel(t *testing.T) {
 	t.Parallel()
 	ch := routingtestkit.Configuration{
@@ -715,6 +798,10 @@ func TestIsModelSupportedByProviderWithContext_QoderUsesGroupMappedProviderLayer
 		"provider whitelist should be checked after channel mapping and provider mapping")
 }
 
+// GetProviderWindowStatsBatch increments its atomic batch counter and returns
+// configured statistics for requested IDs. Configured errors return first;
+// result maps are new, while stored statistics pointers remain shared with the
+// fixture.
 func (s *usageLogWindowBatchRepoStub) GetProviderWindowStatsBatch(ctx context.Context, providerIDs []int64, startTime time.Time) (map[int64]*usage.ProviderStats, error) {
 	s.batchCalls.Add(1)
 	if s.batchErr != nil {
@@ -729,6 +816,9 @@ func (s *usageLogWindowBatchRepoStub) GetProviderWindowStatsBatch(ctx context.Co
 	return out, nil
 }
 
+// GetProviderWindowStats increments the individual-read counter and returns its
+// configured result or error. Missing IDs get a fresh zero statistics value,
+// distinguishing an empty observation from unavailable fixture storage.
 func (s *usageLogWindowBatchRepoStub) GetProviderWindowStats(ctx context.Context, providerID int64, startTime time.Time) (*usage.ProviderStats, error) {
 	s.singleCalls.Add(1)
 	if s.singleErr != nil {
@@ -740,6 +830,9 @@ func (s *usageLogWindowBatchRepoStub) GetProviderWindowStats(ctx context.Context
 	return &usage.ProviderStats{}, nil
 }
 
+// GetWindowCostBatch returns configured cost entries for requested IDs in a new
+// map. Configured errors take precedence, while missing entries are omitted so
+// prefetch can obtain those provider windows from usage storage.
 func (s *sessionLimitCacheHotpathStub) GetWindowCostBatch(ctx context.Context, providerIDs []int64) (map[int64]float64, error) {
 	if s.batchErr != nil {
 		return nil, s.batchErr
@@ -753,6 +846,9 @@ func (s *sessionLimitCacheHotpathStub) GetWindowCostBatch(ctx context.Context, p
 	return out, nil
 }
 
+// SetWindowCost records the provider cost in fixture storage unless setErr is
+// configured. It allocates the write map when needed, allowing assertions on
+// best-effort prefetch cache publication.
 func (s *sessionLimitCacheHotpathStub) SetWindowCost(ctx context.Context, providerID int64, cost float64) error {
 	if s.setErr != nil {
 		return s.setErr
@@ -764,6 +860,9 @@ func (s *sessionLimitCacheHotpathStub) SetWindowCost(ctx context.Context, provid
 	return nil
 }
 
+// GetSessionProviderID counts reads atomically and returns the configured
+// positive sticky ID. Nonpositive IDs produce a cache-miss error, while group
+// and hash inputs are ignored by this single-binding fixture.
 func (s *stickyGatewayCacheHotpathStub) GetSessionProviderID(ctx context.Context, groupID int64, sessionHash string) (int64, error) {
 	s.getCalls.Add(1)
 	if s.stickyID > 0 {
@@ -772,30 +871,53 @@ func (s *stickyGatewayCacheHotpathStub) GetSessionProviderID(ctx context.Context
 	return 0, errors.New("not found")
 }
 
+// SetSessionProviderID accepts sticky fixture writes and returns success. The
+// configured stickyID remains its read result, letting prefetch tests measure
+// cache reads independently of any later affinity update.
 func (s *stickyGatewayCacheHotpathStub) SetSessionProviderID(ctx context.Context, groupID int64, sessionHash string, providerID int64, ttl time.Duration) error {
 	return nil
 }
 
+// RefreshSessionTTL accepts sticky fixture expiration calls and returns
+// success. This fixture retains one configured ID with no expiry state, so
+// refresh does not alter the read-count scenario's target.
 func (s *stickyGatewayCacheHotpathStub) RefreshSessionTTL(ctx context.Context, groupID int64, sessionHash string, ttl time.Duration) error {
 	return nil
 }
 
+// DeleteSessionProviderID accepts cleanup for this single-binding fixture and
+// returns success. It keeps the configured read ID intact, leaving prefetch
+// scenarios governed by their supplied hint and lookup counter.
 func (s *stickyGatewayCacheHotpathStub) DeleteSessionProviderID(ctx context.Context, groupID int64, sessionHash string) error {
 	return nil
 }
 
+// SetSessionOwnerGroupID supplies successful owner admission for this
+// sticky-read fixture. Ownership is unmodeled, allowing provider-prefetch
+// scenarios to bind sessions without adding user/source persistence
+// observations.
 func (s *stickyGatewayCacheHotpathStub) SetSessionOwnerGroupID(ctx context.Context, userID int64, source, sessionHash string, groupID int64, ttl time.Duration) (bool, error) {
 	return true, nil
 }
 
+// GetSessionOwnerGroupID returns a cache-miss error because this fixture stores
+// no owner records. Prefetch scenarios therefore receive an absent owner even
+// after the fixture's permissive write path admits binding.
 func (s *stickyGatewayCacheHotpathStub) GetSessionOwnerGroupID(ctx context.Context, userID int64, source, sessionHash string) (int64, error) {
 	return 0, errors.New("not found")
 }
 
+// RefreshSessionOwnerTTL accepts owner refresh and returns success in this
+// fixture. It stores no ownership expiration data, leaving the configured
+// sticky target and lookup counter unchanged for later assertions.
 func (s *stickyGatewayCacheHotpathStub) RefreshSessionOwnerTTL(ctx context.Context, userID int64, source, sessionHash string, ttl time.Duration) error {
 	return nil
 }
 
+// resetGatewayHotpathStatsForTest resets shared cost-window and group-rate
+// counters used by these assertions. Callers serialize scenarios using those
+// global observations so another test's reads do not replace the measured
+// baseline.
 func resetGatewayHotpathStatsForTest() {
 	billing.SharedWindowCostMetrics().Hit.Store(0)
 	billing.SharedWindowCostMetrics().Miss.Store(0)
@@ -810,9 +932,14 @@ func resetGatewayHotpathStatsForTest() {
 	billing.SharedGroupRateMetrics().Fallback.Store(0)
 }
 
+// TestWithWindowCostPrefetch_BatchReadAndContextReuse supplies one cached
+// Anthropic cost and one usage-store miss beside an inapplicable target.
+// Prefetch reuses cache, batches the miss, publishes its result, and returns
+// request-scoped observations.
 func TestWithWindowCostPrefetch_BatchReadAndContextReuse(t *testing.T) {
 	resetGatewayHotpathStatsForTest()
 
+	// Use an hourly fixture anchor for cost-window prefetch grouping.
 	windowStart := time.Now().Add(-30 * time.Minute).Truncate(time.Hour)
 	windowEnd := windowStart.Add(5 * time.Hour)
 	providers := []gatewayprovider.ExecutionProvider{
@@ -863,8 +990,6 @@ func TestWithWindowCostPrefetch_BatchReadAndContextReuse(t *testing.T) {
 		WindowPrefetchAvailable: true,
 	}, nil)
 
-	// Read the provider again when it is missing from prefetched results.
-
 	outCtx := svc.withWindowCostPrefetch(context.Background(), providers)
 	require.NotNil(t, outCtx)
 
@@ -890,9 +1015,13 @@ func TestWithWindowCostPrefetch_BatchReadAndContextReuse(t *testing.T) {
 	require.Equal(t, int64(0), errCount)
 }
 
+// TestWithWindowCostPrefetch_AllHitNoSQL gives every applicable provider a
+// cached window cost. Prefetch returns both observations and makes no usage
+// queries, protecting the all-hit batch path and its metrics.
 func TestWithWindowCostPrefetch_AllHitNoSQL(t *testing.T) {
 	resetGatewayHotpathStatsForTest()
 
+	// Use an hourly fixture anchor for cost-window prefetch grouping.
 	windowStart := time.Now().Add(-30 * time.Minute).Truncate(time.Hour)
 	windowEnd := windowStart.Add(5 * time.Hour)
 	providers := []gatewayprovider.ExecutionProvider{
@@ -950,9 +1079,14 @@ func TestWithWindowCostPrefetch_AllHitNoSQL(t *testing.T) {
 	require.Equal(t, int64(0), errCount)
 }
 
+// TestWithWindowCostPrefetch_BatchErrorFallbackSingleQuery injects failed batch
+// usage reading with an available individual result. Prefetch retains that cost
+// and records fallback/error counters, protecting recovery after the grouped
+// query fails.
 func TestWithWindowCostPrefetch_BatchErrorFallbackSingleQuery(t *testing.T) {
 	resetGatewayHotpathStatsForTest()
 
+	// Use an hourly fixture anchor for cost-window prefetch grouping.
 	windowStart := time.Now().Add(-30 * time.Minute).Truncate(time.Hour)
 	windowEnd := windowStart.Add(5 * time.Hour)
 	providers := []gatewayprovider.ExecutionProvider{
@@ -994,6 +1128,10 @@ func TestWithWindowCostPrefetch_BatchErrorFallbackSingleQuery(t *testing.T) {
 	require.Equal(t, int64(1), errCount)
 }
 
+// TestSelectProviderWithLoadAwareness_StickyReadReuse varies absent, matching,
+// and mismatched group-prefetch hints. Basic selection reads affinity once when
+// needed and skips it for matching prefetch, protecting group-specific request
+// observation reuse.
 func TestSelectProviderWithLoadAwareness_StickyReadReuse(t *testing.T) {
 	now := time.Now().Add(-time.Minute)
 	provider := gatewayprovider.ExecutionProvider{
@@ -1082,12 +1220,17 @@ func TestSelectProviderWithLoadAwareness_StickyReadReuse(t *testing.T) {
 	})
 }
 
-// windowMetricsForTest returns window-cost call metrics.
+// windowMetricsForTest reads shared hit, miss, batch-query, fallback, and error
+// counters in assertion order.
 func windowMetricsForTest() (int64, int64, int64, int64, int64) {
 	m := billing.SharedWindowCostMetrics()
 	return m.Hit.Load(), m.Miss.Load(), m.BatchSQL.Load(), m.Fallback.Load(), m.Errors.Load()
 }
 
+// TestGatewayService_SelectProviderForModelWithExclusions_ForcePlatform
+// supplies Anthropic and Antigravity candidates with authenticated
+// forced-platform context. Selection returns the Antigravity member, protecting
+// that filter before the normal group model choice.
 func TestGatewayService_SelectProviderForModelWithExclusions_ForcePlatform(t *testing.T) {
 	ctx := context.Background()
 	ctx = apikey.WithForcePlatform(ctx, capability.PlatformAntigravity)
@@ -1114,12 +1257,16 @@ func TestGatewayService_SelectProviderForModelWithExclusions_ForcePlatform(t *te
 	require.Equal(t, capability.PlatformAntigravity, acc.Record.Platform)
 }
 
+// TestGatewayService_isModelSupportedByProvider varies platform defaults,
+// custom mapping, and unmatched names with empty scopes. Provider policy
+// returns each expected support result, protecting the configured eligibility
+// cases independently of selection.
 func TestGatewayService_isModelSupportedByProvider(t *testing.T) {
 	tests := []struct {
-		name     string
-		provider *gatewayprovider.ExecutionProvider
-		model    string
-		expected bool
+		name     string                             // named eligibility scenario
+		provider *gatewayprovider.ExecutionProvider // configured provider policy fixture
+		model    string                             // requested model support identity
+		expected bool                               // expected eligibility result
 	}{
 		{
 			name:     "Antigravity平台-支持默认映射中的claude模型",
@@ -1217,7 +1364,10 @@ func TestGatewayService_isModelSupportedByProvider(t *testing.T) {
 	}
 }
 
-// TestGenericGroupIncludesAntigravityWithoutMixedFlag checks mixed-platform group selection.
+// TestGenericGroupIncludesAntigravityWithoutMixedFlag supplies Antigravity with
+// a false retired mixed-scheduling flag inside a normal group. It participates
+// in selection, while forcing Anthropic still narrows the same group to that
+// platform.
 func TestGenericGroupIncludesAntigravityWithoutMixedFlag(t *testing.T) {
 	groupID := int64(1)
 	values := []gatewayprovider.ExecutionProvider{
@@ -1239,6 +1389,10 @@ func TestGenericGroupIncludesAntigravityWithoutMixedFlag(t *testing.T) {
 	require.Equal(t, int64(1), selected.Record.ID)
 }
 
+// TestSelectProviderWithLoadAwareness_FiltersUpstreamRestrictedProviders gives
+// sticky and model-preferred shortcuts different final provider mappings. Both
+// batch and basic paths choose the allowed upstream identity, protecting group
+// restrictions before acquisition.
 func TestSelectProviderWithLoadAwareness_FiltersUpstreamRestrictedProviders(t *testing.T) {
 	for _, loadBatchEnabled := range []bool{false, true} {
 		loadMode := "旧版调度"
@@ -1339,7 +1493,10 @@ func TestSelectProviderWithLoadAwareness_FiltersUpstreamRestrictedProviders(t *t
 	}
 }
 
-// TestSelectProviderWithLoadAwareness_AppliesGroupMappingOnce checks that client model R is mapped to C exactly once.
+// TestSelectProviderWithLoadAwareness_AppliesGroupMappingOnce supplies a client
+// alias and a second-hop group-mapping trap. Selection uses the provider
+// supporting the first intermediate identity, protecting single-hop group
+// routing before provider policy.
 func TestSelectProviderWithLoadAwareness_AppliesGroupMappingOnce(t *testing.T) {
 	groupID := int64(4212)
 	pricingConfig := routingtestkit.Configuration{
@@ -1391,7 +1548,10 @@ func TestSelectProviderWithLoadAwareness_AppliesGroupMappingOnce(t *testing.T) {
 	require.Equal(t, provider.Record.ID, result.Provider.Record.ID)
 }
 
-// TestGatewayService_SelectProviderWithLoadAwareness tests load-aware provider selection.
+// TestGatewayService_SelectProviderWithLoadAwareness varies sticky affinity,
+// model preferences, status, slot outcomes, load observations, and admitted
+// groups. Results choose eligible members or wait plans, protecting basic
+// ordering, fallback, and resource preparation across those paths.
 func TestGatewayService_SelectProviderWithLoadAwareness(t *testing.T) {
 	ctx := context.Background()
 
@@ -1413,8 +1573,6 @@ func TestGatewayService_SelectProviderWithLoadAwareness(t *testing.T) {
 		cfg.Gateway.Scheduling.LoadBatchEnabled = false
 
 		svc := newGenericSelectionForTest(GenericDependencies{Reads: Reads{Providers: repo}, Shared: Shared{Cache: cache, Concurrency: nil}}, cfg)
-
-		// No concurrency service
 
 		result, err := svc.SelectProviderWithLoadAwareness(ctx, selectionFixtureGroupID(ctx), "", "claude-3-5-sonnet-20241022", nil, "", int64(0))
 		require.NoError(t, err)
@@ -1465,8 +1623,6 @@ func TestGatewayService_SelectProviderWithLoadAwareness(t *testing.T) {
 			Reads:  Reads{Providers: repo, Groups: groupRepo},
 			Shared: Shared{Cache: cache, Concurrency: nil},
 		}, cfg)
-
-		// Non-batch selection path.
 
 		result, err := svc.SelectProviderWithLoadAwareness(ctx, &groupID, sessionHash, "claude-b", nil, "", int64(0))
 		require.NoError(t, err)
@@ -2514,6 +2670,10 @@ func TestGatewayService_SelectProviderWithLoadAwareness(t *testing.T) {
 	})
 }
 
+// TestGatewayService_GroupResolution_ReusesContextGroup supplies a valid
+// hydrated request group. Selection avoids a lightweight admission read while
+// retaining the separate full privacy-policy read, protecting the distinction
+// between those group consumers.
 func TestGatewayService_GroupResolution_ReusesContextGroup(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(42)
@@ -2544,10 +2704,14 @@ func TestGatewayService_GroupResolution_ReusesContextGroup(t *testing.T) {
 	provider, err := svc.SelectProviderForModelWithExclusions(ctx, &groupID, "", "claude-3-5-sonnet-20241022", nil)
 	require.NoError(t, err)
 	require.NotNil(t, provider)
-	require.Equal(t, 1, groupRepo.getByIDCalls) // +1 for require_privacy_set check
+	require.Equal(t, 1, groupRepo.getByIDCalls) // The separate privacy check reads the full group.
 	require.Equal(t, 0, groupRepo.getByIDLiteCalls)
 }
 
+// TestGatewayService_GroupResolution_IgnoresInvalidContextGroup supplies an
+// incomplete group snapshot and a hydrated repository record. Selection fetches
+// lightweight admission data and the full privacy rule, protecting
+// incomplete-context replacement at each consumer.
 func TestGatewayService_GroupResolution_IgnoresInvalidContextGroup(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(42)
@@ -2583,10 +2747,14 @@ func TestGatewayService_GroupResolution_IgnoresInvalidContextGroup(t *testing.T)
 	provider, err := svc.SelectProviderForModelWithExclusions(ctx, &groupID, "", "claude-3-5-sonnet-20241022", nil)
 	require.NoError(t, err)
 	require.NotNil(t, provider)
-	require.Equal(t, 1, groupRepo.getByIDCalls) // +1 for require_privacy_set check
+	require.Equal(t, 1, groupRepo.getByIDCalls) // The separate privacy check reads the full group.
 	require.Equal(t, 1, groupRepo.getByIDLiteCalls)
 }
 
+// TestGatewayService_GroupContext_OverwritesInvalidContextGroup replaces a
+// partial request group with hydrated data. Request state returns equal values
+// through a separate snapshot pointer, protecting group copying before
+// selection uses its settings.
 func TestGatewayService_GroupContext_OverwritesInvalidContextGroup(t *testing.T) {
 	groupID := int64(42)
 	invalidGroup := &routing.Group{
@@ -2612,6 +2780,10 @@ func TestGatewayService_GroupContext_OverwritesInvalidContextGroup(t *testing.T)
 	require.NotSame(t, hydratedGroup, got, "分组状态保存独立快照")
 }
 
+// TestGatewayService_GroupResolution_RejectsImplicitFallback supplies a
+// restricted source group with an unadmitted fallback. Selection rejects the
+// client and makes no fallback group reads, protecting entry ownership of
+// fallback admission.
 func TestGatewayService_GroupResolution_RejectsImplicitFallback(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(10)
@@ -2651,11 +2823,14 @@ func TestGatewayService_GroupResolution_RejectsImplicitFallback(t *testing.T) {
 	provider, err := svc.SelectProviderForModelWithExclusions(ctx, &groupID, "", "claude-3-5-sonnet-20241022", nil)
 	require.ErrorIs(t, err, routing.ErrClaudeCodeOnly)
 	require.Nil(t, provider)
-	// An unadmitted fallback group must not trigger policy or provider-pool reads.
 	require.Zero(t, groupRepo.getByIDCalls)
 	require.Zero(t, groupRepo.getByIDLiteCalls)
 }
 
+// TestGatewayService_isModelSupportedByProvider_AntigravityModelMapping
+// supplies wildcard mappings with a narrow final-model allowlist. Matched
+// aliases pass and unrelated names fail, protecting the final identity checked
+// by provider support rules.
 func TestGatewayService_isModelSupportedByProvider_AntigravityModelMapping(t *testing.T) {
 	// Wildcard mappings resolve to models on the provider allowlist.
 	provider := &gatewayprovider.ExecutionProvider{
@@ -2691,6 +2866,10 @@ func TestGatewayService_isModelSupportedByProvider_AntigravityModelMapping(t *te
 	require.True(t, gatewayprovider.ExecutionModelPolicy(provider).Supports(context.Background(), ""))
 }
 
+// TestGatewayService_isModelSupportedByProvider_AntigravityNoMapping supplies
+// neither a custom mapping nor explicit allowlist. Default-mapped and unmatched
+// names pass, protecting the provider policy's empty-scope behavior for these
+// inputs.
 func TestGatewayService_isModelSupportedByProvider_AntigravityNoMapping(t *testing.T) {
 	// Without an allowlist, both default-mapped and unmapped models pass.
 	provider := &gatewayprovider.ExecutionProvider{
@@ -2714,19 +2893,21 @@ func TestGatewayService_isModelSupportedByProvider_AntigravityNoMapping(t *testi
 	require.True(t, gatewayprovider.ExecutionModelPolicy(provider).Supports(context.Background(), "gpt-4"))
 }
 
-// TestGatewayService_isModelSupportedByProviderWithContext_ThinkingMode checks thinking-aware model support.
-// The allowlist is checked against the final model, including any applicable thinking suffix.
+// TestGatewayService_isModelSupportedByProviderWithContext_ThinkingMode varies
+// thinking context, mappings, and allowed Sonnet or Opus identities. Support
+// follows each platform's actual suffix rule and final scope, protecting
+// context-sensitive eligibility.
 func TestGatewayService_isModelSupportedByProviderWithContext_ThinkingMode(t *testing.T) {
 	svc := newGenericSelectionForTest(GenericDependencies{Reads: Reads{}, Shared: Shared{}},
 
 		nil)
 
 	tests := []struct {
-		name            string
-		modelMapping    map[string]any
-		requestedModel  string
-		thinkingEnabled bool
-		expected        bool
+		name            string         // named thinking scenario
+		modelMapping    map[string]any // configured provider model mapping
+		requestedModel  string         // requested client model identity
+		thinkingEnabled bool           // request thinking mode flag
+		expected        bool           // expected model support result
 	}{
 		// A thinking-enabled Sonnet request with only the thinking variant configured.
 		// The allowlist uses the normalized final model.
@@ -2840,8 +3021,10 @@ func TestGatewayService_isModelSupportedByProviderWithContext_ThinkingMode(t *te
 	}
 }
 
-// TestGatewayService_isModelSupportedByProvider_CustomMappingNotInDefault checks custom models
-// outside DefaultAntigravityModelMapping.
+// TestGatewayService_isModelSupportedByProvider_CustomMappingNotInDefault
+// supplies custom model aliases with no explicit allowlist. Custom targets and
+// unmatched names remain supported, protecting mapping extension alongside
+// empty-scope passthrough.
 func TestGatewayService_isModelSupportedByProvider_CustomMappingNotInDefault(t *testing.T) {
 	// The custom mapping includes models absent from the defaults.
 	provider := &gatewayprovider.ExecutionProvider{
@@ -2873,7 +3056,9 @@ func TestGatewayService_isModelSupportedByProvider_CustomMappingNotInDefault(t *
 }
 
 // TestGatewayService_isModelSupportedByProviderWithContext_CustomMappingThinking
-// checks custom mappings combined with thinking mode.
+// supplies base and thinking Sonnet mappings plus an unrelated custom name.
+// Support returns true in both thinking contexts and for the custom request,
+// covering the positive results from this empty-allowlist fixture.
 func TestGatewayService_isModelSupportedByProviderWithContext_CustomMappingThinking(t *testing.T) {
 	svc := newGenericSelectionForTest(GenericDependencies{Reads: Reads{}, Shared: Shared{}},
 
@@ -2893,19 +3078,20 @@ func TestGatewayService_isModelSupportedByProviderWithContext_CustomMappingThink
 		},
 	}
 
-	// thinking=true: claude-sonnet-4-5 → mapped=claude-sonnet-4-5 → +thinking → check IsModelSupported(claude-sonnet-4-5-thinking)=true
 	ctx := requeststate.WithThinkingEnabled(context.Background(), true)
 	require.True(t, svc.isModelSupportedByProviderWithContext(ctx, provider, "claude-sonnet-4-5"))
 
-	// thinking=false: claude-sonnet-4-5 → mapped=claude-sonnet-4-5 → check IsModelSupported(claude-sonnet-4-5)=true
 	ctx = requeststate.WithThinkingEnabled(context.Background(), false)
 	require.True(t, svc.isModelSupportedByProviderWithContext(ctx, provider, "claude-sonnet-4-5"))
 
-	// The custom non-Claude model receives no thinking suffix.
 	ctx = requeststate.WithThinkingEnabled(context.Background(), true)
 	require.True(t, svc.isModelSupportedByProviderWithContext(ctx, provider, "my-custom-model"))
 }
 
+// TestGatewayServiceIsModelSupportedByProvider_BedrockDefaultMappingRestrictsModels
+// supplies a US-region Bedrock target using default routes. A recognized alias
+// passes while an unsupported dated alias fails, protecting verified regional
+// model support.
 func TestGatewayServiceIsModelSupportedByProvider_BedrockDefaultMappingRestrictsModels(t *testing.T) {
 	provider := &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -2926,6 +3112,10 @@ func TestGatewayServiceIsModelSupportedByProvider_BedrockDefaultMappingRestricts
 	}
 }
 
+// TestGatewayServiceIsModelSupportedByProvider_BedrockCustomMappingStillActsAsAllowlist
+// adds a wildcard mapping in a configured region. The custom route and a
+// default alias pass while an unsupported dated name fails, protecting default
+// route availability alongside mapping.
 func TestGatewayServiceIsModelSupportedByProvider_BedrockCustomMappingStillActsAsAllowlist(t *testing.T) {
 	provider := &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -2953,11 +3143,16 @@ func TestGatewayServiceIsModelSupportedByProvider_BedrockCustomMappingStillActsA
 	}
 }
 
-// selectionWindowForTest builds a window-cost guard from fixture dependencies.
+// selectionWindowForTest constructs a billing window guard with fixture cache
+// and usage readers.
 func selectionWindowForTest(cache billing.WindowCostCache, source usage.UsageLogRepository) *billing.WindowCostGuard {
 	return billing.NewWindowCostGuard(cache, gatewaytestkit.WindowCosts(source), billing.WindowCostGuardOptions{Now: time.Now, Stats: billing.SharedWindowCostMetrics(), Log: func(string, ...any) {}, Debug: func(string, ...any) {}})
 }
 
+// TestGatewayProviderLayerUsesGroupMappedModelForSupportAndRateLimit maps an
+// alias through group and provider to a cooled-down allowed model. Support
+// passes, scheduling fails, and sticky invalidation follows that final
+// identity.
 func TestGatewayProviderLayerUsesGroupMappedModelForSupportAndRateLimit(t *testing.T) {
 	groupID := int64(4201)
 	pricingConfig := routingtestkit.Configuration{
@@ -3001,6 +3196,10 @@ func TestGatewayProviderLayerUsesGroupMappedModelForSupportAndRateLimit(t *testi
 	require.True(t, svc.shouldClearStickySessionForProviderLayer(ctx, provider, "client-alias"))
 }
 
+// TestGatewayService_ListSchedulableProviders_DoesNotFilterUnsupportedThresholdPlatforms
+// supplies utilization extras on a platform outside threshold support.
+// Candidate reads retain both targets and perform no pause writes, protecting
+// the adapter's supported-platform scope.
 func TestGatewayService_ListSchedulableProviders_DoesNotFilterUnsupportedThresholdPlatforms(t *testing.T) {
 	settingsRepo := settingstestkit.NewMemory()
 	settingsRepo.Data[providercore.SettingKeyProviderSchedulingThresholds] = `{"openai":90}`
@@ -3051,6 +3250,10 @@ func TestGatewayService_ListSchedulableProviders_DoesNotFilterUnsupportedThresho
 	require.Equal(t, 0, providerRepo.TempCalls)
 }
 
+// TestGatewaySelectProviderWithLoadAwareness_HydratesSelectedProviderFromSchedulerSnapshot
+// ranks a lightweight Anthropic candidate with no execution key. Selection
+// returns its full cached key, protecting snapshot-only credential preparation
+// before forwarding.
 func TestGatewaySelectProviderWithLoadAwareness_HydratesSelectedProviderFromSchedulerSnapshot(t *testing.T) {
 	cache := &snapshotHydrationCache{
 		snapshot: []*gatewayprovider.ExecutionProvider{
@@ -3103,6 +3306,10 @@ func TestGatewaySelectProviderWithLoadAwareness_HydratesSelectedProviderFromSche
 	}
 }
 
+// TestGatewaySelectProviderWithLoadAwareness_SkipsAntigravityGeminiFamilyRateLimitedSnapshot
+// applies a Gemini-family cooldown to the preferred Antigravity snapshot.
+// Selection chooses the eligible backup, protecting family-scoped model
+// eligibility before hydration.
 func TestGatewaySelectProviderWithLoadAwareness_SkipsAntigravityGeminiFamilyRateLimitedSnapshot(t *testing.T) {
 	resetAt := time.Now().Add(10 * time.Minute).Format(time.RFC3339)
 	cache := &snapshotHydrationCache{
@@ -3180,7 +3387,10 @@ func TestGatewaySelectProviderWithLoadAwareness_SkipsAntigravityGeminiFamilyRate
 	}
 }
 
-// TestGatewayNewSelectionResultReleasesSlotWhenHydrationFails checks slot release when full provider hydration fails.
+// TestGatewayNewSelectionResultReleasesSlotWhenHydrationFails omits the full
+// record for an acquired target. Preparation returns an error and releases
+// capacity once, protecting attempt cleanup when lightweight selection cannot
+// become execution.
 func TestGatewayNewSelectionResultReleasesSlotWhenHydrationFails(t *testing.T) {
 	cache := &snapshotHydrationCache{providers: map[int64]*gatewayprovider.ExecutionProvider{}}
 	snapshot := newHydrationSnapshotForTest(cache, selectionProviderFixture{})
@@ -3199,12 +3409,17 @@ func TestGatewayNewSelectionResultReleasesSlotWhenHydrationFails(t *testing.T) {
 	}
 }
 
+// newSessionLimitReleaseCacheStub allocates an empty trace of per-provider
+// session removals.
 func newSessionLimitReleaseCacheStub() *sessionLimitReleaseCacheStub {
 	return &sessionLimitReleaseCacheStub{
 		unregistered: make(map[int64][]string),
 	}
 }
 
+// UnregisterSession appends the provider's session to the fixture removal trace
+// unless an error is configured. It does not deduplicate calls, allowing tests
+// to observe cleanup delegation separately from cache idempotence.
 func (s *sessionLimitReleaseCacheStub) UnregisterSession(_ context.Context, providerID int64, sessionUUID string) error {
 	if s.err != nil {
 		return s.err
@@ -3213,6 +3428,8 @@ func (s *sessionLimitReleaseCacheStub) UnregisterSession(_ context.Context, prov
 	return nil
 }
 
+// newSessionLimitTestProvider constructs an Anthropic OAuth fixture with one
+// allowed active session.
 func newSessionLimitTestProvider() *gatewayprovider.ExecutionProvider {
 	return &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -3224,9 +3441,10 @@ func newSessionLimitTestProvider() *gatewayprovider.ExecutionProvider {
 	}
 }
 
-// TestReleaseProviderSession_ReleasesRegisteredSlot checks immediate unregistering
-// for an Anthropic OAuth provider with session limits enabled,
-// before the session's idle timeout expires.
+// TestReleaseProviderSession_ReleasesRegisteredSlot supplies an applicable
+// Anthropic OAuth target with a configured session limit. Cleanup reaches the
+// cache immediately, protecting release before the session's idle lifetime can
+// expire.
 func TestReleaseProviderSession_ReleasesRegisteredSlot(t *testing.T) {
 	cache := newSessionLimitReleaseCacheStub()
 	svc := newGenericSelectionForTest(GenericDependencies{
@@ -3241,10 +3459,10 @@ func TestReleaseProviderSession_ReleasesRegisteredSlot(t *testing.T) {
 		"应立即移除注册的会话槽")
 }
 
-// TestReleaseProviderSession_NoOpForInapplicableProviders checks zero unregister calls for:
-//   - Providers outside Anthropic OAuth/SetupToken.
-//   - Providers with max_sessions disabled.
-//   - Empty session IDs.
+// TestReleaseProviderSession_NoOpForInapplicableProviders supplies API Key,
+// disabled-limit, blank-session, and nil target cases. Cleanup makes no
+// unregister calls, protecting the eligibility rules shared by session
+// registration and removal.
 func TestReleaseProviderSession_NoOpForInapplicableProviders(t *testing.T) {
 	apiKeyAcc := &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -3264,9 +3482,9 @@ func TestReleaseProviderSession_NoOpForInapplicableProviders(t *testing.T) {
 	enabledAcc := newSessionLimitTestProvider()
 
 	cases := []struct {
-		name      string
-		provider  *gatewayprovider.ExecutionProvider
-		sessionID string
+		name      string                             // named cleanup scenario
+		provider  *gatewayprovider.ExecutionProvider // configured cleanup target fixture
+		sessionID string                             // supplied session hash identity
 	}{
 		{"api_key_provider", apiKeyAcc, "session-hash"},
 		{"max_sessions_disabled", noLimitAcc, "session-hash"},
@@ -3287,8 +3505,10 @@ func TestReleaseProviderSession_NoOpForInapplicableProviders(t *testing.T) {
 	}
 }
 
-// TestReleaseProviderSession_NilCacheAndErrorTolerance checks that a missing cache is a no-op
-// and unregister errors are logged without panicking.
+// TestReleaseProviderSession_NilCacheAndErrorTolerance exercises omitted
+// storage and a configured unregister failure. Cleanup returns to the caller in
+// both cases, protecting optional-cache and logged-failure handling of session
+// removal.
 func TestReleaseProviderSession_NilCacheAndErrorTolerance(t *testing.T) {
 	// A nil cache is a no-op.
 	svc := newGenericSelectionForTest(GenericDependencies{
@@ -3306,8 +3526,10 @@ func TestReleaseProviderSession_NilCacheAndErrorTolerance(t *testing.T) {
 	svc.ReleaseProviderSession(context.Background(), newSessionLimitTestProvider(), "session-hash")
 }
 
-// TestReleaseProviderSession_Idempotent checks repeated release calls,
-// as failover cleanup and a deferred cleanup may release the same provider.
+// TestReleaseProviderSession_Idempotent releases one applicable session twice
+// through a tracing cache. Both calls reach storage, protecting delegated
+// repeated removal rather than claiming the selector deduplicates release calls
+// itself.
 func TestReleaseProviderSession_Idempotent(t *testing.T) {
 	cache := newSessionLimitReleaseCacheStub()
 	svc := newGenericSelectionForTest(GenericDependencies{
@@ -3319,6 +3541,5 @@ func TestReleaseProviderSession_Idempotent(t *testing.T) {
 	svc.ReleaseProviderSession(context.Background(), acc, "session-hash")
 	svc.ReleaseProviderSession(context.Background(), acc, "session-hash")
 
-	// Both calls reach the cache, whose Redis ZREM operation tolerates repeated removal.
 	require.Len(t, cache.unregistered[42], 2)
 }

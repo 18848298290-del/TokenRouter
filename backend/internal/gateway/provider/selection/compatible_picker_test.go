@@ -28,16 +28,24 @@ import (
 	schedulerredis "github.com/TokenFlux/TokenRouter/internal/scheduler/rediscache"
 )
 
+// mixedSessionLimits records Anthropic session registration and rejects one
+// configured provider in mixed-group tests.
 type mixedSessionLimits struct {
-	schedulercore.SessionLimitCache
-	blocked int64
-	calls   map[int64][]string
+	schedulercore.SessionLimitCache                    // unused session operations panic
+	blocked                         int64              // provider rejected during registration
+	calls                           map[int64][]string // recorded provider session hashes
 }
 
+// mixedSnapshot supplies candidate records separately from later full reads in
+// mixed-group fixtures.
 type mixedSnapshot struct {
-	values []gatewayprovider.ExecutionProvider
+	values []gatewayprovider.ExecutionProvider // cached mixed-group target fixtures
 }
 
+// TestAdvancedSchedulerUsesRoutingModelAndKeepsRequestedModel gives the request
+// different client and routing names with a final provider mapping.
+// Compatibility uses the routing identity and retains the client field,
+// protecting their distinct roles.
 func TestAdvancedSchedulerUsesRoutingModelAndKeepsRequestedModel(t *testing.T) {
 	provider := &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -68,6 +76,10 @@ func TestAdvancedSchedulerUsesRoutingModelAndKeepsRequestedModel(t *testing.T) {
 	require.True(t, scheduler.isProviderRequestCompatible(context.Background(), provider, req))
 }
 
+// TestOpenAIGatewayService_MessagesRoutingModelUsesFullMappingChain supplies
+// client, group, dispatch, and final upstream names with one allowed target.
+// Both fixture dependency variants choose the dispatch-compatible provider;
+// their admitted fixture group remains basic.
 func TestOpenAIGatewayService_MessagesRoutingModelUsesFullMappingChain(t *testing.T) {
 	for _, advancedScheduler := range []bool{false, true} {
 		name := "旧版调度"
@@ -161,7 +173,10 @@ func TestOpenAIGatewayService_MessagesRoutingModelUsesFullMappingChain(t *testin
 	}
 }
 
-// TestMixedGroupSelectsModelOnActualProviderPlatform checks cross-platform selection within the group after model and protocol checks.
+// TestMixedGroupSelectsModelOnActualProviderPlatform tries three client
+// protocols and provider model families in basic and advanced groups. Selection
+// chooses the actual matching platform within the group, protecting
+// cross-platform model and protocol eligibility.
 func TestMixedGroupSelectsModelOnActualProviderPlatform(t *testing.T) {
 	for _, mode := range []routing.GroupSchedulerType{routing.GroupSchedulerTypeBasic, routing.GroupSchedulerTypeAdvanced} {
 		t.Run(string(mode), func(t *testing.T) {
@@ -194,6 +209,10 @@ func TestMixedGroupSelectsModelOnActualProviderPlatform(t *testing.T) {
 	}
 }
 
+// TestMixedGroupRequiresExplicitGroupAndHonorsForcedPlatform supplies eligible
+// mixed-platform members with an admitted snapshot. A missing requested group
+// is rejected before pool reads, and a platform override chooses the matching
+// member.
 func TestMixedGroupRequiresExplicitGroupAndHonorsForcedPlatform(t *testing.T) {
 	group := &routing.Group{ID: 91, Hydrated: true, Status: routing.StatusActive}
 	repo := &mixedGroupProviders{values: []gatewayprovider.ExecutionProvider{mixedGroupProvider(1, capability.PlatformAnthropic, "shared", group.ID), mixedGroupProvider(2, capability.PlatformOpenAI, "shared", group.ID)}}
@@ -210,6 +229,9 @@ func TestMixedGroupRequiresExplicitGroupAndHonorsForcedPlatform(t *testing.T) {
 	}
 }
 
+// RegisterSession records the provider and hash before applying the fixture's
+// blocked ID. Other providers admit, while capacity and timeout inputs are
+// ignored so the scenario can isolate session-registration rejection.
 func (s *mixedSessionLimits) RegisterSession(_ context.Context, id int64, hash string, _ int, _ time.Duration) (bool, error) {
 	if s.calls == nil {
 		s.calls = map[int64][]string{}
@@ -218,7 +240,10 @@ func (s *mixedSessionLimits) RegisterSession(_ context.Context, id int64, hash s
 	return id != s.blocked, nil
 }
 
-// TestMixedGroupRespectsAnthropicSessionLimit checks that a full Anthropic session quota advances to another group member.
+// TestMixedGroupRespectsAnthropicSessionLimit rejects session registration for
+// the preferred Anthropic provider. Selection advances to the next group member
+// and attempts registration there, protecting provider retry after
+// session-capacity rejection.
 func TestMixedGroupRespectsAnthropicSessionLimit(t *testing.T) {
 	group := &routing.Group{ID: 91, Hydrated: true, Status: routing.StatusActive}
 	first := mixedGroupProvider(1, capability.PlatformAnthropic, "*", 91)
@@ -243,10 +268,16 @@ func TestMixedGroupRespectsAnthropicSessionLimit(t *testing.T) {
 	}
 }
 
+// ListProviders converts the fixture targets to provider records and reports a
+// nonmixed snapshot. It ignores requested group and platform filters, leaving
+// the selector's fresh/database membership checks observable in the scenario.
 func (s mixedSnapshot) ListProviders(_ context.Context, _ *int64, _ string, _ bool) ([]providercore.Record, bool, error) {
 	return gatewayprovider.ExecutionRecords(s.values), false, nil
 }
 
+// GetProvider returns a converted fixture record for the matching target ID.
+// Missing IDs return nil without error, allowing snapshot-based selection to
+// exercise a full provider lookup miss.
 func (s mixedSnapshot) GetProvider(_ context.Context, id int64) (*providercore.Record, error) {
 	for _, v := range s.values {
 		if v.Record.ID == id {
@@ -256,7 +287,9 @@ func (s mixedSnapshot) GetProvider(_ context.Context, id int64) (*providercore.R
 	return nil, nil
 }
 
-// TestMixedGroupRechecksMembershipAfterSnapshot checks that database revalidation rejects providers removed from the group after a snapshot.
+// TestMixedGroupRechecksMembershipAfterSnapshot keeps a moved provider in the
+// cached candidate pool for both group modes. Database revalidation chooses the
+// remaining member, protecting membership changes after ranking.
 func TestMixedGroupRechecksMembershipAfterSnapshot(t *testing.T) {
 	for _, mode := range []routing.GroupSchedulerType{routing.GroupSchedulerTypeBasic, routing.GroupSchedulerTypeAdvanced} {
 		t.Run(string(mode), func(t *testing.T) {
@@ -279,6 +312,10 @@ func TestMixedGroupRechecksMembershipAfterSnapshot(t *testing.T) {
 	}
 }
 
+// TestOpenAISelectProviderWithScheduler_GroupModelUnsupportedError supplies an
+// eligible compatible provider with a narrower model allowlist. Selection
+// returns a typed rejection and its available model names, protecting
+// configured-model diagnosis.
 func TestOpenAISelectProviderWithScheduler_GroupModelUnsupportedError(t *testing.T) {
 	groupID := int64(1)
 	repo := selectionProviderFixture{
@@ -326,7 +363,10 @@ func TestOpenAISelectProviderWithScheduler_GroupModelUnsupportedError(t *testing
 	require.Contains(t, err.Error(), "Available models: gpt-5.4, gpt-5.4-mini")
 }
 
-// TestCompactSchedulingRechecksAdministratorSwitchFromDatabase checks compact settings against the database in both scheduler modes.
+// TestCompactSchedulingRechecksAdministratorSwitchFromDatabase makes cached and
+// database Compact switches disagree. Both fixture parameter variants follow
+// the database switch; the default admitted group remains basic, so these cases
+// protect revalidation in that mode.
 func TestCompactSchedulingRechecksAdministratorSwitchFromDatabase(t *testing.T) {
 	for _, advanced := range []bool{false, true} {
 		for _, enabled := range []bool{false, true} {
@@ -371,7 +411,9 @@ func TestCompactSchedulingRechecksAdministratorSwitchFromDatabase(t *testing.T) 
 }
 
 // TestOpenAIGatewayService_SelectProviderWithScheduler_CompactSelectsEnabledProvider
-// checks that compact selection chooses an administrator-enabled provider.
+// gives equal-priority API Key targets opposite Compact switches. Basic
+// selection chooses the enabled target, protecting administrator endpoint
+// eligibility before ordering.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_CompactSelectsEnabledProvider(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(91001)
@@ -428,7 +470,9 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_CompactSelectsEnabledP
 }
 
 // TestOpenAIGatewayService_SelectProviderWithScheduler_CompactRejectsDisabled
-// checks that compact selection rejects administrator-disabled providers.
+// disables Compact on every eligible API Key target. Selection returns no
+// result with ErrNoAvailableCompactProviders, protecting the endpoint-specific
+// exhaustion identity.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_CompactRejectsDisabled(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(91002)
@@ -484,7 +528,9 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_CompactRejectsDisabled
 }
 
 // TestOpenAIGatewayService_SelectProviderWithScheduler_CompactUsesDefaultEnabledProvider
-// checks that the compact setting defaults to enabled and honors an explicit disable.
+// supplies an explicitly disabled target and another with no switch. Selection
+// chooses the default-enabled record, protecting absent-versus-disabled Compact
+// configuration.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_CompactUsesDefaultEnabledProvider(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(91003)
@@ -540,7 +586,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_CompactUsesDefaultEnab
 	require.Equal(t, int64(71021), selection.Provider.Record.ID, "default-enabled provider should be selected")
 }
 
-// TestOpenAIGatewayService_SelectProviderWithScheduler_CompactAllowsGrok checks that Grok providers can serve compact requests.
+// TestOpenAIGatewayService_SelectProviderWithScheduler_CompactAllowsGrok
+// supplies a configured Grok model and Compact request. Basic compatible
+// selection returns that member, protecting Grok's current Compact capability
+// rule.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_CompactAllowsGrok(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(91004)
@@ -589,6 +638,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_CompactAllowsGrok(t *t
 	require.Equal(t, int64(71030), selection.Provider.Record.ID)
 }
 
+// TestOpenAIGatewayService_SelectProviderWithScheduler_NativeCompactionSeparatesLegacyCompactSupport
+// gives one target a forced Chat route and another disabled legacy Compact.
+// Ordinary Responses selects the second target while legacy Compact rejects the
+// pool, protecting independent capability gates.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_NativeCompactionSeparatesLegacyCompactSupport(t *testing.T) {
 	groupID := int64(91005)
 	providers := []gatewayprovider.ExecutionProvider{
@@ -662,7 +715,9 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_NativeCompactionSepara
 }
 
 // TestOpenAIGatewayService_SelectProviderWithScheduler_NativeCompactionV2Mode
-// checks that the v2 administrator switch controls v2 compaction eligibility.
+// mixes observed v2 support with opposite administrator overrides. Selection
+// follows the enabled override, protecting mode precedence when a Responses
+// request requires remote compaction v2.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_NativeCompactionV2Mode(t *testing.T) {
 	groupID := int64(91006)
 	providers := []gatewayprovider.ExecutionProvider{
@@ -740,12 +795,15 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_NativeCompactionV2Mode
 	require.Equal(t, int64(71062), selection.Provider.Record.ID)
 }
 
-// TestAllowsOpenAICompatibleCompact checks compact eligibility switches.
+// TestAllowsOpenAICompatibleCompact varies nil targets, provider platforms,
+// absent switches, and explicit Compact modes. The compatibility predicate
+// returns each expected result, protecting defaults and administrator override
+// precedence over observed support.
 func TestAllowsOpenAICompatibleCompact(t *testing.T) {
 	tests := []struct {
-		name     string
-		provider *gatewayprovider.ExecutionProvider
-		want     bool
+		name     string                             // named Compact scenario
+		provider *gatewayprovider.ExecutionProvider // configured Compact eligibility fixture
+		want     bool                               // expected Compact admission result
 	}{
 		{name: "nil", provider: nil, want: false},
 		{name: "non openai", provider: &gatewayprovider.ExecutionProvider{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, Platform: capability.PlatformAnthropic}}, want: false},
@@ -765,6 +823,9 @@ func TestAllowsOpenAICompatibleCompact(t *testing.T) {
 	}
 }
 
+// TestSparkRoutingByModel varies normal and shadow providers with explicit
+// Spark model scopes and a usable parent. Compatibility follows the configured
+// model identity, with empty model requests skipping model filtering.
 func TestSparkRoutingByModel(t *testing.T) {
 	ctx := context.Background()
 	sparkModel := "gpt-5.3-codex-spark"
@@ -825,12 +886,10 @@ func TestSparkRoutingByModel(t *testing.T) {
 	})
 }
 
-// TestParentHealthSchedulerIntegration checks shadow eligibility against parent credential health.
-// A parent's manual scheduling pause and global cooldown leave shadow eligibility intact.
-//
-// The compatibility check reads the parent through the scheduler snapshot.
-// openAISnapshotCacheStub supplies the parent records for these cases.
-// Each case varies parent state while keeping the shadow active.
+// TestParentHealthSchedulerIntegration varies the shadow parent's active state,
+// manual scheduling flag, and global cooldown. The parent-health rule rejects
+// inactive credentials while retaining shadow eligibility for independent
+// parent scheduling restrictions.
 func TestParentHealthSchedulerIntegration(t *testing.T) {
 	ctx := context.Background()
 	pid := int64(78100)
@@ -936,6 +995,10 @@ func TestParentHealthSchedulerIntegration(t *testing.T) {
 	})
 }
 
+// TestParentHealthSchedulerFallsBackToRepoWhenSnapshotMissesParent omits the
+// parent snapshot and disables snapshot-service database fallback. The picker
+// obtains its healthy parent through the repository, protecting the separate
+// shadow-health lookup recovery path.
 func TestParentHealthSchedulerFallsBackToRepoWhenSnapshotMissesParent(t *testing.T) {
 	ctx := context.Background()
 	parentID := int64(79100)
@@ -976,6 +1039,8 @@ func TestParentHealthSchedulerFallsBackToRepoWhenSnapshotMissesParent(t *testing
 	}), "快照缺失母提供商且调度快照 DB fallback 关闭时，应回退 repo 解析健康母提供商")
 }
 
+// newSchedulerTestSubscriptionPriorityConfig supplies Top-K one and
+// priority/load/queue weights for subscription scenarios.
 func newSchedulerTestSubscriptionPriorityConfig() *config.Config {
 	cfg := &config.Config{}
 	cfg.Gateway.AdvancedScheduler.LBTopK = 1
@@ -987,6 +1052,10 @@ func newSchedulerTestSubscriptionPriorityConfig() *config.Config {
 	return cfg
 }
 
+// TestOpenAIGatewayService_SelectProviderWithScheduler_DefaultDisabledUsesLegacyLoadAwareness
+// supplies a prior-response binding in a basic group with a higher-priority
+// alternative. Choice follows the basic pool and reports load_balance,
+// protecting final-group mode before advanced affinity.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_DefaultDisabledUsesLegacyLoadAwareness(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(10106)
@@ -1047,7 +1116,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_DefaultDisabledUsesLeg
 	require.False(t, decision.StickyPreviousHit)
 }
 
-// TestOpenAIGatewayService_SelectProviderWithScheduler_DefaultDisabled_LoadBatchReportsFilterReasons checks that basic load-batch selection reports quota and other rejection reasons.
+// TestOpenAIGatewayService_SelectProviderWithScheduler_DefaultDisabled_LoadBatchReportsFilterReasons
+// supplies quota, model, and request-excluded failures to a basic load-batch
+// pool. Exhaustion includes deterministic rejection counts, protecting
+// diagnostic detail from that selection path.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_DefaultDisabled_LoadBatchReportsFilterReasons(t *testing.T) {
 	ctx := gatewayprovider.WithQuotaAutoPauseSettings(context.Background(), ops.OpsOpenAIProviderQuotaAutoPauseSettings{DefaultThreshold7d: 0.9})
 	groupID := int64(10107)
@@ -1116,6 +1188,9 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_DefaultDisabled_LoadBa
 	require.EqualError(t, err, "no available OpenAI providers supporting model: gpt-5.4-mini (pool=3, filtered: excluded=1 model_not_supported=1 quota_auto_pause_7d=1)")
 }
 
+// TestOpenAIGatewayService_SelectProviderWithScheduler_DefaultDisabled_RequiredWSV2_SkipsHTTPOnlyProvider
+// supplies HTTP-only and WS-capable API Key targets in basic mode. Selection
+// chooses the WS target, protecting transport eligibility after basic choice.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_DefaultDisabled_RequiredWSV2_SkipsHTTPOnlyProvider(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(10108)
@@ -1171,6 +1246,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_DefaultDisabled_Requir
 	require.Equal(t, openAIProviderScheduleLayerLoadBalance, decision.Layer)
 }
 
+// TestOpenAIGatewayService_SelectProviderWithScheduler_DefaultDisabled_RequiredWSV2_NoAvailableProvider
+// supplies an HTTP-only pool while requiring WSv2. Basic selection returns no
+// target with a load_balance decision, protecting transport exhaustion
+// handling.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_DefaultDisabled_RequiredWSV2_NoAvailableProvider(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(10109)
@@ -1210,6 +1289,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_DefaultDisabled_Requir
 	require.Equal(t, openAIProviderScheduleLayerLoadBalance, decision.Layer)
 }
 
+// TestOpenAIGatewayService_SelectProviderWithScheduler_DefaultDisabled_EmbeddingsSkipsChatOnlyProvider
+// supplies text-only and embedding-capable API Key members. Basic selection
+// chooses the embedding target, protecting endpoint capability before execution
+// capacity is returned.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_DefaultDisabled_EmbeddingsSkipsChatOnlyProvider(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(10110)
@@ -1272,7 +1355,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_DefaultDisabled_Embedd
 	require.Equal(t, openAIProviderScheduleLayerLoadBalance, decision.Layer)
 }
 
-// TestOpenAIGatewayService_SelectProviderWithScheduler_ResponsesCapabilityExcludesUnsupportedAPIKey checks that image requests reject API Key providers with Responses disabled.
+// TestOpenAIGatewayService_SelectProviderWithScheduler_ResponsesCapabilityExcludesUnsupportedAPIKey
+// forces one API Key target to Chat while another supports Responses. Responses
+// requests use the supported target or exhaust, while text requests can still
+// use the Chat target.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_ResponsesCapabilityExcludesUnsupportedAPIKey(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(10120)
@@ -1295,7 +1381,7 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_ResponsesCapabilityExc
 			Status: billing.StatusActive, Schedulable: true, Concurrency: 1, Priority: 0,
 		},
 	}
-	// This higher-priority Chat-only provider would win if capability filtering were skipped.
+	// This forced-Chat target cannot accept the Responses endpoint requirement.
 	unsupported := gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
 			Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 37002, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey,
@@ -1339,7 +1425,9 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_ResponsesCapabilityExc
 	})
 }
 
-// TestOpenAIGatewayService_SelectProviderWithScheduler_AlphaSearchAllowsAPIKeyProvider checks that alpha/search requests can use OAuth and API Key providers.
+// TestOpenAIGatewayService_SelectProviderWithScheduler_AlphaSearchAllowsAPIKeyProvider
+// supplies one eligible API Key provider for AlphaSearch. Basic choice returns
+// that target, protecting capability admission for this authentication path.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_AlphaSearchAllowsAPIKeyProvider(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(10125)
@@ -1382,6 +1470,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_AlphaSearchAllowsAPIKe
 	require.Equal(t, int64(38001), selection.Provider.Record.ID)
 }
 
+// TestOpenAIGatewayService_SelectProviderWithScheduler_DefaultDisabled_AllowsGrokChatProvider
+// supplies an eligible Grok OAuth member in basic mode with platform override.
+// Selection returns it with a load_balance decision, protecting compatible text
+// choice for that platform.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_DefaultDisabled_AllowsGrokChatProvider(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(10113)
@@ -1426,6 +1518,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_DefaultDisabled_Allows
 	require.Equal(t, openAIProviderScheduleLayerLoadBalance, decision.Layer)
 }
 
+// TestOpenAIGatewayService_SelectProviderWithScheduler_GrokMediaCapabilityFiltersIneligibleProviders
+// varies recorded media eligibility among Grok members. Media requests choose
+// eligible targets or exhaust, while ordinary text remains routable on an
+// ineligible media target.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_GrokMediaCapabilityFiltersIneligibleProviders(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(10114)
@@ -1491,7 +1587,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_GrokMediaCapabilityFil
 	})
 }
 
-// TestOpenAIGatewayService_SelectProviderWithScheduler_NoAvailableErrorReportsQuotaAutoPauseExclusion checks rejection counts when advanced selection filters every candidate.
+// TestOpenAIGatewayService_SelectProviderWithScheduler_NoAvailableErrorReportsQuotaAutoPauseExclusion
+// pauses the entire advanced pool by seven-day quota. Exhaustion retains
+// ErrNoAvailableProviders and the quota rejection count, protecting hard-filter
+// diagnostics before scoring.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_NoAvailableErrorReportsQuotaAutoPauseExclusion(t *testing.T) {
 	ctx := gatewayprovider.WithQuotaAutoPauseSettings(context.Background(), ops.OpsOpenAIProviderQuotaAutoPauseSettings{DefaultThreshold7d: 0.9})
 	groupID := int64(101201)
@@ -1535,6 +1634,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_NoAvailableErrorReport
 	require.EqualError(t, err, "no available OpenAI providers supporting model: gpt-5.4-mini (pool=1, filtered: quota_auto_pause_7d=1)")
 }
 
+// TestOpenAIGatewayService_SelectProviderWithScheduler_NoAvailableErrorPreservesModelBusinessError
+// requests a Grok model from the OpenAI fixture pool. The result remains a
+// typed model rejection and compatibility reports model_not_supported,
+// protecting business diagnosis during exhaustion.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_NoAvailableErrorPreservesModelBusinessError(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(101202)
@@ -1574,6 +1677,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_NoAvailableErrorPreser
 	require.Equal(t, "model_not_supported", reason)
 }
 
+// TestOpenAIGatewayService_SelectProviderWithScheduler_NoAvailableErrorAggregatesReasonsDeterministically
+// combines quota pause, unsupported model, and excluded candidates in an
+// advanced group. The error orders their counts predictably, protecting stable
+// filter diagnostics.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_NoAvailableErrorAggregatesReasonsDeterministically(t *testing.T) {
 	ctx := gatewayprovider.WithQuotaAutoPauseSettings(context.Background(), ops.OpsOpenAIProviderQuotaAutoPauseSettings{DefaultThreshold7d: 0.9})
 	groupID := int64(101203)
@@ -1635,6 +1742,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_NoAvailableErrorAggreg
 	require.EqualError(t, err, "no available OpenAI providers supporting model: gpt-5.4-mini (pool=3, filtered: excluded=1 model_not_supported=1 quota_auto_pause_7d=1)")
 }
 
+// TestOpenAIGatewayService_SelectProviderWithScheduler_NoAvailableErrorReportsEmptyPool
+// gives an advanced group no provider records. Exhaustion reports pool zero
+// with ErrNoAvailableProviders, protecting the empty-source diagnostic before
+// ranking can run.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_NoAvailableErrorReportsEmptyPool(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(101204)
@@ -1661,6 +1772,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_NoAvailableErrorReport
 	require.EqualError(t, err, "no available OpenAI providers supporting model: gpt-5.1 (pool=0)")
 }
 
+// TestOpenAIGatewayService_SelectProviderWithScheduler_EnabledUsesAdvancedPreviousResponseRouting
+// binds a lower-priority target to a previous response in an advanced group.
+// Selection uses that provider and reports prior-response affinity, protecting
+// continuation before ordinary scores.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_EnabledUsesAdvancedPreviousResponseRouting(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(10107)
@@ -1725,6 +1840,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_EnabledUsesAdvancedPre
 	require.True(t, decision.StickyPreviousHit)
 }
 
+// TestOpenAIGatewayService_SelectProviderWithScheduler_StickyWeightedSessionUsesTopKSampling
+// supplies two advanced candidates and repeated distinct session hashes bound
+// to one target. Both targets appear in sampled results, protecting weighted
+// affinity from forced-first selection.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_StickyWeightedSessionUsesTopKSampling(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(101071)
@@ -1777,6 +1896,8 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_StickyWeightedSessionU
 		},
 	}, cfg)
 
+	// Distinct session inputs exercise both eligible Top-K choices.
+	// The bound target receives a bonus while another target retains positive sampling weight.
 	var observedSticky, observedNonSticky bool
 	for index := range 128 {
 		selection, decision, err := svc.SelectProviderWithScheduler(
@@ -1802,6 +1923,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_StickyWeightedSessionU
 	require.True(t, observedNonSticky, "OpenAI 选择器不能把加权粘性强制置首")
 }
 
+// TestOpenAIGatewayService_SelectProviderWithScheduler_StickyWeightedPreviousRequiresMovableContext
+// binds a lower-priority previous-response target in an advanced weighted
+// group. Fixed continuation stays there, while movable input can select the
+// scored alternative, protecting caller-controlled reconstruction eligibility.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_StickyWeightedPreviousRequiresMovableContext(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(101072)
@@ -1902,6 +2027,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_StickyWeightedPrevious
 	}
 }
 
+// TestOpenAIGatewayService_SelectProviderWithScheduler_PreviousResponseCompactUnsupportedDeletesBinding
+// disables Compact on the response-bound provider while a backup permits it.
+// Selection chooses the backup and deletes prior affinity, protecting endpoint
+// rejection cleanup before ranking.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_PreviousResponseCompactUnsupportedDeletesBinding(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(101073)
@@ -1986,6 +2115,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_PreviousResponseCompac
 	require.Zero(t, providerID)
 }
 
+// TestOpenAIGatewayService_SelectProviderWithScheduler_Enabled_EmbeddingsSkipsChatOnlyProvider
+// supplies an advanced group with text-only and embedding-capable records.
+// Choice returns the embedding target with one eligible candidate, protecting
+// endpoint filtering before advanced ordering.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_Enabled_EmbeddingsSkipsChatOnlyProvider(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(10111)
@@ -2053,6 +2186,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_Enabled_EmbeddingsSkip
 	require.Equal(t, 1, decision.CandidateCount)
 }
 
+// TestOpenAIGatewayService_SelectProviderWithScheduler_Enabled_EmbeddingsSkipsChatOnlyStickyBindings
+// binds both response and session affinity to a text-only target. Advanced
+// embedding choice uses the capable backup and updates session affinity,
+// protecting endpoint rules across both shortcuts.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_Enabled_EmbeddingsSkipsChatOnlyStickyBindings(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(10112)
@@ -2139,6 +2276,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_Enabled_EmbeddingsSkip
 	require.Equal(t, int64(37022), cache.sessionBindings["openai:session_hash_embeddings"])
 }
 
+// TestOpenAIGatewayService_OpenAIProviderSchedulerMetrics_DisabledNoOp omits
+// the health observer before reporting a target result and switch. Metrics
+// remain empty, protecting the wrapper's optional-observer behavior
+// independently of selector construction.
 func TestOpenAIGatewayService_OpenAIProviderSchedulerMetrics_DisabledNoOp(t *testing.T) {
 	svc := newCompatibleSelectionForTest(CompatibleDependencies{Reads: Reads{}, Shared: Shared{}}, nil)
 
@@ -2150,6 +2291,10 @@ func TestOpenAIGatewayService_OpenAIProviderSchedulerMetrics_DisabledNoOp(t *tes
 	require.Equal(t, schedulercore.PlatformMetricsSnapshot{}, snapshot)
 }
 
+// TestOpenAIGatewayService_SelectProviderWithScheduler_SkipsQuarantinedSharedProxy
+// blocks a proxy shared by the preferred OpenAI members. Selection chooses the
+// healthy-proxy backup, protecting shared proxy quarantine before basic
+// provider ordering.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_SkipsQuarantinedSharedProxy(t *testing.T) {
 	proxyA := int64(4698)
 	proxyB := int64(4699)
@@ -2178,7 +2323,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_SkipsQuarantinedShared
 	require.Equal(t, int64(469803), selection.Provider.Record.ID)
 }
 
-// TestOpenAIGatewayService_SelectProviderWithScheduler_FailsOpenWhenAllProxiesQuarantined checks that selection bypasses quarantine when all candidate proxies are blocked.
+// TestOpenAIGatewayService_SelectProviderWithScheduler_FailsOpenWhenAllProxiesQuarantined
+// blocks the proxy used by every basic candidate. A request-local retry returns
+// a target while circuit quarantine remains active, protecting outage admission
+// scope.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_FailsOpenWhenAllProxiesQuarantined(t *testing.T) {
 	proxyID := int64(5056)
 	providers := []gatewayprovider.ExecutionProvider{
@@ -2209,7 +2357,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_FailsOpenWhenAllProxie
 		"fail-open 只影响本次调度，不应清除隔离状态")
 }
 
-// TestOpenAIGatewayService_SelectProviderWithSchedulerForRouting_FailsOpenWhenAllProxiesQuarantined checks that resolved routing models survive the quarantine-bypass retry.
+// TestOpenAIGatewayService_SelectProviderWithSchedulerForRouting_FailsOpenWhenAllProxiesQuarantined
+// supplies distinct client and resolved routing names through a blocked proxy.
+// The request succeeds and returns the fixture's provider, covering quarantine
+// bypass with the supplied routing input.
 func TestOpenAIGatewayService_SelectProviderWithSchedulerForRouting_FailsOpenWhenAllProxiesQuarantined(t *testing.T) {
 	proxyID := int64(5057)
 	provider := gatewayprovider.ExecutionProvider{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 505701, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth, Status: billing.StatusActive, Schedulable: true, Concurrency: 1, ProxyID: &proxyID}}
@@ -2231,6 +2382,10 @@ func TestOpenAIGatewayService_SelectProviderWithSchedulerForRouting_FailsOpenWhe
 	require.Equal(t, provider.Record.ID, selection.Provider.Record.ID)
 }
 
+// TestOpenAIGatewayService_SelectProviderWithScheduler_SessionStickyRateLimitedProviderFallsBackToFreshCandidate
+// leaves the sticky candidate stale while its full snapshot is rate limited.
+// Choice uses the fresh backup and reports ordinary pool selection, protecting
+// current eligibility before affinity reuse.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_SessionStickyRateLimitedProviderFallsBackToFreshCandidate(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(10101)
@@ -2263,6 +2418,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_SessionStickyRateLimit
 	require.Equal(t, openAIProviderScheduleLayerLoadBalance, decision.Layer)
 }
 
+// TestOpenAIGatewayService_SelectProviderWithScheduler_SessionStickyDBRuntimeRecheckSkipsStaleCachedProvider
+// keeps cached sticky records usable while the database blocks the primary.
+// Choice returns the valid backup, protecting database runtime checks before
+// dispatch.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_SessionStickyDBRuntimeRecheckSkipsStaleCachedProvider(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(10103)
@@ -2300,6 +2459,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_SessionStickyDBRuntime
 	require.Equal(t, openAIProviderScheduleLayerLoadBalance, decision.Layer)
 }
 
+// TestOpenAIGatewayService_SelectProviderWithScheduler_PreviousResponseSticky
+// supplies an eligible bound response in an advanced group and a new session
+// hash. Choice returns that provider and binds the session, protecting affinity
+// propagation from response continuation.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_PreviousResponseSticky(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(9)
@@ -2355,6 +2518,9 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_PreviousResponseSticky
 	}
 }
 
+// TestOpenAIGatewayService_SelectProviderWithScheduler_SessionSticky supplies
+// an eligible group-bound session in advanced mode. Choice retains its provider
+// and reports a session hit, protecting hard affinity before ordinary ranking.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_SessionSticky(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(10)
@@ -2405,6 +2571,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_SessionSticky(t *testi
 	}
 }
 
+// TestOpenAIGatewayService_SelectProviderWithScheduler_SessionStickyBusyKeepsSticky
+// fills the hard-bound advanced target with sticky escape disabled. Selection
+// returns its wait plan despite another target's capacity, protecting
+// configured affinity retention under load.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_SessionStickyBusyKeepsSticky(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(10100)
@@ -2450,7 +2620,7 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_SessionStickyBusyKeeps
 	concurrencyCache := schedulerTestConcurrencyCache{
 		acquireResults: map[int64]bool{
 			21001: false, // The sticky provider is full.
-			21002: true,  // Load balancing would select this alternative, but the response chain must stay bound.
+			21002: true,  // The alternative is available while hard session affinity keeps the bound target preferred.
 		},
 		waitCounts: map[int64]int{
 			21001: 999,
@@ -2496,6 +2666,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_SessionStickyBusyKeeps
 	require.True(t, decision.StickySessionHit)
 }
 
+// TestOpenAIGatewayService_SelectProviderWithScheduler_SessionStickyEscapeByTTFT
+// first keeps latency feedback below the escape threshold, then raises its EWMA
+// through slower samples. Choice moves this request to the backup while
+// retaining the stored session binding.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_SessionStickyEscapeByTTFT(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(10101)
@@ -2544,6 +2718,8 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_SessionStickyEscapeByT
 	)
 
 	svc.openaiProviderStats = schedulercore.NewRuntimeStats(time.Now)
+	// Latency samples use milliseconds and start just below the configured limit.
+	// Later slower observations raise the shared EWMA across that escape threshold.
 	fastTTFT := 14999
 	svc.openaiProviderStats.Report(21101, true, &fastTTFT)
 	stableTTFT := 14999
@@ -2560,6 +2736,7 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_SessionStickyEscapeByT
 		selection.ReleaseFunc()
 	}
 
+	// This millisecond sample exceeds the fixture's fifteen-second escape limit.
 	slowTTFT := 20000
 	for range 3 {
 		svc.openaiProviderStats.Report(21101, true, &slowTTFT)
@@ -2578,6 +2755,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_SessionStickyEscapeByT
 	}
 }
 
+// TestOpenAIGatewayService_SelectProviderWithScheduler_SessionStickyEscapeByErrorRate
+// accumulates failures across the configured EWMA threshold. Choice retains
+// affinity below the limit and escapes afterward while keeping the binding,
+// protecting threshold-sensitive request behavior.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_SessionStickyEscapeByErrorRate(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(10102)
@@ -2634,6 +2815,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_SessionStickyEscapeByE
 	}
 }
 
+// TestOpenAIGatewayService_SelectProviderWithScheduler_SessionStickyBusyEscapes
+// fills the bound target and its sticky queue while escape is enabled. Choice
+// immediately uses the available backup with no wait plan, protecting capacity
+// escape.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_SessionStickyBusyEscapes(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(10103)
@@ -2683,6 +2868,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_SessionStickyBusyEscap
 	}
 }
 
+// TestOpenAIGatewayService_SelectProviderWithScheduler_SessionStickyEscapeDisabledKeepsLegacyBehavior
+// supplies slow and failed feedback with escape disabled. Advanced choice
+// retains the bound provider's wait plan, protecting the configured switch over
+// observed performance.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_SessionStickyEscapeDisabledKeepsLegacyBehavior(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(10104)
@@ -2719,6 +2908,7 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_SessionStickyEscapeDis
 	)
 
 	svc.openaiProviderStats = schedulercore.NewRuntimeStats(time.Now)
+	// This millisecond sample exceeds the fixture's fifteen-second escape limit.
 	slowTTFT := 20000
 	svc.openaiProviderStats.Report(21401, true, &slowTTFT)
 	for range 5 {
@@ -2736,6 +2926,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_SessionStickyEscapeDis
 	require.True(t, decision.StickySessionHit)
 }
 
+// TestOpenAIGatewayService_SelectProviderWithScheduler_SubscriptionPriorityChoosesSubscriptionPoolFirst
+// gives an advanced subscription target worse priority and load than an API
+// Key. Enabled subscription preference still selects it, protecting pool
+// precedence before weighted ranking.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_SubscriptionPriorityChoosesSubscriptionPoolFirst(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(10120)
@@ -2793,6 +2987,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_SubscriptionPriorityCh
 	}
 }
 
+// TestOpenAIGatewayService_SelectProviderWithScheduler_SubscriptionPriorityFallsBackWhenSubscriptionFull
+// fills an eligible subscription target while the regular target can acquire
+// capacity. Advanced selection returns the regular target, protecting recovery
+// after the preferred pool has no slot.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_SubscriptionPriorityFallsBackWhenSubscriptionFull(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(10121)
@@ -2853,6 +3051,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_SubscriptionPriorityFa
 	}
 }
 
+// TestOpenAIGatewayService_SelectProviderWithScheduler_SubscriptionPriorityDisabledUsesScore
+// supplies disabled subscription settings and an API Key with better priority
+// and load. The fixture's admitted group remains basic; choice returns that API
+// Key through its ordinary selection path.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_SubscriptionPriorityDisabledUsesScore(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(10122)
@@ -2911,6 +3113,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_SubscriptionPriorityDi
 	}
 }
 
+// TestOpenAIGatewayService_SelectProviderWithScheduler_UsesProviderPriorityWithinGroupPool
+// supplies explicit group memberships and priority-only advanced scoring.
+// Choice returns the provider with better global priority, protecting stored
+// provider priority inside the group's pool.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_UsesProviderPriorityWithinGroupPool(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(10123)
@@ -2972,6 +3178,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_UsesProviderPriorityWi
 	}
 }
 
+// TestOpenAIProviderScheduler_SkipsProviderBlockedForRequestedModel records two
+// failures for one model on a provider. Compatibility rejects that model while
+// admitting another, protecting shared transient state under canonical request
+// identity.
 func TestOpenAIProviderScheduler_SkipsProviderBlockedForRequestedModel(t *testing.T) {
 	now := time.Now()
 	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 21633, Status: billing.StatusActive, Schedulable: true, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeAPIKey}}
@@ -2989,6 +3199,10 @@ func TestOpenAIProviderScheduler_SkipsProviderBlockedForRequestedModel(t *testin
 	require.True(t, scheduler.isProviderRequestCompatible(context.Background(), provider, schedulercore.PlatformSelectionInput{RequestedModel: "gpt-5.6-sol"}))
 }
 
+// TestReportOpenAIProviderScheduleResult_SuccessClearsModelTransientState
+// records an active provider-model cooldown before successful dispatch
+// feedback. The same model becomes unblocked afterward, protecting recovery
+// independently of optional picker metrics.
 func TestReportOpenAIProviderScheduleResult_SuccessClearsModelTransientState(t *testing.T) {
 	svc := newCompatibleSelectionForTest(CompatibleDependencies{
 		Reads:          Reads{},
@@ -3006,6 +3220,10 @@ func TestReportOpenAIProviderScheduleResult_SuccessClearsModelTransientState(t *
 	require.False(t, svc.modelTransient.IsBlocked(21636, "gpt-5.5", now.Add(2*time.Millisecond)))
 }
 
+// TestOpenAIGatewayService_SelectProviderWithScheduler_SessionSticky_ForceHTTP
+// binds an advanced OAuth target configured to force HTTP. An unrestricted
+// transport request retains session affinity, protecting protocol choice from
+// unnecessarily invalidating an eligible binding.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_SessionSticky_ForceHTTP(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(1010)
@@ -3060,6 +3278,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_SessionSticky_ForceHTT
 	}
 }
 
+// TestOpenAIGatewayService_SelectProviderWithScheduler_RequiredWSV2_SkipsStickyHTTPProvider
+// binds a low-load HTTP-only target beside a WS-capable member. Advanced WS
+// choice selects the capable target with one eligible candidate, protecting
+// transport filtering before sticky ranking.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_RequiredWSV2_SkipsStickyHTTPProvider(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(1011)
@@ -3144,6 +3366,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_RequiredWSV2_SkipsStic
 	}
 }
 
+// TestOpenAIGatewayService_SelectProviderWithScheduler_ClearsStickyProviderOutsideGroup
+// binds a target lacking the requested membership beside an admitted member.
+// Selection deletes and replaces that affinity, protecting group isolation
+// during compatible session choice.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_ClearsStickyProviderOutsideGroup(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(1013)
@@ -3211,6 +3437,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_ClearsStickyProviderOu
 	}
 }
 
+// TestOpenAIGatewayService_SelectProviderWithScheduler_RequiredWSV2_NoAvailableProvider
+// supplies a basic group with an HTTP-only target while WSv2 is required.
+// Selection returns no result and zero advanced candidate count, protecting
+// transport exhaustion.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_RequiredWSV2_NoAvailableProvider(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(1012)
@@ -3251,6 +3481,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_RequiredWSV2_NoAvailab
 	require.Equal(t, 0, decision.CandidateCount)
 }
 
+// TestOpenAIGatewayService_SelectProviderWithScheduler_LoadBalanceTopKFallback
+// ranks three advanced targets with Top-K two and makes the best target's slot
+// unavailable. Choice returns the lower-ranked available member and reports
+// the pool and Top-K counts, protecting bounded candidate selection.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_LoadBalanceTopKFallback(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(11)
@@ -3306,7 +3540,7 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_LoadBalanceTopKFallbac
 			3003: {ProviderID: 3003, LoadRate: 10, WaitingCount: 0},
 		},
 		acquireResults: map[int64]bool{
-			3003: false, // If the first candidate fails, try the next Top-K candidate.
+			3003: false, // Highest-scoring target has no slot.
 			3002: true,
 		},
 	}
@@ -3342,7 +3576,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_LoadBalanceTopKFallbac
 	}
 }
 
-// TestOpenAIGatewayService_SelectProviderWithScheduler_LoadBalanceTopKExcludesQuotaPaused checks that quota-paused providers are excluded before Top-K ranking.
+// TestOpenAIGatewayService_SelectProviderWithScheduler_LoadBalanceTopKExcludesQuotaPaused
+// puts the better-priority target above its quota threshold with Top-K one. The
+// eligible backup remains the sole candidate, protecting hard filtering before
+// ranking.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_LoadBalanceTopKExcludesQuotaPaused(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(110)
@@ -3422,6 +3659,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_LoadBalanceTopKExclude
 	}
 }
 
+// TestOpenAIGatewayService_OpenAIProviderSchedulerMetrics selects a hard sticky
+// advanced target, reports successful feedback, and records a switch. Snapshot
+// counters expose selection, affinity, switching, and retained feedback,
+// protecting shared metric reporting.
 func TestOpenAIGatewayService_OpenAIProviderSchedulerMetrics(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(12)
@@ -3467,10 +3708,16 @@ func TestOpenAIGatewayService_OpenAIProviderSchedulerMetrics(t *testing.T) {
 	require.GreaterOrEqual(t, snapshot.RuntimeStatsProviderCount, 1)
 }
 
+// intPtrForTest returns a pointer to the supplied integer for latency fixture
+// inputs.
 func intPtrForTest(v int) *int {
 	return &v
 }
 
+// TestOpenAIGatewayService_SelectProviderWithScheduler_LoadBalanceDistributesAcrossSessions
+// supplies three equally scored advanced targets and many distinct sessions.
+// Choices span multiple providers, protecting Top-K weighted distribution
+// independently of one session's affinity.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_LoadBalanceDistributesAcrossSessions(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(15)
@@ -3535,6 +3782,8 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_LoadBalanceDistributes
 		},
 	}, cfg)
 
+	// Equal scores leave each Top-K target positive sampling weight. Use distinct
+	// session seeds so the scenario observes choices across more than one affinity key.
 	selected := make(map[int64]int, len(providers))
 	for i := range 60 {
 		sessionHash := fmt.Sprintf("session_hash_lb_%d", i)
@@ -3560,6 +3809,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_LoadBalanceDistributes
 	require.GreaterOrEqual(t, len(selected), 2)
 }
 
+// TestDefaultOpenAIProviderScheduler_ReportSwitchAndSnapshot supplies
+// successful latency feedback and two distinct selection-layer observations.
+// The snapshot combines their counts, switch, latency, affinity ratio, and load
+// skew, protecting picker metric aggregation.
 func TestDefaultOpenAIProviderScheduler_ReportSwitchAndSnapshot(t *testing.T) {
 	schedulerAny := newDefaultOpenAIProviderScheduler(newCompatibleSelectionForTest(CompatibleDependencies{Reads: Reads{}, Shared: Shared{}}, nil),
 
@@ -3594,6 +3847,10 @@ func TestDefaultOpenAIProviderScheduler_ReportSwitchAndSnapshot(t *testing.T) {
 	require.Greater(t, snapshot.LoadSkewAvg, 0.0)
 }
 
+// TestOpenAIGatewayService_SchedulerWrappersAndDefaults compares unconfigured
+// wrappers with supplied process weights, Top-K, and sticky lifetime. Metrics
+// stay empty without health observation, while resolved defaults reflect those
+// fixture inputs.
 func TestOpenAIGatewayService_SchedulerWrappersAndDefaults(t *testing.T) {
 	svc := newCompatibleSelectionForTest(CompatibleDependencies{Reads: Reads{}, Shared: Shared{}}, nil)
 
@@ -3635,6 +3892,10 @@ func TestOpenAIGatewayService_SchedulerWrappersAndDefaults(t *testing.T) {
 	require.Equal(t, 0.7, customWeights.Reset)
 }
 
+// TestDefaultOpenAIProviderScheduler_IsProviderTransportCompatible_Branches
+// varies absent services, transport requirements, WS support, and the Responses
+// protocol set. Compatibility follows direct or ingress conversion rules,
+// protecting the transport distinction for eligible targets.
 func TestDefaultOpenAIProviderScheduler_IsProviderTransportCompatible_Branches(t *testing.T) {
 	scheduler := &compatiblePicker{}
 	require.True(t, scheduler.isProviderTransportCompatible(nil, egress.OpenAIUpstreamTransportAny))
@@ -3670,6 +3931,10 @@ func TestDefaultOpenAIProviderScheduler_IsProviderTransportCompatible_Branches(t
 	require.False(t, scheduler.isProviderTransportCompatible(provider, egress.OpenAIUpstreamTransportResponsesWebsocketV2Ingress))
 }
 
+// TestOpenAIGatewayService_SelectProviderWithScheduler_StickyWeightedDoesNotFallbackOutsideTopK
+// binds a lower-scoring provider outside a one-member Top-K pool. A busy Top-K
+// target returns its own wait plan, protecting weighted affinity from adding an
+// out-of-pool fallback.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_StickyWeightedDoesNotFallbackOutsideTopK(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(101081)
@@ -3688,9 +3953,8 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_StickyWeightedDoesNotF
 			},
 		},
 		{
-			Record:
 			// The sticky provider remains in the group but scores below Top-K.
-			providercore.Record{
+			Record: providercore.Record{
 				Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 38002,
 				Platform:    capability.PlatformOpenAI,
 				Type:        capability.ProviderTypeAPIKey,
@@ -3746,14 +4010,17 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_StickyWeightedDoesNotF
 	require.False(t, decision.StickySessionHit)
 }
 
+// TestOpenAIGatewayService_SelectProviderWithScheduler_SubscriptionPriorityWaitsOnBusySubscriptionWhenRegularUnusable
+// supplies a busy subscription target and a regular target with Compact
+// disabled. The fixture's basic group waits on the usable subscription member,
+// protecting endpoint eligibility before waiting.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_SubscriptionPriorityWaitsOnBusySubscriptionWhenRegularUnusable(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(101091)
 	providers := []gatewayprovider.ExecutionProvider{
 		{
-			Record:
 			// The subscription provider supports compact but has no free slot.
-			providercore.Record{
+			Record: providercore.Record{
 				LoadLocation: time.LoadLocation, ID: 38011,
 				Platform:    capability.PlatformOpenAI,
 				Type:        capability.ProviderTypeOAuth,
@@ -3767,9 +4034,8 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_SubscriptionPriorityWa
 			},
 		},
 		{
-			Record:
 			// The regular provider has compact disabled and cannot serve this request.
-			providercore.Record{
+			Record: providercore.Record{
 				Credentials: map[string]any{"model_whitelist": []string{"*"}}, LoadLocation: time.LoadLocation, ID: 38012,
 				Platform:    capability.PlatformOpenAI,
 				Type:        capability.ProviderTypeAPIKey,
@@ -3814,6 +4080,10 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_SubscriptionPriorityWa
 	require.Equal(t, openAIProviderScheduleLayerLoadBalance, decision.Layer)
 }
 
+// TestOpenAIGatewayService_SelectProviderWithScheduler_UsesWSPassthroughSnapshotFlags
+// supplies a cached OAuth record with per-session WS connection mode. Basic
+// selection returns that target for WSv2, protecting the snapshot flags used by
+// transport eligibility.
 func TestOpenAIGatewayService_SelectProviderWithScheduler_UsesWSPassthroughSnapshotFlags(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(10105)
@@ -3867,7 +4137,11 @@ func TestOpenAIGatewayService_SelectProviderWithScheduler_UsesWSPassthroughSnaps
 	require.Equal(t, openAIProviderScheduleLayerLoadBalance, decision.Layer)
 }
 
-// TestOpenAIGatewayService_SelectProviderByPreviousResponseIDUsesResolvedRoutingModel checks that response-chain stickiness uses D without resolving it back to C.
+// TestOpenAIGatewayService_SelectProviderByPreviousResponseIDUsesResolvedRoutingModel
+// supplies different group and dispatch names with only the dispatch mapping
+// allowed upstream. Basic selection returns the configured target using that
+// resolved model; the populated response binding does not activate advanced
+// affinity in this fixture.
 func TestOpenAIGatewayService_SelectProviderByPreviousResponseIDUsesResolvedRoutingModel(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(26)
@@ -3945,7 +4219,10 @@ func TestOpenAIGatewayService_SelectProviderByPreviousResponseIDUsesResolvedRout
 	}
 }
 
-// TestSystemOneSelectionHonorsProtocol checks separate protocol eligibility for decision and chat requests in mixed groups.
+// TestSystemOneSelectionHonorsProtocol supplies Jev and OpenAI group members
+// under basic and advanced modes. SystemOne and Responses requests choose their
+// matching provider, protecting endpoint protocol eligibility within a
+// mixed-platform group.
 func TestSystemOneSelectionHonorsProtocol(t *testing.T) {
 	for _, mode := range []routing.GroupSchedulerType{routing.GroupSchedulerTypeBasic, routing.GroupSchedulerTypeAdvanced} {
 		t.Run(string(mode), func(t *testing.T) {
@@ -3953,8 +4230,8 @@ func TestSystemOneSelectionHonorsProtocol(t *testing.T) {
 			repo := &mixedGroupProviders{values: []gatewayprovider.ExecutionProvider{mixedGroupProvider(1, capability.PlatformJev, "shared", group.ID), mixedGroupProvider(2, capability.PlatformOpenAI, "shared", group.ID)}}
 			selector := NewCompatible(CompatibleDependencies{Reads: Reads{Providers: repo}}, DefaultOptions())
 			for _, tc := range []struct {
-				protocol protocol.ProtocolID
-				id       int64
+				protocol protocol.ProtocolID // requested client protocol identity
+				id       int64               // expected matching provider identifier
 			}{{protocol.ProtocolSystemOne, 1}, {protocol.ProtocolOpenAIResponses, 2}} {
 				ctx := requeststate.WithClientProtocol(requeststate.WithGroup(context.Background(), group), tc.protocol)
 				result, _, err := selector.SelectProviderWithSchedulerForCapability(ctx, &group.ID, "", "", "shared", nil, egress.OpenAIUpstreamTransportHTTPSSE, "", false, false)

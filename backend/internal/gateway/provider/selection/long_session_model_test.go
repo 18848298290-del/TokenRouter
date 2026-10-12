@@ -15,14 +15,17 @@ import (
 	routingtestkit "github.com/TokenFlux/TokenRouter/internal/routing/testkit"
 )
 
-// TestResolveOpenAIWSRoutingModelForProviderStrictlyFollowsBillingBasis checks each turn against the configured requested, group-mapped, or upstream billing model.
+// TestResolveOpenAIWSRoutingModelForProviderStrictlyFollowsBillingBasis places
+// a different name at each routing stage. Every turn uses the configured
+// restriction basis, returning the group model or rejecting an unmatched
+// upstream price identity.
 func TestResolveOpenAIWSRoutingModelForProviderStrictlyFollowsBillingBasis(t *testing.T) {
 	price := 0.01
 	tests := []struct {
-		name           string
-		billingSource  string
-		pricingModel   string
-		expectRejected bool
+		name           string // named restriction scenario
+		billingSource  string // model restriction stage
+		pricingModel   string // admitted price identity
+		expectRejected bool   // expected turn rejection
 	}{
 		{name: "requested", billingSource: routing.BillingModelSourceRequested, pricingModel: "client-alias"},
 		{name: "group_mapped", billingSource: routing.BillingModelSourceGroupMapped, pricingModel: "group-model"},
@@ -73,7 +76,10 @@ func TestResolveOpenAIWSRoutingModelForProviderStrictlyFollowsBillingBasis(t *te
 	}
 }
 
-// TestResolveOpenAIWSRoutingModelForProviderRejectsUnsupportedMappedModel checks that later turns respect the fixed provider's final-model allowlist.
+// TestResolveOpenAIWSRoutingModelForProviderRejectsUnsupportedMappedModel
+// supplies a fixed provider whose final-model allowlist rejects the mapped
+// target. The turn returns an error and no routing model, protecting
+// eligibility after connection selection.
 func TestResolveOpenAIWSRoutingModelForProviderRejectsUnsupportedMappedModel(t *testing.T) {
 	provider := &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{

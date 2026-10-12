@@ -15,6 +15,10 @@ import (
 	routingtestkit "github.com/TokenFlux/TokenRouter/internal/routing/testkit"
 )
 
+// TestOpenAIUpstreamRestrictionAppliesPricingConfigThenProviderMapping supplies
+// a client alias, group model, and distinct provider target. The allowed final
+// name is accepted after both mappings, protecting upstream-stage restriction
+// inputs.
 func TestOpenAIUpstreamRestrictionAppliesPricingConfigThenProviderMapping(t *testing.T) {
 	groupID := int64(4202)
 	price := 0.01
@@ -47,16 +51,19 @@ func TestOpenAIUpstreamRestrictionAppliesPricingConfigThenProviderMapping(t *tes
 	require.False(t, upstreamRestrictedForTest(svc, context.Background(), groupID, provider, "client-alias", false))
 }
 
-// TestOpenAIUpstreamRestrictionUsesActuallyForwardedOAuthModel checks upstream restrictions after OAuth normalization and automatic passthrough.
+// TestOpenAIUpstreamRestrictionUsesActuallyForwardedOAuthModel varies complete
+// OAuth names and automatic passthrough mapping. Restrictions use the final
+// forwarded identity, keeping suffix models and bare names distinct from
+// independently priced models.
 func TestOpenAIUpstreamRestrictionUsesActuallyForwardedOAuthModel(t *testing.T) {
 	price := 0.01
 	tests := []struct {
-		name               string
-		groupID            int64
-		pricingConfigModel string
-		pricingModel       string
-		provider           *gatewayprovider.ExecutionProvider
-		restricted         bool
+		name               string                             // named mapping scenario
+		groupID            int64                              // fixture policy group
+		pricingConfigModel string                             // group mapping target
+		pricingModel       string                             // admitted pricing identity
+		provider           *gatewayprovider.ExecutionProvider // final mapping fixture
+		restricted         bool                               // expected restriction result
 	}{
 		{
 			name:               "OAuth 后缀型号不能借用基名价格",
@@ -125,7 +132,10 @@ func TestOpenAIUpstreamRestrictionUsesActuallyForwardedOAuthModel(t *testing.T) 
 	}
 }
 
-// upstreamRestrictedForTest applies group mapping before checking provider-level model restrictions.
+// upstreamRestrictedForTest applies group mapping before compatible upstream
+// restriction in the fixture. Callers pass a client model and Compact flag,
+// keeping the test's provider-stage check aligned with production's resolved
+// routing input.
 func upstreamRestrictedForTest(s *Compatible, ctx context.Context, group int64, value *gatewayprovider.ExecutionProvider, model string, compact bool) bool {
 	return s.UpstreamRoutingModelRestricted(ctx, group, value, s.resolveGroupRoutingModel(ctx, &group, model), compact)
 }

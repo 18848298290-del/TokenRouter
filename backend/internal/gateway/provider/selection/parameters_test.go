@@ -12,18 +12,24 @@ import (
 	schedulerredis "github.com/TokenFlux/TokenRouter/internal/scheduler/rediscache"
 )
 
+// snapshotGroupBindingReader returns one group and counts full reads for
+// override assertions.
 type snapshotGroupBindingReader struct {
-	Groups
-	group *routing.Group
-	calls int
+	Groups                // unused group reads panic
+	group  *routing.Group // configured override group
+	calls  int            // full lookup count
 }
 
+// GetByID increments the fixture's full-read count and returns its configured
+// group pointer.
 func (r *snapshotGroupBindingReader) GetByID(context.Context, int64) (*routing.Group, error) {
 	r.calls++
 	return r.group, nil
 }
 
-// TestSnapshotNativeBindingPreservesGroupOverrides checks group settings and overrides when request context lacks a group.
+// TestSnapshotNativeBindingPreservesGroupOverrides omits request group context
+// while configuring scheduling snapshots for each selector. Each reads the full
+// group once and applies its Top-K override to effective settings.
 func TestSnapshotNativeBindingPreservesGroupOverrides(t *testing.T) {
 	for _, platform := range []string{"gateway", "gemini", "openai"} {
 		t.Run(platform, func(t *testing.T) {

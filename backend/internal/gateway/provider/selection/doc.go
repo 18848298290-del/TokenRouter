@@ -1,4 +1,7 @@
-// Package selection chooses gateway providers by group, model, and runtime state.
+// Package selection chooses providers within the request's admitted group using
+// model, protocol, and runtime eligibility. Scheduler cores rank metadata while
+// per-call adapters retain the corresponding execution targets for hydration and
+// forwarding; shared observations also support scoring diagnostics.
 //
 // Start with:
 //   - runtime.go: platform selector construction and shared runtime parameters.

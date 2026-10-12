@@ -16,17 +16,37 @@ import (
 	schedulercore "github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// openAINoAvailableSelectionError carries a diagnostic message and unwraps to ErrNoAvailableProviders.
+// Compatible selection chooses within the admitted group while retaining both
+// the client model and the group-mapped routing model. Slot-free auxiliary
+// requests, basic selection, and load-aware selection all reuse platform
+// eligibility through scheduler adapters. A no-provider result may instead
+// describe a configured model rejection or a Compact capability failure.
+//
+// Snapshot candidates receive fresh eligibility checks and, when a repository
+// is paired with the snapshot, a database recheck before execution. The later
+// record supplies membership, privacy, parent health, runtime, and model data.
+// Hydration finishes credential preparation for snapshot-only selection;
+// failure after an acquired slot invokes the caller's release handle. Sticky
+// state and threshold observations stay bound to the application instances.
+
+// openAINoAvailableSelectionError carries compatible diagnostics with the
+// scheduler's no-provider error identity.
 type openAINoAvailableSelectionError struct {
-	message string
+	message string // pool diagnostic message
 }
 
-// BindStickySession binds a provider using the configured session TTL.
+// BindStickySession writes the compatible group-session binding using
+// SessionStickyTTL. Empty sessions, nonpositive provider IDs, and
+// guardian-parent preservation requests are ignored by
+// BindStickySessionWithTTL, while cache write errors propagate to callers.
 func (s *Compatible) BindStickySession(ctx context.Context, groupID *int64, sessionHash string, providerID int64) error {
 	return s.BindStickySessionWithTTL(ctx, groupID, sessionHash, providerID, s.SessionStickyTTL())
 }
 
-// BindStickySessionWithTTL binds a session for the supplied TTL, leaving guardian parent bindings intact.
+// BindStickySessionWithTTL writes a compatible session binding with the
+// supplied lifetime. Empty sessions, nonpositive provider IDs, and
+// guardian-parent preservation hints return nil so child review requests leave
+// the parent's affinity intact.
 func (s *Compatible) BindStickySessionWithTTL(ctx context.Context, groupID *int64, sessionHash string, providerID int64, ttl time.Duration) error {
 	if sessionHash == "" || providerID <= 0 || requeststate.PreserveGuardianParentBinding(ctx, sessionHash) {
 		return nil
@@ -34,13 +54,17 @@ func (s *Compatible) BindStickySessionWithTTL(ctx context.Context, groupID *int6
 	return s.setStickySessionProviderID(ctx, groupID, sessionHash, providerID, ttl)
 }
 
-// SelectProviderForModel selects a provider supporting the requested model.
+// SelectProviderForModel delegates a slot-free model choice with no excluded
+// providers. It validates the admitted group and applies the final group's
+// scheduling mode before returning a target for the caller's auxiliary use.
 func (s *Compatible) SelectProviderForModel(ctx context.Context, groupID *int64, sessionHash string, requestedModel string) (*gatewayprovider.ExecutionProvider, error) {
 	return s.SelectProviderForModelWithExclusions(ctx, groupID, sessionHash, requestedModel, nil)
 }
 
-// SelectProviderForModelWithExclusions selects a model-compatible provider outside the exclusion set.
-// Advanced groups use select-only mode and release any returned slot.
+// SelectProviderForModelWithExclusions returns a model-compatible target
+// outside excludedIDs after validating the admitted group. Advanced groups use
+// select-only context, and any release handle returned by that path is invoked
+// before exposing the provider.
 func (s *Compatible) SelectProviderForModelWithExclusions(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}) (*gatewayprovider.ExecutionProvider, error) {
 	ctx = s.withOpenAIQuotaAutoPauseContext(ctx)
 	resolvedCtx, resolvedGroupID, err := s.resolveOpenAISchedulerGroup(ctx, groupID)
@@ -64,6 +88,8 @@ func (s *Compatible) SelectProviderForModelWithExclusions(ctx context.Context, g
 		if selection == nil || selection.Provider == nil {
 			return nil, schedulercore.ErrNoAvailableProviders
 		}
+		// Auxiliary selection hands back a target for counting or probing. Release
+		// any supplied handle here before the caller receives the slot-free target.
 		if selection.ReleaseFunc != nil {
 			selection.ReleaseFunc()
 		}
@@ -72,6 +98,16 @@ func (s *Compatible) SelectProviderForModelWithExclusions(ctx context.Context, g
 	return s.selectProviderForModelWithExclusions(ctx, groupID, "", sessionHash, requestedModel, excludedIDs, false, 0, "")
 }
 
+// shouldUseGroupModelUnsupportedError reports whether the nonblank routing
+// model is unsupported by every record-schedulable candidate. Empty input pools
+// and blank models return false, and inactive records do not establish a
+// relevant pool.
+//
+// A single supporting candidate is enough to keep this result false. The caller
+// can then report temporary unavailability instead of claiming the group's
+// model configuration is missing. These checks examine record schedulability
+// and compatible model support; other request-specific quota and capacity gates
+// belong to the selection flow.
 func shouldUseGroupModelUnsupportedError(ctx context.Context, providers []gatewayprovider.ExecutionProvider, requestedModel string) bool {
 	requestedModel = strings.TrimSpace(requestedModel)
 	if requestedModel == "" || len(providers) == 0 {
@@ -91,8 +127,10 @@ func shouldUseGroupModelUnsupportedError(ctx context.Context, providers []gatewa
 	return hasRelevantProvider
 }
 
-// SelectProviderForTokenCount selects a provider for an unbilled token-count request.
-// It checks platform, model, capability, and runtime eligibility without acquiring generation slots.
+// SelectProviderForTokenCount selects an unbilled target after platform, model,
+// capability, and runtime checks. It uses basic slot-free selection even for
+// auxiliary counting, so the caller can invoke counting without occupying
+// generation capacity.
 func (s *Compatible) SelectProviderForTokenCount(
 	ctx context.Context,
 	groupID *int64,
@@ -115,8 +153,16 @@ func (s *Compatible) SelectProviderForTokenCount(
 	)
 }
 
-// noAvailableOpenAISelectionErrorForRoutingWithDetails adds diagnostics to generic capacity errors.
-// Compact capability failures and group model restrictions return their specific errors.
+// noAvailableOpenAISelectionErrorForRoutingWithDetails classifies compatible
+// selection exhaustion for the caller. Compact rejection takes precedence,
+// followed by routing's typed model error when the first supplied provider
+// collection supports that diagnosis.
+//
+// Other failures carry the client model and optional details in
+// openAINoAvailableSelectionError. That wrapper keeps ErrNoAvailableProviders
+// available through errors.Is while retaining the human-readable pool
+// diagnostics. Model support uses routingModel, keeping the provider-layer name
+// separate from the client name shown in the error.
 func noAvailableOpenAISelectionErrorForRoutingWithDetails(ctx context.Context, requestedModel string, routingModel string, compactBlocked bool, details string, providers ...[]gatewayprovider.ExecutionProvider) error {
 	if compactBlocked {
 		return schedulercore.ErrNoAvailableCompactProviders
@@ -136,14 +182,22 @@ func noAvailableOpenAISelectionErrorForRoutingWithDetails(ctx context.Context, r
 	return openAINoAvailableSelectionError{message: message}
 }
 
+// Error returns the compatible selection diagnostic message stored in this
+// wrapper.
 func (e openAINoAvailableSelectionError) Error() string {
 	return e.message
 }
 
+// Unwrap exposes ErrNoAvailableProviders so callers can classify compatible
+// pool exhaustion.
 func (e openAINoAvailableSelectionError) Unwrap() error {
 	return schedulercore.ErrNoAvailableProviders
 }
 
+// withOpenAIQuotaAutoPauseContext captures current quota auto-pause settings
+// for provider checks on this request. Missing selector or settings cache
+// passes context through, retaining any settings already supplied by the
+// caller.
 func (s *Compatible) withOpenAIQuotaAutoPauseContext(ctx context.Context) context.Context {
 	if s == nil || s.quotaSettings == nil {
 		return ctx
@@ -151,12 +205,19 @@ func (s *Compatible) withOpenAIQuotaAutoPauseContext(ctx context.Context) contex
 	return gatewayprovider.WithQuotaAutoPauseSettings(ctx, s.quotaSettings.GetOpenAIQuotaAutoPauseSettings(ctx))
 }
 
+// selectProviderForModelWithExclusions resolves one group mapping before basic
+// slot-free selection. Callers supply the client model, while the routing-aware
+// helper receives its resolved provider-layer identity and the unchanged
+// exclusion set.
 func (s *Compatible) selectProviderForModelWithExclusions(ctx context.Context, groupID *int64, platform string, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, requireCompact bool, stickyProviderID int64, requiredCapability providercore.OpenAIEndpointCapability) (*gatewayprovider.ExecutionProvider, error) {
 	routingModel := s.resolveGroupRoutingModel(ctx, groupID, requestedModel)
 	return s.selectProviderForModelWithExclusionsForRouting(ctx, groupID, platform, sessionHash, requestedModel, routingModel, excludedIDs, requireCompact, stickyProviderID, requiredCapability)
 }
 
-// selectProviderForModelWithExclusionsForRouting runs basic selection with an already resolved routing model.
+// selectProviderForModelWithExclusionsForRouting invokes basic slot-free
+// selection with an already resolved routing model. It validates group
+// admission, honors a nonblank forced platform from context, and captures
+// sticky eligibility inputs for provider rechecks.
 func (s *Compatible) selectProviderForModelWithExclusionsForRouting(ctx context.Context, groupID *int64, platform string, sessionHash string, requestedModel string, routingModel string, excludedIDs map[int64]struct{}, requireCompact bool, stickyProviderID int64, requiredCapability providercore.OpenAIEndpointCapability) (*gatewayprovider.ExecutionProvider, error) {
 	resolvedCtx, _, groupErr := s.resolveOpenAISchedulerGroup(ctx, groupID)
 	if groupErr != nil {
@@ -172,17 +233,27 @@ func (s *Compatible) selectProviderForModelWithExclusionsForRouting(ctx context.
 	return scope.oldProvider(selected), err
 }
 
-// SelectProviderWithLoadAwareness selects by load and may return a wait plan.
+// SelectProviderWithLoadAwareness delegates compatible load-aware selection
+// after capturing quota auto-pause settings. A successful result carries
+// acquired resources or a wait plan; callers finish resource acquisition and
+// release according to that result.
 func (s *Compatible) SelectProviderWithLoadAwareness(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}) (*gatewayprovider.SelectionResult, error) {
 	return s.selectProviderWithLoadAwareness(s.withOpenAIQuotaAutoPauseContext(ctx), groupID, "", sessionHash, requestedModel, excludedIDs, false, "")
 }
 
+// selectProviderWithLoadAwareness resolves the client's group model before
+// invoking the routing-aware basic scheduler. It passes exclusions, Compact
+// requirements, and endpoint capability through so provider eligibility uses
+// the same dispatch identity.
 func (s *Compatible) selectProviderWithLoadAwareness(ctx context.Context, groupID *int64, platform string, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, requireCompact bool, requiredCapability providercore.OpenAIEndpointCapability) (*gatewayprovider.SelectionResult, error) {
 	routingModel := s.resolveGroupRoutingModel(ctx, groupID, requestedModel)
 	return s.selectProviderWithLoadAwarenessForRouting(ctx, groupID, platform, sessionHash, requestedModel, routingModel, excludedIDs, requireCompact, requiredCapability)
 }
 
-// selectProviderWithLoadAwarenessForRouting runs load-aware selection with an already resolved routing model.
+// selectProviderWithLoadAwarenessForRouting invokes basic load-aware selection
+// for an already mapped routing model. Group validation and forced-platform
+// filtering precede candidate policy capture, and the returned scope restores
+// the provider with its resource decision.
 func (s *Compatible) selectProviderWithLoadAwarenessForRouting(ctx context.Context, groupID *int64, platform string, sessionHash string, requestedModel string, routingModel string, excludedIDs map[int64]struct{}, requireCompact bool, requiredCapability providercore.OpenAIEndpointCapability) (*gatewayprovider.SelectionResult, error) {
 	resolvedCtx, _, groupErr := s.resolveOpenAISchedulerGroup(ctx, groupID)
 	if groupErr != nil {
@@ -198,6 +269,10 @@ func (s *Compatible) selectProviderWithLoadAwarenessForRouting(ctx context.Conte
 	return scope.restore(selected), err
 }
 
+// listSchedulableProviders reads candidates from a positive group's snapshot or
+// repository. Empty platform queries the known platform set; read errors are
+// wrapped, and threshold plus Grok soft-quota filtering apply before returning
+// the pool.
 func (s *Compatible) listSchedulableProviders(ctx context.Context, groupID *int64, platform string) ([]gatewayprovider.ExecutionProvider, error) {
 	if groupID == nil || *groupID <= 0 {
 		return nil, nil
@@ -219,6 +294,10 @@ func (s *Compatible) listSchedulableProviders(ctx context.Context, groupID *int6
 	return s.filterGrokFreeQuotaProvidersForOpenAI(ctx, providers), nil
 }
 
+// tryAcquireProviderSlot delegates capacity acquisition to the compatible
+// concurrency service. Select-only context or an absent service returns
+// acquired with a no-op release; callers release successful acquired capacity
+// after their attempt.
 func (s *Compatible) tryAcquireProviderSlot(ctx context.Context, providerID int64, maxConcurrency int) (*schedulercore.AcquireResult, error) {
 	if schedulercore.IsSelectOnly(ctx) {
 		return &schedulercore.AcquireResult{Acquired: true, ReleaseFunc: func() {}}, nil
@@ -229,6 +308,15 @@ func (s *Compatible) tryAcquireProviderSlot(ctx context.Context, providerID int6
 	return s.concurrencyService.AcquireProviderSlot(ctx, providerID, maxConcurrency)
 }
 
+// resolveFreshSchedulableOpenAIProvider returns a target passing the current
+// candidate checks, or nil when unavailable. A configured snapshot causes a new
+// full read by provider ID; otherwise the supplied target is checked directly.
+//
+// Eligibility combines protocol, model, request group, platform quotas, shadow
+// parent policy and health, credential or model blocks, scheduling thresholds,
+// and proxy quarantine. Read failures reject this candidate so the scheduler
+// can continue with others. The returned pointer is the checked record, letting
+// later stages retain its current configuration.
 func (s *Compatible) resolveFreshSchedulableOpenAIProvider(ctx context.Context, provider *gatewayprovider.ExecutionProvider, platform string, requestedModel string, requireCompact bool, requiredCapability providercore.OpenAIEndpointCapability) *gatewayprovider.ExecutionProvider {
 	if provider == nil {
 		return nil
@@ -237,6 +325,8 @@ func (s *Compatible) resolveFreshSchedulableOpenAIProvider(ctx context.Context, 
 
 	fresh := provider
 	if s.schedulerSnapshot != nil {
+		// Snapshot ranking can outlive eligibility changes. A failed full read rejects
+		// this candidate rather than letting its older snapshot supply execution data.
 		current, err := s.getSchedulableProvider(ctx, provider.Record.ID)
 		if err != nil || current == nil {
 			return nil
@@ -264,20 +354,32 @@ func (s *Compatible) resolveFreshSchedulableOpenAIProvider(ctx context.Context, 
 	return fresh
 }
 
-// parentProviderLookup returns a repository-backed parent lookup for shadow health checks.
-// A missing repository or unsuccessful lookup returns nil, which fails parent eligibility.
-// Each call reads the current record.
-// Candidate passes may wrap this lookup with their own cache.
+// parentProviderLookup returns a repository callback for shadow parent health
+// checks. Missing repositories return nil; each read returns its record value
+// and discards the error, leaving parent health to evaluate that value or nil.
 func (s *Compatible) parentProviderLookup(ctx context.Context) func(int64) *gatewayprovider.ExecutionProvider {
 	return func(id int64) *gatewayprovider.ExecutionProvider {
 		if s.providerRepo == nil {
 			return nil
 		}
+		// Parent health consumes the reader's record result, including nil when
+		// unavailable. The lookup error is discarded because the shared gate evaluates that result.
 		a, _ := s.providerRepo.GetByID(ctx, id)
 		return a
 	}
 }
 
+// recheckSelectedOpenAIProviderFromDB returns the target that passes the
+// selected-provider revalidation, or nil on rejection. With snapshots and a
+// repository, it reads the latest database record before applying membership,
+// privacy, platform eligibility, shadow policy, runtime blocks, thresholds, and
+// quarantine.
+//
+// When those paired readers are absent, it checks the supplied record's
+// membership, privacy, candidate eligibility, thresholds, shadow policy and
+// health, and proxy state directly. Database read failure rejects the
+// candidate. A successful database branch returns latest so cached credentials
+// and memberships cannot replace the verified target.
 func (s *Compatible) recheckSelectedOpenAIProviderFromDB(ctx context.Context, provider *gatewayprovider.ExecutionProvider, groupID *int64, platform string, requestedModel string, requireCompact bool, requiredCapability providercore.OpenAIEndpointCapability) *gatewayprovider.ExecutionProvider {
 	if provider == nil {
 		return nil
@@ -307,6 +409,8 @@ func (s *Compatible) recheckSelectedOpenAIProviderFromDB(ctx context.Context, pr
 		return provider
 	}
 
+	// The database can revoke group membership or change credentials after ranking.
+	// Check its current record before returning the execution target chosen from snapshots.
 	latest, err := s.providerRepo.GetByID(ctx, provider.Record.ID)
 	if err != nil || latest == nil {
 		return nil
@@ -337,15 +441,25 @@ func (s *Compatible) recheckSelectedOpenAIProviderFromDB(ctx context.Context, pr
 	return latest
 }
 
+// openAIProviderMatchesSchedulingGroup reports membership through the
+// provider's stored group representations. Nil records and absent or
+// nonpositive group IDs fail, requiring a positive matching admitted group for
+// scheduling.
 func (s *Compatible) openAIProviderMatchesSchedulingGroup(provider *gatewayprovider.ExecutionProvider, groupID *int64) bool {
 	return openAIStickyProviderMatchesGroup(provider, groupID)
 }
 
-// openAIProviderPassesPrivacyRequirement reports whether the provider satisfies the group's privacy requirement.
+// openAIProviderPassesPrivacyRequirement checks this group's privacy
+// requirement against the target's recorded state. Missing providers fail,
+// while groups without a requirement admit either privacy state through the
+// request's cached group policy.
 func (s *Compatible) openAIProviderPassesPrivacyRequirement(ctx context.Context, groupID *int64, provider *gatewayprovider.ExecutionProvider) bool {
 	return provider != nil && (!s.openAIGroupRequiresPrivacySet(ctx, groupID) || provider.View().IsPrivacySet())
 }
 
+// getSchedulableProvider reads the target through snapshots or the provider
+// repository. Read errors pass through, while threshold rejection and a blocked
+// Grok Free OAuth gate return nil without error for candidate selection.
 func (s *Compatible) getSchedulableProvider(ctx context.Context, providerID int64) (*gatewayprovider.ExecutionProvider, error) {
 	var (
 		provider *gatewayprovider.ExecutionProvider
@@ -371,8 +485,10 @@ func (s *Compatible) getSchedulableProvider(ctx context.Context, providerID int6
 	return provider, nil
 }
 
-// filterGrokFreeQuotaProvidersForOpenAI applies the local Free OAuth soft gate
-// to basic compatible selection using the shared free-quota rules.
+// filterGrokFreeQuotaProvidersForOpenAI applies the basic compatible selector's
+// bound Free OAuth soft gate. Missing selector or gate retains the incoming
+// candidates, while observed quota blocks remove only explicitly eligible Free
+// OAuth records.
 func (s *Compatible) filterGrokFreeQuotaProvidersForOpenAI(ctx context.Context, providers []gatewayprovider.ExecutionProvider) []gatewayprovider.ExecutionProvider {
 	if s == nil {
 		return providers
@@ -380,6 +496,10 @@ func (s *Compatible) filterGrokFreeQuotaProvidersForOpenAI(ctx context.Context, 
 	return filterFreeQuotaProjection(s.freeQuotaGate, providers)
 }
 
+// filterOpenAIProvidersBySchedulingThreshold returns candidates passing the
+// health adapter's current scheduling threshold. Empty input stays unchanged;
+// other results use new slice storage while the provider records retain their
+// referenced data.
 func (s *Compatible) filterOpenAIProvidersBySchedulingThreshold(ctx context.Context, providers []gatewayprovider.ExecutionProvider) []gatewayprovider.ExecutionProvider {
 	if len(providers) == 0 {
 		return providers
@@ -395,6 +515,10 @@ func (s *Compatible) filterOpenAIProvidersBySchedulingThreshold(ctx context.Cont
 	return filtered
 }
 
+// isOpenAIProviderBlockedBySchedulingThreshold delegates scheduling pause
+// decisions to the bound health adapter. Nil selector, observer, or target
+// returns false; a handled observation can update the execution record's
+// temporary scheduling state.
 func (s *Compatible) isOpenAIProviderBlockedBySchedulingThreshold(ctx context.Context, provider *gatewayprovider.ExecutionProvider) bool {
 	if s == nil || s.healthObserver == nil || provider == nil {
 		return false
@@ -402,6 +526,10 @@ func (s *Compatible) isOpenAIProviderBlockedBySchedulingThreshold(ctx context.Co
 	return gatewayprovider.ApplyExecutionSchedulingThreshold(ctx, s.healthObserver, provider)
 }
 
+// hydrateSelectedProvider supplies a full record for snapshot-only compatible
+// selection. Nil targets, absent snapshots, and paired repositories pass the
+// input through; snapshot-only reads propagate errors and report an error when
+// the selected provider is missing.
 func (s *Compatible) hydrateSelectedProvider(ctx context.Context, provider *gatewayprovider.ExecutionProvider) (*gatewayprovider.ExecutionProvider, error) {
 	if provider == nil || s.schedulerSnapshot == nil || s.providerRepo != nil {
 		return provider, nil
@@ -416,6 +544,10 @@ func (s *Compatible) hydrateSelectedProvider(ctx context.Context, provider *gate
 	return hydrated, nil
 }
 
+// newSelectionResult hydrates the provider and attaches the acquired flag,
+// release callback, and wait plan. Preparation errors return no result; this
+// helper leaves cleanup to its caller, while newAcquiredSelectionResult handles
+// an acquired slot's failure.
 func (s *Compatible) newSelectionResult(ctx context.Context, provider *gatewayprovider.ExecutionProvider, acquired bool, release func(), waitPlan *schedulercore.ProviderWaitPlan) (*gatewayprovider.SelectionResult, error) {
 	hydrated, err := s.hydrateSelectedProvider(ctx, provider)
 	if err != nil {
@@ -429,23 +561,35 @@ func (s *Compatible) newSelectionResult(ctx context.Context, provider *gatewaypr
 	}, nil
 }
 
+// newAcquiredSelectionResult prepares an acquired result and returns its
+// release callback to the execution caller. Hydration failure invokes a nonnil
+// release immediately before returning the error so preparation cannot retain
+// the provider's capacity.
 func (s *Compatible) newAcquiredSelectionResult(ctx context.Context, provider *gatewayprovider.ExecutionProvider, release func()) (*gatewayprovider.SelectionResult, error) {
 	selection, err := s.newSelectionResult(ctx, provider, true, release, nil)
+	// Slot acquisition precedes full snapshot hydration. Return that capacity when
+	// preparation fails so another request can still use the selected provider.
 	if err != nil && release != nil {
 		release()
 	}
 	return selection, err
 }
 
+// schedulingConfig returns the compatible selector's startup selection and wait
+// policy value.
 func (s *Compatible) schedulingConfig() schedulercore.FlowOptions {
 	return s.options.Scheduling
 }
 
-// StickyProviderID reads the group's session binding for the request's cache billing basis.
+// StickyProviderID reads the positive group's session binding for cache billing
+// attribution. Missing selector, cache, group, or session returns zero, and
+// cache read failure also produces zero for an unavailable binding.
 func (s *Compatible) StickyProviderID(ctx context.Context, groupID *int64, sessionHash string) int64 {
 	if s == nil || s.cache == nil || groupID == nil || *groupID <= 0 || sessionHash == "" {
 		return 0
 	}
+	// Cache billing attribution treats an unreadable binding as absent. A failed
+	// observation returns zero so completion can apply its unbound-session rule.
 	id, err := s.getStickySessionProviderID(ctx, groupID, sessionHash)
 	if err != nil {
 		return 0
@@ -453,7 +597,9 @@ func (s *Compatible) StickyProviderID(ctx context.Context, groupID *int64, sessi
 	return id
 }
 
-// readSchedulingGroup reads the group through the configured scheduling-group reader.
+// readSchedulingGroup invokes the bound full group reader for compatible
+// scheduling policy. An unavailable reader returns nil without error so callers
+// resolving optional settings can handle a missing group.
 func (s *Compatible) readSchedulingGroup(ctx context.Context, id int64) (*routing.Group, error) {
 	if s.schedulingGroups == nil {
 		return nil, nil

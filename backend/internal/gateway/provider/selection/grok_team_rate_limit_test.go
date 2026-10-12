@@ -11,8 +11,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// TestGrokTeamModelRateLimit_MarksAndFiltersSiblings records one OAuth
+// provider's team-model cooldown. Its sibling is filtered for that model while
+// another model, another team, and a missing team remain eligible.
 func TestGrokTeamModelRateLimit_MarksAndFiltersSiblings(t *testing.T) {
-	// Use a time-qualified team ID to separate this fixture's cooldown state.
+	// The provider store is process-global. A time-qualified team ID separates
+	// this fixture's cooldown observations from those established by other tests.
 	team := "team-test-" + time.Now().Format("150405.000")
 	a1 := &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -55,6 +59,9 @@ func TestGrokTeamModelRateLimit_MarksAndFiltersSiblings(t *testing.T) {
 	require.Contains(t, ids, int64(104))
 }
 
+// TestGrokTeamModelRateLimit_Expires supplies a deadline that is already in the
+// past. The provider rule substitutes its default cooldown, so the observation
+// remains active when selection checks it immediately.
 func TestGrokTeamModelRateLimit_Expires(t *testing.T) {
 	team := "team-expire-" + time.Now().Format("150405.000")
 	a := &gatewayprovider.ExecutionProvider{
@@ -65,11 +72,13 @@ func TestGrokTeamModelRateLimit_Expires(t *testing.T) {
 	}
 	past := time.Now().Add(-time.Minute)
 	providercore.MarkGrokTeamModelRateLimit(gatewayprovider.ExecutionRecord(a), "grok-4.5", past)
-	// Marking an expired deadline substitutes the default TTL from the current time.
-	// The resulting cooldown must therefore still be active.
 	require.True(t, isGrokTeamModelRateLimited(a, "grok-4.5", time.Now()))
 }
 
+// TestGrokTeamModelRateLimitFilterUsesMappedUpstreamModel maps a client
+// wildcard onto an observed Grok team cooldown. The candidate is removed
+// through its canonical upstream identity, protecting team limits across
+// aliases.
 func TestGrokTeamModelRateLimitFilterUsesMappedUpstreamModel(t *testing.T) {
 	now := time.Now()
 	provider := &gatewayprovider.ExecutionProvider{

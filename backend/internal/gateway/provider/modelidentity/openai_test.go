@@ -6,6 +6,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestUsageBillingModelCandidates_BareGPT56ExcludesSol passes bare and
+// provider-qualified GPT names to settlement lookup. Each produces its own
+// single identity, preventing an implicit Sol candidate from changing billing.
 func TestUsageBillingModelCandidates_BareGPT56ExcludesSol(t *testing.T) {
 	require.Equal(t,
 		[]string{"gpt-5.6"},
@@ -17,7 +20,9 @@ func TestUsageBillingModelCandidates_BareGPT56ExcludesSol(t *testing.T) {
 	)
 }
 
-// TestUsageCandidatesPreserveModelID checks billing identities with prefixes, dates, and effort suffixes.
+// TestUsageCandidatesPreserveModelID supplies model names with qualifiers, date
+// versions, and effort suffixes. Each complete name remains the sole billing
+// candidate, including names resembling another model family.
 func TestUsageCandidatesPreserveModelID(t *testing.T) {
 	models := []string{
 		"gpt-6-astra",
@@ -40,6 +45,10 @@ func TestUsageCandidatesPreserveModelID(t *testing.T) {
 	}
 }
 
+// TestUsageBillingModelCandidatesPreserveCodexAutoReviewModel submits the
+// dedicated automatic-review model to billing candidate selection. The result
+// contains that exact identity once so settlement retains its independent
+// pricing name.
 func TestUsageBillingModelCandidatesPreserveCodexAutoReviewModel(t *testing.T) {
 	candidates := UsageCandidates("codex-auto-review")
 
@@ -54,6 +63,10 @@ func TestUsageBillingModelCandidatesPreserveCodexAutoReviewModel(t *testing.T) {
 	}
 }
 
+// TestUsageBillingModelCandidatesPreserveGPT55ProModel supplies the
+// provider-qualified Pro identity used in completion records. Its complete name
+// remains the sole candidate so billing can distinguish it from other GPT
+// models.
 func TestUsageBillingModelCandidatesPreserveGPT55ProModel(t *testing.T) {
 	candidates := UsageCandidates("openai/gpt-5.5-pro")
 
