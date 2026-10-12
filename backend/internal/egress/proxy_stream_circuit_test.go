@@ -7,6 +7,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestOpenAIProxyStreamCircuitThresholdTTLAndSuccessReset records failures
+// before and after success with a fixed clock. It checks threshold activation,
+// exact quarantine expiry, reset history, and separated failures outside the
+// observation window.
 func TestOpenAIProxyStreamCircuitThresholdTTLAndSuccessReset(t *testing.T) {
 	base := time.Unix(1_800_000_000, 0)
 	circuit := NewProxyStreamCircuit(ProxyStreamCircuitSettings{
@@ -35,7 +39,9 @@ func TestOpenAIProxyStreamCircuitThresholdTTLAndSuccessReset(t *testing.T) {
 	require.False(t, tripped, "failures outside the window must not accumulate")
 }
 
-// TestOpenAIProxyStreamCircuitCollapsesBurstFailures checks that bursts count once and later failures can quarantine a proxy.
+// TestOpenAIProxyStreamCircuitCollapsesBurstFailures records three observations
+// within one collapse interval and another after it. It checks that the burst
+// stays unblocked and the later independent failure activates quarantine.
 func TestOpenAIProxyStreamCircuitCollapsesBurstFailures(t *testing.T) {
 	base := time.Unix(1_800_000_000, 0)
 	circuit := NewProxyStreamCircuit(ProxyStreamCircuitSettings{
@@ -59,7 +65,9 @@ func TestOpenAIProxyStreamCircuitCollapsesBurstFailures(t *testing.T) {
 	require.True(t, circuit.IsBlocked(1, base.Add(5*time.Second)))
 }
 
-// TestOpenAIProxyStreamCircuitDisabled checks that disabled circuits record no failures or active blocks.
+// TestOpenAIProxyStreamCircuitDisabled supplies a disabled circuit with a
+// one-failure threshold. It checks the failure result, proxy block lookup, and
+// active quarantine count all remain inactive.
 func TestOpenAIProxyStreamCircuitDisabled(t *testing.T) {
 	base := time.Unix(1_800_000_000, 0)
 	circuit := NewProxyStreamCircuit(ProxyStreamCircuitSettings{
@@ -76,6 +84,9 @@ func TestOpenAIProxyStreamCircuitDisabled(t *testing.T) {
 	require.Equal(t, 0, circuit.ActiveBlockCount(base))
 }
 
+// TestOpenAIProxyStreamCircuitActiveBlockCount activates two proxy quarantines
+// using a controlled clock. It checks that both count before their deadlines
+// and expired blocks count as zero at the deadline.
 func TestOpenAIProxyStreamCircuitActiveBlockCount(t *testing.T) {
 	base := time.Unix(1_800_000_000, 0)
 	circuit := NewProxyStreamCircuit(ProxyStreamCircuitSettings{
@@ -93,6 +104,9 @@ func TestOpenAIProxyStreamCircuitActiveBlockCount(t *testing.T) {
 	require.Equal(t, 0, circuit.ActiveBlockCount(until), "到期隔离不应计入活跃数量")
 }
 
+// TestOpenAIProxyStreamCircuitBoundsEntries inserts three proxy identities into
+// a two-entry circuit. It checks the retained map size and eviction of the
+// least recently touched first proxy.
 func TestOpenAIProxyStreamCircuitBoundsEntries(t *testing.T) {
 	base := time.Unix(1_800_000_000, 0)
 	circuit := NewProxyStreamCircuit(ProxyStreamCircuitSettings{

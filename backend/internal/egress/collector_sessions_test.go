@@ -7,6 +7,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestTLSFingerprintCollectorServiceSessionLimits inserts two captures into a
+// one-record session using a controlled clock. It checks newest-arrival
+// retention, readability at the exact expiration timestamp, and rejection one
+// nanosecond later.
 func TestTLSFingerprintCollectorServiceSessionLimits(t *testing.T) {
 	now := time.Now()
 	sessions := NewCaptureSessions(func() time.Time { return now })

@@ -6,6 +6,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestUpstreamUsageBaseURLReusesSecurityPolicy supplies an enabled usage
+// allowlist and mixed-case HTTPS schemes. It checks normalized successful URLs
+// and rejection of HTTP, a private literal address, and an unlisted hostname.
 func TestUpstreamUsageBaseURLReusesSecurityPolicy(t *testing.T) {
 	policy := UsageURLPolicy{Configured: true, Enabled: true, UpstreamHosts: []string{"gateway.example"}}
 
@@ -23,6 +26,9 @@ func TestUpstreamUsageBaseURLReusesSecurityPolicy(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestUpstreamUsageBaseURLUsesStrictDefaultsWithoutConfig leaves the usage
+// policy unconfigured. It checks that HTTPS public hostnames pass while HTTP
+// schemes and loopback literal addresses fail under the default rules.
 func TestUpstreamUsageBaseURLUsesStrictDefaultsWithoutConfig(t *testing.T) {
 	policy := UsageURLPolicy{}
 	_, err := policy.Validate("http://gateway.example/v1")

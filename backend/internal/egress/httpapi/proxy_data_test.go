@@ -17,19 +17,33 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider/transfer"
 )
 
-// proxyTaskFixture runs import probes asynchronously; test cleanup waits for completion.
-type proxyTaskFixture struct{ wg sync.WaitGroup }
+// proxyTaskFixture tracks asynchronously accepted import callbacks so test
+// cleanup waits for their completion.
+type proxyTaskFixture struct {
+	// wg tracks each accepted callback through its return. setupProxyDataRouter
+	// registers cleanup waiting after construction so test completion joins the
+	// background work admitted while handlers process imports.
+	wg sync.WaitGroup // accepted callback completion tracking
+}
 
+// proxyDataResponse decodes the common response code and exported proxy backup
+// envelope for assertions.
 type proxyDataResponse struct {
-	Code int                  `json:"code"`
-	Data transfer.DataPayload `json:"data"`
+	Code int                  `json:"code"` // common response outcome code
+	Data transfer.DataPayload `json:"data"` // exported proxy backup envelope
 }
 
+// proxyImportResponse decodes response status and partial proxy import outcomes
+// for fixture assertions.
 type proxyImportResponse struct {
-	Code int                       `json:"code"`
-	Data transfer.DataImportResult `json:"data"`
+	Code int                       `json:"code"` // common response outcome code
+	Data transfer.DataImportResult `json:"data"` // partial proxy import outcomes
 }
 
+// TestProxyExportDataRespectsFilters configures HTTP and HTTPS records before
+// exporting with a protocol filter. It checks envelope identity/version,
+// selected protocol, empty provider collection, and forwarded default ordering
+// values.
 func TestProxyExportDataRespectsFilters(t *testing.T) {
 	router, adminSvc := setupProxyDataRouter(t)
 
@@ -75,6 +89,9 @@ func TestProxyExportDataRespectsFilters(t *testing.T) {
 	require.Equal(t, "desc", adminSvc.lastListProxies.sortOrder)
 }
 
+// TestProxyExportDataWithSelectedIDs exports one selected fixture ID from two
+// different connection records. It checks the returned record's protocol and
+// host and verifies the ordinary filtered listing path was not invoked.
 func TestProxyExportDataWithSelectedIDs(t *testing.T) {
 	router, adminSvc := setupProxyDataRouter(t)
 
@@ -115,6 +132,9 @@ func TestProxyExportDataWithSelectedIDs(t *testing.T) {
 	require.Equal(t, 0, adminSvc.lastListProxies.calls)
 }
 
+// TestProxyExportDataPassesSortParams requests protocol/status/search filters
+// and name ordering through export. It checks the successful response and every
+// recorded ordinary-list filter/order value passed to the fixture service.
 func TestProxyExportDataPassesSortParams(t *testing.T) {
 	router, adminSvc := setupProxyDataRouter(t)
 
@@ -144,6 +164,10 @@ func TestProxyExportDataPassesSortParams(t *testing.T) {
 	require.Equal(t, "asc", adminSvc.lastListProxies.sortOrder)
 }
 
+// TestProxyExportDataSortByProviderCountUsesProviderCountListing supplies
+// distinct ordinary and augmented fixtures with provider-count ordering. It
+// checks exported names follow the configured augmented order and ordinary
+// listing was not called.
 func TestProxyExportDataSortByProviderCountUsesProviderCountListing(t *testing.T) {
 	router, adminSvc := setupProxyDataRouter(t)
 
@@ -204,6 +228,10 @@ func TestProxyExportDataSortByProviderCountUsesProviderCountListing(t *testing.T
 	require.Equal(t, 0, adminSvc.lastListProxies.calls)
 }
 
+// TestProxyImportDataReusesAndTriggersLatencyProbe imports one existing
+// connection with changed status and one new connection. It checks partial
+// counters, recorded reused-ID update, and eventual scheduling of one fixture
+// latency probe.
 func TestProxyImportDataReusesAndTriggersLatencyProbe(t *testing.T) {
 	router, adminSvc := setupProxyDataRouter(t)
 
@@ -269,6 +297,8 @@ func TestProxyImportDataReusesAndTriggersLatencyProbe(t *testing.T) {
 	adminSvc.mu.Unlock()
 	require.Contains(t, updatedIDs, int64(1))
 
+	// Import returns before accepted probe work completes. Observe the recorded
+	// callback under its fixture lock before cleanup joins the tracked task lifetime.
 	require.Eventually(t, func() bool {
 		adminSvc.mu.Lock()
 		defer adminSvc.mu.Unlock()
@@ -276,11 +306,21 @@ func TestProxyImportDataReusesAndTriggersLatencyProbe(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 }
 
+// Go admits every supplied callback and tracks its asynchronous execution with
+// the fixture wait group. Cleanup waits for registered callbacks, and the
+// fixture provides no cancellation, admission rejection, or panic recovery
+// behavior.
 func (f *proxyTaskFixture) Go(_ string, run func()) bool {
+	// Register callback completion with the wait group before returning admission,
+	// so test cleanup includes work whose goroutine starts after the HTTP response.
 	f.wg.Go(func() { ; run() })
 	return true
 }
 
+// setupProxyDataRouter constructs direct export/import routes using a serial
+// admin fixture and tracked background tasks. Cleanup waits for those
+// callbacks; authentication is outside this router, so tests inspect binding
+// and transfer behavior only.
 func setupProxyDataRouter(t *testing.T) (*gin.Engine, *proxyAdminFixture) {
 	router := gin.New()
 	adminSvc := newProxyAdminFixture()

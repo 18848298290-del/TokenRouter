@@ -6,7 +6,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestTLSProfileSnapshotIsolation checks that source and returned objects cannot mutate cached profiles.
+// TestTLSProfileSnapshotIsolation mutates returned cipher/ALPN slices and then
+// the source cipher slice after local publication. It checks those sampled
+// lists keep their cached values across later GetProfileByID calls.
 func TestTLSProfileSnapshotIsolation(t *testing.T) {
 	source := &TLSFingerprintProfile{ID: 1, Name: "profile", CipherSuites: []uint16{4865}, ALPNProtocols: []string{"h2"}}
 	svc := NewTLSFingerprintProfileService(nil, nil)

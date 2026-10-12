@@ -6,6 +6,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestTLSFingerprintRouterService_ValidateRules supplies enabled rules with
+// blank literal patterns and malformed regex patterns. It checks that direct
+// router validation returns an error for each rejected rule configuration.
 func TestTLSFingerprintRouterService_ValidateRules(t *testing.T) {
 	t.Run("空 pattern 拒绝", func(t *testing.T) {
 		router := &TLSFingerprintRouter{
@@ -32,11 +35,15 @@ func TestTLSFingerprintRouterService_ValidateRules(t *testing.T) {
 	})
 }
 
+// TestTLSFingerprintRouter_ValidateChatGPTOAuthTokenProfileID supplies absent,
+// built-in, random, positive, and invalid negative dedicated selections. It
+// checks that token configuration accepts the supported ID forms and rejects
+// the value below -1.
 func TestTLSFingerprintRouter_ValidateChatGPTOAuthTokenProfileID(t *testing.T) {
 	tests := []struct {
-		name    string
-		value   *int64
-		wantErr bool
+		name    string // profile selection scenario name
+		value   *int64 // supplied nullable profile identity
+		wantErr bool   // expected profile validation failure
 	}{
 		{name: "未配置", value: nil},
 		{name: "内置默认模板", value: tlsRouterInt64Ptr(0)},
@@ -61,6 +68,8 @@ func TestTLSFingerprintRouter_ValidateChatGPTOAuthTokenProfileID(t *testing.T) {
 	}
 }
 
+// tlsRouterInt64Ptr allocates a profile selection pointer for router validation
+// fixtures.
 func tlsRouterInt64Ptr(value int64) *int64 {
 	return &value
 }

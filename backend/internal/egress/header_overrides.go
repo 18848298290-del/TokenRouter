@@ -8,10 +8,22 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// Header overrides apply to API key providers on Anthropic, OpenAI, and supported
-// Chinese provider platforms, and to Grok API key and OAuth providers.
-// Administrators configure header name/value pairs to replace outgoing headers
-// case-insensitively. Entries with empty values are ignored when applying overrides.
+// Provider header overrides replace outgoing values case-insensitively after
+// platform authentication and client identity are prepared. Provider
+// eligibility allows API keys on Anthropic, OpenAI, Kimi, Zhipu, DeepSeek, and
+// Jev, plus API keys or OAuth on Grok. Egress validates syntax and blocks
+// credential, session, and framing names.
+//
+// Write validation normalizes names before duplicate detection so each accepted
+// header retains one value after conversion between supported map
+// representations. It builds a replacement table before changing credentials,
+// leaving the submitted table available on validation failure. Read-time
+// resolution filters stored values through the same entry rules and allocates a
+// request map, while empty stored values remain editable placeholders rather
+// than applied overrides.
+
+// Header override credential keys and size limits govern write validation and
+// request-time filtering of stored administrator values.
 const (
 	credKeyHeaderOverrideEnabled = "header_override_enabled"
 	credKeyHeaderOverrides       = "header_overrides"
@@ -63,13 +75,24 @@ var headerOverrideBlockedNames = map[string]struct{}{
 	"x-grok-conv-id":           {},
 }
 
+// IsHeaderOverrideBlockedName reports whether the supplied lowercase header
+// name is reserved by credential, session, or transport handling. The caller
+// lowercases its name first; this lookup performs an exact map-key comparison.
 func IsHeaderOverrideBlockedName(lowerName string) bool {
 	_, blocked := headerOverrideBlockedNames[lowerName]
 	return blocked
 }
 
-// ResolveHeaderOverrides normalizes overrides and skips invalid or empty entries.
-// Read-time filtering also covers stored data predating validation or blocklist additions.
+// ResolveHeaderOverrides returns a new map of normalized permitted nonempty
+// header overrides, or nil when none survive. Invalid, blocked, and empty
+// entries are skipped during request-time reads, including values stored before
+// current write validation.
+//
+// Accepted names become lowercase map keys, keeping each request separate from
+// stored map storage. Legacy case-variant names can collide after normalization;
+// the last visited entry wins in Go map iteration order.
+// NormalizeHeaderOverrideCredentials rejects those collisions at write time, but
+// this read helper does not establish an ordering between legacy duplicates.
 func ResolveHeaderOverrides(raw map[string]string) map[string]string {
 	if len(raw) == 0 {
 		return nil
@@ -77,6 +100,8 @@ func ResolveHeaderOverrides(raw map[string]string) map[string]string {
 	result := make(map[string]string, len(raw))
 	for name, value := range raw {
 		lowerName, value, err := NormalizeHeaderOverrideEntry(name, value)
+		// Read-time filtering covers legacy or directly stored credentials, so a
+		// rejected entry cannot bypass the current override rules in a request.
 		if err != nil || lowerName == "" || value == "" {
 			continue
 		}
@@ -88,9 +113,16 @@ func ResolveHeaderOverrides(raw map[string]string) map[string]string {
 	return result
 }
 
-// NormalizeHeaderOverrideCredentials validates and normalizes overrides in place.
-// Provider write paths call it; absent override fields leave credentials unchanged.
-// It trims names and values, lowercases names, and discards entirely empty entries.
+// NormalizeHeaderOverrideCredentials validates override fields and replaces the
+// credential entry with a normalized name-to-value object on success. Missing
+// or nil fields leave the supplied map unchanged, while a present enable flag
+// needs a boolean value.
+//
+// The function accepts either supported map representation, rejects excessive
+// entry counts, and normalizes every name and value before detecting duplicate
+// lowercase names. Named empty values remain editable placeholders. Validation
+// failure returns before replacing header_overrides, so callers can reject the
+// submitted credential object rather than persist a partially normalized table.
 func NormalizeHeaderOverrideCredentials(credentials map[string]any) error {
 	if credentials == nil {
 		return nil
@@ -136,8 +168,10 @@ func NormalizeHeaderOverrideCredentials(credentials map[string]any) error {
 		if err != nil {
 			return err
 		}
+		// Empty name-and-value rows are editor placeholders rather than headers.
+		// Omitting them prevents an empty map key from being persisted as an override.
 		if lowerName == "" {
-			continue // Discard an entirely empty placeholder row.
+			continue
 		}
 		if _, dup := normalized[lowerName]; dup {
 			return infraerrors.Newf(infraerrors.Category(400), "INVALID_HEADER_OVERRIDE",
@@ -185,5 +219,7 @@ func NormalizeHeaderOverrideEntry(name, value string) (string, string, error) {
 	return lowerName, value, nil
 }
 
-// ValidHeaderName checks HTTP token syntax; callers check provider eligibility and blocked names.
+// ValidHeaderName reports whether name has HTTP token syntax according to
+// httpguts. Callers separately determine provider eligibility and reject
+// reserved credential, session, and transport names before applying an override.
 func ValidHeaderName(name string) bool { return httpguts.ValidHeaderFieldName(name) }

@@ -11,6 +11,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/egress"
 )
 
+// TestRunProxyQualityTarget_CloudflareChallenge serves a forbidden HTML
+// challenge with a ray header from a loopback target. It checks challenge
+// classification, observed status, and the extracted diagnostic ray value.
 func TestRunProxyQualityTarget_CloudflareChallenge(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
@@ -35,6 +38,9 @@ func TestRunProxyQualityTarget_CloudflareChallenge(t *testing.T) {
 	require.Equal(t, "test-ray-123", item.CFRay)
 }
 
+// TestRunProxyQualityTarget_AllowedStatusPass serves a successful JSON response
+// whose status is allowed for the fixture target. It checks the resulting item
+// passes and records the observed status.
 func TestRunProxyQualityTarget_AllowedStatusPass(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -56,6 +62,9 @@ func TestRunProxyQualityTarget_AllowedStatusPass(t *testing.T) {
 	require.Equal(t, http.StatusOK, item.HTTPStatus)
 }
 
+// TestRunProxyQualityTarget_AllowedStatusPassForUnauthorized serves an expected
+// authentication error for an unauthenticated model target. It checks status
+// membership yields pass and produces the reachable-target diagnostic message.
 func TestRunProxyQualityTarget_AllowedStatusPassForUnauthorized(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
@@ -78,6 +87,9 @@ func TestRunProxyQualityTarget_AllowedStatusPassForUnauthorized(t *testing.T) {
 	require.Contains(t, item.Message, "目标可达")
 }
 
+// TestProxyQualityTargets_IncludesGrok locates the configured Grok target in
+// the shared target list. It checks its URL, GET method, and accepted
+// unauthorized status remain available for quality probing.
 func TestProxyQualityTargets_IncludesGrok(t *testing.T) {
 	var grokTarget *egress.ProxyQualityTarget
 	for i := range egress.ProxyQualityTargets {
@@ -93,6 +105,9 @@ func TestProxyQualityTargets_IncludesGrok(t *testing.T) {
 	require.Contains(t, grokTarget.AllowedStatuses, http.StatusUnauthorized)
 }
 
+// TestRunProxyQualityTarget_GrokUnauthorizedPasses serves an unauthorized Grok
+// response and checks the request method. It verifies target identity, pass
+// classification, observed status, and reachable-target diagnostic text.
 func TestRunProxyQualityTarget_GrokUnauthorizedPasses(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {

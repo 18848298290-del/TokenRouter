@@ -8,16 +8,31 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/egress"
 )
 
+// Stored TLS profiles expose arrays to administrator responses even when
+// database fields are absent. Creation omits empty optional lists, update
+// clears them, and entity conversion fills absent arrays with present empty
+// values before later service cloning provides runtime snapshot ownership.
+
+// tlsFingerprintProfileRepository maps Ent profile persistence into editable
+// egress fingerprint values.
 type tlsFingerprintProfileRepository struct {
-	client *ent.Client
+	// client remains available while profile administration and cache reloads use
+	// this adapter. The application owns its lifecycle and keeps persistence open
+	// until dependent readers stop.
+	client *ent.Client // borrowed application Ent client
 }
 
-// NewTLSFingerprintProfileRepository creates a TLS profile repository.
+// NewTLSFingerprintProfileRepository creates a profile persistence adapter
+// using the supplied Ent client. The adapter retains that client for later
+// commands, and its application owner keeps it available throughout
+// administration and cache reloads.
 func NewTLSFingerprintProfileRepository(client *ent.Client) egress.TLSFingerprintProfileRepository {
 	return &tlsFingerprintProfileRepository{client: client}
 }
 
-// List returns all TLS profiles ordered by name.
+// List returns all persisted TLS profiles ordered by their stored name.
+// Conversion fills absent arrays for JSON responses, while nested nonempty
+// values can retain the loaded entity's storage until service cloning.
 func (r *tlsFingerprintProfileRepository) List(ctx context.Context) ([]*egress.TLSFingerprintProfile, error) {
 	profiles, err := r.client.TLSFingerprintProfile.Query().
 		Order(ent.Asc(tlsfingerprintprofile.FieldName)).
@@ -33,7 +48,9 @@ func (r *tlsFingerprintProfileRepository) List(ctx context.Context) ([]*egress.T
 	return result, nil
 }
 
-// GetByID returns a TLS profile, or nil when the ID is missing.
+// GetByID returns the stored profile, or nil with no error when Ent reports its
+// ID missing. Other persistence errors return directly; conversion supplies
+// present empty arrays for absent list fields.
 func (r *tlsFingerprintProfileRepository) GetByID(ctx context.Context, id int64) (*egress.TLSFingerprintProfile, error) {
 	p, err := r.client.TLSFingerprintProfile.Get(ctx, id)
 	if err != nil {
@@ -45,7 +62,10 @@ func (r *tlsFingerprintProfileRepository) GetByID(ctx context.Context, id int64)
 	return r.toModel(p), nil
 }
 
-// Create persists a TLS profile.
+// Create persists the supplied name, GREASE flag, and populated optional
+// profile values. Empty lists are omitted from the create builder; the returned
+// egress model includes database metadata and converts absent arrays to present
+// empty slices.
 func (r *tlsFingerprintProfileRepository) Create(ctx context.Context, p *egress.TLSFingerprintProfile) (*egress.TLSFingerprintProfile, error) {
 	builder := r.client.TLSFingerprintProfile.Create().
 		SetName(p.Name).
@@ -89,12 +109,16 @@ func (r *tlsFingerprintProfileRepository) Create(ctx context.Context, p *egress.
 	return r.toModel(created), nil
 }
 
-// Update replaces a TLS profile's fields, clearing empty optional values.
+// Update replaces the profile identified by ID with the supplied editable
+// values. Nil description and empty lists clear their stored fields, so callers
+// supply a complete desired profile after merging any partial HTTP update.
 func (r *tlsFingerprintProfileRepository) Update(ctx context.Context, p *egress.TLSFingerprintProfile) (*egress.TLSFingerprintProfile, error) {
 	builder := r.client.TLSFingerprintProfile.UpdateOneID(p.ID).
 		SetName(p.Name).
 		SetEnableGrease(p.EnableGREASE)
 
+	// Update receives a complete merged profile. Clear absent optional values
+	// here so an explicit empty list reaches persistence and later runtime defaults.
 	if p.Description != nil {
 		builder.SetDescription(*p.Description)
 	} else {
@@ -154,12 +178,15 @@ func (r *tlsFingerprintProfileRepository) Update(ctx context.Context, p *egress.
 	return r.toModel(updated), nil
 }
 
-// Delete deletes a TLS profile.
+// Delete removes the stored TLS fingerprint profile identified by id.
 func (r *tlsFingerprintProfileRepository) Delete(ctx context.Context, id int64) error {
 	return r.client.TLSFingerprintProfile.DeleteOneID(id).Exec(ctx)
 }
 
-// toModel converts an Ent entity to an egress profile.
+// toModel converts a nonnil Ent profile into egress values and supplies present
+// empty arrays for absent lists. Optional description pointers and populated
+// list storage remain shared with the loaded entity; runtime service
+// publication subsequently clones those values.
 func (r *tlsFingerprintProfileRepository) toModel(e *ent.TLSFingerprintProfile) *egress.TLSFingerprintProfile {
 	p := &egress.TLSFingerprintProfile{
 		ID:                  e.ID,
@@ -179,7 +206,8 @@ func (r *tlsFingerprintProfileRepository) toModel(e *ent.TLSFingerprintProfile) 
 		UpdatedAt:           e.UpdatedAt,
 	}
 
-	// Use empty slices so JSON responses contain arrays rather than null.
+	// Administrative JSON expects arrays for each fingerprint list. Replace
+	// absent entity slices with present empty values before the response is encoded.
 	if p.CipherSuites == nil {
 		p.CipherSuites = []uint16{}
 	}

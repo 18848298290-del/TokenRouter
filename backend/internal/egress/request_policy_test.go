@@ -8,7 +8,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestRequestPolicyCopiesTLSHeadersAndHidesCredentials checks mutation isolation and credential-free formatting.
+// TestRequestPolicyCopiesTLSHeadersAndHidesCredentials mutates source and
+// returned TLS/header collections after policy construction. It checks sampled
+// slice isolation, blocked credentials, retained validation flags, and password
+// omission from JSON and diagnostic formatting.
 func TestRequestPolicyCopiesTLSHeadersAndHidesCredentials(t *testing.T) {
 	profile := &TLSFingerprintProfile{Name: "identity", CipherSuites: []uint16{1, 2}, ALPNProtocols: []string{"h2", "http/1.1"}}
 	headers := map[string]string{"X-Allowed": "original", "Authorization": "forbidden"}

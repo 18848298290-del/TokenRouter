@@ -7,20 +7,56 @@ import (
 	"time"
 )
 
+// Proxy backups match connection identities across instances and use names for
+// backup references that local IDs cannot preserve. Export resolves names
+// within its selected set, while import maps existing records and earlier batch
+// creations before each later item is processed.
+//
+// Items can be created, reused, or rejected independently, and successful
+// writes remain when another item fails. Status synchronization carries a full
+// expiration/fallback group because ProxyAdmin replaces those values even for
+// nil or zero input. Provider-binding imports reread reused records and
+// suppress status-update errors; ordinary proxy imports report those errors and
+// optionally schedule probes after the batch. Task admission and probe errors
+// are best effort, with background lifetimes owned by the application tracker.
+
+// ProxyExportQuery selects backup records by IDs or filtered paginated
+// administration queries.
 type ProxyExportQuery struct {
-	IDs                                         []int64
+	// IDs takes precedence over Protocol, Status, Search, SortBy, and SortOrder.
+	// Without selected IDs, Export reads every filtered page using the supplied
+	// administration ordering.
+	IDs []int64 // selected proxy database identities
+	// Protocol filters proxy scheme; Status filters stored availability; Search
+	// filters proxy names; SortBy selects ordering; SortOrder selects direction.
 	Protocol, Status, Search, SortBy, SortOrder string
 }
+
+// ProxyImportResult summarizes created, reused, and rejected items with their
+// partial import diagnostics.
 type ProxyImportResult struct {
+	// ProxyCreated counts stored new items; ProxyReused counts matching existing
+	// items; ProxyFailed counts validation or creation failures. Status-update
+	// diagnostics can accompany created or reused counts without increasing ProxyFailed.
 	ProxyCreated, ProxyReused, ProxyFailed int
-	Errors                                 []TransferError
-}
-type ProxyTransfer struct {
-	adminService ProxyAdministrator
-	tasks        ProxyTasks
-	now          func() time.Time
+	Errors                                 []TransferError // per-item import diagnostic outcomes
 }
 
+// ProxyTransfer coordinates proxy backup mapping, per-item administration
+// writes, and optional post-import probes.
+type ProxyTransfer struct {
+	adminService ProxyAdministrator // proxy administration write/query dependency
+	// tasks owns accepted probe callbacks with independent background contexts.
+	// Import copies selected IDs before registration and discards admission or
+	// individual probe failures.
+	tasks ProxyTasks       // optional import probe task owner
+	now   func() time.Time // export timestamp clock callback
+}
+
+// NewProxyTransfer constructs backup coordination using administration,
+// optional tasks, and export timing. Nil now selects time.Now, and construction
+// starts no work; the task owner later joins admitted post-import probe
+// callbacks.
 func NewProxyTransfer(admin ProxyAdministrator, tasks ProxyTasks, now func() time.Time) *ProxyTransfer {
 	if now == nil {
 		now = time.Now
@@ -28,6 +64,16 @@ func NewProxyTransfer(admin ProxyAdministrator, tasks ProxyTasks, now func() tim
 	return &ProxyTransfer{adminService: admin, tasks: tasks, now: now}
 }
 
+// Export returns selected proxy backup values and a UTC RFC3339 export
+// timestamp. Nonempty IDs choose repository-selected order and bypass query
+// filters; otherwise every matching administration page is read. Credentials
+// are included in the transfer records.
+//
+// Backup IDs become names only when that target is also in the exported set.
+// Missing selected targets therefore leave BackupProxyName empty, which affects
+// later restoration of fallback. Expiration is converted to Unix seconds, and
+// the returned comparison keys use the connection text so destination imports
+// can find matching records independently of local IDs.
 func (h *ProxyTransfer) Export(ctx context.Context, query ProxyExportQuery) ([]TransferProxy, string, error) {
 	var err error
 	var proxies []Proxy
@@ -43,7 +89,8 @@ func (h *ProxyTransfer) Export(ctx context.Context, query ProxyExportQuery) ([]T
 		}
 	}
 
-	// Resolve backup names within the set of exported proxies.
+	// IDs are local to this instance. Resolve only selected backup targets to
+	// names; a backup outside the exported set has no name in the resulting record.
 	proxyNameByID := make(map[int64]string, len(proxies))
 	for i := range proxies {
 		proxyNameByID[proxies[i].ID] = proxies[i].Name
@@ -56,6 +103,7 @@ func (h *ProxyTransfer) Export(ctx context.Context, query ProxyExportQuery) ([]T
 
 		var expiresAt *int64
 		if p.ExpiresAt != nil {
+			// Backup timestamps use whole seconds, discarding subsecond expiration precision.
 			v := p.ExpiresAt.Unix()
 			expiresAt = &v
 		}
@@ -82,17 +130,42 @@ func (h *ProxyTransfer) Export(ctx context.Context, query ProxyExportQuery) ([]T
 	return dataProxies, h.now().UTC().Format(time.RFC3339), nil
 }
 
-// Import reports per-item failures and schedules probes for reused proxies after the batch.
+// Import processes proxy backup items with partial created/reused/failed
+// results and per-item diagnostics. A failure loading existing records aborts
+// the batch; later item failures are retained, and reused IDs can be probed
+// asynchronously after successful iteration.
 func (h *ProxyTransfer) Import(ctx context.Context, items []TransferProxy) (ProxyImportResult, error) {
 	_, result, err := h.importItems(ctx, items, false)
 	return result, err
 }
 
-// ImportForProviderBinding rereads reused proxies before status updates and suppresses status-update errors.
+// ImportForProviderBinding returns a mapping containing existing destination
+// proxies and successful creations for provider association lookup. It also
+// returns partial proxy outcomes. Reused records are reread before status
+// synchronization, status-update errors are suppressed, and reused-item probes
+// are omitted.
 func (h *ProxyTransfer) ImportForProviderBinding(ctx context.Context, items []TransferProxy) (map[string]int64, ProxyImportResult, error) {
 	return h.importItems(ctx, items, true)
 }
 
+// importItems loads destination proxies and processes backup entries in order,
+// returning key mappings and partial results. A nonempty supplied ProxyKey
+// determines reuse; otherwise connection text constructs that key. It can
+// therefore differ from the supplied connection values.
+//
+// Existing and earlier-created names resolve backup references. Reused records
+// can synchronize status using imported expiration policy; providerBinding
+// rereads the record and suppresses status-update errors. New items with
+// unresolved backup names disable fallback and retain a diagnostic, while
+// validation or create errors increment failure counts. Successful creations
+// stay mapped even if later status synchronization fails.
+//
+// Ordinary imports queue copied reused IDs for sequential background probes
+// after iteration, leaving task admission and probe failure outside the
+// returned persistence outcome. Newly created records rely on CreateProxy's own
+// optional probe registration. The destination list, per-item writes, and
+// status updates form separate operations, so the batch has no all-or-nothing
+// transaction.
 func (h *ProxyTransfer) importItems(ctx context.Context, items []TransferProxy, providerBinding bool) (map[string]int64, ProxyImportResult, error) {
 	result := ProxyImportResult{}
 
@@ -106,7 +179,8 @@ func (h *ProxyTransfer) importItems(ctx context.Context, items []TransferProxy, 
 	}
 
 	proxyByKey := make(map[string]Proxy, len(existingProxies))
-	// Resolve backup_proxy_name against existing proxies and earlier creations in this batch.
+	// Names replace instance-local backup IDs. Existing records and earlier
+	// creations are available to later items, while forward references cannot resolve here.
 	proxyNameToID := make(map[string]int64, len(existingProxies))
 	for i := range existingProxies {
 		p := existingProxies[i]
@@ -141,6 +215,8 @@ func (h *ProxyTransfer) importItems(ctx context.Context, items []TransferProxy, 
 			result.ProxyReused++
 			originalID := existing.ID
 			canUpdate := true
+			// Provider binding uses the freshest available reused record before
+			// a status patch, keeping its connection values aligned with that reread.
 			if providerBinding && normalizedStatus != "" {
 				fresh, err := h.adminService.GetProxy(ctx, originalID)
 				if err != nil || fresh == nil {
@@ -196,21 +272,24 @@ func (h *ProxyTransfer) importItems(ctx context.Context, items []TransferProxy, 
 			continue
 		}
 
-		// Convert Unix seconds to an expiration time.
+		// Transfer expiry stores whole Unix seconds, while administration expects
+		// an optional time.Time. Reconstruct it in UTC before applying expiration policy.
 		var expiresAt *time.Time
 		if item.ExpiresAt != nil {
 			t := time.Unix(*item.ExpiresAt, 0).UTC()
 			expiresAt = &t
 		}
 
-		// Resolve backup names to IDs available at this point in the import.
+		// Resolve names using records available before this item. A later creation
+		// cannot satisfy a forward reference in this single-pass destination import.
 		fallbackMode := item.FallbackMode
 		var backupProxyID *int64
 		if item.BackupProxyName != "" {
 			if bid, ok := proxyNameToID[item.BackupProxyName]; ok {
 				backupProxyID = &bid
 			} else {
-				// Disable unresolved proxy fallback and report the missing backup name.
+				// A new record cannot follow an unknown destination backup. Disable
+				// that fallback while retaining the missing-name diagnostic in the partial result.
 				fallbackMode = FallbackModeNone
 				result.Errors = append(result.Errors, TransferError{
 					Kind:     "proxy",
@@ -245,7 +324,8 @@ func (h *ProxyTransfer) importItems(ctx context.Context, items []TransferProxy, 
 		}
 		result.ProxyCreated++
 		proxyByKey[key] = *created
-		// Allow later items in the batch to reference this proxy by name.
+		// Publish each created name after persistence, allowing later records to
+		// resolve that backup identity even when no matching proxy existed initially.
 		if created.Name != "" {
 			proxyNameToID[created.Name] = created.ID
 		}
@@ -273,9 +353,12 @@ func (h *ProxyTransfer) importItems(ctx context.Context, items []TransferProxy, 
 				})
 			}
 		}
-		// CreateProxy already triggers a latency probe, avoid double probing here.
+		// CreateProxy owns optional new-record probing through its own task
+		// dependency. This batch registers extra probes only for reused ordinary-import IDs.
 	}
 
+	// Copy IDs before task admission so the background loop retains a stable
+	// batch selection after import returns. Admission and probe errors are best effort.
 	if len(latencyProbeIDs) > 0 && h.tasks != nil {
 		ids := append([]int64(nil), latencyProbeIDs...)
 		h.tasks.Go("handler/admin/proxy_data.go:ImportData", func() {
@@ -291,6 +374,9 @@ func (h *ProxyTransfer) importItems(ctx context.Context, items []TransferProxy, 
 	return keys, result, nil
 }
 
+// getProxiesByIDs returns an empty present list for no selected IDs and
+// otherwise delegates repository selection. Result order follows administration
+// storage rather than input ID order, as required by proxy backup export.
 func (h *ProxyTransfer) getProxiesByIDs(ctx context.Context, ids []int64) ([]Proxy, error) {
 	if len(ids) == 0 {
 		return []Proxy{}, nil
@@ -298,8 +384,19 @@ func (h *ProxyTransfer) getProxiesByIDs(ctx context.Context, ids []int64) ([]Pro
 	return h.adminService.GetProxiesByIDs(ctx, ids)
 }
 
+// listProxiesFiltered reads all matching administration pages until the
+// accumulated count reaches the reported total or a page is empty.
+// Provider-count ordering uses its augmented listing path, while other ordering
+// uses ordinary proxy listing.
+//
+// The helper requests pages of one thousand and strips count/probe augmentation
+// from returned backup values. Each page is a separate read, so concurrent
+// destination changes can affect later page contents or totals. A page failure
+// returns an error and discards the accumulated result from the caller's
+// export/import operation.
 func (h *ProxyTransfer) listProxiesFiltered(ctx context.Context, protocol, status, search, sortBy, sortOrder string) ([]Proxy, error) {
 	page := 1
+	// Read bounded pages while accumulating the complete backup selection.
 	pageSize := 1000
 	var out []Proxy
 	sortBy = strings.TrimSpace(sortBy)
@@ -331,7 +428,10 @@ func (h *ProxyTransfer) listProxiesFiltered(ctx context.Context, protocol, statu
 	return out, nil
 }
 
-// GetProxiesByIDs retrieves the selected proxies for provider backups in repository order.
+// GetProxiesByIDs returns selected stored proxies for provider backup
+// references in repository query order. Empty input returns an empty present
+// list, and the helper delegates selection to the same administration service
+// as proxy export.
 func (h *ProxyTransfer) GetProxiesByIDs(ctx context.Context, ids []int64) ([]Proxy, error) {
 	return h.getProxiesByIDs(ctx, ids)
 }

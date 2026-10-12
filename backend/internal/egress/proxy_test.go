@@ -5,13 +5,16 @@ import (
 	"testing"
 )
 
+// TestProxyURL supplies plain, complete, partial, and special-character proxy
+// credentials. It checks the exact escaped URL strings and the omission of
+// authentication when the password is absent.
 func TestProxyURL(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name  string
-		proxy Proxy
-		want  string
+		name  string // credential formatting case name
+		proxy Proxy  // supplied proxy connection values
+		want  string // expected formatted proxy URL
 	}{
 		{
 			name: "without auth",
@@ -66,6 +69,9 @@ func TestProxyURL(t *testing.T) {
 	}
 }
 
+// TestProxyURL_SpecialCharactersRoundTrip formats credentials containing spaces
+// and URL delimiters, then parses the URL again. It checks that both username
+// and password survive the escaped user-info representation unchanged.
 func TestProxyURL_SpecialCharactersRoundTrip(t *testing.T) {
 	t.Parallel()
 

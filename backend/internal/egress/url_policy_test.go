@@ -2,6 +2,9 @@ package egress
 
 import "testing"
 
+// TestValidateURLFormat supplies empty, malformed, HTTP, HTTPS, and
+// invalid-port URL inputs. It checks scheme permission and trimming of trailing
+// slashes from root and endpoint paths in successful format-validation results.
 func TestValidateURLFormat(t *testing.T) {
 	if _, err := ValidateURLFormat("", false); err == nil {
 		t.Fatalf("expected empty url to fail")
@@ -50,6 +53,9 @@ func TestValidateURLFormat(t *testing.T) {
 	}
 }
 
+// TestValidateHTTPURL combines scheme permission, empty required allowlists,
+// exact/wildcard host patterns, and localhost input. It checks the observed
+// acceptance and rejection decisions through the egress forwarding helper.
 func TestValidateHTTPURL(t *testing.T) {
 	if _, err := ValidateHTTPURL("http://example.com", false, ValidationOptions{}); err == nil {
 		t.Fatalf("expected http to fail when allow_insecure_http is false")

@@ -1,4 +1,8 @@
 // Package egress manages outbound proxies, TLS fingerprints, and request transport policies.
+// Provider reassignment follows configured expiration fallback, and request
+// selection copies cached TLS settings before handing them to transport adapters.
+// Services retain cache and worker lifecycles while network adapters perform
+// probes, capture ClientHello records, and construct request headers.
 //
 // Reading entry points:
 //   - proxy_admin.go: proxy queries, updates, connectivity probes, and quality checks.

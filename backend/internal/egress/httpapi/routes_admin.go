@@ -4,13 +4,23 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// RegisterProxyRoutes mounts proxy routes after app installs group authentication, rate limits, and auditing.
+// Proxy backup export includes plaintext credentials and installs the
+// application-supplied step-up handler before its endpoint. Proxy
+// administration, TLS profile/router management, and collector sessions mount
+// under an existing admin group whose authentication, rate limits, and auditing
+// are already installed by app wiring.
+
+// RegisterProxyRoutes mounts administration, probes, associations, and backup
+// routes under the protected admin group. The application supplies group
+// authentication/auditing and a configured step-up handler for credential
+// export before calling this registrar.
 func RegisterProxyRoutes(admin *gin.RouterGroup, endpoint *ProxyHandler, stepUpAuth gin.HandlerFunc) {
 	proxies := admin.Group("/proxies")
 	{
 		proxies.GET("", endpoint.List)
 		proxies.GET("/all", endpoint.GetAll)
-		// Exports contain plaintext proxy passwords and require step-up authentication.
+		// The backup response includes plaintext passwords. Run the supplied
+		// step-up middleware before export so this credential read has its additional admin check.
 		proxies.GET("/data", stepUpAuth, endpoint.ExportData)
 		proxies.POST("/data", endpoint.ImportData)
 		proxies.GET("/:id", endpoint.GetByID)
@@ -26,7 +36,10 @@ func RegisterProxyRoutes(admin *gin.RouterGroup, endpoint *ProxyHandler, stepUpA
 	}
 }
 
-// RegisterTLSFingerprintProfileRoutes mounts profile and collector routes on the protected admin group.
+// RegisterTLSFingerprintProfileRoutes mounts profile CRUD and collector
+// control/session routes under the protected admin group. The application
+// supplies authentication, rate limiting, and auditing before registration,
+// while collector availability is handled by the endpoint.
 func RegisterTLSFingerprintProfileRoutes(admin *gin.RouterGroup, endpoint *TLSFingerprintProfileHandler) {
 	profiles := admin.Group("/tls-fingerprint-profiles")
 	{
@@ -47,7 +60,10 @@ func RegisterTLSFingerprintProfileRoutes(admin *gin.RouterGroup, endpoint *TLSFi
 	}
 }
 
-// RegisterTLSFingerprintRouterRoutes mounts TLS router routes on the protected admin group.
+// RegisterTLSFingerprintRouterRoutes mounts router CRUD endpoints under the
+// existing protected admin group. The application installs authentication, rate
+// limiting, and auditing before this registration and supplies the initialized
+// router handler.
 func RegisterTLSFingerprintRouterRoutes(admin *gin.RouterGroup, endpoint *TLSFingerprintRouterHandler) {
 	routers := admin.Group("/tls-fingerprint-routers")
 	{

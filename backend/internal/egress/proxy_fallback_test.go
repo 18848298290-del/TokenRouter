@@ -7,6 +7,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// mkProxy constructs a fallback fixture and optionally offsets expiration by
+// calendar days from now. A nil offset leaves expiration absent, so test cases
+// can distinguish unbounded and expired backups.
 func mkProxy(id int64, mode string, backup *int64, expiresInDays *int, now time.Time) Proxy {
 	p := Proxy{ID: id, FallbackMode: mode, BackupProxyID: backup}
 	if expiresInDays != nil {
@@ -15,9 +18,17 @@ func mkProxy(id int64, mode string, backup *int64, expiresInDays *int, now time.
 	}
 	return p
 }
-func i64(v int64) *int64 { return &v }
-func di(v int) *int      { return &v }
 
+// i64 returns an allocated integer pointer for fixture proxy identities.
+func i64(v int64) *int64 { return &v }
+
+// di returns an allocated integer pointer for fixture expiration offsets.
+func di(v int) *int { return &v }
+
+// TestResolveFallbackTarget builds none, direct, healthy-backup, expired-chain,
+// cycle, and direct-tail snapshots. It checks each returned target ID and
+// change flag to protect the reassignment decisions for those configured
+// chains.
 func TestResolveFallbackTarget(t *testing.T) {
 	now := time.Now()
 	t.Run("none keeps original", func(t *testing.T) {

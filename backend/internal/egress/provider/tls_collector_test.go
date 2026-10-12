@@ -15,6 +15,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestTLSFingerprintCollectorServiceLifecycleAndCapture starts a loopback
+// collector with generated trust and sends Claude/Codex request hints. It
+// checks running state, session URL/trust, sampled fingerprint lists, YAML and
+// JA3 output, session deletion, and stopped certificate status.
 func TestTLSFingerprintCollectorServiceLifecycleAndCapture(t *testing.T) {
 	port := reserveTLSFingerprintCollectorPort(t)
 	cfg := CollectorOptions{
@@ -41,8 +45,8 @@ func TestTLSFingerprintCollectorServiceLifecycleAndCapture(t *testing.T) {
 
 	client := newTLSFingerprintCollectorTestClient(t, session.CAPEM)
 	for _, tc := range []struct {
-		userAgent string
-		wantKind  string
+		userAgent string // supplied request User-Agent text
+		wantKind  string // expected heuristic client kind
 	}{
 		{userAgent: "Claude Code/2.0.0 Node.js/24.3.0", wantKind: "claude_code"},
 		{userAgent: "codex-cli/0.1.0", wantKind: "codex"},
@@ -78,11 +82,14 @@ func TestTLSFingerprintCollectorServiceLifecycleAndCapture(t *testing.T) {
 	require.False(t, stopped.UsingGeneratedCert)
 }
 
+// TestCaptureTokenFromRequest supplies base and appended capture paths plus
+// query, Authorization, and API-key tokens. It checks sampled source extraction
+// and query precedence over the dedicated header token.
 func TestCaptureTokenFromRequest(t *testing.T) {
 	tests := []struct {
-		name string
-		path string
-		want string
+		name string // token extraction scenario name
+		path string // supplied capture request path
+		want string // expected selected session token
 	}{
 		{name: "base path", path: "/capture/token-1", want: "token-1"},
 		{name: "client appended path", path: "/capture/token-2/v1/responses", want: "token-2"},
@@ -112,6 +119,9 @@ func TestCaptureTokenFromRequest(t *testing.T) {
 	require.Equal(t, "api-key-token", captureTokenFromRequest(req))
 }
 
+// TestTLSFingerprintCaptureConnAcceptsLargeClientHello sends a synthetic padded
+// TLS record larger than four KiB through a pipe. It checks first-record
+// capture succeeds and retains the padding extension ID.
 func TestTLSFingerprintCaptureConnAcceptsLargeClientHello(t *testing.T) {
 	record := buildLargeTLSFingerprintClientHelloRecord(t, 8*1024)
 	serverConn, clientConn := net.Pipe()
@@ -120,6 +130,8 @@ func TestTLSFingerprintCaptureConnAcceptsLargeClientHello(t *testing.T) {
 		_ = clientConn.Close()
 	})
 
+	// net.Pipe writes wait for the other endpoint to read. Send concurrently
+	// so captureClientHello can inspect the full synthetic record without blocking setup.
 	go func() {
 		_, _ = clientConn.Write(record)
 	}()
@@ -131,6 +143,10 @@ func TestTLSFingerprintCaptureConnAcceptsLargeClientHello(t *testing.T) {
 	require.Contains(t, captureConn.captured.Extensions, uint16(21))
 }
 
+// reserveTLSFingerprintCollectorPort temporarily binds loopback port zero and
+// returns its assigned TCP port after closure. The later collector bind can
+// race with another process because the fixture releases that temporary
+// listener.
 func reserveTLSFingerprintCollectorPort(t *testing.T) int {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -141,6 +157,9 @@ func reserveTLSFingerprintCollectorPort(t *testing.T) int {
 	return addr.Port
 }
 
+// newTLSFingerprintCollectorTestClient trusts the generated collector CA and
+// returns an HTTP/1-oriented client with bounded waits. The test owns response
+// closure, and the transport remains associated with that returned client.
 func newTLSFingerprintCollectorTestClient(t *testing.T, caPEM string) *http.Client {
 	t.Helper()
 	pool := x509.NewCertPool()
@@ -155,6 +174,10 @@ func newTLSFingerprintCollectorTestClient(t *testing.T, caPEM string) *http.Clie
 	}
 }
 
+// buildLargeTLSFingerprintClientHelloRecord encodes one synthetic ClientHello
+// with configurable padding into a complete TLS record. Length fields use the
+// fixture's narrow integer representations, so callers provide values that fit
+// one record for capture-only tests.
 func buildLargeTLSFingerprintClientHelloRecord(t *testing.T, paddingLen int) []byte {
 	t.Helper()
 	extensions := make([]byte, 0, paddingLen+64)
@@ -168,6 +191,8 @@ func buildLargeTLSFingerprintClientHelloRecord(t *testing.T, paddingLen int) []b
 	hello = append(hello, 0)
 	hello = append(hello, 0, 2, 0x13, 0x01)
 	hello = append(hello, 1, 0)
+	// Encode fixture vector lengths in the on-wire integer width. Test inputs
+	// stay within one record; truncation here would make the synthetic framing inconsistent.
 	hello = appendUint16(hello, uint16(len(extensions)))
 	hello = append(hello, extensions...)
 
@@ -179,19 +204,25 @@ func buildLargeTLSFingerprintClientHelloRecord(t *testing.T, paddingLen int) []b
 	return record
 }
 
+// appendTLSExtension appends an extension ID, sixteen-bit payload length, and
+// payload bytes to the fixture buffer. Callers keep payload length within that
+// encoding and use the returned slice after possible allocation.
 func appendTLSExtension(dst []byte, id uint16, payload []byte) []byte {
 	dst = appendUint16(dst, id)
 	dst = appendUint16(dst, uint16(len(payload)))
 	return append(dst, payload...)
 }
 
+// appendUint16 appends one two-byte big-endian value to the fixture buffer.
 func appendUint16(dst []byte, v uint16) []byte {
 	var buf [2]byte
 	binary.BigEndian.PutUint16(buf[:], v)
 	return append(dst, buf[:]...)
 }
 
-// TestTLSFingerprintCollectorShutdownSealsStart checks that shutdown prevents restarting the listener.
+// TestTLSFingerprintCollectorShutdownSealsStart shuts down an idle collector
+// before requesting startup. It checks the terminal-start rejection error and
+// successful repeated shutdown for that sealed instance.
 func TestTLSFingerprintCollectorShutdownSealsStart(t *testing.T) {
 	svc := NewTLSFingerprintCollectorService(CollectorOptions{})
 	require.NoError(t, svc.Shutdown(context.Background()))

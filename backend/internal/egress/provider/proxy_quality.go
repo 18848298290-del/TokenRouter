@@ -11,21 +11,53 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient"
 )
 
-// ProxyQualityHTTP probes targets sequentially through a shared client and records each result.
+// Unauthenticated quality probes classify target reachability from response
+// status and a bounded challenge preview. Recognized Cloudflare challenges in
+// 403/429 responses classify before acceptable statuses. Other allowed responses
+// pass, while unaccepted 429 responses warn and other unexpected statuses fail
+// the assessment.
+//
+// Targets run sequentially through a shared proxy client with per-request
+// timeout settings. Received responses measure elapsed time through headers, use
+// a bounded body prefix, and close that body. Failed exchanges retain attempt
+// time after client.Do errors; request-construction failures keep zero latency.
+// Oversized payloads are truncated for classification, so later body evidence
+// can remain outside inspection. Endpoint failures become items and later
+// targets still run; client construction failure returns the batch-level error.
+
+// ProxyQualityHTTP probes targets sequentially through a shared client and
+// records each result.
 type ProxyQualityHTTP struct{}
 
+// ProbeTargets probes the supplied endpoints sequentially through a shared
+// proxy client and returns one item per target. Client construction failure
+// returns an error; individual endpoint failures stay in the result sequence so
+// later targets still run.
 func (ProxyQualityHTTP) ProbeTargets(ctx context.Context, proxyURL string, targets []egress.ProxyQualityTarget) ([]egress.ProxyQualityCheckItem, error) {
 	client, err := httpclient.GetClient(httpclient.Options{ProxyURL: proxyURL, Timeout: 15 * time.Second, ResponseHeaderTimeout: 10 * time.Second})
 	if err != nil {
 		return nil, err
 	}
 	out := make([]egress.ProxyQualityCheckItem, 0, len(targets))
+	// Keep per-endpoint failures as assessment items so another reachable
+	// platform can still contribute evidence to this proxy's quality summary.
 	for _, target := range targets {
 		out = append(out, RunProxyQualityTarget(ctx, client, target))
 	}
 	return out, nil
 }
 
+// RunProxyQualityTarget sends one unauthenticated target request and returns
+// its observed quality classification. It records response status and header
+// latency, reads a bounded body prefix, and closes the received body before
+// returning.
+//
+// Challenge evidence has precedence over allowed statuses, with
+// IsCloudflareChallengeResponse applying its own smaller preview limit within
+// the retained body. Membership in AllowedStatuses passes even for expected
+// authentication errors; an unmatched 429 warns, and other unexpected statuses
+// fail. Read errors fail too. Body overflow is truncated for classification, so
+// later challenge text can remain outside the inspected evidence.
 func RunProxyQualityTarget(ctx context.Context, client *http.Client, target egress.ProxyQualityTarget) egress.ProxyQualityCheckItem {
 	item := egress.ProxyQualityCheckItem{
 		Target: target.Target,
@@ -58,11 +90,16 @@ func RunProxyQualityTarget(ctx context.Context, client *http.Client, target egre
 		item.Message = fmt.Sprintf("读取响应失败: %v", readErr)
 		return item
 	}
+	// Quality classification accepts a bounded prefix rather than a complete
+	// payload. The extra byte detects overflow so only the configured preview is
+	// inspected.
 	if int64(len(body)) > egress.ProxyQualityMaxBodyBytes {
 		body = body[:egress.ProxyQualityMaxBodyBytes]
 	}
 
-	// Check challenges before allowed statuses, since a challenge is not a usable response.
+	// Challenge evidence disqualifies the response even if its status is
+	// allowlisted for unauthenticated reachability; record that classification
+	// before status lookup.
 	if egress.IsCloudflareChallengeResponse(resp.StatusCode, resp.Header, body) {
 		item.Status = "challenge"
 		item.CFRay = egress.ExtractCloudflareRayID(resp.Header, body)
@@ -72,7 +109,8 @@ func RunProxyQualityTarget(ctx context.Context, client *http.Client, target egre
 
 	if _, ok := target.AllowedStatuses[resp.StatusCode]; ok {
 		// Allowed statuses establish reachability. Unauthenticated probes can expect
-		// 401 or 405 responses, which pass the connectivity check without a score penalty.
+		// 401 or 405 responses, which pass the connectivity check without a score
+		// penalty.
 		item.Status = "pass"
 		if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
 			item.Message = fmt.Sprintf("HTTP %d", resp.StatusCode)

@@ -1,26 +1,49 @@
 package egress
 
-// EgressPolicy contains the proxy, TLS profile, headers, and destination checks for one request.
+// An outbound attempt carries its selected proxy and fingerprint together with
+// destination and redirect checks. RequestPolicy allocates the TLS and header
+// collections before transport construction, so callers can prepare
+// request-specific values without editing the collections supplied to it.
+
+// EgressPolicy holds resolved transport identity and destination checks for one
+// outbound attempt.
 type EgressPolicy struct {
-	ProxyURL           string                 `json:"-"`
-	TLSProfile         *TLSFingerprintProfile `json:"-"`
-	Headers            map[string]string      `json:"-"`
-	TransportMode      string
-	ValidateResolvedIP bool
-	PublicHostsOnly    bool
-	DisableRedirects   bool
+	ProxyURL string `json:"-"` // selected credential-bearing proxy URL
+	// TLSProfile is cloned by RequestPolicy before publication to the caller.
+	// Transport adapters separately convert this profile for dialers that can
+	// retain their own copies.
+	TLSProfile *TLSFingerprintProfile `json:"-"` // optional selected fingerprint profile
+	// Headers is allocated and filtered by RequestPolicy before the request is
+	// built. ApplyRequestHeaders consumes these names as case-insensitive
+	// replacements for existing wire headers.
+	Headers            map[string]string `json:"-"` // filtered lowercase header overrides
+	TransportMode      string            // selected transport cache variant
+	ValidateResolvedIP bool              // global resolved-address validation flag
+	PublicHostsOnly    bool              // request public-address restriction flag
+	DisableRedirects   bool              // request redirect rejection flag
 }
 
-// RequestPolicyInput contains outbound settings resolved by the caller.
-// Apply headers while building the request; choose TLS and redirects before acquiring a client.
+// RequestPolicyInput supplies transport identity, header overrides, and
+// validation flags for copying.
+//
+// TLSProfile and Headers are read during RequestPolicy and copied into the
+// returned policy. The caller keeps their source collections stable while this
+// synchronous conversion runs.
 type RequestPolicyInput struct {
-	ProxyURL                                              string
-	TLSProfile                                            *TLSFingerprintProfile
-	Headers                                               map[string]string
+	// caller-selected credential-bearing proxy URL
+	ProxyURL string
+	// caller-supplied fingerprint profile pointer
+	TLSProfile *TLSFingerprintProfile
+	// caller-supplied header override values
+	Headers map[string]string
+	// ValidateResolvedIP requests DNS-address validation; PublicHostsOnly
+	// restricts resolved addresses; DisableRedirects rejects redirect following.
 	ValidateResolvedIP, PublicHostsOnly, DisableRedirects bool
 }
 
-// RequestPolicy copies TLS settings and filters header overrides through safety rules.
+// RequestPolicy clones the supplied fingerprint and normalizes permitted header
+// overrides into a request policy. Invalid, blocked, and empty header entries
+// are omitted, while proxy and destination flags retain their supplied values.
 func RequestPolicy(input RequestPolicyInput) EgressPolicy {
 	return EgressPolicy{ProxyURL: input.ProxyURL, TLSProfile: CloneTLSFingerprintProfile(input.TLSProfile), Headers: ResolveHeaderOverrides(input.Headers), ValidateResolvedIP: input.ValidateResolvedIP, PublicHostsOnly: input.PublicHostsOnly, DisableRedirects: input.DisableRedirects}
 }

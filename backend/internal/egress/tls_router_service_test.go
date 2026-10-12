@@ -7,14 +7,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// tlsFingerprintRouterRepoStub keeps mutable router pointers for serial service
+// matching and normalization tests.
 type tlsFingerprintRouterRepoStub struct {
-	routers []*TLSFingerprintRouter
+	// routers retains pointers supplied by the test or later writes. Fixture
+	// methods return these pointers directly, so tests serialize access and can
+	// observe normalization mutations.
+	routers []*TLSFingerprintRouter // shared stored router pointers
 }
 
+// List returns the fixture's retained router pointer slice directly. Tests
+// serialize reads and writes because the fixture performs no cloning,
+// filtering, context checks, or synchronization for its stored records.
 func (r *tlsFingerprintRouterRepoStub) List(context.Context) ([]*TLSFingerprintRouter, error) {
 	return r.routers, nil
 }
 
+// GetByID returns the first retained nonnil router whose ID matches, or nil
+// when absent. Returned pointers remain shared with the serial fixture,
+// allowing callers to observe direct mutations.
 func (r *tlsFingerprintRouterRepoStub) GetByID(_ context.Context, id int64) (*TLSFingerprintRouter, error) {
 	for _, router := range r.routers {
 		if router != nil && router.ID == id {
@@ -24,12 +35,18 @@ func (r *tlsFingerprintRouterRepoStub) GetByID(_ context.Context, id int64) (*TL
 	return nil, nil
 }
 
+// Create assigns a sequential fixture ID, appends the supplied router pointer,
+// and returns it. The fixture retains the mutable input directly, and tests
+// serialize later access to that pointer.
 func (r *tlsFingerprintRouterRepoStub) Create(_ context.Context, router *TLSFingerprintRouter) (*TLSFingerprintRouter, error) {
 	router.ID = int64(len(r.routers) + 1)
 	r.routers = append(r.routers, router)
 	return router, nil
 }
 
+// Update replaces the first retained router with a matching ID or appends the
+// input when no match exists. It returns and retains the supplied pointer,
+// leaving synchronization and mutation order to serial tests.
 func (r *tlsFingerprintRouterRepoStub) Update(_ context.Context, router *TLSFingerprintRouter) (*TLSFingerprintRouter, error) {
 	for i, existing := range r.routers {
 		if existing != nil && existing.ID == router.ID {
@@ -41,6 +58,9 @@ func (r *tlsFingerprintRouterRepoStub) Update(_ context.Context, router *TLSFing
 	return router, nil
 }
 
+// Delete removes the first retained router matching id and otherwise succeeds
+// without a change. It edits the fixture slice in place, so tests serialize
+// this operation with other fixture access.
 func (r *tlsFingerprintRouterRepoStub) Delete(_ context.Context, id int64) error {
 	for i, router := range r.routers {
 		if router != nil && router.ID == id {
@@ -51,10 +71,17 @@ func (r *tlsFingerprintRouterRepoStub) Delete(_ context.Context, id int64) error
 	return nil
 }
 
+// newTLSFingerprintRouterTestService constructs a service using the supplied
+// shared router pointers and no distributed cache. Runtime cache warming occurs
+// later when matching misses its initially empty local map.
 func newTLSFingerprintRouterTestService(routers ...*TLSFingerprintRouter) *TLSFingerprintRouterService {
 	return NewTLSFingerprintRouterService(&tlsFingerprintRouterRepoStub{routers: routers}, nil)
 }
 
+// TestTLSFingerprintRouterService_MatchUserAgent configures ordered disabled,
+// exact, contains, prefix, and regex rules. It checks matched profile IDs,
+// selected header values, disabled-rule skipping, case handling, and retained router
+// metadata for an unmatched User-Agent.
 func TestTLSFingerprintRouterService_MatchUserAgent(t *testing.T) {
 	svc := newTLSFingerprintRouterTestService(&TLSFingerprintRouter{
 		ID:      1,
@@ -102,11 +129,11 @@ func TestTLSFingerprintRouterService_MatchUserAgent(t *testing.T) {
 	})
 
 	tests := []struct {
-		name      string
-		ua        string
-		wantMatch bool
-		wantRule  string
-		wantID    int64
+		name      string // matching scenario display name
+		ua        string // incoming User-Agent test value
+		wantMatch bool   // expected rule match flag
+		wantRule  string // expected matched rule name
+		wantID    int64  // expected selected profile identity
 	}{
 		{name: "按顺序跳过禁用规则后命中 exact", ua: "codex_cli_rs/1.0", wantMatch: true, wantRule: "Codex 精确匹配", wantID: 1},
 		{name: "contains 默认大小写不敏感", ua: "opencode/0.9", wantMatch: true, wantRule: "OpenCode 大小写不敏感", wantID: 2},
@@ -133,6 +160,9 @@ func TestTLSFingerprintRouterService_MatchUserAgent(t *testing.T) {
 	}
 }
 
+// TestTLSFingerprintRouterService_MatchUserAgent_CaseSensitive uses a
+// case-sensitive contains rule with mixed-case pattern text. It checks that the
+// lowercase User-Agent misses and the matching capitalization selects the rule.
 func TestTLSFingerprintRouterService_MatchUserAgent_CaseSensitive(t *testing.T) {
 	svc := newTLSFingerprintRouterTestService(&TLSFingerprintRouter{
 		ID:      2,
@@ -154,6 +184,10 @@ func TestTLSFingerprintRouterService_MatchUserAgent_CaseSensitive(t *testing.T) 
 	require.True(t, svc.MatchUserAgent(2, "OpenCode/1.0").Matched)
 }
 
+// TestTLSFingerprintRouterService_Create_NormalizesChatGPTOAuthTokenConfig
+// creates a router with padded names, token User-Agent text, random profile
+// selection, and nil rules. It checks the persisted normalized strings,
+// retained profile sentinel, and empty rule collection.
 func TestTLSFingerprintRouterService_Create_NormalizesChatGPTOAuthTokenConfig(t *testing.T) {
 	profileID := int64(-1)
 	repo := &tlsFingerprintRouterRepoStub{}
@@ -175,6 +209,9 @@ func TestTLSFingerprintRouterService_Create_NormalizesChatGPTOAuthTokenConfig(t 
 	require.Empty(t, created.Rules)
 }
 
+// TestTLSRouterSnapshotIsolation mutates a returned token-profile pointer and
+// then its source pointer after local publication. It checks later runtime
+// router copies retain the sampled cached profile ID.
 func TestTLSRouterSnapshotIsolation(t *testing.T) {
 	id := int64(1)
 	source := &TLSFingerprintRouter{ID: 1, Name: "router", Enabled: true, ChatGPTOAuthTokenTLSFingerprintProfileID: &id}

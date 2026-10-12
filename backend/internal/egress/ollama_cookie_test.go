@@ -7,6 +7,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestNormalizeOllamaCloudUsageCookieAllowlist supplies session, tracking, and
+// sharded cookie names with whitespace and malformed variants. It checks
+// filtering, retained order and casing, surrounding whitespace handling, and
+// rejection of injection, duplicates, attributes, missing sessions, and
+// oversized raw input.
 func TestNormalizeOllamaCloudUsageCookieAllowlist(t *testing.T) {
 	normalized, err := NormalizeOllamaCloudUsageCookie(" tracking=discard ; wos-session=secret ; __Secure-authjs.session-token.0=part-a ; device=discard ")
 	require.NoError(t, err)

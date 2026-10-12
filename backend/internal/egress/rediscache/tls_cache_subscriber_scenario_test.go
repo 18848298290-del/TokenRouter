@@ -1,7 +1,5 @@
 package rediscache
 
-// This scenario covers subscriber shutdown ordering for TLS profile and router caches.
-
 import (
 	"context"
 	"testing"
@@ -12,15 +10,34 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Profile and router subscribers from tls_profile_cache.go and tls_router_cache.go
+// receive a notification while Redis remains available. The scenarios stop each
+// subscriber from outside callback execution before client cleanup, checking the
+// lifecycle ordering shared by those adapters.
+
+// stoppableTLSFingerprintCache exposes tracked subscription registration and
+// terminal shutdown for lifecycle scenarios.
 type stoppableTLSFingerprintCache interface {
+	// SubscribeUpdates registers the scenario callback for cache update messages
+	// using its context. Implementations retain the subscriber until cancellation
+	// or terminal shutdown, and the fixture keeps Redis available during that
+	// lifetime.
 	SubscribeUpdates(context.Context, func())
+	// StopSubscription cancels the retained subscriber and waits for callback and
+	// goroutine completion. The scenario calls it outside callback execution and
+	// before its deferred Redis client close.
 	StopSubscription()
 }
 
+// TestTLSFingerprintCacheSubscriberStopsBeforeRedisClose registers profile and
+// router subscribers against miniredis and observes a delivered callback. It
+// then calls terminal stop twice before deferred Redis closure to protect
+// admitted subscriber cleanup ordering.
 func TestTLSFingerprintCacheSubscriberStopsBeforeRedisClose(t *testing.T) {
 	tests := []struct {
-		name     string
-		channel  string
+		name    string // cache lifecycle scenario name
+		channel string // expected refresh publication channel
+		// selected cache adapter constructor
 		newCache func(*redis.Client) stoppableTLSFingerprintCache
 	}{
 		{
@@ -50,6 +67,8 @@ func TestTLSFingerprintCacheSubscriberStopsBeforeRedisClose(t *testing.T) {
 			notified := make(chan struct{}, 1)
 			cache.SubscribeUpdates(ctx, func() { notified <- struct{}{} })
 
+			// Subscription registration launches asynchronously, so publish until
+			// one message reaches the callback before testing shutdown completion.
 			require.Eventually(t, func() bool {
 				if err := client.Publish(ctx, tt.channel, "refresh").Err(); err != nil {
 					return false
@@ -62,7 +81,8 @@ func TestTLSFingerprintCacheSubscriberStopsBeforeRedisClose(t *testing.T) {
 				}
 			}, time.Second, 10*time.Millisecond)
 
-			// StopSubscription waits for the subscriber before the deferred Redis close.
+			// Stop outside the callback while Redis remains available, then repeat
+			// the wait to verify terminal shutdown can be requested more than once.
 			cache.StopSubscription()
 			cache.StopSubscription()
 		})

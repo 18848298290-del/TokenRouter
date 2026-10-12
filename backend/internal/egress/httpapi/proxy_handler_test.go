@@ -11,6 +11,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestProxyHandlerEndpoints exercises successful list, lookup,
+// create/update/delete, batch-delete, probe, quality, statistics, and
+// provider-summary routes against a fixture. It checks HTTP success statuses
+// for these requests rather than real persistence or complete response
+// payloads.
 func TestProxyHandlerEndpoints(t *testing.T) {
 	router, _ := setupProxyAdminContractRouter()
 
@@ -75,6 +80,10 @@ func TestProxyHandlerEndpoints(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 }
 
+// setupProxyAdminContractRouter binds direct handler endpoints to the synthetic
+// administrator fixture without authentication middleware. Its zero-value
+// idempotency executor invokes create callbacks directly, letting tests focus
+// on endpoint response availability.
 func setupProxyAdminContractRouter() (*gin.Engine, *proxyAdminFixture) {
 	router := gin.New()
 	source := newProxyAdminFixture()
