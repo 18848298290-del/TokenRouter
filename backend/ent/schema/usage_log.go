@@ -14,183 +14,268 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
-// UsageLog stores API usage and billing facts.
-//
-// Records include token counts and calculated costs for API calls.
-// Callers append usage records to this table.
+// Completed request records retain execution, usage, and funding facts for
+// statistics and administrator audits. User-side funding amounts can differ
+// from the provider pricing base, and separate request and billing
+// identifiers keep query correlation distinct from financial deduplication.
+
+// UsageLog declares historical request attribution, measured usage, and calculated billing facts.
 type UsageLog struct {
-	ent.Schema
+	ent.Schema // generated entity definition
 }
 
-// Annotations sets the database table name.
+// Annotations maps completed request facts to the usage_logs database table.
 func (UsageLog) Annotations() []schema.Annotation {
 	return []schema.Annotation{
 		entsql.Annotation{Table: "usage_logs"},
 	}
 }
 
-// Fields defines request attribution, usage, and billing fields.
+// Fields declares attribution, token and media dimensions, costs, and
+// request metadata. Generated inserts default usage and costs to zero;
+// current SQL writers also populate migrated columns beyond this Ent
+// schema and preserve supplied historical attribution.
 func (UsageLog) Fields() []ent.Field {
 	return []ent.Field{
-		// Request attribution.
+		// user_id, billing_user_id, team_id, and api_key_id separate the acting
+		// user, recorded payer, optional team scope, and credential. Historical
+		// payer writes are supported by migration 221, while current repositories
+		// write their resolved payer snapshot.
+		// Acting request user.
 		field.Int64("user_id"),
-		// Repositories write the payer snapshot; a database trigger supports legacy raw SQL inserts.
+		// Recorded request payer.
 		field.Int64("billing_user_id").Optional(),
+		// Optional request team scope.
 		field.Int64("team_id").Optional().Nillable(),
+		// Authenticated request key.
 		field.Int64("api_key_id"),
+		// Selected execution provider.
 		field.Int64("provider_id"),
-		// Snapshot the platform so later provider or group edits cannot change historical statistics.
+		// platform snapshots the execution platform so later provider changes
+		// do not rewrite historical attribution. The generated default is unknown;
+		// repository insertion normalizes supplied reporting platform values.
 		field.String("platform").MaxLen(64).Default("unknown"),
-		// billing_key deduplicates fund operations; legacy rows with no value use request_id.
+		// billing_key identifies the financial operation independently of the
+		// request identifier. Migration 293 deduplicates COALESCE(billing_key,
+		// request_id) with api_key_id, allowing older rows to retain their
+		// request-based financial identity.
 		field.String("billing_key").MaxLen(255).Optional().Nillable(),
+		// Local request correlation identifier.
 		field.String("request_id").
 			MaxLen(64).
 			NotEmpty(),
+		// Recorded request model.
 		field.String("model").
 			MaxLen(100).
 			NotEmpty(),
-		// RequestedModel stores the client-requested model name for stable display and analytics.
-		// NULL means historical rows written before requested_model dual-write was introduced.
+		// requested_model retains the client model for display and analytics.
+		// Current usage insertion substitutes model when this input is empty;
+		// historical rows can remain null and use display-time compatibility rules.
 		field.String("requested_model").
 			MaxLen(100).
 			Optional().
 			Nillable(),
-		// UpstreamModel stores the actual upstream model name when model mapping
-		// is applied. NULL means no upstream model was recorded.
+		// upstream_model retains the model sent to the provider when recorded.
+		// An absent value means that no upstream model was stored for the row;
+		// model mapping and response-model observations remain separate facts.
 		field.String("upstream_model").
 			MaxLen(100).
 			Optional().
 			Nillable(),
-		// The upstream response model is for administrator audits; missing observations and legacy rows remain NULL.
+		// upstream_response_model and upstream_model_mismatch retain the directly
+		// observed response declaration and its comparison result for administrator
+		// audits. Missing observations and legacy rows can leave both values
+		// null; these fields do not select the billing price.
+		// Observed response model.
 		field.String("upstream_response_model").MaxLen(200).Optional().Nillable(),
+		// Observed model-comparison result.
 		field.Bool("upstream_model_mismatch").Optional().Nillable(),
+		// Resolved shared pricing configuration.
 		field.Int64("pricing_config_id").Optional().Nillable().Comment("Shared pricing configuration ID"),
+		// Recorded model transformation chain.
 		field.String("model_mapping_chain").MaxLen(500).Optional().Nillable().Comment("Model mapping chain"),
+		// Selected price-tier label.
 		field.String("billing_tier").MaxLen(50).Optional().Nillable().Comment("Billing tier label"),
+		// Selected pricing calculation mode.
 		field.String("billing_mode").MaxLen(20).Optional().Nillable().Comment("Billing mode: token/per_request/image"),
+		// Optional final request group.
 		field.Int64("group_id").
 			Optional().
 			Nillable(),
+		// Optional recorded funding subscription.
 		field.Int64("subscription_id").
 			Optional().
 			Nillable(),
 
-		// Token counts.
+		// input_tokens, output_tokens, cache_creation_tokens, and cache_read_tokens
+		// retain the aggregate token dimensions. cache_creation_5m_tokens and
+		// cache_creation_1h_tokens separately retain TTL detail; UsageLog.TotalTokens
+		// adds the aggregate dimensions, so those TTL fields are not added again.
+		// Uncached input token count.
 		field.Int("input_tokens").
 			Default(0),
+		// Generated output token count.
 		field.Int("output_tokens").
 			Default(0),
+		// Aggregate cache-creation token count.
 		field.Int("cache_creation_tokens").
 			Default(0),
+		// Reused cache token count.
 		field.Int("cache_read_tokens").
 			Default(0),
+		// Five-minute cache-creation token count.
 		field.Int("cache_creation_5m_tokens").
 			Default(0),
+		// One-hour cache-creation token count.
 		field.Int("cache_creation_1h_tokens").
 			Default(0),
 
-		// Costs and funding allocations.
+		// USD input-token cost.
 		field.Float("input_cost").
 			Default(0).
 			SchemaType(map[string]string{dialect.Postgres: "decimal(20,10)"}),
+		// USD output-token cost.
 		field.Float("output_cost").
 			Default(0).
 			SchemaType(map[string]string{dialect.Postgres: "decimal(20,10)"}),
+		// USD cache-creation cost.
 		field.Float("cache_creation_cost").
 			Default(0).
 			SchemaType(map[string]string{dialect.Postgres: "decimal(20,10)"}),
+		// USD cache-read cost.
 		field.Float("cache_read_cost").
 			Default(0).
 			SchemaType(map[string]string{dialect.Postgres: "decimal(20,10)"}),
+		// total_cost retains the pricing cost before funding multipliers, while
+		// actual_cost records the user-side amount. Free-OpenAI-Fast policy can
+		// reprice user funding at Standard while retaining the upstream Fast
+		// base for provider statistics.
+		// USD pricing-base total.
 		field.Float("total_cost").
 			Default(0).
 			SchemaType(map[string]string{dialect.Postgres: "decimal(20,10)"}),
+		// USD user-side total.
 		field.Float("actual_cost").
 			Default(0).
 			SchemaType(map[string]string{dialect.Postgres: "decimal(20,10)"}),
+		// subscription_amount_usd, balance_amount_usd, and billing_allocations
+		// retain funding outcomes by source. Individual allocations can identify
+		// several subscriptions and source-specific multipliers; the single
+		// subscription_id remains the row-level attribution value.
+		// USD subscription-funded amount.
 		field.Float("subscription_amount_usd").
 			Default(0).
 			SchemaType(map[string]string{dialect.Postgres: "decimal(20,10)"}),
+		// USD balance-funded amount.
 		field.Float("balance_amount_usd").
 			Default(0).
 			SchemaType(map[string]string{dialect.Postgres: "decimal(20,10)"}),
+		// Recorded per-source funding allocations.
 		field.JSON("billing_allocations", []billing.BillingAllocation{}).
 			Optional().
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}),
+		// rate_multiplier records the selected user pricing multiplier. When
+		// settlement returns an effective multiplier for positive base cost,
+		// ApplyResultToLog replaces it with the total funded amount divided by
+		// that base, reflecting mixed subscription and balance funding.
 		field.Float("rate_multiplier").
 			Default(1).
 			SchemaType(map[string]string{dialect.Postgres: "decimal(10,4)"}),
+		// long_context_billing_applied records whether the resolved long-context
+		// rules increased this request's cost. Merely crossing a configured context
+		// threshold does not establish an increase when the resulting price is free.
 		field.Bool("long_context_billing_applied").
 			Default(false).
 			Comment("Records whether long-context rules increased this request's cost"),
 
-		// Provider cost multiplier snapshot; NULL is treated as 1.0.
+		// provider_rate_multiplier snapshots the provider cost multiplier. Usage
+		// statistics treat historical null values as one, independently of the
+		// user-side amounts recorded in the funding fields.
 		field.Float("provider_rate_multiplier").
 			Optional().
 			Nillable().
 			SchemaType(map[string]string{dialect.Postgres: "decimal(10,4)"}),
 
-		// Request timing and client metadata.
+		// Legacy funding category: zero for balance, one for subscription.
 		field.Int8("billing_type").
 			Default(0),
+		// Recorded streaming-response flag.
 		field.Bool("stream").
 			Default(false),
+		// Elapsed request duration, milliseconds.
 		field.Int("duration_ms").
 			Optional().
 			Nillable(),
+		// Latency to first token, milliseconds.
 		field.Int("first_token_ms").
 			Optional().
 			Nillable(),
+		// Recorded client user agent.
 		field.String("user_agent").
 			MaxLen(512).
 			Optional().
 			Nillable(),
+		// Recorded client IP address.
 		field.String("ip_address").
-			MaxLen(45). // Fits IPv6 addresses.
+			MaxLen(45). // Accommodate IPv6 text that contains embedded IPv4 octets.
 			Optional().
 			Nillable(),
 
-		// Image generation usage, including image models such as gemini-3-pro-image.
+		// Generated image output count.
 		field.Int("image_count").
 			Default(0),
+		// Selected image billing size.
 		field.String("image_size").
 			MaxLen(10).
 			Optional().
 			Nillable(),
+		// Recorded input image size.
 		field.String("image_input_size").
 			MaxLen(32).
 			Optional().
 			Nillable(),
+		// Recorded output image size.
 		field.String("image_output_size").
 			MaxLen(32).
 			Optional().
 			Nillable(),
+		// Recorded billing-size selection source.
 		field.String("image_size_source").
 			MaxLen(16).
 			Optional().
 			Nillable(),
+		// Image counts by billing size.
 		field.JSON("image_size_breakdown", map[string]int{}).
 			Optional().
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}),
 
-		// Video usage remains identifiable under any billing_mode; Grok video charges use seconds.
+		// video_count identifies generated video usage when positive. Analytics
+		// can recognize such rows independently of billing_mode, while Grok
+		// video pricing uses the separately recorded duration in seconds.
 		field.Int("video_count").
 			Default(0).
 			Comment("Generated video count; a positive value identifies video usage"),
+		// Selected video billing resolution.
 		field.String("video_resolution").
 			MaxLen(10).
 			Optional().
 			Nillable().
 			Comment("Video resolution used for billing: 480p/720p/1080p"),
+		// video_duration_seconds records the duration selected for video billing.
+		// Grok completion prefers a positive duration from the status response,
+		// then the creation snapshot, and uses the pricing default when both
+		// sources omit a usable duration.
 		field.Int("video_duration_seconds").
 			Optional().
 			Nillable().
 			Comment("Requested video duration at submission, in seconds, used for per-second billing"),
-		// Records an administrator override of cache TTL billing.
+		// Administrator cache-TTL billing override.
 		field.Bool("cache_ttl_overridden").
 			Default(false),
 
-		// Creation time is immutable; usage records have no updated_at field.
+		// created_at is immutable and defaults to time.Now for generated Ent
+		// inserts. The raw SQL usage repository can retain a supplied request
+		// time; this declaration supplies no updated_at field.
 		field.Time("created_at").
 			Default(time.Now).
 			Immutable().
@@ -198,7 +283,7 @@ func (UsageLog) Fields() []ent.Field {
 	}
 }
 
-// Edges defines request attribution and subscription relationships.
+// Edges links request records to users, credentials, providers, and optional funding scope.
 func (UsageLog) Edges() []ent.Edge {
 	return []ent.Edge{
 		edge.From("user", User.Type).
@@ -231,7 +316,10 @@ func (UsageLog) Edges() []ent.Edge {
 	}
 }
 
-// Indexes supports attribution, model, request, and time-range lookups.
+// Indexes declares attribution, model, request, and time-range lookups
+// for Ent. Production migrations additionally define partial group
+// indexes and billing-key deduplication, so callers use the deployed
+// migration schema when evaluating uniqueness.
 func (UsageLog) Indexes() []ent.Index {
 	return []ent.Index{
 		index.Fields("user_id"),
@@ -245,10 +333,8 @@ func (UsageLog) Indexes() []ent.Index {
 		index.Fields("model"),
 		index.Fields("requested_model"),
 		index.Fields("request_id"),
-		// Composite indexes support time-range queries for users and keys.
 		index.Fields("user_id", "created_at"),
 		index.Fields("api_key_id", "created_at"),
-		// Production uses a SQL partial index with group_id IS NOT NULL for group time-range queries.
 		index.Fields("group_id", "created_at"),
 	}
 }

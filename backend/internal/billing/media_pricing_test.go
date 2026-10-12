@@ -9,7 +9,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 )
 
-// TestMediaExplicitFreeCardWins checks that an explicit zero image price is accepted without a catalog rate.
+// TestMediaExplicitFreeCardWins supplies an explicit zero image price with
+// no catalog entry. It protects both zero unit-price acceptance and a
+// priced public quote that remains free after the display multiplier.
 func TestMediaExplicitFreeCardWins(t *testing.T) {
 	zero := 0.0
 	groupID := int64(1)

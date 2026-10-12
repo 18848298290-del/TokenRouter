@@ -9,12 +9,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 )
 
-// TestMemberQuotaCalendarProjection checks DST day boundaries and resets expired windows in a copy while retaining
-// current windows.
+// TestMemberQuotaCalendarProjection normalizes stale day and month usage
+// on the autumn DST date and retains current weekly usage. It checks the
+// returned daily start, shared weekly pointer, unchanged source daily data,
+// and the twenty-five-hour local calendar day.
 func TestMemberQuotaCalendarProjection(t *testing.T) {
 	location, err := time.LoadLocation("America/New_York")
 	require.NoError(t, err)
 	calendar := timezone.NewCalendar(location)
+	// Use the autumn clock-change date so the calendar-day length assertion
+	// detects a fixed twenty-four-hour interpretation of that local date.
 	now := time.Date(2026, time.November, 1, 7, 30, 0, 0, time.UTC)
 	stale := time.Date(2026, time.October, 31, 0, 0, 0, 0, location)
 	week := calendar.StartOfWeek(now)
@@ -31,7 +35,10 @@ func TestMemberQuotaCalendarProjection(t *testing.T) {
 	require.NoError(t, CheckMemberQuotaSnapshot(got))
 }
 
-// TestMemberQuotaThresholdOrder checks daily, weekly, then monthly rejection and unlimited zero limits.
+// TestMemberQuotaThresholdOrder starts with every positive member limit
+// exhausted. It checks daily, weekly, and monthly rejection precedence
+// as each earlier limit is disabled, then accepts the snapshot when
+// all limits are zero.
 func TestMemberQuotaThresholdOrder(t *testing.T) {
 	snapshot := MemberQuotaSnapshot{DailyLimitUSD: 1, WeeklyLimitUSD: 2, MonthlyLimitUSD: 3, DailyUsageUSD: 1, WeeklyUsageUSD: 2, MonthlyUsageUSD: 3}
 	require.ErrorIs(t, CheckMemberQuotaSnapshot(snapshot), ErrTeamMemberDailyExceeded)

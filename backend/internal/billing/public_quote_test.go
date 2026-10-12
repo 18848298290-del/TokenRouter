@@ -9,7 +9,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 )
 
-// TestPublicQuotePreservesExactImagePrices checks image-only quotes and distinguishes free from unpriced models.
+// TestPublicQuotePreservesExactImagePrices quotes explicit catalog image
+// prices, including zero, with a user multiplier. It checks quote, unit
+// price, and calculated charge agreement, and keeps an unknown image
+// model distinguishable as unpriced.
 func TestPublicQuotePreservesExactImagePrices(t *testing.T) {
 	calculator := NewCalculator(defaultCatalogStub{entries: map[string]*pricing.CatalogModelPricing{
 		"grok-imagine-image-quality": {CatalogRules: pricing.CatalogRules{ImagePrices: map[string]float64{"1K": 0.05}}, TokenPricingAbsent: true},
@@ -18,8 +21,8 @@ func TestPublicQuotePreservesExactImagePrices(t *testing.T) {
 	}}, CalculatorOptions{})
 	resolver := NewPriceResolver(nil, calculator, nil, nil)
 	for _, tc := range []struct {
-		model string
-		price float64
+		model string  // quoted image model
+		price float64 // expected USD unit price
 	}{
 		{"grok-imagine-image-quality", 0.05},
 		{"custom-image", 0.1},
@@ -29,6 +32,9 @@ func TestPublicQuotePreservesExactImagePrices(t *testing.T) {
 		quote := resolver.PublicQuote(context.Background(), PublicQuoteInput{PricingInput: input, RateMultiplier: 2})
 		require.Equal(t, "priced", quote.PriceStatus, tc.model)
 		require.Equal(t, "image", quote.PricingMode, tc.model)
+		// Compare multiplied display amounts with a small tolerance for binary
+		// floating-point noise while requiring the unit price and calculated
+		// charge to retain their separately asserted values.
 		require.InDelta(t, tc.price*2, quote.ImagePrice1K, 1e-12)
 		unit, err := resolver.ResolveImageUnitPrice(context.Background(), input, "1K")
 		require.NoError(t, err)
@@ -41,7 +47,10 @@ func TestPublicQuotePreservesExactImagePrices(t *testing.T) {
 	require.Equal(t, "unpriced", quote.PriceStatus)
 }
 
-// TestPricingManagementFreeImageOverridesCatalog checks that free user pricing leaves catalog size costs independent.
+// TestPricingManagementFreeImageOverridesCatalog applies a free configured
+// image card over a catalog with positive size prices. It checks that
+// user unit prices become zero while the catalog prices remain available
+// for each displayed size.
 func TestPricingManagementFreeImageOverridesCatalog(t *testing.T) {
 	zero := 0.0
 	groupID := int64(1)
