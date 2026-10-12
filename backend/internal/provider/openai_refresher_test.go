@@ -9,6 +9,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// The background OpenAI refresher separates provider eligibility from its
+// decision to exchange a near-expiry token. These cases check refresh-token
+// presence, exclusion of credential shadows and the supported OpenAI OAuth
+// type while leaving actual exchanges and persistence to other tests.
+
+// TestOpenAITokenRefresher_NeedsRefresh_SkipsProviderWithoutRefreshToken
+// compares near-expiry OAuth records with and without a refresh token. Only
+// the record with a refresh token requests exchange inside the supplied
+// five-minute window.
 func TestOpenAITokenRefresher_NeedsRefresh_SkipsProviderWithoutRefreshToken(t *testing.T) {
 	refresher := &OpenAITokenRefresher{}
 	expiresAt := time.Now().Add(time.Minute).UTC().Format(time.RFC3339)
@@ -35,7 +44,9 @@ func TestOpenAITokenRefresher_NeedsRefresh_SkipsProviderWithoutRefreshToken(t *t
 	require.True(t, refresher.NeedsRefresh(withRT, 5*time.Minute))
 }
 
-// TestOpenAITokenRefresherSkipsShadow checks that background refresh excludes credential shadows.
+// TestOpenAITokenRefresherSkipsShadow compares a credential shadow with a
+// regular OpenAI OAuth record. CanRefresh rejects the shadow despite its
+// matching platform and type, while the regular record remains eligible.
 func TestOpenAITokenRefresherSkipsShadow(t *testing.T) {
 	pid := int64(100)
 	r := &OpenAITokenRefresher{}
@@ -45,14 +56,17 @@ func TestOpenAITokenRefresherSkipsShadow(t *testing.T) {
 	require.True(t, r.CanRefresh(&Record{ID: 100, Platform: capability.PlatformOpenAI, Type: capability.ProviderTypeOAuth, Credentials: map[string]any{"refresh_token": "RT"}}))
 }
 
+// TestOpenAITokenRefresher_CanRefresh supplies OpenAI OAuth and API-key
+// records through the eligibility table. CanRefresh accepts the OAuth type and
+// rejects the API-key type, independently of expiry evaluation.
 func TestOpenAITokenRefresher_CanRefresh(t *testing.T) {
 	refresher := &OpenAITokenRefresher{}
 
 	tests := []struct {
-		name     string
-		platform string
-		accType  string
-		want     bool
+		name     string // refresher eligibility case label
+		platform string // supplied provider platform value
+		accType  string // supplied provider authentication type
+		want     bool   // expected provider eligibility result
 	}{
 		{
 			name:     "openai oauth - can refresh",

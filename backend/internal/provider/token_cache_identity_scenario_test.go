@@ -1,15 +1,22 @@
 package provider
 
-// Token cache identities are namespaced by platform.
-
 import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
 
+// OpenAI and Claude token sources can receive the same provider ID while
+// sharing one cache adapter. This scenario spans openai_token.go and
+// claude_token.go and verifies that their platform prefixes keep those
+// provider-ID entries distinct.
+
+// TestCacheKeyUniqueness gives the OpenAI and Claude key builders an identical
+// provider ID. The assertions require different values and the presence of
+// each platform's label, protecting distinct identities for these two token families.
 func TestCacheKeyUniqueness(t *testing.T) {
-	// The same provider ID must produce different keys across platforms.
+	// Both builders receive one record so that a provider-ID difference cannot
+	// explain the distinct cache identities being asserted here.
 	provider := &Record{ID: 123}
 
 	openaiKey := OpenAITokenCacheKey(provider)

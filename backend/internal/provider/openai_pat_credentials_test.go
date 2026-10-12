@@ -8,6 +8,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// PAT updates can arrive after OAuth metadata was merged into the credential
+// map. This case verifies removal of refresh-only state and publication of PAT
+// markers while retaining the access token, subscription identity and custom
+// configuration entries.
+
+// TestNormalizeOpenAIPersonalAccessTokenCredentialsRemovesOAuthFields
+// classifies PAT mode from a stored provider and normalizes a mixed credential
+// map. OAuth refresh fields disappear while authentication markers, account
+// metadata and the asserted custom entries remain.
 func TestNormalizeOpenAIPersonalAccessTokenCredentialsRemovesOAuthFields(t *testing.T) {
 	provider := &Record{
 		Platform: capability.PlatformOpenAI,

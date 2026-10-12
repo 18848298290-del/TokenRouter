@@ -4,35 +4,58 @@ import (
 	"time"
 )
 
+// Refresh failures have different request outcomes across OAuth platforms.
+// Claude and OpenAI permit a stored-token response with a policy-selected
+// cache lifetime, while Gemini, Antigravity and Grok return exchange failures.
+// Lock-result policy separately controls whether a token source polls for a
+// cache fill before using its captured credentials.
+
+// Refresh-error actions determine whether a token source propagates an exchange
+// failure or attempts to return the access token already present in credentials.
 const (
-	// ProviderRefreshErrorReturn returns the refresh error.
+	// ProviderRefreshErrorReturn propagates the token exchange failure.
 	ProviderRefreshErrorReturn ProviderRefreshErrorAction = iota
-	// ProviderRefreshErrorUseExistingToken uses the existing token after refresh failure.
+	// ProviderRefreshErrorUseExistingToken permits stored credentials after an exchange failure.
 	ProviderRefreshErrorUseExistingToken
 )
 
+// Lock-result actions determine whether token sources poll the cache or continue
+// with their captured credentials when refresh acquisition is reported unavailable.
+//
 //nolint:decorder // Separate const blocks keep each iota sequence starting at zero.
 const (
-	// ProviderLockHeldUseExistingToken uses the existing token while another caller holds the lock.
+	// ProviderLockHeldUseExistingToken continues with captured credentials after unavailable acquisition.
 	ProviderLockHeldUseExistingToken ProviderLockHeldAction = iota
-	// ProviderLockHeldWaitForCache waits before reading the token cache again.
+	// ProviderLockHeldWaitForCache polls for an access token published during contention.
 	ProviderLockHeldWaitForCache
 )
 
-// ProviderRefreshErrorAction selects the response to a token refresh failure.
+// ProviderRefreshErrorAction selects how token sources handle an unsuccessful
+// refresh exchange.
 type ProviderRefreshErrorAction int
 
-// ProviderLockHeldAction selects the response when another caller holds the refresh lock.
+// ProviderLockHeldAction selects how token sources handle an unavailable
+// refresh-lock result.
 type ProviderLockHeldAction int
 
-// ProviderRefreshPolicy holds platform-specific refresh and cache failure settings.
+// ProviderRefreshPolicy supplies a token source's error action, contention
+// action and recovery cache lifetime.
 type ProviderRefreshPolicy struct {
+	// OnRefreshError selects exchange-error handling. Its zero value requests
+	// error propagation when the token source consults this policy.
 	OnRefreshError ProviderRefreshErrorAction
-	OnLockHeld     ProviderLockHeldAction
-	FailureTTL     time.Duration
+	// OnLockHeld selects contention handling. Its zero value permits captured
+	// credentials; cache polling requires ProviderLockHeldWaitForCache.
+	OnLockHeld ProviderLockHeldAction
+	// FailureTTL limits a recovered token's cache lifetime. Claude and OpenAI
+	// choose one minute when recovery reaches caching with a nonpositive value.
+	FailureTTL time.Duration
 }
 
-// ProviderRefreshPlatformPolicy combines Grok refresh eligibility and credential failure snapshots.
+// ProviderRefreshPlatformPolicy binds Grok request eligibility and
+// identity-scoped failure classification for the shared refresh coordinator.
+// Missing refresh tokens and configuration or containment errors retain their
+// specific error forms for that coordinator's callers.
 func ProviderRefreshPlatformPolicy() RefreshPlatformPolicy {
 	return RefreshPlatformPolicy{
 		Eligibility: GrokOAuthRequestProviderEligibilityError,
@@ -49,6 +72,8 @@ func ProviderRefreshPlatformPolicy() RefreshPlatformPolicy {
 	}
 }
 
+// ClaudeProviderRefreshPolicy returns stored-token recovery, cache polling and
+// a one-minute failure cache lifetime.
 func ClaudeProviderRefreshPolicy() ProviderRefreshPolicy {
 	return ProviderRefreshPolicy{
 		OnRefreshError: ProviderRefreshErrorUseExistingToken,
@@ -57,6 +82,8 @@ func ClaudeProviderRefreshPolicy() ProviderRefreshPolicy {
 	}
 }
 
+// OpenAIProviderRefreshPolicy returns stored-token recovery, cache polling and
+// a one-minute failure cache lifetime.
 func OpenAIProviderRefreshPolicy() ProviderRefreshPolicy {
 	return ProviderRefreshPolicy{
 		OnRefreshError: ProviderRefreshErrorUseExistingToken,
@@ -65,6 +92,8 @@ func OpenAIProviderRefreshPolicy() ProviderRefreshPolicy {
 	}
 }
 
+// GeminiProviderRefreshPolicy returns exchange-error propagation and
+// existing-token use after an unavailable lock result.
 func GeminiProviderRefreshPolicy() ProviderRefreshPolicy {
 	return ProviderRefreshPolicy{
 		OnRefreshError: ProviderRefreshErrorReturn,
@@ -73,6 +102,8 @@ func GeminiProviderRefreshPolicy() ProviderRefreshPolicy {
 	}
 }
 
+// AntigravityProviderRefreshPolicy returns exchange-error propagation and
+// existing-token use after an unavailable lock result.
 func AntigravityProviderRefreshPolicy() ProviderRefreshPolicy {
 	return ProviderRefreshPolicy{
 		OnRefreshError: ProviderRefreshErrorReturn,
@@ -81,6 +112,8 @@ func AntigravityProviderRefreshPolicy() ProviderRefreshPolicy {
 	}
 }
 
+// GrokProviderRefreshPolicy returns exchange-error propagation with cache
+// polling after an unavailable refresh-lock result.
 func GrokProviderRefreshPolicy() ProviderRefreshPolicy {
 	return ProviderRefreshPolicy{
 		OnRefreshError: ProviderRefreshErrorReturn,

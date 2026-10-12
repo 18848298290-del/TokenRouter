@@ -42,8 +42,9 @@ type CreationOptions struct {
 // windows are calculated, using two clock reads when Extra is nonnil. Positive
 // expiration seconds produce a new time pointer; auto-pause defaults true.
 // Negative rate multipliers fail, while load factors are accepted only when
-// positive and at most 10000. These comparisons do not reject a NaN multiplier;
-// NaN load factors are ignored. No persistence occurs in this constructor.
+// positive and at most 10000. The multiplier comparison does not reject NaN;
+// load factors use integer input and remain unset when nonpositive. No persistence
+// occurs in this constructor.
 func BuildProviderForCreate(input *CreateProviderInput, providerExtra map[string]any, options CreationOptions) (*Record, error) {
 	// Discard deprecated configuration before interpreting usage settings, then
 	// remove system-managed monitor and session observations so creation starts
