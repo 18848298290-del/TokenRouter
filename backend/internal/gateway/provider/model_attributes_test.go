@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -180,5 +181,52 @@ func TestModelRequestStateGeminiFieldAliases(t *testing.T) {
 				})
 			}
 		}
+	}
+}
+
+func TestModelRequestStateFieldPrecedence(t *testing.T) {
+	high, low, medium, none := "high", "low", "medium", "none"
+	yes, no := true, false
+	for _, tc := range []struct {
+		name, body string
+		effort     *string
+		thinking   *bool
+	}{
+		{"absent", `{}`, nil, nil},
+		{"effort priority", `{"output_config":{"effort":"low"},"reasoning_effort":"medium","reasoning":{"effort":" HIGH "}}`, &high, &yes},
+		{"thinking overrides effort", `{"thinking":{"type":"disabled"},"reasoning":{"effort":"high"}}`, &high, &no},
+		{"duplicate nested match", `{"reasoning":{},"reasoning":{"effort":"high"}}`, &high, &yes},
+		{"duplicate null match", `{"reasoning":{"effort":null},"reasoning":{"effort":"high"},"reasoning_effort":"medium"}`, &medium, &yes},
+		{"duplicate scalar match", `{"reasoning_effort":"low","reasoning_effort":"high"}`, &low, &yes},
+		{"duplicate thinking match", `{"thinking":{},"thinking":{"type":"disabled"},"thinking":{"type":"enabled"}}`, nil, &no},
+		{"config spelling priority", `{"generation_config":{"thinkingConfig":{"thinkingLevel":"none"}},"generationConfig":{"thinking_config":{"thinking_level":"high"}}}`, &none, &no},
+		{"duplicate config match", `{"generationConfig":{},"generationConfig":{"thinkingConfig":{"thinkingLevel":"high"}}}`, nil, nil},
+		{"budget overrides level", `{"generationConfig":{"thinkingConfig":{"thinkingLevel":"high","thinkingBudget":0}}}`, &high, &no},
+		{"escaped field", `{"reasoning_\u0065ffort":"high"}`, &high, &yes},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := []byte(tc.body)
+			state := ModelRequestState(body)
+			for i := range body {
+				body[i] = 'x'
+			}
+			require.Equal(t, modelcatalog.RequestState{Effort: tc.effort, Thinking: tc.thinking}, state)
+		})
+	}
+}
+
+func BenchmarkModelRequestState(b *testing.B) {
+	for _, size := range []int{1024, 1024 * 1024, 8 * 1024 * 1024} {
+		b.Run(fmt.Sprint(size), func(b *testing.B) {
+			body := []byte(`{"input":"` + strings.Repeat("x", size) + `","reasoning":{"effort":"high"}}`)
+			b.SetBytes(int64(len(body)))
+			b.ResetTimer()
+			for range b.N {
+				state := ModelRequestState(body)
+				if state.Effort == nil || *state.Effort != "high" {
+					b.Fatal("missing reasoning effort")
+				}
+			}
+		})
 	}
 }

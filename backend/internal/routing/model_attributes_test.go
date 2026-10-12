@@ -206,3 +206,61 @@ func BenchmarkModelAttributeRoutes(b *testing.B) {
 		})
 	}
 }
+
+func TestModelAttributesReuseEquivalentRelays(t *testing.T) {
+	lookups := 0
+	svc := &ModelAttributeService{Catalog: ModelAttributeCatalog{Lookup: func(string) modelcatalog.Attributes {
+		lookups++
+		return modelcatalog.Attributes{DisplayNameLocalization: &locale.Update[string]{Content: locale.Original("Model")}}
+	}}}
+	first := modelcatalog.Target{Platform: "openai", ProviderType: "apikey", Model: "model", BaseURL: "https://relay-a.example/v1"}
+	second := first
+	second.BaseURL = "https://relay-b.example/v1"
+	models := []RequestableModel{{ID: "alias", AttributeTargets: []modelcatalog.Target{first, second, first}}}
+	result, err := svc.ResolveModels(context.Background(), 1, models)
+	require.NoError(t, err)
+	require.Equal(t, 1, lookups)
+	require.Equal(t, "Model", *result["alias"].DisplayName)
+	require.Equal(t, []string{"Model", "Model"}, result["alias"].SearchTerms)
+	require.False(t, result["alias"].RouteDifferences)
+	require.Equal(t, []modelcatalog.Target{first, second, first}, models[0].AttributeTargets)
+
+	official := first
+	official.BaseURL = "https://api.openai.com/v1"
+	models[0].AttributeTargets = append(models[0].AttributeTargets, official)
+	lookups = 0
+	_, err = svc.ResolveModels(context.Background(), 1, models)
+	require.NoError(t, err)
+	require.Equal(t, 2, lookups)
+}
+
+func BenchmarkModelAttributeDistinctRoutes(b *testing.B) {
+	for _, distinctRelays := range []bool{false, true} {
+		b.Run(fmt.Sprint(distinctRelays), func(b *testing.B) {
+			svc := &ModelAttributeService{Catalog: ModelAttributeCatalog{Lookup: func(string) modelcatalog.Attributes {
+				yes, limit, modalities := true, 128000, []string{"text", "image"}
+				return modelcatalog.Attributes{Context: &limit, Reasoning: &yes, ToolCall: &yes, InputModalities: &modalities}
+			}}}
+			models := make([]RequestableModel, 186)
+			for i := range models {
+				models[i].ID = fmt.Sprint("model-", i)
+				for provider := range 65 {
+					baseURL := ""
+					if distinctRelays {
+						baseURL = fmt.Sprintf("https://relay-%d.example/v1", provider)
+					}
+					for _, wire := range []string{"openai_responses", "openai_chat_completions", "anthropic_messages"} {
+						models[i].AttributeTargets = append(models[i].AttributeTargets, modelcatalog.Target{Platform: "openai", ProviderType: "apikey", Model: models[i].ID, BaseURL: baseURL, ClientProtocol: wire, UpstreamProtocol: "openai_responses"})
+					}
+				}
+			}
+			b.ResetTimer()
+			for range b.N {
+				_, err := svc.ResolveGroups(context.Background(), map[int64][]RequestableModel{1: models})
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}

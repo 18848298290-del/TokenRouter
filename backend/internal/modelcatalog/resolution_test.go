@@ -239,3 +239,34 @@ func TestViewRecognizesOfficialCompatibleServices(t *testing.T) {
 	legacy := catalog.View().Resolve(Target{Platform: "deepseek", Model: "deepseek-chat"}, Attributes{})
 	require.Nil(t, legacy.Attributes.Conditions)
 }
+
+func TestTargetAttributeKeyPreservesServiceAndExecutionRules(t *testing.T) {
+	base := Target{Platform: "openai", ProviderType: "apikey", Model: "model", BaseURL: "https://relay-a.example/v1"}
+	otherRelay := base
+	otherRelay.BaseURL = "https://relay-b.example/custom/v1"
+	require.NotEqual(t, base.Key(), otherRelay.Key())
+	require.Equal(t, base.Key().ForAttributes(), otherRelay.Key().ForAttributes())
+	for _, mutate := range []func(*Target){
+		func(v *Target) { v.Model = "other" },
+		func(v *Target) { v.Platform = "grok" },
+		func(v *Target) { v.ProviderType = "oauth" },
+		func(v *Target) { v.ProviderMode = "coding" },
+		func(v *Target) { v.Site = "cn" },
+		func(v *Target) { v.ClientProtocol = "anthropic_messages" },
+		func(v *Target) { v.UpstreamProtocol = "openai_responses" },
+		func(v *Target) { v.Endpoint = "compact" },
+		func(v *Target) { v.CatalogProvider = "openai" },
+		func(v *Target) { v.Ollama = true },
+		func(v *Target) { v.OllamaOutputCap = valuePointer(100) },
+		func(v *Target) { v.BaseURL = "" },
+		func(v *Target) { v.BaseURL = "https://api.openai.com/v1" },
+	} {
+		changed := base
+		mutate(&changed)
+		require.NotEqual(t, base.Key().ForAttributes(), changed.Key().ForAttributes(), "%+v", changed)
+	}
+	payg, coding := base, base
+	payg.BaseURL = "https://api.z.ai/api/paas/v4"
+	coding.BaseURL = "https://api.z.ai/api/coding/paas/v4"
+	require.NotEqual(t, payg.Key().ForAttributes(), coding.Key().ForAttributes())
+}

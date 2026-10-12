@@ -350,7 +350,7 @@ func (c *Catalog) Lookup(candidates []string) (Entry, bool) {
 	}
 	for _, candidate := range candidates {
 		if entry, ok := c.Entries[normalize(candidate)]; ok {
-			entry.Attributes = Merge(Attributes{}, entry.Attributes)
+			entry.Attributes = entry.Attributes.Clone()
 			entry.AttributeSources = maps.Clone(entry.AttributeSources)
 			return entry, true
 		}
@@ -371,7 +371,7 @@ func (c *Catalog) LookupAttributes(model string, candidates []string) (Attribute
 	if !found {
 		return Attributes{}, false
 	}
-	return Merge(Attributes{}, attributes), true
+	return attributes.Clone(), true
 }
 
 // Rows 返回稳定排序的可查询索引，明确保留供应商限定名称。
@@ -382,7 +382,7 @@ func (c *Catalog) Rows() []Entry {
 	}
 	for key, value := range c.Entries {
 		value.Model = key
-		value.Attributes = Merge(Attributes{}, value.Attributes)
+		value.Attributes = value.Attributes.Clone()
 		value.AttributeSources = maps.Clone(value.AttributeSources)
 		rows = append(rows, value)
 	}

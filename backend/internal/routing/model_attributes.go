@@ -250,10 +250,7 @@ func (s *ModelAttributeService) ResolveGroups(ctx context.Context, groups map[in
 
 // resolveModels 将档案规则叠加到最终上游模型的目录属性上。
 func (s *ModelAttributeService) resolveModels(view modelcatalog.View, config *ModelAttributeConfig, models []RequestableModel, language string) map[string]EffectiveModelAttributes {
-	var candidates func(string) []string
-	if s.Catalog.Candidates != nil {
-		candidates = s.Catalog.Candidates()
-	}
+	candidates := s.identityCandidates()
 	result := map[string]EffectiveModelAttributes{}
 	resolvedTargets := make(map[modelcatalog.TargetKey]modelcatalog.Attributes)
 	for _, model := range models {
@@ -277,10 +274,11 @@ func (s *ModelAttributeService) resolveModels(view modelcatalog.View, config *Mo
 				continue
 			}
 			seen[key] = true
-			base, found := resolvedTargets[key]
+			attributeKey := key.ForAttributes()
+			base, found := resolvedTargets[attributeKey]
 			if !found {
 				base = s.resolve(view, config, target, candidates).Attributes
-				resolvedTargets[key] = base
+				resolvedTargets[attributeKey] = base
 			}
 			if base.DisplayNameLocalization != nil {
 				searchTerms = append(searchTerms, locale.SearchTexts(base.DisplayNameLocalization.Content, func(text string) []string { return []string{text} })...)

@@ -88,7 +88,7 @@ func (v View) Resolve(target Target, override Attributes) Resolution {
 		model = "claude-sonnet-4-5"
 	}
 	entry := v.lookup(target, model)
-	result.Attributes = Merge(Attributes{}, entry.Attributes)
+	result.Attributes = entry.Attributes.Clone()
 	for _, field := range result.Attributes.fieldNames() {
 		result.Sources[field] = "models.dev"
 	}
@@ -175,7 +175,7 @@ func (r *Resolution) patch(attrs Attributes, source string) {
 
 // ForRequest 根据本次推理状态计算条件属性，调用不会改变展示值。
 func (r Resolution) ForRequest(state RequestState) Resolution {
-	r.Attributes = Merge(Attributes{}, r.Attributes)
+	r.Attributes = r.Attributes.Clone()
 	if state.Thinking == nil {
 		switch r.Target.servicePlatform() {
 		case "anthropic":
@@ -399,6 +399,13 @@ func (t Target) Key() TargetKey {
 		key.outputCap, key.hasOutputCap = *t.OllamaOutputCap, true
 		key.target.OllamaOutputCap = nil
 	}
+	return key
+}
+
+// ForAttributes reuses the resolved service identity and omits the raw address.
+// Caches that return the route itself use the full key.
+func (key TargetKey) ForAttributes() TargetKey {
+	key.target.BaseURL = ""
 	return key
 }
 

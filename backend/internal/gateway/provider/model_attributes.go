@@ -11,6 +11,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/requeststate"
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/protocol/bridge"
+	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/ollama"
 )
@@ -146,19 +147,42 @@ func ApplyModelAttributeParameters(body []byte, result modelcatalog.Resolution) 
 
 // ModelRequestState reads reasoning controls after group policies, including Gemini JSON field aliases.
 func ModelRequestState(body []byte) modelcatalog.RequestState {
+	var reasoning, effort, output, thinking, camelConfig, snakeConfig gjson.Result
+	// Read the controls in one pass so large inputs are skipped once. Each
+	// path keeps its first match, including null, as gjson.GetBytes does.
+	wirejson.ParseView(body).ForEach(func(key, value gjson.Result) bool {
+		var field *gjson.Result
+		switch key.Str {
+		case "reasoning":
+			field, value = &reasoning, value.Get("effort")
+		case "reasoning_effort":
+			field = &effort
+		case "output_config":
+			field, value = &output, value.Get("effort")
+		case "thinking":
+			field, value = &thinking, value.Get("type")
+		case "generationConfig":
+			field = &camelConfig
+		case "generation_config":
+			field = &snakeConfig
+		}
+		if field != nil && !field.Exists() {
+			*field = value
+		}
+		return true
+	})
 	state := modelcatalog.RequestState{}
-	for _, path := range []string{"reasoning.effort", "reasoning_effort", "output_config.effort"} {
-		value := gjson.GetBytes(body, path)
+	for _, value := range []gjson.Result{reasoning, effort, output} {
 		if value.Type == gjson.String && strings.TrimSpace(value.String()) != "" {
-			effort := strings.ToLower(strings.TrimSpace(value.String()))
+			effort := strings.Clone(strings.ToLower(strings.TrimSpace(value.String())))
 			state.Effort = &effort
 			thinking := effort != "none"
 			state.Thinking = &thinking
 			break
 		}
 	}
-	if value := gjson.GetBytes(body, "thinking.type"); value.Type == gjson.String {
-		switch value.String() {
+	if thinking.Type == gjson.String {
+		switch thinking.String() {
 		case "enabled", "adaptive", "between_tools":
 			thinking := true
 			state.Thinking = &thinking
@@ -167,13 +191,12 @@ func ModelRequestState(body []byte) modelcatalog.RequestState {
 			state.Thinking = &thinking
 		}
 	}
-	for _, configName := range []string{"generationConfig", "generation_config"} {
-		config := gjson.GetBytes(body, configName)
+	for _, config := range []gjson.Result{camelConfig, snakeConfig} {
 		for _, thinkingName := range []string{"thinkingConfig", "thinking_config"} {
 			thinkingConfig := config.Get(thinkingName)
 			for _, key := range []string{"thinkingLevel", "thinking_level"} {
 				if level := thinkingConfig.Get(key); level.Type == gjson.String {
-					effort := strings.ToLower(level.String())
+					effort := strings.Clone(strings.ToLower(level.String()))
 					state.Effort = &effort
 					thinking := effort != "none"
 					state.Thinking = &thinking

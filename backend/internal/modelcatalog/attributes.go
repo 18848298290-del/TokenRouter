@@ -179,7 +179,7 @@ func Common(values []Attributes) (Attributes, bool) {
 	if len(values) == 0 {
 		return Attributes{}, false
 	}
-	result := Merge(Attributes{}, values[0])
+	result := values[0]
 	first := values[0]
 	different := false
 	for _, value := range values[1:] {

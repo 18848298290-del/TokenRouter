@@ -76,3 +76,38 @@ func TestMergeMediaEmptyOverrides(t *testing.T) {
 	require.Equal(t, valuePointer(3), result.Media.MaxReferenceImages)
 	require.Equal(t, []string{"1K", "2K"}, base.Media.ImageSizes)
 }
+
+func TestCommonOwnsNestedValues(t *testing.T) {
+	for _, count := range []int{1, 2} {
+		source := Attributes{
+			Context: valuePointer(100),
+			ReasoningOptions: valuePointer([]ReasoningOption{
+				{Type: "effort", Values: []*string{nil, valuePointer("high")}},
+			}),
+			Conditions: valuePointer(ParameterConditions{"temperature": {Thinking: valuePointer(false), Efforts: []string{"none"}}}),
+			Media:      &MediaCapabilities{ImageSizes: []string{}, MaxReferenceImages: valuePointer(3)},
+		}
+		values := []Attributes{source}
+		if count == 2 {
+			values = append(values, source.Clone())
+		}
+		got, different := Common(values)
+		require.False(t, different)
+		require.Nil(t, got.InputModalities)
+		require.NotNil(t, got.Media.ImageSizes)
+		require.Nil(t, (*got.ReasoningOptions)[0].Values[0])
+		*got.Context = 50
+		*(*got.ReasoningOptions)[0].Values[1] = "low"
+		condition := (*got.Conditions)["temperature"]
+		*condition.Thinking = true
+		condition.Efforts[0] = "high"
+		*got.Media.MaxReferenceImages = 9
+		for _, value := range values {
+			require.Equal(t, 100, *value.Context)
+			require.Equal(t, "high", *(*value.ReasoningOptions)[0].Values[1])
+			require.False(t, *(*value.Conditions)["temperature"].Thinking)
+			require.Equal(t, []string{"none"}, (*value.Conditions)["temperature"].Efforts)
+			require.Equal(t, 3, *value.Media.MaxReferenceImages)
+		}
+	}
+}
