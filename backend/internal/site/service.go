@@ -11,52 +11,96 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
+// Announcements are published for users whose current balance and active plans
+// satisfy their targeting expression within the scheduled interval. User lists
+// resolve a title and body together, join first-read markers by announcement ID,
+// and place unread entries ahead of previously read entries. Administrator
+// read-status views inspect targeting independently of publication scheduling.
+//
+// Content updates use revisioned localization, while schedule updates retain
+// a distinct omission-versus-clear representation. Creating or editing an
+// already ended active record archives it before saving. Administrator list
+// and detail reads archive expired records before querying, and abort the read
+// when that write fails, so an expiry failure is visible to the administrator.
+
+// AnnouncementService validates publication changes and assembles user eligibility and read-status views.
 type AnnouncementService struct {
-	announcementRepo AnnouncementRepository
-	readRepo         AnnouncementReadRepository
-	userRepo         UserReader
-	userSubRepo      SubscriptionReader
+	announcementRepo AnnouncementRepository     // announcement persistence dependency
+	readRepo         AnnouncementReadRepository // first-read marker storage
+	userRepo         UserReader                 // current user observations
+	userSubRepo      SubscriptionReader         // active subscription observations
 }
 
+// CreateAnnouncementInput supplies source copy, publication rules, schedule, and creating actor.
 type CreateAnnouncementInput struct {
+	// Localization prepares a revisioned copy when supplied and overwrites input
+	// Title and Content with its source before the base record is validated.
 	Localization *locale.Update[AnnouncementCopy]
-	Title        string
-	Content      string
-	Status       string
-	NotifyMode   string
-	Targeting    AnnouncementTargeting
-	StartsAt     *time.Time
-	EndsAt       *time.Time
-	ActorID      *int64 // Administrator user ID.
+	Title        string // source announcement heading
+	Content      string // source announcement body
+	// Status defaults to draft when blank; active records with an end time
+	// at or before creation's current time are saved as archived records.
+	Status string
+	// NotifyMode defaults to silent when blank; any nonblank value must be
+	// one of the supported frontend presentation modes before the record is saved.
+	NotifyMode string
+	Targeting  AnnouncementTargeting // eligible reader expression
+	// StartsAt and EndsAt are optional schedule endpoints, with start included
+	// and end excluded. When both exist, start must precede end before creation.
+	StartsAt *time.Time // inclusive start instant
+	EndsAt   *time.Time // exclusive end instant
+	// ActorID supplies administrator audit identity; positive values populate
+	// both CreatedBy and UpdatedBy, while nil or nonpositive values leave them absent.
+	ActorID *int64
 }
 
+// UpdateAnnouncementInput supplies selected announcement changes and distinguishes omitted schedule endpoints.
 type UpdateAnnouncementInput struct {
+	// Localization is required for source-copy edits. When supplied, Update
+	// prepares it against the record and sets input Title and Content to nil.
 	Localization *locale.Update[AnnouncementCopy]
-	Title        *string
-	Content      *string
-	Status       *string
-	NotifyMode   *string
-	Targeting    *AnnouncementTargeting
-	// For schedule fields, nil leaves the value unchanged; a pointer to nil clears it.
-	StartsAt **time.Time
-	EndsAt   **time.Time
-	ActorID  *int64 // Administrator user ID.
+	// Title and Content are legacy source fields; submitting either without
+	// Localization returns a conflict, and submitting Localization clears them before field handling.
+	Title   *string // legacy heading input
+	Content *string // legacy body input
+	// Status, NotifyMode, and Targeting replace their stored values when the
+	// corresponding pointer is supplied. Nil pointers leave these publication
+	// and eligibility settings unchanged while another field is edited.
+	Status     *string                // optional publication update
+	NotifyMode *string                // optional presentation update
+	Targeting  *AnnouncementTargeting // optional eligibility update
+	// StartsAt and EndsAt distinguish three cases: nil preserves the stored
+	// endpoint, a pointer to nil clears it, and a pointer to a time replaces it.
+	StartsAt **time.Time // start endpoint edit
+	EndsAt   **time.Time // end endpoint edit
+	// ActorID updates the editing administrator when positive; a nil or
+	// nonpositive input leaves the record's current UpdatedBy audit identity in place.
+	ActorID *int64
 }
 
+// UserAnnouncement pairs an eligible announcement with this user's first-read marker.
 type UserAnnouncement struct {
-	Announcement Announcement
-	ReadAt       *time.Time
+	Announcement Announcement // eligible localized announcement
+	// ReadAt is nil for unread announcements; a non-nil timestamp is copied
+	// from the read map and places the entry after unread entries during sorting.
+	ReadAt *time.Time
 }
 
+// AnnouncementUserReadStatus records administrator-visible targeting eligibility and one user's first read.
 type AnnouncementUserReadStatus struct {
-	UserID   int64      `json:"user_id"`
-	Email    string     `json:"email"`
-	Username string     `json:"username"`
-	Balance  float64    `json:"balance"`
+	UserID   int64   `json:"user_id"`  // persistent user identifier
+	Email    string  `json:"email"`    // account email address
+	Username string  `json:"username"` // account display name
+	Balance  float64 `json:"balance"`  // current account balance
+	// Eligible describes targeting alone for this administrator view; publication
+	// status and schedule are not included in ListUserReadStatus's eligibility calculation.
 	Eligible bool       `json:"eligible"`
-	ReadAt   *time.Time `json:"read_at,omitempty"`
+	ReadAt   *time.Time `json:"read_at,omitempty"` // first read timestamp
 }
 
+// NewAnnouncementService binds announcement storage and focused user, subscription, and read-marker readers.
+// Administrator CRUD uses announcementRepo; user-facing and read-status methods
+// also require the corresponding readers. Construction performs no queries or startup work.
 // @project-doc docs/interfaces/http_api.md#announcement_api
 func NewAnnouncementService(
 	announcementRepo AnnouncementRepository,
@@ -72,6 +116,16 @@ func NewAnnouncementService(
 	}
 }
 
+// Create validates and saves a new announcement, returning the persisted record.
+// A nil input is rejected. Blank status and notify mode select draft and
+// silent; source fields are trimmed for the base record, and schedule endpoints
+// must be strictly ordered when both are supplied.
+//
+// Supplied localization prepares title and body together and updates those
+// fields on input before base validation. Targeting is independently normalized.
+// An active record whose end has already arrived becomes archived before the
+// repository write, so creation cannot persist a currently ended active state.
+// The returned record retains supplied schedule and positive actor pointers.
 func (s *AnnouncementService) Create(ctx context.Context, input *CreateAnnouncementInput) (*Announcement, error) {
 	if input == nil {
 		return nil, ErrAnnouncementNilInput
@@ -88,6 +142,7 @@ func (s *AnnouncementService) Create(ctx context.Context, input *CreateAnnouncem
 	}
 	title := strings.TrimSpace(input.Title)
 	content := strings.TrimSpace(input.Content)
+	// Base record titles are limited in bytes after trimming.
 	if title == "" || len(title) > 200 {
 		return nil, ErrAnnouncementInvalidTitle
 	}
@@ -136,6 +191,8 @@ func (s *AnnouncementService) Create(ctx context.Context, input *CreateAnnouncem
 		a.CreatedBy = input.ActorID
 		a.UpdatedBy = input.ActorID
 	}
+	// Normalize expired publication state before the single creation write;
+	// an already elapsed active schedule is stored as archived even before the periodic scanner runs.
 	archiveAnnouncementIfExpired(a, time.Now())
 
 	if err := s.announcementRepo.Create(ctx, a); err != nil {
@@ -144,6 +201,15 @@ func (s *AnnouncementService) Create(ctx context.Context, input *CreateAnnouncem
 	return a, nil
 }
 
+// Update applies selected fields to a stored announcement and saves the resulting record.
+// A nil input is rejected. Localization is prepared against current content;
+// direct Title or Content edits without it return a conflict. A supplied
+// localization update clears those two pointers on input after accepting its source copy.
+//
+// Schedule pointer layers distinguish omission, clearing, and replacement before
+// validating the resulting interval. Other supplied state fields are validated
+// before saving. An elapsed active end archives the result, while the repository
+// uses the fetched UpdatedAt value to reject a concurrent record edit.
 func (s *AnnouncementService) Update(ctx context.Context, id int64, input *UpdateAnnouncementInput) (*Announcement, error) {
 	if input == nil {
 		return nil, ErrAnnouncementNilInput
@@ -155,6 +221,8 @@ func (s *AnnouncementService) Update(ctx context.Context, id int64, input *Updat
 	}
 
 	if a.Localization.Revision == 0 {
+		// Unversioned records still supply source copy for revision preparation.
+		// Initialize from their stored fields so the submitted update can be checked against that copy.
 		a.Localization = AnnouncementLocalization(locale.Original(AnnouncementCopy{Title: a.Title, Content: a.Content}))
 	}
 	if input.Localization != nil {
@@ -170,6 +238,7 @@ func (s *AnnouncementService) Update(ctx context.Context, id int64, input *Updat
 	}
 	if input.Title != nil {
 		title := strings.TrimSpace(*input.Title)
+		// Base record title validation uses the trimmed byte length.
 		if title == "" || len(title) > 200 {
 			return nil, ErrAnnouncementInvalidTitle
 		}
@@ -222,6 +291,8 @@ func (s *AnnouncementService) Update(ctx context.Context, id int64, input *Updat
 	if input.ActorID != nil && *input.ActorID > 0 {
 		a.UpdatedBy = input.ActorID
 	}
+	// An edited schedule can already have ended. Resolve that state before
+	// saving so administrator changes and expiry scans use the same exclusive end-time rule.
 	archiveAnnouncementIfExpired(a, time.Now())
 
 	if err := s.announcementRepo.Update(ctx, a); err != nil {
@@ -230,6 +301,7 @@ func (s *AnnouncementService) Update(ctx context.Context, id int64, input *Updat
 	return a, nil
 }
 
+// Delete removes the selected announcement and adds context to a persistence failure.
 func (s *AnnouncementService) Delete(ctx context.Context, id int64) error {
 	if err := s.announcementRepo.Delete(ctx, id); err != nil {
 		return fmt.Errorf("delete announcement: %w", err)
@@ -237,20 +309,33 @@ func (s *AnnouncementService) Delete(ctx context.Context, id int64) error {
 	return nil
 }
 
+// GetByID archives expired announcements before returning the selected administrator record.
+// Archiving is a persistent side effect of this read, and its failure prevents
+// the detail query from returning a successful result.
 func (s *AnnouncementService) GetByID(ctx context.Context, id int64) (*Announcement, error) {
+	// The administrator detail response should reflect persisted expiry state.
+	// Complete the archival write first; a failure stops the subsequent record query.
 	if err := s.archiveExpired(ctx, time.Now()); err != nil {
 		return nil, err
 	}
 	return s.announcementRepo.GetByID(ctx, id)
 }
 
+// List archives expired announcements before reading an administrator page with filters.
+// An archival failure aborts listing, while successful archival leaves pagination
+// and ordering to the repository query that follows it.
 func (s *AnnouncementService) List(ctx context.Context, params pagination.PaginationParams, filters AnnouncementListFilters) ([]Announcement, *pagination.PaginationResult, error) {
+	// Persist expiry transitions before applying administrator status filters;
+	// otherwise an active-only query could include records that have already reached their end.
 	if err := s.archiveExpired(ctx, time.Now()); err != nil {
 		return nil, nil, err
 	}
 	return s.announcementRepo.List(ctx, params, filters)
 }
 
+// archiveExpired persists due active-to-archived transitions through the announcement repository.
+// The affected row count is discarded; callers need the error to decide
+// whether their administrator query can proceed with current stored status.
 func (s *AnnouncementService) archiveExpired(ctx context.Context, now time.Time) error {
 	if _, err := s.announcementRepo.ArchiveExpired(ctx, now); err != nil {
 		return fmt.Errorf("archive expired announcements: %w", err)
@@ -260,6 +345,8 @@ func (s *AnnouncementService) archiveExpired(ctx context.Context, now time.Time)
 
 // archiveAnnouncementIfExpired changes an active announcement to archived when
 // its end time is at or before now.
+// Nil records, other statuses, and open-ended or future schedules remain eligible
+// for their own state handling; the helper performs no repository writes.
 func archiveAnnouncementIfExpired(a *Announcement, now time.Time) {
 	if a == nil || a.Status != AnnouncementStatusActive || a.EndsAt == nil || a.EndsAt.After(now) {
 		return
@@ -267,6 +354,15 @@ func archiveAnnouncementIfExpired(a *Announcement, now time.Time) {
 	a.Status = AnnouncementStatusArchived
 }
 
+// ListForUser returns scheduled, targeted announcements with language copy and first-read state.
+// It reads the user's balance and active plans, filters the repository's active
+// candidates at one current-time value, and selects localized copy when the
+// announcement has versioned content. No visible candidates returns an empty slice.
+//
+// Read markers are requested only for surviving announcement IDs, preventing
+// unrelated markers from participating in output. unreadOnly removes previously
+// read entries. Remaining unread records sort first, then descending ID orders
+// each read-state group; read timestamps are copied into distinct pointer values.
 func (s *AnnouncementService) ListForUser(ctx context.Context, userID int64, unreadOnly bool) ([]UserAnnouncement, error) {
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
@@ -334,7 +430,8 @@ func (s *AnnouncementService) ListForUser(ctx context.Context, userID int64, unr
 		})
 	}
 
-	// Unread announcements come first; each group is ordered by descending ID.
+	// Read membership controls grouping independently of publication order. Keep
+	// unread entries first, then use descending record IDs to order both groups predictably.
 	sort.Slice(out, func(i, j int) bool {
 		ai, aj := out[i], out[j]
 		if (ai.ReadAt == nil) != (aj.ReadAt == nil) {
@@ -346,8 +443,18 @@ func (s *AnnouncementService) ListForUser(ctx context.Context, userID int64, unr
 	return out, nil
 }
 
+// MarkRead records a user's read marker after checking publication and targeting eligibility.
+// Missing users or repository failures return their errors. An inactive or
+// untargeted announcement returns ErrAnnouncementNotFound, making inaccessible records
+// unavailable through the read-marking endpoint as well as through listing.
+//
+// Eligibility uses the fetched balance, active plans, and one current-time
+// value before the read write. The PostgreSQL read repository retains the first
+// marker for repeated calls, so a retry acknowledges the read without replacing
+// the timestamp observed by subsequent user and administrator queries.
 func (s *AnnouncementService) MarkRead(ctx context.Context, userID, announcementID int64) error {
-	// Check schedule and targeting before allowing this user to mark the announcement read.
+	// Eligibility precedes the read-marker write. Validate the same schedule and
+	// targeting rules used by listing before permitting this user to acknowledge the announcement.
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
 		return fmt.Errorf("get user: %w", err)
@@ -382,6 +489,16 @@ func (s *AnnouncementService) MarkRead(ctx context.Context, userID, announcement
 	return nil
 }
 
+// ListUserReadStatus returns a user page with targeting eligibility and recorded read timestamps.
+// It trims search before querying users, then joins markers by user ID and
+// reads active plans for each returned user. Repository failures abort the
+// page instead of supplying incomplete eligibility observations.
+//
+// Eligible answers whether targeting matches the user's current balance and
+// plans. It does not include announcement status or scheduling, allowing an
+// administrator to inspect the audience of drafts and archived records too.
+// Pagination is inherited from the user query; read markers affect displayed
+// state rather than which users belong to that page.
 func (s *AnnouncementService) ListUserReadStatus(
 	ctx context.Context,
 	announcementID int64,
@@ -444,6 +561,7 @@ func (s *AnnouncementService) ListUserReadStatus(
 	return out, page, nil
 }
 
+// isValidAnnouncementStatus reports whether status is one of the stored publication states.
 func isValidAnnouncementStatus(status string) bool {
 	switch status {
 	case AnnouncementStatusDraft, AnnouncementStatusActive, AnnouncementStatusArchived:
@@ -453,6 +571,7 @@ func isValidAnnouncementStatus(status string) bool {
 	}
 }
 
+// isValidAnnouncementNotifyMode reports whether mode is a supported frontend notification presentation.
 func isValidAnnouncementNotifyMode(mode string) bool {
 	switch mode {
 	case AnnouncementNotifyModeSilent, AnnouncementNotifyModePopup:
@@ -462,14 +581,19 @@ func isValidAnnouncementNotifyMode(mode string) bool {
 	}
 }
 
-// validateAnnouncementCopy validates a title and body together for one language.
+// validateAnnouncementCopy validates a nonblank title and body for one language copy.
+// Titles allow at most two hundred Unicode characters, while body length uses
+// bytes and allows at most one mebibyte. Violations return the corresponding
+// title, content-required, or page-size error.
 func validateAnnouncementCopy(copy AnnouncementCopy) error {
+	// Localized title length counts characters, including whitespace in supplied copy.
 	if strings.TrimSpace(copy.Title) == "" || len([]rune(copy.Title)) > 200 {
 		return ErrAnnouncementInvalidTitle
 	}
 	if strings.TrimSpace(copy.Content) == "" {
 		return ErrAnnouncementContentRequired
 	}
+	// Bound each localized body to one mebibyte of encoded content.
 	if len(copy.Content) > 1<<20 {
 		return ErrPageTooLarge
 	}

@@ -10,23 +10,29 @@ import (
 
 // displayValues records queried keys to check on-demand reads and configuration defaults.
 type displayValues struct {
-	values map[string]string
-	err    error
-	keys   []string
+	values map[string]string // configured fixture values
+	err    error             // injected read failure
+	keys   []string          // recorded lookup order
 }
 
+// GetValue records each requested setting before returning fixture data.
+// The configured error accompanies every read, allowing tests to check how
+// each getter handles storage failures and consults its defaults.
 func (s *displayValues) GetValue(_ context.Context, key string) (string, error) {
 	s.keys = append(s.keys, key)
 	return s.values[key], s.err
 }
 
+// TestDisplaySettingsPreserveNameAndMenuValues supplies empty, whitespace, stored, and failed reads.
+// It checks lazy lookup order and verifies that branding and raw menu values
+// apply their respective defaults only in the cases exercised.
 func TestDisplaySettingsPreserveNameAndMenuValues(t *testing.T) {
 	for _, tc := range []struct {
-		name     string
-		value    string
-		err      error
-		wantName string
-		wantMenu string
+		name     string // named input scenario
+		value    string // supplied storage value
+		err      error  // supplied read error
+		wantName string // expected branding text
+		wantMenu string // expected raw menu
 	}{
 		{name: "empty", wantName: "TokenRouter"},
 		{name: "whitespace", value: "  ", wantName: "  ", wantMenu: "  "},
@@ -44,6 +50,9 @@ func TestDisplaySettingsPreserveNameAndMenuValues(t *testing.T) {
 	}
 }
 
+// TestDisplaySettingsFrontendFallbackIsLazy changes the deployment callback result between reads.
+// It verifies trimming for stored URLs, lazy fallback invocation, and unchanged
+// callback output when storage is blank or unavailable.
 func TestDisplaySettingsFrontendFallbackIsLazy(t *testing.T) {
 	repo := &displayValues{values: map[string]string{SettingKeyFrontendURL: " https://example.com "}}
 	calls := 0

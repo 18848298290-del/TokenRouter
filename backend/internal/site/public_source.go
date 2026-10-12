@@ -5,31 +5,48 @@ import (
 	"fmt"
 )
 
+// Public settings combine display values with authentication and usage decisions
+// derived from the same stored batch. Display values are copied through an
+// allowlist before returning, while authentication conversion can inspect the
+// additional credential settings needed to decide available browser entry points.
+
 // PublicInputStore loads the settings needed for public responses in one batch.
 type PublicInputStore interface {
+	// GetMultiple returns raw values for the requested setting keys or an error.
 	GetMultiple(context.Context, []string) (map[string]string, error)
 }
 
 // PublicInputOptions contains the converters and version source supplied by app
 // for public settings responses.
 type PublicInputOptions struct {
-	Auth    func(map[string]string) PublicAuth
-	Usage   func(map[string]string) PublicUsage
+	// Auth and Usage receive the same raw storage map, in that order. InputSource
+	// copies display values first, so callback mutations can affect the later
+	// converter but cannot rewrite the Values map already prepared for PublicService.
+	Auth  func(map[string]string) PublicAuth  // browser authentication conversion
+	Usage func(map[string]string) PublicUsage // browser ranking conversion
+	// Version supplies the current build label when PublicVersion is invoked;
+	// this callback is independent of the stored settings batch used by LoadSitePublicInputs.
 	Version func() string
 }
+
+// InputSource assembles filtered display values and module-owned decisions from one settings batch.
 type InputSource struct {
-	store   PublicInputStore
-	options PublicInputOptions
+	store   PublicInputStore   // batched setting reader
+	options PublicInputOptions // module conversion callbacks
 }
 
 // NewInputSource creates the shared source for public API, HTML, and CSP settings.
-// Construction does not read the store.
+// Construction retains dependencies without reading storage. Auth and Usage
+// callbacks are required for loading inputs, and Version is required when
+// consumers request the build label; missing callbacks are not validated here.
 func NewInputSource(store PublicInputStore, options PublicInputOptions) *InputSource {
 	return &InputSource{store: store, options: options}
 }
 
-// LoadSitePublicInputs filters raw settings to PublicValueKeys before returning
-// them alongside the converted authentication and usage settings.
+// LoadSitePublicInputs returns allowlisted display values and authentication and usage decisions.
+// A storage failure aborts loading. The Values map is newly allocated and
+// includes each PublicValueKeys entry, while both converters inspect the full
+// batch containing any credential settings needed for capability decisions.
 func (s *InputSource) LoadSitePublicInputs(ctx context.Context) (PublicInputs, error) {
 	raw, err := s.store.GetMultiple(ctx, PublicInputKeys())
 	if err != nil {
@@ -41,10 +58,14 @@ func (s *InputSource) LoadSitePublicInputs(ctx context.Context) (PublicInputs, e
 	}
 	return PublicInputs{Values: values, Auth: s.options.Auth(raw), Usage: s.options.Usage(raw)}, nil
 }
+
+// PublicVersion calls the injected build-label source when its value is requested.
 func (s *InputSource) PublicVersion() string { return s.options.Version() }
 
 // PublicInputKeys returns a fresh list of keys needed to assemble public settings,
 // including credentials used by the authentication converter.
+// InputSource filters those raw values through PublicValueKeys before exposing
+// display data, so this storage-read list is broader than the returned Values map.
 func PublicInputKeys() []string {
 	return []string{
 		"balance_unit_name_localized", "oidc_connect_provider_name_localized", "balance_low_notify_recharge_url_localized",

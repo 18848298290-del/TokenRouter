@@ -13,9 +13,21 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site"
 )
 
-type PageHandler struct{ pages *site.Pages }
+// Markdown page bodies require a logged-in role, while permitted page images
+// are served publicly. Body responses expose the selected language and preserve
+// page-specific errors; image lookup failures collapse to an empty 404 response.
 
+// PageHandler translates menu-authorized page reads into Markdown and image responses.
+type PageHandler struct {
+	pages *site.Pages // page authorization service
+}
+
+// NewPageHandler binds the page service used by the registered HTTP routes.
 func NewPageHandler(pages *site.Pages) *PageHandler { return &PageHandler{pages: pages} }
+
+// GetPageContent writes an authorized page body and its resolved content language.
+// The caller's role comes from authentication middleware. Invalid slugs become
+// 400 responses, hidden pages become 404, and oversized bodies become 413.
 func (h *PageHandler) GetPageContent(c *gin.Context) {
 	role, _ := authctx.GetUserRoleFromContext(c)
 	content, language, err := h.pages.ReadLocalizedMarkdown(c.Request.Context(), c.Param("slug"), role == "admin")
@@ -35,16 +47,27 @@ func (h *PageHandler) GetPageContent(c *gin.Context) {
 	}
 }
 
+// ListPages writes source page slugs for the administrator's page picker.
+// Register protects this endpoint with administrator middleware. Storage errors
+// are discarded here, so the success envelope contains whatever slice the
+// page service returned.
 func (h *PageHandler) ListPages(c *gin.Context) {
+	// Page listing is a picker response. Retain the returned slice even when
+	// an adapter also reports an error, matching the endpoint's success-envelope behavior.
 	slugs, _ := h.pages.ListPages(c.Request.Context())
 	response.Success(c, slugs)
 }
 
+// ServePageImage serves a permitted public page image using an optional locale query.
+// A normalized query language selects localized assets; absent or invalid
+// languages use shared assets. Lookup failures return an empty 404 response.
 func (h *PageHandler) ServePageImage(c *gin.Context) {
 	ctx := c.Request.Context()
 	if language := locale.Normalize(c.Query("locale")); language != "" {
 		ctx = locale.WithLanguage(ctx, language)
 	} else {
+		// Image language selection belongs to the query parameter. Clear any
+		// inherited context language so an absent query resolves the shared asset directory.
 		ctx = locale.WithoutLanguage(ctx)
 	}
 	path, err := h.pages.ImagePath(ctx, c.Param("slug"), strings.TrimPrefix(c.Param("filename"), "/"))
@@ -55,6 +78,9 @@ func (h *PageHandler) ServePageImage(c *gin.Context) {
 	c.File(path)
 }
 
+// Register installs authenticated body reads, public images, and administrator page listing.
+// The separate groups let image requests avoid JWT middleware while retaining
+// role checks on Markdown and administrator checks on the source-file picker.
 func (h *PageHandler) Register(v1 *gin.RouterGroup, jwtAuth, adminAuth gin.HandlerFunc) {
 	pages := v1.Group("/pages")
 	pages.Use(jwtAuth)

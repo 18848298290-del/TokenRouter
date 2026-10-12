@@ -8,15 +8,27 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site/httpapi/dto"
 )
 
+// Browser initialization needs typed display settings and navigation arrays,
+// while individual legal reads return the requested language's agreement copy.
+// The public settings response adds the handler's build label and current
+// server timezone information after the domain service resolves its values.
+
+// PublicHandler writes browser settings and localized legal documents through the site service.
 type PublicHandler struct {
-	settingService *site.PublicService
-	version        string
+	settingService *site.PublicService // localized public settings service
+	// version is the build label supplied to this HTTP handler; HTML injection
+	// obtains its version independently from the service's PublicSource callback.
+	version string
 }
 
+// NewPublicHandler binds the public site service and build label for API responses.
 func NewPublicHandler(s *site.PublicService, version string) *PublicHandler {
 	return &PublicHandler{settingService: s, version: version}
 }
 
+// publicLoginAgreementDocumentsToDTO returns agreement identities and their selected display copy.
+// Each output value contains ID, Title, and ContentMD; localization editor state
+// and resolution pointers stay unset in this settings-list response shape.
 func publicLoginAgreementDocumentsToDTO(items []site.LoginAgreementDocument) []dto.LoginAgreementDocument {
 	result := make([]dto.LoginAgreementDocument, 0, len(items))
 	for _, item := range items {
@@ -30,6 +42,9 @@ func publicLoginAgreementDocumentsToDTO(items []site.LoginAgreementDocument) []d
 }
 
 // GetPublicSettings returns public site settings.
+// The service resolves language and capability values, while this handler parses
+// navigation JSON into arrays, removes admin-only menu entries, and adds its
+// supplied build label plus the service's current server timezone and offset.
 // GET /api/v1/settings/public
 func (h *PublicHandler) GetPublicSettings(c *gin.Context) {
 	settings, err := h.settingService.GetPublicSettings(c.Request.Context())
@@ -126,10 +141,15 @@ func (h *PublicHandler) GetPublicSettings(c *gin.Context) {
 	})
 }
 
-// GetLegalDocument returns the public agreement in the current language when requested.
+// GetLegalDocument returns an agreement selected for the request context's language.
+// Any service error becomes a document-not-found response. Successful reads
+// add Vary: Accept-Language and keep the selected document's resolution metadata.
 func (h *PublicHandler) GetLegalDocument(c *gin.Context) {
 	doc, err := h.settingService.GetLegalDocument(c.Request.Context(), c.Param("id"))
 	if err != nil {
+		// This endpoint reports unavailable legal copy through one not-found
+		// response, including storage-read failures, so callers receive the endpoint's
+		// fixed document-unavailable message for every unsuccessful service lookup.
 		response.NotFound(c, "Document not found.")
 		return
 	}

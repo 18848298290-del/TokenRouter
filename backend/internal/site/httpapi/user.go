@@ -11,12 +11,17 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site"
 )
 
-// AnnouncementHandler handles user announcement operations.
+// Announcement lists use the authenticated account's balance, plans, language,
+// and first-read markers to select and display records. Read acknowledgements
+// use that same account identity, so route parameters select the announcement
+// while middleware determines whose read state changes.
+
+// AnnouncementHandler serves account-specific announcement lists and read acknowledgements through the service.
 type AnnouncementHandler struct {
-	announcementService *site.AnnouncementService
+	announcementService *site.AnnouncementService // eligibility and read operations
 }
 
-// NewAnnouncementHandler creates a new user announcement handler.
+// NewAnnouncementHandler binds announcement eligibility and read operations for user HTTP endpoints.
 func NewAnnouncementHandler(announcementService *site.AnnouncementService) *AnnouncementHandler {
 	return &AnnouncementHandler{
 		announcementService: announcementService,
@@ -24,6 +29,9 @@ func NewAnnouncementHandler(announcementService *site.AnnouncementService) *Anno
 }
 
 // List returns announcements visible to the authenticated user.
+// Missing account context returns an unauthorized response. unread_only accepts
+// the positive values recognized by parseBoolQuery; domain filtering, language
+// resolution, and unread-first ordering come from the announcement service.
 // GET /api/v1/announcements
 func (h *AnnouncementHandler) List(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
@@ -48,6 +56,9 @@ func (h *AnnouncementHandler) List(c *gin.Context) {
 }
 
 // MarkRead records that the authenticated user has read a visible announcement.
+// It requires account context and a positive decimal announcement ID. The
+// service checks schedule and targeting before persisting the marker, with
+// failures mapped through the shared HTTP error response.
 // POST /api/v1/announcements/:id/read
 func (h *AnnouncementHandler) MarkRead(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
@@ -70,6 +81,9 @@ func (h *AnnouncementHandler) MarkRead(c *gin.Context) {
 	response.Success(c, gin.H{"message": "ok"})
 }
 
+// parseBoolQuery reports whether v names a supported affirmative query value.
+// Input is trimmed and lowercased; 1, true, yes, y, and on are affirmative,
+// while an absent or unrecognized value leaves the filter disabled.
 func parseBoolQuery(v string) bool {
 	switch strings.TrimSpace(strings.ToLower(v)) {
 	case "1", "true", "yes", "y", "on":

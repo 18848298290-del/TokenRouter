@@ -16,12 +16,17 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site/filesystem"
 )
 
+// pageMenuFixture exposes a normal guide and an administrator-only page to handlers.
 type pageMenuFixture struct{}
 
+// GetCustomMenuItemsRaw returns menu visibility for the HTTP filesystem fixtures.
 func (pageMenuFixture) GetCustomMenuItemsRaw(context.Context) string {
 	return `[{"page_slug":"guide","visibility":"user"},{"page_slug":"private","visibility":"admin"}]`
 }
 
+// TestPageHTTPBoundaryAndVisibility routes page requests through fixture role middleware.
+// It verifies authentication and administrator statuses, and checks that an
+// external Markdown symlink never exposes its target body through the endpoint.
 func TestPageHTTPBoundaryAndVisibility(t *testing.T) {
 	data := t.TempDir()
 	store := filesystem.New(data)
@@ -50,8 +55,8 @@ func TestPageHTTPBoundaryAndVisibility(t *testing.T) {
 	}
 	h.Register(router.Group("/api/v1"), auth, admin)
 	for _, test := range []struct {
-		path, role string
-		status     int
+		path, role string // requested URL path and caller role header
+		status     int    // expected response status
 	}{
 		{"/api/v1/pages/guide", "", 401}, {"/api/v1/pages/guide", "user", 404}, {"/api/v1/pages/private", "user", 404}, {"/api/v1/pages/private", "admin", 200}, {"/api/v1/pages", "user", 403}, {"/api/v1/pages", "admin", 200}, {"/api/v1/pages/private/images/x.png", "admin", 404},
 	} {
@@ -64,8 +69,9 @@ func TestPageHTTPBoundaryAndVisibility(t *testing.T) {
 	}
 }
 
-// TestPageImagesCannotReadMarkdown checks anonymous image requests against translated content and symlinks to
-// Markdown.
+// TestPageImagesCannotReadMarkdown supplies translated bodies, ordinary documents, and a disguised symlink.
+// It verifies that anonymous image requests reject those files while safe
+// shared and localized images remain public and Markdown still requires authentication.
 func TestPageImagesCannotReadMarkdown(t *testing.T) {
 	data := t.TempDir()
 	store := filesystem.New(data)
@@ -97,8 +103,8 @@ func TestPageImagesCannotReadMarkdown(t *testing.T) {
 		require.Empty(t, response.Body.String())
 	}
 	for _, test := range []struct {
-		path, role, body string
-		status           int
+		path, role, body string // requested URL path, caller role header, and expected response body
+		status           int    // expected response status
 	}{
 		{"/api/v1/pages/guide", "", "", http.StatusUnauthorized},
 		{"/api/v1/pages/guide", "user", "members-only translation", http.StatusOK},

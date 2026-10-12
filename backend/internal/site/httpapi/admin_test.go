@@ -14,24 +14,31 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site"
 )
 
+// announcementRepoCapture records administrator list parameters while supplying empty announcement fixtures.
 type announcementRepoCapture struct {
-	site.AnnouncementRepository
-	listParams pagination.PaginationParams
+	site.AnnouncementRepository                             // unused repository method set
+	listParams                  pagination.PaginationParams // captured announcement pagination
 }
 
+// announcementUserRepoCapture records user-query pagination used by administrator read-status requests.
 type announcementUserRepoCapture struct {
-	site.UserReader
-	listParams pagination.PaginationParams
+	site.UserReader                             // unused user method set
+	listParams      pagination.PaginationParams // captured user pagination
 }
 
+// announcementReadRepoCapture supplies an empty read map for empty user-page fixtures.
 type announcementReadRepoCapture struct {
-	site.AnnouncementReadRepository
+	site.AnnouncementReadRepository // unused read method set
 }
 
+// announcementUserSubRepoCapture supplies the unused subscription dependency for empty reader pages.
 type announcementUserSubRepoCapture struct {
-	site.SubscriptionReader
+	site.SubscriptionReader // unused subscription method set
 }
 
+// TestAdminAnnouncementListSortParams supplies an explicit announcement sort field and uppercase direction.
+// It verifies a successful response and unchanged forwarding of those query
+// values to the announcement repository's pagination parameters.
 func TestAdminAnnouncementListSortParams(t *testing.T) {
 	announcementRepo := &announcementRepoCapture{}
 	userRepo := &announcementUserRepoCapture{}
@@ -46,6 +53,9 @@ func TestAdminAnnouncementListSortParams(t *testing.T) {
 	require.Equal(t, "ASC", announcementRepo.listParams.SortOrder)
 }
 
+// TestAdminAnnouncementListSortDefaults omits administrator announcement sort query parameters.
+// It verifies the endpoint returns success and passes created_at descending
+// to the repository as the default announcement ordering.
 func TestAdminAnnouncementListSortDefaults(t *testing.T) {
 	announcementRepo := &announcementRepoCapture{}
 	userRepo := &announcementUserRepoCapture{}
@@ -60,6 +70,9 @@ func TestAdminAnnouncementListSortDefaults(t *testing.T) {
 	require.Equal(t, "desc", announcementRepo.listParams.SortOrder)
 }
 
+// TestAdminAnnouncementReadStatusSortParams supplies a balance sort field and uppercase descending direction.
+// It verifies a successful read-status response and unchanged forwarding of
+// both sort values to the focused user reader.
 func TestAdminAnnouncementReadStatusSortParams(t *testing.T) {
 	announcementRepo := &announcementRepoCapture{}
 	userRepo := &announcementUserRepoCapture{}
@@ -74,6 +87,9 @@ func TestAdminAnnouncementReadStatusSortParams(t *testing.T) {
 	require.Equal(t, "DESC", userRepo.listParams.SortOrder)
 }
 
+// TestAdminAnnouncementReadStatusSortDefaults omits ordering parameters while requesting an announcement's reader page.
+// It verifies that user pagination receives email ascending and the HTTP
+// response succeeds with the empty fixture results.
 func TestAdminAnnouncementReadStatusSortDefaults(t *testing.T) {
 	announcementRepo := &announcementRepoCapture{}
 	userRepo := &announcementUserRepoCapture{}
@@ -93,6 +109,9 @@ func (r *announcementRepoCapture) ArchiveExpired(context.Context, time.Time) (in
 	return 0, nil
 }
 
+// List captures the supplied announcement pagination and returns an empty successful page.
+// Filters and context are unused in this fixture, while returned page values
+// let the handler encode the same requested pagination in its response.
 func (r *announcementRepoCapture) List(ctx context.Context, params pagination.PaginationParams, filters site.AnnouncementListFilters) ([]site.Announcement, *pagination.PaginationResult, error) {
 	r.listParams = params
 	return []site.Announcement{}, &pagination.PaginationResult{
@@ -103,6 +122,7 @@ func (r *announcementRepoCapture) List(ctx context.Context, params pagination.Pa
 	}, nil
 }
 
+// GetByID returns an active fixture announcement using the requested record identifier.
 func (r *announcementRepoCapture) GetByID(ctx context.Context, id int64) (*site.Announcement, error) {
 	return &site.Announcement{
 		ID:        id,
@@ -114,6 +134,9 @@ func (r *announcementRepoCapture) GetByID(ctx context.Context, id int64) (*site.
 	}, nil
 }
 
+// ListWithFilters captures user pagination and returns an empty page for read-status handlers.
+// Search and context are unused; the fixture's page metadata retains the
+// requested page and page size for success-envelope construction.
 func (r *announcementUserRepoCapture) ListWithFilters(ctx context.Context, params pagination.PaginationParams, filters site.UserListFilters) ([]site.UserSnapshot, *pagination.PaginationResult, error) {
 	r.listParams = params
 	return []site.UserSnapshot{}, &pagination.PaginationResult{
@@ -124,10 +147,15 @@ func (r *announcementUserRepoCapture) ListWithFilters(ctx context.Context, param
 	}, nil
 }
 
+// GetReadMapByUsers returns an empty successful read map for the fixture user page.
 func (r *announcementReadRepoCapture) GetReadMapByUsers(ctx context.Context, announcementID int64, userIDs []int64) (map[int64]time.Time, error) {
 	return map[int64]time.Time{}, nil
 }
 
+// newAnnouncementSortTestRouter binds administrator list handlers to repositories that capture pagination.
+// It configures Gin test mode and registers announcement and read-status lists
+// directly, so the returned engine exercises handler parameter mapping with the
+// supplied empty-page fixtures.
 func newAnnouncementSortTestRouter(announcementRepo *announcementRepoCapture, userRepo *announcementUserRepoCapture) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	svc := site.NewAnnouncementService(

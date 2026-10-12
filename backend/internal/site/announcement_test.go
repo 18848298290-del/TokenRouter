@@ -6,12 +6,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestAnnouncementTargeting_Matches_EmptyMatchesAll supplies no targeting groups with different user observations.
+// It verifies that an absent expression reaches users regardless of balance
+// and whether an active plan set is supplied.
 func TestAnnouncementTargeting_Matches_EmptyMatchesAll(t *testing.T) {
 	var targeting AnnouncementTargeting
 	require.True(t, targeting.Matches(0, nil))
 	require.True(t, targeting.Matches(123.45, map[int64]struct{}{1: {}}))
 }
 
+// TestAnnouncementTargeting_NormalizeAndValidate_RejectsEmptyConditionGroup supplies a configured group with no conditions.
+// It verifies that incomplete targeting is rejected instead of being stored
+// as an alternative that could grant unconditional visibility.
 func TestAnnouncementTargeting_NormalizeAndValidate_RejectsEmptyConditionGroup(t *testing.T) {
 	targeting := AnnouncementTargeting{
 		AnyOf: []AnnouncementConditionGroup{
@@ -23,6 +29,9 @@ func TestAnnouncementTargeting_NormalizeAndValidate_RejectsEmptyConditionGroup(t
 	require.ErrorIs(t, err, ErrAnnouncementInvalidTarget)
 }
 
+// TestAnnouncementTargeting_NormalizeAndValidate_RejectsInvalidCondition supplies an unsupported balance operator.
+// It verifies the invalid-target error reaches the caller, preventing storage
+// of a condition the runtime matcher cannot evaluate as a supported comparison.
 func TestAnnouncementTargeting_NormalizeAndValidate_RejectsInvalidCondition(t *testing.T) {
 	targeting := AnnouncementTargeting{
 		AnyOf: []AnnouncementConditionGroup{
@@ -38,6 +47,9 @@ func TestAnnouncementTargeting_NormalizeAndValidate_RejectsInvalidCondition(t *t
 	require.ErrorIs(t, err, ErrAnnouncementInvalidTarget)
 }
 
+// TestAnnouncementTargeting_Matches_AndOrSemantics combines a low-balance alternative with balance-and-plan requirements.
+// It verifies that groups are alternatives, that every condition in a group
+// is required, and that the numeric threshold's equality behavior is respected.
 func TestAnnouncementTargeting_Matches_AndOrSemantics(t *testing.T) {
 	targeting := AnnouncementTargeting{
 		AnyOf: []AnnouncementConditionGroup{
