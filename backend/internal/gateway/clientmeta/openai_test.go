@@ -7,13 +7,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestPairCodexClientIdentity exercises leading identities, trailer recovery,
+// and invalid names. Pairing keeps originator and the rebuilt leading name
+// equal, preserves the suffix, canonicalizes exact names, and rejects unsafe or
+// unrecognized identities.
 func TestPairCodexClientIdentity(t *testing.T) {
 	tests := []struct {
-		name           string
-		ua             string
-		wantOriginator string
-		wantUA         string
-		wantOK         bool
+		name           string // test scenario label
+		ua             string // input User-Agent value
+		wantOriginator string // expected outbound originator
+		wantUA         string // expected paired User-Agent
+		wantOK         bool   // expected pairing success
 	}{
 		{
 			name:           "cli 首段直接配对",
@@ -85,11 +89,14 @@ func TestPairCodexClientIdentity(t *testing.T) {
 	}
 }
 
+// TestIsCodexCLIRequest supplies historical CLI prefixes inside standalone and
+// composite headers. Compatibility matching accepts case and whitespace
+// variants and rejects empty headers or unrelated client names.
 func TestIsCodexCLIRequest(t *testing.T) {
 	tests := []struct {
-		name string
-		ua   string
-		want bool
+		name string // test scenario label
+		ua   string // input User-Agent value
+		want bool   // expected recognition result
 	}{
 		{name: "codex_cli_rs 前缀", ua: "codex_cli_rs/0.1.0", want: true},
 		{name: "codex_vscode 前缀", ua: "codex_vscode/1.2.3", want: true},
@@ -110,11 +117,14 @@ func TestIsCodexCLIRequest(t *testing.T) {
 	}
 }
 
+// TestIsBrowserUserAgent compares Mozilla browser headers with CLI and curl
+// values. Browser recognition trims whitespace and ignores prefix case while
+// unrelated and empty headers remain false.
 func TestIsBrowserUserAgent(t *testing.T) {
 	tests := []struct {
-		name string
-		ua   string
-		want bool
+		name string // test scenario label
+		ua   string // input User-Agent value
+		want bool   // expected recognition result
 	}{
 		{name: "Chrome 浏览器", ua: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36", want: true},
 		{name: "大小写混合", ua: "mozilla/5.0 Safari/537.36", want: true},
@@ -134,11 +144,14 @@ func TestIsBrowserUserAgent(t *testing.T) {
 	}
 }
 
+// TestIsCodexOfficialClientRequest supplies known Codex prefixes, family names,
+// embedded markers, and trailer identities. Compatibility recognition accepts
+// those forms and rejects unrelated headers or unknown trailer names.
 func TestIsCodexOfficialClientRequest(t *testing.T) {
 	tests := []struct {
-		name string
-		ua   string
-		want bool
+		name string // test scenario label
+		ua   string // input User-Agent value
+		want bool   // expected recognition result
 	}{
 		{name: "codex_cli_rs 前缀", ua: "codex_cli_rs/0.98.0", want: true},
 		{name: "codex-tui 前缀", ua: "codex-tui/0.125.0", want: true},
@@ -168,11 +181,15 @@ func TestIsCodexOfficialClientRequest(t *testing.T) {
 	}
 }
 
+// TestIsCodexOfficialClientRequestStrict compares leading and trailer
+// identities against markers embedded in browser headers. Strict recognition
+// accepts the former and rejects embedded markers alone, unknown names, and
+// empty input.
 func TestIsCodexOfficialClientRequestStrict(t *testing.T) {
 	tests := []struct {
-		name string
-		ua   string
-		want bool
+		name string // test scenario label
+		ua   string // input User-Agent value
+		want bool   // expected recognition result
 	}{
 		{name: "codex_cli_rs 前缀", ua: "codex_cli_rs/0.98.0", want: true},
 		{name: "codex-tui 前缀", ua: "codex-tui/0.125.0", want: true},
@@ -198,11 +215,14 @@ func TestIsCodexOfficialClientRequestStrict(t *testing.T) {
 	}
 }
 
+// TestIsCodexOfficialClientOriginator checks exact known identifiers and Codex
+// family names. Whitespace is normalized, while names merely containing Codex
+// text and unrelated client identifiers fail recognition.
 func TestIsCodexOfficialClientOriginator(t *testing.T) {
 	tests := []struct {
-		name       string
-		originator string
-		want       bool
+		name       string // test scenario label
+		originator string // input originator value
+		want       bool   // expected recognition result
 	}{
 		{name: "codex_cli_rs", originator: "codex_cli_rs", want: true},
 		{name: "codex-tui", originator: "codex-tui", want: true},
@@ -231,12 +251,15 @@ func TestIsCodexOfficialClientOriginator(t *testing.T) {
 	}
 }
 
+// TestIsCodexOfficialClientByHeaders varies whether the User-Agent or
+// originator supplies a recognized identity. Either header can establish client
+// format, while two unmatched values return false.
 func TestIsCodexOfficialClientByHeaders(t *testing.T) {
 	tests := []struct {
-		name       string
-		ua         string
-		originator string
-		want       bool
+		name       string // test scenario label
+		ua         string // input User-Agent value
+		originator string // input originator value
+		want       bool   // expected recognition result
 	}{
 		{name: "仅 originator 命中 desktop", originator: "Codex Desktop", want: true},
 		{name: "仅 originator 命中 vscode", originator: "codex_vscode", want: true},

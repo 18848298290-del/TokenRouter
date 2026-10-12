@@ -11,19 +11,25 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// fundingCheckFixture exposes a test callback as the funding admission checker.
 type fundingCheckFixture func(context.Context, billing.CheckInput) error
 
+// rpmCheckFixture exposes a test callback as the RPM admission checker.
 type rpmCheckFixture func(context.Context, *scheduler.RPMUser, *scheduler.RPMGroup) error
 
+// Check invokes the configured test funding callback with the supplied input.
 func (f fundingCheckFixture) Check(ctx context.Context, input billing.CheckInput) error {
 	return f(ctx, input)
 }
 
+// Check invokes the configured RPM callback with the supplied request actors.
 func (f rpmCheckFixture) Check(ctx context.Context, user *scheduler.RPMUser, group *scheduler.RPMGroup) error {
 	return f(ctx, user, group)
 }
 
-// TestFundingAdmissionPreservesOrderAndWaitBoundary checks that RPM is counted once and post-wait checks revalidate funds alone.
+// TestFundingAdmissionPreservesOrderAndWaitBoundary exercises rejected, accepted,
+// and post-wait requests. Funding precedes RPM counting, rejection skips counting,
+// and the post-wait path performs the funding check alone.
 func TestFundingAdmissionPreservesOrderAndWaitBoundary(t *testing.T) {
 	for _, mode := range []string{"rejected", "accepted", "after_wait"} {
 		t.Run(mode, func(t *testing.T) {

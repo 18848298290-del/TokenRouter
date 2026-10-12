@@ -7,41 +7,55 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// recoveryPorts records lazy global-model reads and response-release order.
+// recoveryPorts records model-rule lookups and recovery effects for order assertions.
 type recoveryPorts struct {
-	calls         []string
-	providerModel string
+	calls         []string // ordered lookup and effect trace
+	providerModel string   // configured provider fallback model
 }
 
+// ProviderModel records the requested model and returns the configured provider
+// fallback. An empty configured value reports no mapping, letting the test
+// observe subsequent global-model reads.
 func (p *recoveryPorts) ProviderModel(model string) (string, bool) {
 	p.calls = append(p.calls, "provider:"+model)
 	return p.providerModel, p.providerModel != ""
 }
 
+// GlobalModel records a global lookup and returns the fixed fallback fixture.
 func (p *recoveryPorts) GlobalModel() string {
 	p.calls = append(p.calls, "global")
 	return "global-fallback"
 }
 
+// ResolveGlobalModel records the global resolution input and returns it unchanged.
 func (p *recoveryPorts) ResolveGlobalModel(model string) string {
 	p.calls = append(p.calls, "resolve:"+model)
 	return model
 }
 
+// ObserveRetry records retry observation for the combined recovery ordering assertion.
 func (p *recoveryPorts) ObserveRetry(_ []byte, _ string) { p.calls = append(p.calls, "observe") }
 
+// CloseResponse records a response-release effect without owning a response resource.
 func (p *recoveryPorts) CloseResponse() { p.calls = append(p.calls, "close") }
 
+// SetModel records the replacement model used by the recovery ordering assertion.
 func (p *recoveryPorts) SetModel(model string) { p.calls = append(p.calls, "model:"+model) }
 
+// LogRetry records old and replacement models with their upstream error code.
 func (p *recoveryPorts) LogRetry(from, to, code string) {
 	p.calls = append(p.calls, "log:"+from+":"+to+":"+code)
 }
 
+// TestRecoveryPortOrderAndSingleRetry exercises provider and global fallback
+// paths. It protects lazy global lookup, body rewriting, observation-before-close
+// ordering, model diagnostics, and the rejection of a second recovery attempt.
 func TestRecoveryPortOrderAndSingleRetry(t *testing.T) {
 	for _, tc := range []struct {
+		// name labels the test scenario, providerModel supplies the configured
+		// provider mapping, and fallback names the expected replacement model.
 		name, providerModel, fallback string
-		reads                         []string
+		reads                         []string // expected model lookup sequence
 	}{
 		{name: "provider", providerModel: "provider-fallback", fallback: "provider-fallback", reads: []string{"provider:client"}},
 		{name: "global", fallback: "global-fallback", reads: []string{"provider:client", "global", "resolve:global-fallback"}},

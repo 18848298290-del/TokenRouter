@@ -8,20 +8,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// promptSettingsFixture supplies forwarding settings to tests.
+// promptSettingsFixture supplies requested scalar forwarding values from test data.
 type promptSettingsFixture struct {
+	// RuntimeSettingsStore provides unimplemented methods through the embedded
+	// interface. Tests configure the batch-read path and leave other methods unused.
 	RuntimeSettingsStore
-	data map[string]string
+	data map[string]string // configured forwarding setting values
 }
 
 // identityPatchStore records single-key reads and can inject a read error.
 type identityPatchStore struct {
+	// RuntimeSettingsStore leaves operations other than GetValue unset in these
+	// read-order tests. An unexpected embedded-method call cannot provide a setting result.
 	RuntimeSettingsStore
-	values map[string]string
-	err    error
-	reads  []string
+	values map[string]string // configured identity setting values
+	err    error             // injected scalar read error
+	reads  []string          // ordered setting lookup trace
 }
 
+// TestSettingService_GetClaudeOAuthSystemPromptInjectionSettings reads missing
+// settings and an explicit disabled configuration. The default enables
+// injection with empty prompt values, while configured text and block JSON
+// retain their exact contents.
 func TestSettingService_GetClaudeOAuthSystemPromptInjectionSettings(t *testing.T) {
 	t.Run("defaults to enabled with empty prompt", func(t *testing.T) {
 		svc := NewRuntimeSettings(&promptSettingsFixture{data: map[string]string{}}, nil, nil)
@@ -50,11 +58,15 @@ func TestSettingService_GetClaudeOAuthSystemPromptInjectionSettings(t *testing.T
 	})
 }
 
+// TestIdentityPatchSettingsOriginalReadSemantics supplies exact, empty,
+// case-varied, and failed setting reads. It protects per-call lookup order,
+// literal true matching, enabled-on-error behavior, and unchanged successful
+// prompt text.
 func TestIdentityPatchSettingsOriginalReadSemantics(t *testing.T) {
 	for _, tc := range []struct {
-		name, value string
-		err         error
-		enabled     bool
+		name, value string // test scenario label; persisted switch value
+		err         error  // configured setting read error
+		enabled     bool   // expected identity patch permission
 	}{
 		{name: "enabled", value: "true", enabled: true},
 		{name: "disabled", value: "false"},
@@ -77,6 +89,9 @@ func TestIdentityPatchSettingsOriginalReadSemantics(t *testing.T) {
 	}
 }
 
+// GetMultiple copies the requested entries from the fixture data into a fresh
+// map. Missing keys are omitted so the forwarding reader, rather than the
+// fixture, supplies its setting defaults.
 func (s *promptSettingsFixture) GetMultiple(_ context.Context, keys []string) (map[string]string, error) {
 	values := make(map[string]string, len(keys))
 	for _, key := range keys {
@@ -87,6 +102,9 @@ func (s *promptSettingsFixture) GetMultiple(_ context.Context, keys []string) (m
 	return values, nil
 }
 
+// GetValue records the identity-setting lookup and returns its configured value
+// and error. The trace lets tests confirm constructor laziness and the
+// switch-before-prompt order of their two explicit reads.
 func (s *identityPatchStore) GetValue(_ context.Context, key string) (string, error) {
 	s.reads = append(s.reads, key)
 	return s.values[key], s.err

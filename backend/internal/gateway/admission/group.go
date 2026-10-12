@@ -6,7 +6,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/apikey"
 )
 
-// GroupAllowed reports whether the user may bind the group. Missing key, user, or group data returns true.
+// Group checks distinguish authorization from availability. An authenticated
+// request can have permission to use a group that was disabled or deleted, so
+// handlers apply both checks and translate availability reasons into their
+// protocol's error response.
+
+// GroupAllowed reports whether the key's user may bind its loaded group.
+// Missing key, group ID, user, or group data returns true; authentication callers
+// establish those records separately before relying on this authorization check.
 func GroupAllowed(key *apikey.APIKey) bool {
 	if key == nil || key.GroupID == nil || key.User == nil || key.Group == nil {
 		return true
@@ -14,7 +21,10 @@ func GroupAllowed(key *apikey.APIKey) bool {
 	return key.User.CanBindGroup(key.Group.ID, key.Group.IsExclusive)
 }
 
-// GroupAvailable returns a reason, message, and availability flag, distinguishing deleted and disabled groups.
+// GroupAvailable returns a rejection reason, message, and availability flag for
+// the key's group. A missing key or group ID passes; a configured ID with missing
+// or deleted group data yields GROUP_DELETED. An inactive group yields
+// GROUP_DISABLED; handlers receive empty reason and message strings on success.
 func GroupAvailable(key *apikey.APIKey) (string, string, bool) {
 	if key == nil || key.GroupID == nil {
 		return "", "", true

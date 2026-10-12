@@ -7,32 +7,66 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/promptpolicy"
 )
 
-// AdminReadSettings contains gateway settings displayed by the administration page.
+// Persisted gateway settings need display defaults even before an administrator
+// saves every field. Reading applies the forwarding switches' established
+// defaults and platform normalizers, retaining configured prompt text and
+// parsing prompt replacement JSON for the administration view.
+
+// AdminReadSettings contains interpreted gateway values displayed by the administration page.
 type AdminReadSettings struct {
-	AntigravityUserAgentVersion            string
-	BackendModeEnabled                     bool
-	ClaudeOAuthSystemPrompt                string
-	ClaudeOAuthSystemPromptBlocks          string
-	EnableAnthropicCacheTTL1hInjection     bool
-	EnableCCHSigning                       bool
+	// Antigravity client version override
+	AntigravityUserAgentVersion string
+	// backend-mode admission toggle
+	BackendModeEnabled bool
+	// configured Anthropic system text
+	ClaudeOAuthSystemPrompt string
+	// JSON system content blocks
+	ClaudeOAuthSystemPromptBlocks string
+	// one-hour Anthropic cache injection
+	EnableAnthropicCacheTTL1hInjection bool
+	// Claude billing attribution signing
+	EnableCCHSigning bool
+	// Anthropic system injection toggle
 	EnableClaudeOAuthSystemPromptInjection bool
-	EnableClientDatelineNormalization      bool
-	EnableFingerprintUnification           bool
-	EnableIdentityPatch                    bool
-	EnableMetadataPassthrough              bool
-	GrokDefaultBaseURLMode                 string
-	GrokDefaultTextModel                   string
-	IdentityPatchPrompt                    string
-	MaxClaudeCodeVersion                   string
-	MinClaudeCodeVersion                   string
-	OpenAIAllowClaudeCodeCodexPlugin       bool
-	OpenAICodexUserAgent                   string
-	OpenAITTFTMode                         string
-	RewriteMessageCacheControl             bool
-	UserPromptReplacementConfig            *promptpolicy.UserPromptReplacementConfig
+	// client dateline normalization toggle
+	EnableClientDatelineNormalization bool
+	// provider fingerprint unification toggle
+	EnableFingerprintUnification bool
+	// identity prompt patching toggle
+	EnableIdentityPatch bool
+	// client metadata passthrough toggle
+	EnableMetadataPassthrough bool
+	// default Grok endpoint mode
+	GrokDefaultBaseURLMode string
+	// default Grok text model
+	GrokDefaultTextModel string
+	// configured identity patch text
+	IdentityPatchPrompt string
+	// upper CLI version bound
+	MaxClaudeCodeVersion string
+	// lower CLI version bound
+	MinClaudeCodeVersion string
+	// Claude Codex plugin permission
+	OpenAIAllowClaudeCodeCodexPlugin bool
+	// outbound Codex User-Agent override
+	OpenAICodexUserAgent string
+	// semantic or visible TTFT
+	OpenAITTFTMode string
+	// message cache-control rewrite toggle
+	RewriteMessageCacheControl bool
+	// configured user-prompt replacement rules
+	UserPromptReplacementConfig *promptpolicy.UserPromptReplacementConfig
 }
 
-// ReadAdminSettings parses persisted values and applies defaults for missing settings.
+// ReadAdminSettings interprets persisted gateway values for the administration
+// view. Supply the Antigravity version normalizer and Grok default model;
+// missing values enable identity patching, fingerprint unification, prompt
+// injection, and dateline normalization, while other switches default to false.
+//
+// Boolean values match the literal "true" rather than general boolean spellings.
+// Prompt text and version bounds are retained, TTFT and Grok URL modes are
+// normalized, and prompt replacement JSON uses its parser's default configuration
+// when it is absent or invalid.
 func ReadAdminSettings(settings map[string]string, rules AdminSettingsRules) *AdminReadSettings {
 	result := &AdminReadSettings{}
 	result.BackendModeEnabled = settings[SettingKeyBackendModeEnabled] == "true"
@@ -82,7 +116,9 @@ func ReadAdminSettings(settings map[string]string, rules AdminSettingsRules) *Ad
 	return result
 }
 
-// parseAdminPromptConfig parses prompt policy settings and logs diagnostics.
+// parseAdminPromptConfig parses replacement-policy JSON for the administration
+// view and logs invalid JSON through slog.Warn. Missing or invalid input returns
+// the prompt-policy parser's default configuration for display.
 func parseAdminPromptConfig(raw string) *promptpolicy.UserPromptReplacementConfig {
 	return promptpolicy.ParseConfig(raw, slog.Warn)
 }

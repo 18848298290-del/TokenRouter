@@ -5,20 +5,45 @@ import (
 	"strings"
 )
 
+// Some Claude client auxiliary requests have fixed local answers, allowing
+// their caller to proceed without an upstream exchange. Single-token Haiku
+// probes require a validated Claude client and take precedence; suggestion and
+// warmup recognition inspect structured message and system text after a quick
+// raw-body marker check.
+//
+// Suggestion recognition considers the first text block of the final request
+// message when its role is user, while warmup scans all text blocks for title
+// requests or a fixed warmup value. Malformed JSON yields ordinary forwarding.
+// This ordering keeps probe identification independent of JSON
+// shape and keeps suggestion classification ahead of title or warmup markers
+// elsewhere in an otherwise valid request.
+
+// Interception kinds select the fixed local reply emitted by the Messages
+// entrypoint when a recognized auxiliary request bypasses upstream execution.
 const (
-	InterceptTypeNone              InterceptType = iota
-	InterceptTypeWarmup                          // Warmup request; reply with "New Conversation".
-	InterceptTypeSuggestionMode                  // Suggestion mode; reply with an empty string.
-	InterceptTypeMaxTokensOneHaiku               // Single-token Haiku probe; reply with "#".
+	InterceptTypeNone              InterceptType = iota // ordinary upstream forwarding
+	InterceptTypeWarmup                                 // Warmup request; reply with "New Conversation".
+	InterceptTypeSuggestionMode                         // Suggestion mode; reply with an empty string.
+	InterceptTypeMaxTokensOneHaiku                      // Single-token Haiku probe; reply with "#".
 )
 
-// InterceptType identifies requests answered locally.
+// InterceptType classifies auxiliary requests eligible for fixed local responses.
 type InterceptType int
 
 // DetectInterceptType classifies probe, suggestion, and warmup requests for local responses.
 // Haiku probe detection requires a validated Claude Code client.
+// Probes take precedence over body markers, suggestion mode precedes warmup,
+// and malformed JSON or an unmatched payload returns InterceptTypeNone. The
+// caller owns client validation and supplies its result with model and maxTokens.
+//
+// Suggestion markers qualify at the start of the final message's first text
+// block when that message has the user role.
+// Title or fixed warmup text can occur in earlier messages or system blocks,
+// but those markers are consulted after suggestion recognition.
 func DetectInterceptType(body []byte, model string, maxTokens int, isClaudeCodeClient bool) InterceptType {
-	// Probe detection takes precedence for both streaming and buffered requests.
+	// A validated single-token Haiku probe can omit ordinary Messages payload
+	// features. Identify it before parsing so both streaming and buffered probes
+	// receive the same local classification.
 	if isClaudeCodeClient && IsHaikuProbe(model, maxTokens) {
 		return InterceptTypeMaxTokensOneHaiku
 	}
@@ -34,16 +59,19 @@ func DetectInterceptType(body []byte, model string, maxTokens int, isClaudeCodeC
 
 	var req struct {
 		Messages []struct {
-			Role    string `json:"role"`
+			Role    string `json:"role"` // request message role
 			Content []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			} `json:"content"`
-		} `json:"messages"`
+				Type string `json:"type"` // content block type
+				Text string `json:"text"` // content block text
+			} `json:"content"` // ordered message content
+		} `json:"messages"` // ordered request messages
 		System []struct {
-			Text string `json:"text"`
-		} `json:"system"`
+			Text string `json:"text"` // system block text
+		} `json:"system"` // supplied system blocks
 	}
+	// An undecodable payload provides no reliable message positions or text
+	// blocks for auxiliary recognition. Return the ordinary classification so the
+	// entrypoint keeps its normal handling path.
 	if err := json.Unmarshal(body, &req); err != nil {
 		return InterceptTypeNone
 	}

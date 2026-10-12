@@ -6,11 +6,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestExtractVersion supplies CLI version headers with case variants, suffixes,
+// and malformed prefixes. Extraction returns three release components for
+// recognized headers and an empty string for unmatched client input.
 func TestExtractVersion(t *testing.T) {
 	v := NewClaudeCodeValidator()
 	tests := []struct {
-		ua   string
-		want string
+		ua   string // input User-Agent value
+		want string // expected extracted version
 	}{
 		{"claude-cli/2.1.22 (darwin; arm64)", "2.1.22"},
 		{"claude-cli/1.0.0", "1.0.0"},
@@ -26,10 +29,13 @@ func TestExtractVersion(t *testing.T) {
 	}
 }
 
+// TestCompareVersions compares equal versions and changes in each numeric
+// component. The result protects numeric ordering, missing-input zero behavior,
+// and compatibility with a leading lowercase v.
 func TestCompareVersions(t *testing.T) {
 	tests := []struct {
-		a, b string
-		want int
+		a, b string // first comparison version; second comparison version
+		want int    // expected comparison ordering
 	}{
 		{"2.1.0", "2.1.0", 0},
 		{"2.1.1", "2.1.0", 1},

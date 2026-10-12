@@ -7,35 +7,61 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
 )
 
+// Claude Code identification affects request mimicry and client restrictions,
+// so ordinary Messages requests need matching payload and header features as
+// well as the CLI User-Agent. Auxiliary count-token and marked Haiku probes
+// use a smaller set of checks because they can omit the ordinary system prompt.
+// These features are supplied by the requester and classify its format.
+//
+// System-prompt recognition accepts identity-template similarity, billing
+// attribution with an entrypoint, or a structured security-monitor prompt.
+// Monitor recognition examines one complete text block at a time, allowing
+// separate context blocks before or after it. Template scoring counts repeated
+// rune bigrams as a multiset so repeated pairs contribute only their shared
+// multiplicity when calculating similarity.
+
+// Client recognition constants control the accepted prompt forms and similarity
+// threshold used after the CLI User-Agent check passes.
 const (
-	// Security-monitor detection uses these markers while allowing other prompt wording to vary.
+	// Security-monitor detection uses these markers while allowing other prompt
+	// wording to vary.
 	claudeCodeSecurityMonitorPromptPrefix = "You are a security monitor for autonomous AI coding agents."
+	// claudeCodeSecurityMonitorPromptMinLen measures bytes, so short classifier
+	// prefixes need the complete prompt body before monitor recognition can pass.
 	claudeCodeSecurityMonitorPromptMinLen = 10_000
 
-	// claudeCodeBillingHeaderPrefix identifies the billing-attribution block in Claude Code system prompts.
-	// This block identifies subrequests that lack identity text. Fixed auxiliary requests have separate detection rules.
+	// claudeCodeBillingHeaderPrefix identifies the billing-attribution block in
+	// Claude Code system prompts. This block identifies subrequests that lack
+	// identity text. Fixed auxiliary requests have separate detection rules.
 	// See protocol/bridge/anthropic_to_responses.go for the corresponding protocol conversion.
 	claudeCodeBillingHeaderPrefix = wire.ClaudeCodeBillingHeaderPrefix
 	// claudeCodeEntrypointMarker detects the presence of an entrypoint field.
-	// Entrypoint values such as cli, claude-vscode, jetbrains, and sdk can be supplied by the requester.
+	// Entrypoint values such as cli, claude-vscode, jetbrains, and sdk can be
+	// supplied by the requester.
 	claudeCodeEntrypointMarker = wire.ClaudeCodeEntrypointMarker
 
-	// ClaudeCodeSystemPromptThreshold is the minimum Dice similarity accepted for identity templates.
+	// ClaudeCodeSystemPromptThreshold is the minimum Dice similarity accepted
+	// for identity templates.
 	ClaudeCodeSystemPromptThreshold = 0.5
 
-	// ClaudeCodeSecurityMonitorPrefix exposes the detection prefix for compatibility checks.
+	// ClaudeCodeSecurityMonitorPrefix exposes the detection prefix for
+	// compatibility checks.
 	ClaudeCodeSecurityMonitorPrefix = claudeCodeSecurityMonitorPromptPrefix
 )
 
+// Client recognition patterns and prompt templates supply the fixed format
+// evidence checked by the validator and its similarity calculation.
 var (
-	// Match the claude-cli/x.x.x prefix case-insensitively.
+	// claudeCodeUAPattern accepts a case-insensitive CLI prefix and three numeric
+	// version components, allowing trailing client details after the matched prefix.
 	claudeCodeUAPattern = regexp.MustCompile(`(?i)^claude-cli/\d+\.\d+\.\d+`)
 
-	// Minimum system-prompt similarity.
+	// systemPromptThreshold is the minimum template score for identifying an
+	// ordinary prompt when the billing and monitor recognizers do not match.
 	systemPromptThreshold = ClaudeCodeSystemPromptThreshold
 
-	// Claude Code identity templates.
-	// Template source: claude-relay-service/src/utils/contents.js.
+	// claudeCodeSystemPrompts are identity and auxiliary prompt fragments compared
+	// with whitespace-normalized request text during client-format recognition.
 	claudeCodeSystemPrompts = []string{
 		// claudeOtherSystemPrompt1 - Primary
 		"You are Claude Code, Anthropic's official CLI for Claude.",
@@ -56,7 +82,8 @@ var (
 		"You are an interactive CLI tool that helps users",
 	}
 
-	// claudeCodeSecurityMonitorMarkers are required in addition to the prefix and minimum length.
+	// claudeCodeSecurityMonitorMarkers are required in addition to the fixed
+	// prefix and minimum length when recognizing a monitor prompt block.
 	claudeCodeSecurityMonitorMarkers = []string{
 		"## Threat Model",
 		"- `<transcript>`:",
@@ -75,49 +102,61 @@ type ClaudeCodeValidator struct{}
 
 // ClaudeCodeValidationInput contains client metadata extracted synchronously by HTTP handlers.
 type ClaudeCodeValidationInput struct {
-	Path              string
-	UserAgent         string
-	XApp              string
-	AnthropicBeta     string
-	AnthropicVersion  string
+	Path             string // HTTP request path
+	UserAgent        string // client User-Agent value
+	XApp             string // client X-App value
+	AnthropicBeta    string // requested Anthropic beta markers
+	AnthropicVersion string // requested Anthropic protocol version
+	// MaxTokensOneHaiku marks a probe identified by the caller's model and token
+	// checks. Validate still requires a matching CLI User-Agent before accepting it.
 	MaxTokensOneHaiku bool
 }
 
-// IsClaudeCodeClient checks the CLI User-Agent and metadata identity format.
-// Both checks must pass before callers can skip request mimicry.
+// IsClaudeCodeClient checks the CLI User-Agent and metadata identity format for
+// ingress and mimicry decisions. Both predicates need to pass for this result;
+// forwarding callers can also consult separately validated context or proxied
+// request evidence. Metadata accepts both formats recognized by the Anthropic parser.
 func IsClaudeCodeClient(userAgent, metadataUserID string) bool {
 	return claudeCodeUAPattern.MatchString(userAgent) && wire.ParseMetadataUserID(metadataUserID) != nil
 }
 
-// NewClaudeCodeValidator creates a client-format validator.
+// NewClaudeCodeValidator constructs a stateless validator for ingress client-format checks.
 func NewClaudeCodeValidator() *ClaudeCodeValidator {
 	return &ClaudeCodeValidator{}
 }
 
 // Validate checks the CLI User-Agent before applying path-specific payload checks.
 // Non-Messages paths, count_tokens, and marked Haiku probes require the User-Agent alone.
+// Path matching uses a case-sensitive messages substring; the count-token
+// exemption requires the /messages/count_tokens suffix. Callers identify probe
+// intent before setting MaxTokensOneHaiku because that flag waives payload checks.
 //
 // Ordinary Messages requests also require a recognized system prompt, nonempty
 // X-App, anthropic-beta, and anthropic-version headers, and valid metadata.user_id.
+// The decoded body needs a string model, a []any system array, and map[string]any
+// metadata so those checks can read the expected request representation.
 func (v *ClaudeCodeValidator) Validate(input ClaudeCodeValidationInput, body map[string]any) bool {
 	ua := input.UserAgent
 	if !claudeCodeUAPattern.MatchString(ua) {
 		return false
 	}
 
-	// Non-Messages paths require the CLI User-Agent alone.
+	// Auxiliary paths lack the ordinary Messages payload. The validated CLI
+	// header identifies their client format before body and metadata checks are needed.
 	path := input.Path
 	if !strings.Contains(path, "messages") {
 		return true
 	}
 
-	// count_tokens auxiliary requests may omit the full Messages system prompt.
+	// Count-token requests can omit identity prompts and metadata, so a matching
+	// CLI header suffices for this auxiliary path after the initial User-Agent gate.
 	if isMessagesCountTokensPath(path) {
 		return true
 	}
 
-	// Haiku connectivity probes may omit the system prompt.
-	// The caller marks these probes after checking their model and token limit.
+	// Callers mark single-token Haiku probes before validation. Their smaller
+	// payload can omit system prompts and required Messages headers once the CLI
+	// User-Agent gate has passed.
 	if input.MaxTokensOneHaiku {
 		return true // User-Agent validation has already passed.
 	}
@@ -163,12 +202,15 @@ func (v *ClaudeCodeValidator) Validate(input ClaudeCodeValidationInput, body map
 	return true
 }
 
+// isMessagesCountTokensPath reports whether the path has the Messages counting suffix.
 func isMessagesCountTokensPath(path string) bool {
 	return strings.HasSuffix(path, "/messages/count_tokens")
 }
 
 // hasClaudeCodeSystemPrompt recognizes security-monitor markers, billing blocks,
 // or identity templates whose Dice similarity meets the threshold.
+// A model string and system array are required; monitor recognition examines
+// typed text blocks while billing and identity matching read each block's text.
 func (v *ClaudeCodeValidator) hasClaudeCodeSystemPrompt(body map[string]any) bool {
 	if body == nil {
 		return false
@@ -198,13 +240,16 @@ func (v *ClaudeCodeValidator) hasClaudeCodeSystemPrompt(body map[string]any) boo
 			continue
 		}
 
-		// Recognize the billing block before template similarity checks.
-		// The protocol billing prefix and entrypoint marker are case-sensitive.
+		// Billing attribution can identify auxiliary requests whose text differs
+		// from identity templates. Its protocol prefix and entrypoint marker use
+		// case-sensitive matching before the broader similarity calculation.
 		if strings.HasPrefix(text, claudeCodeBillingHeaderPrefix) &&
 			strings.Contains(text, claudeCodeEntrypointMarker) {
 			return true
 		}
 
+		// When exact structural recognizers do not match, the similarity threshold
+		// lets small wording variations still identify a configured client prompt template.
 		bestScore := v.BestSimilarityScore(text)
 		if bestScore >= systemPromptThreshold {
 			return true
@@ -216,6 +261,8 @@ func (v *ClaudeCodeValidator) hasClaudeCodeSystemPrompt(body map[string]any) boo
 
 // isClaudeCodeSecurityMonitorPrompt checks individual system blocks, allowing
 // the CLI to add conversation context before or after the monitor prompt.
+// A matching text block needs the fixed prefix, byte-length minimum, and every
+// structural marker. Markers split between different blocks cannot satisfy it.
 func isClaudeCodeSecurityMonitorPrompt(systemEntries []any) bool {
 	for _, rawEntry := range systemEntries {
 		entry, ok := rawEntry.(map[string]any)
@@ -228,6 +275,8 @@ func isClaudeCodeSecurityMonitorPrompt(systemEntries []any) bool {
 			continue
 		}
 
+		// A prefix alone also appears in shorter or altered classifier prompts.
+		// The minimum byte length and complete marker set constrain monitor recognition.
 		text, ok := entry["text"].(string)
 		if !ok || len(text) < claudeCodeSecurityMonitorPromptMinLen ||
 			!strings.HasPrefix(text, claudeCodeSecurityMonitorPromptPrefix) {
@@ -242,6 +291,7 @@ func isClaudeCodeSecurityMonitorPrompt(systemEntries []any) bool {
 	return false
 }
 
+// hasAllClaudeCodeSecurityMonitorMarkers checks the full marker set within one prompt.
 func hasAllClaudeCodeSecurityMonitorMarkers(text string) bool {
 	for _, marker := range claudeCodeSecurityMonitorMarkers {
 		if !strings.Contains(text, marker) {
@@ -253,6 +303,8 @@ func hasAllClaudeCodeSecurityMonitorMarkers(text string) bool {
 }
 
 // BestSimilarityScore returns the highest Dice similarity against the Claude Code templates.
+// Whitespace is normalized before comparison, and DiceCoefficient handles case
+// folding. Empty input obtains zero against the nonempty configured templates.
 func (v *ClaudeCodeValidator) BestSimilarityScore(text string) float64 {
 	normalizedText := normalizePrompt(text)
 	bestScore := 0.0
@@ -268,19 +320,28 @@ func (v *ClaudeCodeValidator) BestSimilarityScore(text string) float64 {
 	return bestScore
 }
 
-// normalizePrompt collapses whitespace and trims the prompt.
+// normalizePrompt returns prompt text with trimmed, collapsed whitespace between words.
 func normalizePrompt(text string) string {
 	return strings.Join(strings.Fields(text), " ")
 }
 
 // DiceCoefficient returns the Sorensen-Dice similarity of case-folded rune bigrams.
-// Repeated bigrams contribute their minimum count to the intersection.
-// The score is 2 * intersection / (bigrams(a) + bigrams(b)).
+// Equal input strings return one immediately, including equal empty strings;
+// differing inputs with no usable bigrams return zero.
+//
+// Each input is lowercased and represented by adjacent rune pairs with their
+// multiplicities. The intersection adds the smaller count for each shared pair,
+// so one repeated pair cannot match more occurrences than the other input has.
+// Dividing twice that intersection by both total pair counts yields the score
+// used for identity-template recognition.
 func DiceCoefficient(a, b string) float64 {
 	if a == b {
 		return 1.0
 	}
 
+	// Differing strings need an adjacent pair for a meaningful similarity score.
+	// The byte guard handles ASCII single characters; the later empty-bigram guard
+	// covers inputs containing just one multibyte rune.
 	if len(a) < 2 || len(b) < 2 {
 		return 0.0
 	}
@@ -293,6 +354,8 @@ func DiceCoefficient(a, b string) float64 {
 	}
 
 	intersection := 0
+	// For example, abab and ab share one ab pair among four total pairs.
+	// Limiting each shared count keeps their score at one half despite the repeated pair.
 	for bigram, countA := range bigramsA {
 		if countB, exists := bigramsB[bigram]; exists {
 			if countA < countB {
@@ -333,13 +396,14 @@ func (v *ClaudeCodeValidator) ValidateUserAgent(ua string) bool {
 	return claudeCodeUAPattern.MatchString(ua)
 }
 
-// ExtractVersion returns the three-part Claude Code version from the User-Agent,
-// or an empty string when the prefix does not match.
+// ExtractVersion returns the three numeric release components from a leading
+// CLI User-Agent. It accepts case variants and trailing suffixes through
+// ExtractClaudeCLIVersion, returning an empty string for an unmatched prefix.
 func (v *ClaudeCodeValidator) ExtractVersion(ua string) string {
 	return ExtractClaudeCLIVersion(ua)
 }
 
-// IsHaikuProbe identifies single-token Haiku connectivity probes.
+// IsHaikuProbe reports whether a single-token request names a Haiku model.
 func IsHaikuProbe(model string, maxTokens int) bool {
 	return maxTokens == 1 && strings.Contains(strings.ToLower(model), "haiku")
 }

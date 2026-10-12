@@ -6,6 +6,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestStreamPayloadInjectsIDOnlyWhenRequired supplies a compact response with
+// and without an existing ID. The generator stays unused for a supplied ID and
+// is called once to populate a missing one.
 func TestStreamPayloadInjectsIDOnlyWhenRequired(t *testing.T) {
 	calls := 0
 	id := func() string { calls++; return "resp_generated" }
