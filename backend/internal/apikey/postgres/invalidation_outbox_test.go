@@ -10,9 +10,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestAuthCacheInvalidationOutboxRepository_ClaimUsesLeaseAndSkipLocked
+// supplies one returned leased record through SQL expectations. It checks the
+// elapsed-claim predicate, SKIP LOCKED statement shape, supplied parameters and
+// decoded delivery-stage fields.
 func TestAuthCacheInvalidationOutboxRepository_ClaimUsesLeaseAndSkipLocked(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
+	// Release the test-owned SQL handle after its claim or transition
+	// assertions so the mock connection does not outlive the adapter scenario.
 	defer func() { _ = db.Close() }()
 
 	created := time.Now().UTC()
@@ -30,9 +36,14 @@ func TestAuthCacheInvalidationOutboxRepository_ClaimUsesLeaseAndSkipLocked(t *te
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestAuthCacheInvalidationOutboxRepository_ClaimIsBoundedByDefault passes
+// omitted batch and lease values to the SQL adapter. It checks defaults become
+// a bounded claim limit and thirty-second lease in the executed statement.
 func TestAuthCacheInvalidationOutboxRepository_ClaimIsBoundedByDefault(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
+	// Release the test-owned SQL handle after its claim or transition
+	// assertions so the mock connection does not outlive the adapter scenario.
 	defer func() { _ = db.Close() }()
 	mock.ExpectQuery("(?s)FROM auth_cache_invalidation_outbox.*LIMIT \\$2.*SKIP LOCKED").
 		WithArgs("worker", 100, int64(30)).
@@ -43,9 +54,15 @@ func TestAuthCacheInvalidationOutboxRepository_ClaimIsBoundedByDefault(t *testin
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestAuthCacheInvalidationOutboxRepository_ClaimOwnershipTransitions accepts
+// one affected row for safety scheduling, retry and deletion. It checks row and
+// worker identities plus retry timestamps and text are sent to each
+// owner-dependent SQL operation.
 func TestAuthCacheInvalidationOutboxRepository_ClaimOwnershipTransitions(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
+	// Release the test-owned SQL handle after its claim or transition
+	// assertions so the mock connection does not outlive the adapter scenario.
 	defer func() { _ = db.Close() }()
 	repo := NewAuthCacheInvalidationOutboxRepository(db)
 
@@ -68,9 +85,15 @@ func TestAuthCacheInvalidationOutboxRepository_ClaimOwnershipTransitions(t *test
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestAuthCacheInvalidationOutboxRepository_RejectsLostClaim returns zero
+// affected rows for an old worker's acknowledgement attempt. It checks the
+// adapter reports lost claim ownership instead of accepting the absent
+// deletion.
 func TestAuthCacheInvalidationOutboxRepository_RejectsLostClaim(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
+	// Release the test-owned SQL handle after its claim or transition
+	// assertions so the mock connection does not outlive the adapter scenario.
 	defer func() { _ = db.Close() }()
 	mock.ExpectExec("DELETE FROM auth_cache_invalidation_outbox").
 		WithArgs(int64(3), "old-worker").
@@ -80,9 +103,14 @@ func TestAuthCacheInvalidationOutboxRepository_RejectsLostClaim(t *testing.T) {
 	require.ErrorContains(t, err, "no longer owned")
 }
 
+// TestAuthCacheInvalidationOutboxRepository_StatsExposeDurableLagAndFailures
+// supplies retained count, creation time, retries and stored error through SQL
+// rows. It checks these observations are decoded for worker health reporting.
 func TestAuthCacheInvalidationOutboxRepository_StatsExposeDurableLagAndFailures(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
+	// Release the test-owned SQL handle after its claim or transition
+	// assertions so the mock connection does not outlive the adapter scenario.
 	defer func() { _ = db.Close() }()
 	oldest := time.Now().UTC().Add(-time.Minute)
 	mock.ExpectQuery("(?s)SELECT COUNT\\(\\*\\), MIN\\(created_at\\), COALESCE\\(MAX\\(attempts\\), 0\\)").

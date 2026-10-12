@@ -11,24 +11,37 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/requestcontext"
 )
 
-// requestLimitCacheStub records lease releases and embeds unused cache operations.
+// requestLimitCacheStub counts renewal and release attempts with configurable
+// reservation failures.
 type requestLimitCacheStub struct {
-	APIKeyCache
-	released   int
-	reserveErr error
-	refreshErr error
-	refreshed  int
+	APIKeyCache // unused cache methods require setup
+	// released and refreshed are unsynchronized observations written by cleanup
+	// and renewal respectively. Tests join renewal or use synctest.Wait before
+	// reading the counters, and configure the error fields before acquisition.
+	released   int   // counted usable-context cleanup attempts
+	reserveErr error // configured reservation failure result
+	refreshErr error // configured lease renewal failure
+	refreshed  int   // counted lease renewal attempts
 }
 
+// ReserveRequest returns one second and the configured reservation error for
+// every call. The fixture ignores Key identity and limits, allowing tests to
+// isolate service cleanup around a predetermined result.
 func (s *requestLimitCacheStub) ReserveRequest(context.Context, int64, string, int, int) (time.Duration, error) {
 	return time.Second, s.reserveErr
 }
 
+// RefreshRequest counts one renewal attempt and returns its configured failure.
+// Context, Key ID and request identity are ignored; tests install that result
+// before acquisition and join renewal before reading its unsynchronized counter.
 func (s *requestLimitCacheStub) RefreshRequest(context.Context, int64, string) error {
 	s.refreshed++
 	return s.refreshErr
 }
 
+// ReleaseRequest counts cleanup when its context is usable at entry and returns
+// the context error. Cancellation prevents recording, allowing callers to
+// observe whether the service creates an independent cleanup context.
 func (s *requestLimitCacheStub) ReleaseRequest(ctx context.Context, _ int64, _ string) error {
 	if ctx.Err() == nil {
 		s.released++
@@ -36,7 +49,9 @@ func (s *requestLimitCacheStub) ReleaseRequest(ctx context.Context, _ int64, _ s
 	return ctx.Err()
 }
 
-// TestRequestLimitsValidation covers absent limits, clearing limits, and database integer bounds.
+// TestRequestLimitsValidation supplies omitted, zero, positive and PostgreSQL
+// integer-edge limits. It checks accepted values and rejection of negative or
+// oversized limits through the service create and update validators.
 func TestRequestLimitsValidation(t *testing.T) {
 	for _, n := range []int{0, 1, 2147483647} {
 		require.NoError(t, ValidateRequestLimits(&n, &n))
@@ -48,13 +63,17 @@ func TestRequestLimitsValidation(t *testing.T) {
 	}
 }
 
-// TestRequestLimitsReleaseAfterCancellation checks that release survives cancellation and runs once.
+// TestRequestLimitsReleaseAfterCancellation cancels an admitted request and
+// invokes release twice. It checks one recorded cleanup and canceled request
+// context despite cleanup being called after client cancellation.
 func TestRequestLimitsReleaseAfterCancellation(t *testing.T) {
 	cache := &requestLimitCacheStub{}
 	service := &APIKeyService{cache: cache}
 	ctx, cancel := context.WithCancel(context.Background())
 	admitted, release, _, err := service.AcquireRequest(ctx, &APIKey{ID: 1, ConcurrencyLimit: 1})
 	require.NoError(t, err)
+	// Cancel first to reproduce client disconnect before completion; repeated
+	// release must still return the lease through an independent cleanup context.
 	cancel()
 	release()
 	release()
@@ -62,7 +81,9 @@ func TestRequestLimitsReleaseAfterCancellation(t *testing.T) {
 	require.Equal(t, 1, cache.released)
 }
 
-// TestRequestLimitsUnavailable rejects limited keys without storage while admitting unlimited keys.
+// TestRequestLimitsUnavailable supplies a service with no limiter storage and
+// compares configured and unlimited Keys. It checks rejection with no release
+// for the configured limit and successful no-op release for the unlimited Key.
 func TestRequestLimitsUnavailable(t *testing.T) {
 	service := &APIKeyService{}
 	_, release, _, err := service.AcquireRequest(context.Background(), &APIKey{ConcurrencyLimit: 1})
@@ -73,7 +94,9 @@ func TestRequestLimitsUnavailable(t *testing.T) {
 	release()
 }
 
-// TestRequestLimitSnapshotRoundTrip retains request limits and rejects snapshots predating them.
+// TestRequestLimitSnapshotRoundTrip supplies a preceding snapshot version and a
+// current version containing both request limits. It checks stale rejection and
+// reconstruction of the current concurrency and RPM values.
 func TestRequestLimitSnapshotRoundTrip(t *testing.T) {
 	service := &APIKeyService{}
 	_, used, err := service.KeyApplyAuthCacheEntry("old", &APIKeyAuthCacheEntry{Snapshot: &APIKeyAuthSnapshot{Version: 46}})
@@ -89,7 +112,10 @@ func TestRequestLimitSnapshotRoundTrip(t *testing.T) {
 	require.Equal(t, 20, key.RPMLimit)
 }
 
-// TestRequestLeaseRenewalFailure checks cancellation on renewal failure and cleanup after release.
+// TestRequestLeaseRenewalFailure advances simulated time past the first renewal
+// with a failing store. It checks cancellation of ordinary and detached
+// contexts, one cleanup, and rejection of later limited work after service
+// shutdown.
 func TestRequestLeaseRenewalFailure(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		cache := &requestLimitCacheStub{refreshErr: ErrKeyLimiterUnavailable}
@@ -98,6 +124,8 @@ func TestRequestLeaseRenewalFailure(t *testing.T) {
 		require.NoError(t, err)
 		detached := requestcontext.Detach(ctx)
 		synctest.Wait()
+		// Advance beyond one renewal tick; synctest.Wait then joins runnable
+		// renewal work before the test inspects its cancellation or count.
 		time.Sleep(31 * time.Second)
 		synctest.Wait()
 		require.ErrorIs(t, ctx.Err(), context.Canceled)
@@ -107,13 +135,17 @@ func TestRequestLeaseRenewalFailure(t *testing.T) {
 		require.Equal(t, 1, cache.refreshed)
 		release()
 		require.Equal(t, 1, cache.released)
+		// Wait for the operation gate to drain after lease cleanup so subsequent
+		// admission can observe the service's permanent stopping state.
 		service.Stop()
 		_, _, _, err = service.AcquireRequest(context.Background(), &APIKey{ID: 1, ConcurrencyLimit: 1})
 		require.ErrorIs(t, err, ErrKeyLimiterUnavailable)
 	})
 }
 
-// TestRequestLeaseSurvivesClientCancellation keeps a concurrency slot while processing continues after disconnect.
+// TestRequestLeaseSurvivesClientCancellation disconnects an admitted caller
+// while retaining its detached processing context. It checks renewal continues
+// before release, then stops and cleans up once after the caller finishes.
 func TestRequestLeaseSurvivesClientCancellation(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		cache := &requestLimitCacheStub{}
@@ -125,11 +157,15 @@ func TestRequestLeaseSurvivesClientCancellation(t *testing.T) {
 		cancel()
 		synctest.Wait()
 		require.NoError(t, detached.Err())
+		// Advance beyond one renewal tick; synctest.Wait then joins runnable
+		// renewal work before the test inspects its cancellation or count.
 		time.Sleep(31 * time.Second)
 		synctest.Wait()
 		require.Equal(t, 1, cache.refreshed)
 		require.Zero(t, cache.released)
 		release()
+		// Advance through additional renewal intervals after release to detect
+		// a worker that failed to stop and continued refreshing the completed lease.
 		time.Sleep(time.Minute)
 		synctest.Wait()
 		require.Equal(t, 1, cache.refreshed)
@@ -137,7 +173,9 @@ func TestRequestLeaseSurvivesClientCancellation(t *testing.T) {
 	})
 }
 
-// TestRequestReservationUnknownOutcome cleans up a slot that may have been reserved before response loss.
+// TestRequestReservationUnknownOutcome supplies an unavailable reservation
+// result that could follow Redis response loss. It checks independent cleanup
+// occurs and no release callback is returned to the rejected caller.
 func TestRequestReservationUnknownOutcome(t *testing.T) {
 	cache := &requestLimitCacheStub{reserveErr: ErrKeyLimiterUnavailable}
 	service := &APIKeyService{cache: cache}
@@ -145,5 +183,7 @@ func TestRequestReservationUnknownOutcome(t *testing.T) {
 	require.ErrorIs(t, err, ErrKeyLimiterUnavailable)
 	require.Nil(t, release)
 	require.Equal(t, 1, cache.released)
+	// Wait for service shutdown after rejection; a leaked reservation operation
+	// count would keep the drain monitor from completing this fixture's teardown.
 	service.Stop()
 }

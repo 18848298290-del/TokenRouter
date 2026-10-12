@@ -1,16 +1,27 @@
-// Package apikey manages API keys, authenticates callers, and checks request limits.
+// Package apikey manages gateway credentials, their admission views and cached
+// authentication data. Credential creator, team payer and request actor remain
+// distinct so gateway checks and billing use the appropriate user.
 //
-// Reading entry points:
-//   - api_key.go defines keys, status, usage windows, and copying.
-//   - service.go creates, reads, and updates keys and checks team access and usage limits.
-//   - authenticate.go authenticates keys and resolves request identities.
+// Begin with authenticate.go to follow identity checks and diagnostic failure
+// records. Read api_key.go for persisted fields, hydrated views and copy rules.
+// Read service.go for Key configuration writes, funding choices and usage helpers.
 //
-// File groups:
-//   - auth_cache*.go caches authentication snapshots and refreshes them through invalidation and the outbox.
-//   - admin.go, managed_key.go, and credential_rotation.go handle admin operations, managed keys, and rotation.
-//   - composite.go, model_mapping.go, and runtime_group.go handle composite groups, model redirects, and request group selection.
-//   - access_context.go, request_metadata.go, and reauthenticate.go store request identity and metadata and revalidate access.
-//   - request_limits.go, ip.go, and invalid_auth_abuse_limiter.go enforce request concurrency, IP rules, and invalid-auth limits.
-//   - options.go, clock.go, and lifecycle.go configure the service and manage time and lifecycle.
-//   - snapshot_copy.go and published_invalidation.go copy snapshot data and publish cache invalidation.
+// auth_cache*.go handles versioned snapshots, local caching, subscriptions and
+// durable outbox delivery. lifecycle.go gates authentication work and drains it
+// before cache closure. request_limits.go and rediscache maintain admitted
+// request leases separately from cached configuration.
+//
+// composite.go, model_mapping.go and runtime_group.go resolve group prefixes,
+// Key aliases and permitted fallback targets. access_context.go and
+// request_metadata.go carry request decisions; reauthenticate.go reloads current
+// identity for later connection turns. admin.go, credential_rotation.go and
+// managed_key.go handle administrative writes, secret replacement and hidden
+// execution Keys.
+//
+// options.go and clock.go supply startup dependencies and service time; ip.go
+// and invalid_auth_abuse_limiter.go check address rules and bound invalid-client
+// tracking. snapshot_copy.go provides the conversion copy helpers, while
+// published_invalidation.go adapts shared invalidation for other modules.
+// postgres persists records and outbox claims; httpapi exposes console DTOs
+// and protocol-specific authentication responses.
 package apikey

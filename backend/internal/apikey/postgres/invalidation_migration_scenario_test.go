@@ -14,6 +14,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
+// TestAuthCacheInvalidationMigration_SecurityCoverageAndNoPlaintextPayload
+// inspects the embedded outbox migration source and its invalidation trigger
+// conditions. It checks hashed payload syntax, identity and lifecycle coverage,
+// delivery columns and absence of quota_used and last_used_at change conditions.
 func TestAuthCacheInvalidationMigration_SecurityCoverageAndNoPlaintextPayload(t *testing.T) {
 	content, err := migrations.FS.ReadFile("212_auth_cache_invalidation_outbox.sql")
 	require.NoError(t, err)
@@ -37,11 +41,16 @@ func TestAuthCacheInvalidationMigration_SecurityCoverageAndNoPlaintextPayload(t 
 	require.NotContains(t, sqlText, plaintext)
 }
 
+// TestAuthCacheInvalidationBillingMigrationCoversSubscriptionBinding reads the
+// embedded migration extending Key invalidation conditions. It checks both
+// funding-mode and specified-subscription comparisons appear in the trigger
+// source alongside the prior credential reference.
 func TestAuthCacheInvalidationBillingMigrationCoversSubscriptionBinding(t *testing.T) {
 	content, err := migrations.FS.ReadFile("258_extend_api_key_auth_cache_invalidation.sql")
 	require.NoError(t, err)
 	sqlText := string(content)
-	// Funding changes affect authentication snapshots and must enqueue invalidation through the same trigger.
+	// Funding mode and specified subscription participate in cached admission
+	// decisions, so this migration must retain both conditions in its Key trigger.
 	require.Contains(t, sqlText, "OLD.billing_mode IS DISTINCT FROM NEW.billing_mode")
 	require.Contains(t, sqlText, "OLD.preferred_subscription_id IS DISTINCT FROM NEW.preferred_subscription_id")
 	require.Contains(t, sqlText, "OLD.key")

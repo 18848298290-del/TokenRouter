@@ -11,6 +11,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/apikey"
 )
 
+// TestForcePlatform_SetsContextAndGinValue runs forced-platform middleware
+// before a request handler. It checks Gin presence and value agree with
+// standard request metadata and the handler returns its expected success
+// status.
 func TestForcePlatform_SetsContextAndGinValue(t *testing.T) {
 	r := gin.New()
 	r.Use(ForcePlatform("anthropic"))

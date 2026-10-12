@@ -12,30 +12,45 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// reauthenticationKeys counts direct authentication reads and supplies current
+// Key data.
 type reauthenticationKeys struct {
-	APIKeyRepository
-	key   *APIKey
-	err   error
-	reads int
+	APIKeyRepository         // unused methods require setup
+	key              *APIKey // configured current credential view
+	err              error   // configured direct lookup error
+	reads            int     // counted direct authentication reads
 }
 
-type reauthenticationGroups struct{ GroupRepository }
+// reauthenticationGroups returns active groups for the connection's selected
+// target ID.
+type reauthenticationGroups struct {
+	GroupRepository // unused group methods require setup
+}
 
+// staleReauthenticationCache supplies a retained positive entry despite current
+// repository rejection.
 type staleReauthenticationCache struct {
-	APIKeyCache
-	entry *APIKeyAuthCacheEntry
+	APIKeyCache                       // unused cache methods require setup
+	entry       *APIKeyAuthCacheEntry // retained positive cache entry
 }
 
+// GetByKeyForAuth counts one storage read and returns a copied configured Key
+// with its error. CopyAPIKey retains its documented nested references, and the
+// fixture ignores the requested credential and context.
 func (r *reauthenticationKeys) GetByKeyForAuth(context.Context, string) (*APIKey, error) {
 	r.reads++
 	return CopyAPIKey(r.key), r.err
 }
 
+// GetByIDLite returns a newly allocated active group for the supplied
+// identifier.
 func (reauthenticationGroups) GetByIDLite(_ context.Context, id int64) (*routing.Group, error) {
 	return &routing.Group{ID: id, Status: "active"}, nil
 }
 
-// TestReauthenticate rejects revoked access and leaves the admitted request's snapshot unchanged.
+// TestReauthenticate compares a previously admitted personal view with active,
+// revoked, changed and restricted current data. It checks rejection or fresh
+// admission, one repository read, and unchanged prior status and quota fields.
 func TestReauthenticate(t *testing.T) {
 	for _, name := range []string{"active", "deleted", "lookup_error", "replacement_key", "disabled", "inactive_user", "missing_user", "expired", "quota", "billing_changed", "ip_denied", "team_removed"} {
 		t.Run(name, func(t *testing.T) {
@@ -90,11 +105,16 @@ func TestReauthenticate(t *testing.T) {
 	}
 }
 
+// GetAuthCache returns the retained entry pointer for every credential lookup.
+// It ignores context and key text; tests keep published snapshot data unchanged
+// while authentication reconstructs its request view.
 func (c staleReauthenticationCache) GetAuthCache(context.Context, string) (*APIKeyAuthCacheEntry, error) {
 	return c.entry, nil
 }
 
-// TestReauthenticateBypassesPositiveCache checks that a cached credential cannot authorize a deleted key on a later turn.
+// TestReauthenticateBypassesPositiveCache supplies a positive cache entry for a
+// credential rejected by storage. It checks an initial cache load succeeds
+// while later reauthentication performs a direct read and rejects the Key.
 func TestReauthenticateBypassesPositiveCache(t *testing.T) {
 	ctx := context.Background()
 	previous := &APIKey{ID: 1, UserID: 2, Key: "sk-cached", Status: "active", User: &identity.User{ID: 2, Status: "active"}}

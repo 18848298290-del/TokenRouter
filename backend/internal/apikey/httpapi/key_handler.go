@@ -19,106 +19,185 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// APIKeyHandler handles key use cases and delegates group presentation and capacity reads.
-type APIKeyHandler[G any] struct {
-	idempotencyhttp.Executor
+// User Key requests combine authenticated subject identity with saved
+// credential configuration and payer-scoped group or subscription choices.
+// Creation converts optional HTTP amounts into service defaults and uses the
+// configured idempotency executor, while updates retain omission separately
+// from explicit zero or empty collections before selecting configuration
+// writes. Service validation decides ownership, binding and funding
+// eligibility.
+//
+// Responses present localized group copies and may attach optional live
+// capacity observations. Capacity failures still allow group listing, and
+// include_models is passed to the specialized presenter so lightweight choices
+// can skip catalogue work. Credential rotation is a direct operation returning
+// the generated replacement secret. Request routes rely on their configured
+// middleware for authentication, rate controls and auditing before these
+// handlers read the subject.
 
-	apiKeyService        *apikey.APIKeyService
-	groupCapacityService GroupCapacityReader
-	groupPresentation    func(context.Context, *routing.Group, *accessview.GroupCapacitySummary, bool) *G
-	presentGroup         func(*routing.Group, *accessview.GroupCapacitySummary) *G
+// APIKeyHandler serves user credential operations and payer-scoped
+// configuration choices with group presentation.
+type APIKeyHandler[G any] struct {
+	idempotencyhttp.Executor // configured user creation idempotency executor
+
+	// apiKeyService, groupCapacityService, groupPresentation and presentGroup
+	// are bound before concurrent requests. Capacity is optional, the specialized
+	// presenter can replace base group output, and credential responses use presentGroup.
+	apiKeyService        *apikey.APIKeyService                                                            // configured user Key service
+	groupCapacityService GroupCapacityReader                                                              // optional live capacity reader
+	groupPresentation    func(context.Context, *routing.Group, *accessview.GroupCapacitySummary, bool) *G // optional specialized group presenter
+	presentGroup         func(*routing.Group, *accessview.GroupCapacitySummary) *G                        // base credential group presenter
 }
+
+// GroupCapacityReader supplies optional live group observations for authorized
+// console choices.
 type GroupCapacityReader interface {
+	// GetGroupCapacityByIDs returns live observations keyed by group ID for
+	// optional presentation. The caller treats failure as absent capacity and
+	// continues permission-filtered group listing with the base group data.
 	GetGroupCapacityByIDs(context.Context, []int64) (map[int64]accessview.GroupCapacitySummary, error)
 }
 
-// CreateAPIKeyRequest represents the create API key request payload.
+// CreateAPIKeyRequest carries user creation input before service defaults and
+// final validation.
 type CreateAPIKeyRequest struct {
-	Name        string `json:"name" binding:"required"`
-	Scope       string `json:"scope" binding:"omitempty,oneof=personal team"`
-	GroupID     *int64 `json:"group_id"` // nullable
-	IsComposite bool   `json:"is_composite"`
-	// CompositeGroups contains the full set of group-prefix mappings.
-	CompositeGroups         []apikey.APIKeyCompositeGroupInput `json:"composite_groups"`
-	CustomKey               *string                            `json:"custom_key"`       // Optional custom credential
-	IPWhitelist             []string                           `json:"ip_whitelist"`     // Allowed IP addresses and CIDRs
-	IPBlacklist             []string                           `json:"ip_blacklist"`     // Denied IP addresses and CIDRs
-	FastModePolicy          string                             `json:"fast_mode_policy"` // Empty follows the client request
-	BillingMode             string                             `json:"billing_mode"`     // Empty selects funding automatically
-	PreferredSubscriptionID *int64                             `json:"preferred_subscription_id"`
-	ModelMapping            map[string]string                  `json:"model_mapping"`   // Complete model redirect rules for this key
-	Quota                   *float64                           `json:"quota"`           // Quota limit in USD
-	ExpiresInDays           *int                               `json:"expires_in_days"` // Validity in days
+	Name            string                             `json:"name" binding:"required"`                       // submitted credential display name
+	Scope           string                             `json:"scope" binding:"omitempty,oneof=personal team"` // requested personal or team scope
+	GroupID         *int64                             `json:"group_id"`                                      // requested ordinary group binding
+	IsComposite     bool                               `json:"is_composite"`                                  // submitted prefix selection mode
+	CompositeGroups []apikey.APIKeyCompositeGroupInput `json:"composite_groups"`                              // complete submitted prefix group bindings
+	CustomKey       *string                            `json:"custom_key"`                                    // optional custom credential text
+	IPWhitelist     []string                           `json:"ip_whitelist"`                                  // submitted allowed address patterns
+	IPBlacklist     []string                           `json:"ip_blacklist"`                                  // submitted denied address patterns
+	// FastModePolicy and BillingMode retain transport text for final service
+	// normalization. An empty policy follows the request; an empty funding mode
+	// chooses automatic allocation, with PreferredSubscriptionID used for
+	// specified funding.
+	FastModePolicy          string            `json:"fast_mode_policy"`          // submitted Key acceleration preference
+	BillingMode             string            `json:"billing_mode"`              // submitted funding source mode
+	PreferredSubscriptionID *int64            `json:"preferred_subscription_id"` // submitted payer subscription identifier
+	ModelMapping            map[string]string `json:"model_mapping"`             // submitted Key model redirect rules
+	// Quota, RateLimit5h, RateLimit1d and RateLimit7d are optional USD allowances.
+	// The handler turns absent inputs into service zero defaults, while a supplied
+	// zero also selects an unbounded allowance.
+	Quota *float64 `json:"quota"` // supplied total USD allowance
+	// ExpiresInDays is omitted for an unbounded lifetime. Supplied values are
+	// validated positive before the service calculates expiry from its clock using
+	// calendar days.
+	ExpiresInDays *int `json:"expires_in_days"` // supplied relative expiry days
 
-	// Key request limits; zero means unlimited.
-	ConcurrencyLimit int `json:"concurrency_limit"`
-	RPMLimit         int `json:"rpm_limit"`
+	// ConcurrencyLimit and RPMLimit apply across the created Key's groups.
+	// Their zero defaults leave request allowances unbounded, while positive values
+	// are validated and reserved by service and gateway admission.
+	ConcurrencyLimit int `json:"concurrency_limit"` // supplied active request allowance
+	RPMLimit         int `json:"rpm_limit"`         // supplied per-minute request allowance
 
-	// Rate limit fields (0 = unlimited)
-	RateLimit5h *float64 `json:"rate_limit_5h"`
-	RateLimit1d *float64 `json:"rate_limit_1d"`
-	RateLimit7d *float64 `json:"rate_limit_7d"`
-	// Permits the configured fallback when the bound group is unavailable; nil uses the service default.
-	FallbackWhenGroupUnavailable *bool `json:"fallback_when_group_unavailable"`
+	RateLimit5h *float64 `json:"rate_limit_5h"` // supplied five-hour USD allowance
+	RateLimit1d *float64 `json:"rate_limit_1d"` // supplied one-day USD allowance
+	RateLimit7d *float64 `json:"rate_limit_7d"` // supplied seven-day USD allowance
+	// FallbackWhenGroupUnavailable permits the configured target when the bound
+	// group is unavailable. Nil selects the service default, and target admission
+	// still applies its own eligibility checks.
+	FallbackWhenGroupUnavailable *bool `json:"fallback_when_group_unavailable"` // supplied unavailable-group selection preference
 }
 
-// UpdateAPIKeyRequest represents the update API key request payload.
+// UpdateAPIKeyRequest retains omitted, clear and replacement values for user
+// Key configuration.
 type UpdateAPIKeyRequest struct {
-	Name        string `json:"name"`
-	GroupID     *int64 `json:"group_id"`
-	IsComposite *bool  `json:"is_composite"`
-	// CompositeGroups replaces all mappings when non-nil.
-	CompositeGroups         *[]apikey.APIKeyCompositeGroupInput `json:"composite_groups"`
-	Status                  string                              `json:"status" binding:"omitempty,oneof=active inactive"`
-	IPWhitelist             *[]string                           `json:"ip_whitelist"`     // nil: unchanged; empty: clear the allowlist
-	IPBlacklist             *[]string                           `json:"ip_blacklist"`     // nil: unchanged; empty: clear the denylist
-	FastModePolicy          *string                             `json:"fast_mode_policy"` // nil leaves the policy unchanged
-	BillingMode             *string                             `json:"billing_mode"`     // nil leaves the funding mode unchanged
-	PreferredSubscriptionID *int64                              `json:"preferred_subscription_id"`
-	ModelMapping            *map[string]string                  `json:"model_mapping"` // nil: unchanged; empty object: clear mappings
-	Quota                   *float64                            `json:"quota"`         // Quota limit in USD; zero means unlimited
-	ExpiresAt               *string                             `json:"expires_at"`    // Expiration timestamp in RFC3339 format
-	ResetQuota              *bool                               `json:"reset_quota"`   // Reset consumed quota
+	// Name and Status are forwarded as changes when their strings are nonempty.
+	// Empty values are omitted by the handler; Status binding accepts the listed
+	// active or inactive transport choices.
+	Name        string `json:"name"`         // submitted credential display name
+	GroupID     *int64 `json:"group_id"`     // requested ordinary group binding
+	IsComposite *bool  `json:"is_composite"` // submitted prefix selection mode
+	// CompositeGroups, IPWhitelist, IPBlacklist and ModelMapping retain pointer
+	// presence so omission leaves saved values and empty supplied collections
+	// replace them. Service validation checks the complete submitted mapping or IP
+	// set.
+	CompositeGroups         *[]apikey.APIKeyCompositeGroupInput `json:"composite_groups"`                                 // complete submitted prefix group bindings
+	Status                  string                              `json:"status" binding:"omitempty,oneof=active inactive"` // submitted credential lifecycle choice
+	IPWhitelist             *[]string                           `json:"ip_whitelist"`                                     // submitted allowed address patterns
+	IPBlacklist             *[]string                           `json:"ip_blacklist"`                                     // submitted denied address patterns
+	FastModePolicy          *string                             `json:"fast_mode_policy"`                                 // submitted Key acceleration preference
+	BillingMode             *string                             `json:"billing_mode"`                                     // submitted funding source mode
+	PreferredSubscriptionID *int64                              `json:"preferred_subscription_id"`                        // submitted payer subscription identifier
+	ModelMapping            *map[string]string                  `json:"model_mapping"`                                    // submitted Key model redirect rules
+	// Quota, ConcurrencyLimit, RPMLimit, RateLimit5h, RateLimit1d and RateLimit7d
+	// retain omitted pointers. Supplied zero clears that allowance; the final
+	// service validator rejects invalid amounts or request counts.
+	Quota *float64 `json:"quota"` // supplied total USD allowance
+	// ExpiresAt omission retains the saved expiry; empty text selects
+	// ClearExpiration. A nonempty supplied value is parsed as RFC3339 before the
+	// service update receives its timestamp.
+	ExpiresAt  *string `json:"expires_at"`  // supplied RFC3339 expiry text
+	ResetQuota *bool   `json:"reset_quota"` // requested total-spending usage reset
 
-	// Nil leaves each request limit unchanged; zero clears it.
-	ConcurrencyLimit *int `json:"concurrency_limit"`
-	RPMLimit         *int `json:"rpm_limit"`
+	// ConcurrencyLimit and RPMLimit retain omitted pointer values during update.
+	// Each supplied zero clears its saved request allowance independently, while
+	// positive values become the replacement admission settings after service validation.
+	ConcurrencyLimit *int `json:"concurrency_limit"` // supplied active request allowance
+	RPMLimit         *int `json:"rpm_limit"`         // supplied per-minute request allowance
 
-	// Rate limit fields (nil = no change, 0 = unlimited)
-	RateLimit5h         *float64 `json:"rate_limit_5h"`
-	RateLimit1d         *float64 `json:"rate_limit_1d"`
-	RateLimit7d         *float64 `json:"rate_limit_7d"`
-	ResetRateLimitUsage *bool    `json:"reset_rate_limit_usage"` // Reset window usage
-	// Nil leaves the fallback setting unchanged.
-	FallbackWhenGroupUnavailable *bool `json:"fallback_when_group_unavailable"`
+	RateLimit5h *float64 `json:"rate_limit_5h"` // supplied five-hour USD allowance
+	RateLimit1d *float64 `json:"rate_limit_1d"` // supplied one-day USD allowance
+	RateLimit7d *float64 `json:"rate_limit_7d"` // supplied seven-day USD allowance
+	// ResetQuota and ResetRateLimitUsage request explicit saved-counter resets
+	// when true. Nil and false keep their counters; service write masks
+	// distinguish these resets from configuration edits.
+	ResetRateLimitUsage *bool `json:"reset_rate_limit_usage"` // requested spending-window usage reset
+	// FallbackWhenGroupUnavailable retains the saved selection preference when
+	// nil. Supplied false disables unavailable-group selection after the service writes it.
+	FallbackWhenGroupUnavailable *bool `json:"fallback_when_group_unavailable"` // supplied unavailable-group selection preference
 }
 
+// ApiKeyLimitInput pairs a supplied numeric allowance with its validation field
+// name.
 type ApiKeyLimitInput struct {
-	field string
-	value *float64
+	field string // allowance validation input name
+	// field identifies the error metadata name for value. A nil value
+	// skips validation; a present amount receives the shared finite and bounded
+	// USD check before the HTTP caller submits its service input.
+	value *float64 // optional supplied USD amount
 }
 
-// APIKeyBillingSubscriptionOptionResponse exposes subscription options for funding selection.
+// APIKeyBillingSubscriptionOptionResponse presents eligible payer subscriptions
+// and their plan group restrictions.
 type APIKeyBillingSubscriptionOptionResponse struct {
-	ID               int64     `json:"id"`
-	PlanID           int64     `json:"plan_id"`
-	PlanName         string    `json:"plan_name"`
-	ExpiresAt        time.Time `json:"expires_at"`
-	GroupsRestricted bool      `json:"groups_restricted"`
-	ApplicableGroups []int64   `json:"applicable_groups"`
+	ID               int64     `json:"id"`                // offered subscription record identifier
+	PlanID           int64     `json:"plan_id"`           // offered subscription plan identifier
+	PlanName         string    `json:"plan_name"`         // localized subscription plan name
+	ExpiresAt        time.Time `json:"expires_at"`        // offered subscription expiry timestamp
+	GroupsRestricted bool      `json:"groups_restricted"` // plan group restriction presence
+	ApplicableGroups []int64   `json:"applicable_groups"` // copied applicable group identifiers
 }
 
+// NewAPIKeyHandler retains keys and the group mapper used in credential
+// responses. Callers bind optional capacity, presentation and idempotency
+// dependencies before concurrent handling; the basic presenter accepts nil
+// group input and returns a nonnil response for each available-group record.
+// A specialized presenter also returns a nonnil value when replacing that record.
 func NewAPIKeyHandler[G any](keys *apikey.APIKeyService, present func(*routing.Group, *accessview.GroupCapacitySummary) *G) *APIKeyHandler[G] {
 	return &APIKeyHandler[G]{apiKeyService: keys, presentGroup: present}
 }
 
-// SetGroupPresentation configures group rendering for authorized console queries.
+// SetGroupPresentation binds the specialized authorized group presenter used by
+// available-group queries. The callback receives include_models and capacity
+// observations; callers install it before concurrent requests because this
+// setter is unsynchronized. The callback returns a nonnil result for every
+// available group, because GetAvailableGroups copies that result into its response.
 func (h *APIKeyHandler[G]) SetGroupPresentation(present func(context.Context, *routing.Group, *accessview.GroupCapacitySummary, bool) *G) {
 	h.groupPresentation = present
 }
 
+// SetGroupCapacityService binds optional live group capacity reads for
+// available-group presentation. Nil leaves capacity absent; callers configure
+// this unsynchronized dependency before concurrent console queries begin using
+// the handler.
 func (h *APIKeyHandler[G]) SetGroupCapacityService(c GroupCapacityReader) { h.groupCapacityService = c }
 
+// keyResponse maps a credential using copied group views localized for
+// language. Nil group input reaches the base presenter directly; the supplied
+// Key retains the DTO mapper's documented pointer and collection sharing.
 func (h *APIKeyHandler[G]) keyResponse(k *apikey.APIKey, language string) *dto.APIKey[G] {
 	return dto.APIKeyFromKey(k, func(g *routing.Group) *G {
 		if g != nil {
@@ -131,7 +210,9 @@ func (h *APIKeyHandler[G]) keyResponse(k *apikey.APIKey, language string) *dto.A
 	})
 }
 
-// ValidateAPIKeyLimitFields applies service validation to supplied HTTP limit fields.
+// ValidateAPIKeyLimitFields validates each supplied amount through the service
+// allowance rule. Nil pointers are omitted, zero is accepted as unbounded, and
+// the first invalid supplied input returns its field-specific error.
 func ValidateAPIKeyLimitFields(limits ...ApiKeyLimitInput) error {
 	for _, limit := range limits {
 		if limit.value == nil {
@@ -144,7 +225,10 @@ func ValidateAPIKeyLimitFields(limits ...ApiKeyLimitInput) error {
 	return nil
 }
 
-// ValidateAPIKeyCreateRequest validates limits and relative expiration.
+// ValidateAPIKeyCreateRequest validates supplied HTTP monetary allowances and a
+// positive relative expiry. Omitted values pass this early check; request
+// concurrency and RPM bounds are validated by the final service input
+// validation.
 func ValidateAPIKeyCreateRequest(req CreateAPIKeyRequest) error {
 	if err := ValidateAPIKeyLimitFields(
 		ApiKeyLimitInput{field: "quota", value: req.Quota},
@@ -160,7 +244,9 @@ func ValidateAPIKeyCreateRequest(req CreateAPIKeyRequest) error {
 	return nil
 }
 
-// ValidateAPIKeyUpdateRequest validates supplied update limits.
+// ValidateAPIKeyUpdateRequest validates supplied HTTP monetary allowance
+// replacements using the service rule. Nil fields remain omitted, and request
+// concurrency or RPM validation occurs again in the final service update path.
 func ValidateAPIKeyUpdateRequest(req UpdateAPIKeyRequest) error {
 	return ValidateAPIKeyLimitFields(
 		ApiKeyLimitInput{field: "quota", value: req.Quota},
@@ -170,8 +256,11 @@ func ValidateAPIKeyUpdateRequest(req UpdateAPIKeyRequest) error {
 	)
 }
 
-// List handles listing user's API keys with pagination
-// GET /api/v1/keys
+// List returns filtered credentials for the authenticated subject with
+// pagination and localized group data. Search is trimmed and capped at 100
+// bytes, malformed group IDs are ignored, and scope is normalized before the
+// repository filter. Service errors are returned through the application
+// response.
 func (h *APIKeyHandler[G]) List(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -187,7 +276,8 @@ func (h *APIKeyHandler[G]) List(c *gin.Context) {
 		SortOrder: c.DefaultQuery("sort_order", "desc"),
 	}
 
-	// Parse filter parameters
+	// The console search cap limits query text in bytes; cutting a multibyte
+	// name can retain an incomplete encoding, while malformed group IDs are ignored.
 	var filters apikey.APIKeyListFilters
 	if search := strings.TrimSpace(c.Query("search")); search != "" {
 		if len(search) > 100 {
@@ -217,8 +307,10 @@ func (h *APIKeyHandler[G]) List(c *gin.Context) {
 	response.Paginated(c, out, result.Total, page, pageSize)
 }
 
-// GetByID handles getting a single API key
-// GET /api/v1/keys/:id
+// GetByID loads one visible credential for the authenticated subject and
+// presents localized group data. A differently owned Key uses the same
+// missing-key response as absence; parseable signed IDs reach the service,
+// while malformed input returns a bad request.
 func (h *APIKeyHandler[G]) GetByID(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -247,8 +339,17 @@ func (h *APIKeyHandler[G]) GetByID(c *gin.Context) {
 	response.Success(c, h.keyResponse(key, locale.FromContext(c.Request.Context())))
 }
 
-// Create handles creating a new API key
-// POST /api/v1/keys
+// Create strictly decodes user creation input, validates supplied allowances
+// and submits it through the configured executor. Missing subject, malformed JSON
+// or early validation rejects before persistence.
+//
+// Optional monetary fields become service zero defaults when omitted; pointer
+// and collection choices retain their supplied presence. The configured
+// coordinator scopes creation to the authenticated user and request payload;
+// an unbound executor invokes the callback directly for fixtures. The service
+// performs final group, funding and credential checks. Successful
+// execution returns a localized Key response; service errors become the
+// executor's application error result.
 func (h *APIKeyHandler[G]) Create(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -306,8 +407,15 @@ func (h *APIKeyHandler[G]) Create(c *gin.Context) {
 	})
 }
 
-// Update handles updating an API key
-// PUT /api/v1/keys/:id
+// Update strictly decodes selected changes for the authenticated subject and
+// returns the service's updated credential. Missing subject or malformed ID,
+// JSON, numeric allowance or expiry input stops before the write.
+//
+// Empty Name and Status strings are omitted, while pointer fields carry
+// explicit zero or empty replacements. Empty expires_at sets ClearExpiration;
+// nonempty text uses RFC3339 parsing. The service determines final write masks,
+// ownership, binding and funding checks, then the handler presents its result
+// with request-localized group data.
 func (h *APIKeyHandler[G]) Update(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -357,10 +465,10 @@ func (h *APIKeyHandler[G]) Update(c *gin.Context) {
 	if req.Status != "" {
 		svcReq.Status = &req.Status
 	}
-	// Parse expires_at if provided
+	// Keep an omitted expiry distinct from clearing it. Empty transport text
+	// selects the service clearing flag before any stored timestamp is replaced.
 	if req.ExpiresAt != nil {
 		if *req.ExpiresAt == "" {
-			// Empty string means clear expiration
 			svcReq.ExpiresAt = nil
 			svcReq.ClearExpiration = true
 		} else {
@@ -382,7 +490,10 @@ func (h *APIKeyHandler[G]) Update(c *gin.Context) {
 	response.Success(c, h.keyResponse(key, locale.FromContext(c.Request.Context())))
 }
 
-// RotateCredential replaces the current user's key credential and returns the updated record.
+// RotateCredential replaces an authenticated subject's eligible credential and
+// presents the returned secret. A nonpositive or malformed ID is rejected
+// early; ownership, managed-Key exclusion and storage conflicts come from the
+// service and use shared application error responses.
 func (h *APIKeyHandler[G]) RotateCredential(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -402,8 +513,10 @@ func (h *APIKeyHandler[G]) RotateCredential(c *gin.Context) {
 	response.Success(c, h.keyResponse(key, locale.FromContext(c.Request.Context())))
 }
 
-// Delete handles deleting an API key
-// DELETE /api/v1/keys/:id
+// Delete requests service tombstone deletion for the authenticated subject's
+// credential and returns a success message. Malformed ID or missing subject
+// stops early; parseable signed IDs and service ownership failures use the
+// existing service response path.
 func (h *APIKeyHandler[G]) Delete(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -426,8 +539,17 @@ func (h *APIKeyHandler[G]) Delete(c *gin.Context) {
 	response.Success(c, gin.H{"message": "API key deleted successfully"})
 }
 
-// GetAvailableGroups lists groups the user may bind to a key.
-// GET /api/v1/groups/available
+// GetAvailableGroups resolves active payer-permitted groups, optionally
+// restricted by a selected subscription, for the subject's requested scope.
+// include_models defaults true and malformed text is rejected; supplied
+// subscription IDs must be positive.
+//
+// Capacity observations are optional and failed reads leave presentation
+// usable. The base presenter is invoked before an optional specialized
+// presenter replaces its result, receiving the parsed include_models choice.
+// The specialized presenter receives the current request context for its
+// localized or catalogue work. The base callback determines its own presentation
+// work, and caller-installed middleware establishes subject authorization.
 func (h *APIKeyHandler[G]) GetAvailableGroups(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -478,8 +600,10 @@ func (h *APIKeyHandler[G]) GetAvailableGroups(c *gin.Context) {
 	response.Success(c, out)
 }
 
-// GetBillingOptions lists subscriptions available for funding in the requested scope.
-// GET /api/v1/keys/billing-options?scope=personal|team
+// GetBillingOptions lists effective subscriptions offered for the authenticated
+// subject's requested payer scope. Team scope resolves the owner in the
+// service; the response copies applicable group IDs and uses service-localized
+// plan names.
 func (h *APIKeyHandler[G]) GetBillingOptions(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
 	if !ok {
@@ -510,6 +634,10 @@ func (h *APIKeyHandler[G]) GetBillingOptions(c *gin.Context) {
 	response.Success(c, out)
 }
 
+// getAvailableGroupCapacityMap reads optional capacity observations for
+// supplied group IDs. Empty input or missing dependency returns nil, and a
+// failed read also returns nil so authorized group listing continues with
+// absent capacity.
 func (h *APIKeyHandler[G]) getAvailableGroupCapacityMap(ctx context.Context, groups []routing.Group) map[int64]accessview.GroupCapacitySummary {
 	if h.groupCapacityService == nil || len(groups) == 0 {
 		return nil
@@ -519,7 +647,8 @@ func (h *APIKeyHandler[G]) getAvailableGroupCapacityMap(ctx context.Context, gro
 		groupIDs = append(groupIDs, groups[i].ID)
 	}
 
-	// Capacity is optional load information; a failed lookup must not prevent listing groups.
+	// Capacity is a load observation after permission filtering. Treat failed
+	// reads as absent observations so group configuration choices still remain available.
 	capacityMap, err := h.groupCapacityService.GetGroupCapacityByIDs(ctx, groupIDs)
 	if err != nil {
 		return nil
@@ -527,8 +656,10 @@ func (h *APIKeyHandler[G]) getAvailableGroupCapacityMap(ctx context.Context, gro
 	return capacityMap
 }
 
-// GetUserGroupRates returns the current user's group-specific rate multipliers.
-// GET /api/v1/groups/rates
+// GetUserGroupRates returns payer-specific group charge multipliers for the
+// authenticated subject's requested scope. Team scope resolves the current
+// owner, missing rate storage can produce nil data, and service errors use the
+// shared application response.
 func (h *APIKeyHandler[G]) GetUserGroupRates(c *gin.Context) {
 	subject, ok := authctx.GetAuthSubjectFromContext(c)
 	if !ok {

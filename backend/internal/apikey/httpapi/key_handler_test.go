@@ -19,26 +19,40 @@ import (
 	response "github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// rotationHTTPRepository records secret replacement calls and supplies an
+// optional write failure.
 type rotationHTTPRepository struct {
-	apiKeyHandlerSecurityRepoStub
-	calls int
-	err   error
+	apiKeyHandlerSecurityRepoStub       // embedded credential lookup fixture
+	calls                         int   // recorded credential replacement attempts
+	err                           error // injected replacement write error
 }
 
+// apiKeyHandlerSecurityRepoStub returns shallow records for credential
+// visibility and rotation tests.
 type apiKeyHandlerSecurityRepoStub struct {
-	apikey.APIKeyRepository
-	keys map[int64]*apikey.APIKey
+	apikey.APIKeyRepository                          // unused repository methods require setup
+	keys                    map[int64]*apikey.APIKey // retained credential lookup records
 }
 
-// availableGroupsUsers supplies an ordinary user for group endpoint tests.
+// availableGroupsUsers supplies one ordinary user with no exclusive group
+// grants.
 type availableGroupsUsers struct{}
 
-type availableGroupsRepository struct{ apikey.GroupRepository }
+// availableGroupsRepository offers public and exclusive candidates for console
+// group filtering tests.
+type availableGroupsRepository struct {
+	apikey.GroupRepository // unused group methods require setup
+}
 
+// TestValidateAPIKeyCreateRequest supplies omitted and bounded monetary
+// allowances with positive or invalid relative expiry values. It checks
+// accepted limits and early rejection of negative, nonfinite, oversized or
+// nonpositive expiry input.
 func TestValidateAPIKeyCreateRequest(t *testing.T) {
 	t.Parallel()
 
 	zero := 0.0
+	// Exercise the nearest representable amount below the exclusive decimal bound.
 	largeValid := math.Nextafter(1_000_000_000_000, 0)
 	positiveDays := 1
 	require.NoError(t, ValidateAPIKeyCreateRequest(CreateAPIKeyRequest{
@@ -64,10 +78,14 @@ func TestValidateAPIKeyCreateRequest(t *testing.T) {
 	}
 }
 
+// TestValidateAPIKeyUpdateRequest supplies omitted, unbounded and large valid
+// monetary replacements beside invalid numeric values. It checks the service
+// allowance error identity is retained for rejected HTTP inputs.
 func TestValidateAPIKeyUpdateRequest(t *testing.T) {
 	t.Parallel()
 
 	zero := 0.0
+	// Exercise the nearest representable amount below the exclusive decimal bound.
 	largeValid := math.Nextafter(1_000_000_000_000, 0)
 	require.NoError(t, ValidateAPIKeyUpdateRequest(UpdateAPIKeyRequest{
 		Quota:       &zero,
@@ -86,15 +104,18 @@ func TestValidateAPIKeyUpdateRequest(t *testing.T) {
 	}
 }
 
-// TestRotateCredentialRoute checks ownership validation and the replacement credential response.
+// TestRotateCredentialRoute exercises subject presence, signed ID validation,
+// missing or foreign records, managed Keys and write conflict. It checks
+// status, replacement-secret shape, retained usage and absence of old-secret
+// disclosure on rejection.
 func TestRotateCredentialRoute(t *testing.T) {
 	managed := "creative_studio"
 	for _, test := range []struct {
-		name   string
-		id     string
-		userID int64
-		err    error
-		status int
+		name   string // HTTP scenario display label
+		id     string // submitted route identifier text
+		userID int64  // injected authenticated subject identifier
+		err    error  // injected replacement write error
+		status int    // expected HTTP response status
 	}{
 		{name: "success", id: "7", userID: 3, status: http.StatusOK},
 		{name: "unauthenticated", id: "7", status: http.StatusUnauthorized},
@@ -129,10 +150,10 @@ func TestRotateCredentialRoute(t *testing.T) {
 			require.Equal(t, test.status, rec.Code, rec.Body.String())
 			if test.status == http.StatusOK {
 				var result struct {
-					Data struct {
-						ID        int64   `json:"id"`
-						Key       string  `json:"key"`
-						QuotaUsed float64 `json:"quota_used"`
+					Data struct { // decoded HTTP response payload
+						ID        int64   `json:"id"`         // returned record identifier
+						Key       string  `json:"key"`        // returned replacement credential text
+						QuotaUsed float64 `json:"quota_used"` // returned saved USD usage
 					} `json:"data"`
 				}
 				require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &result))
@@ -150,7 +171,10 @@ func TestRotateCredentialRoute(t *testing.T) {
 	}
 }
 
-// TestKeyWritesRejectRetiredDefaultGroupFallback rejects the retired field, including false and null, before invoking the key service.
+// TestKeyWritesRejectRetiredDefaultGroupFallback submits the unsupported
+// default-group field as true, false and null to both write routes. It checks
+// strict JSON decoding rejects the field before the unconfigured service can
+// run.
 func TestKeyWritesRejectRetiredDefaultGroupFallback(t *testing.T) {
 	handler := NewAPIKeyHandler[struct{}](nil, nil)
 	router := gin.New()
@@ -158,7 +182,9 @@ func TestKeyWritesRejectRetiredDefaultGroupFallback(t *testing.T) {
 	router.POST("/keys", handler.Create)
 	router.PUT("/keys/:id", handler.Update)
 	for _, value := range []string{"true", "false", "null"} {
-		for _, endpoint := range []struct{ method, path string }{{http.MethodPost, "/keys"}, {http.MethodPut, "/keys/1"}} {
+		for _, endpoint := range []struct {
+			method, path string // request HTTP method; submitted endpoint path
+		}{{http.MethodPost, "/keys"}, {http.MethodPut, "/keys/1"}} {
 			recorder := httptest.NewRecorder()
 			req := httptest.NewRequest(endpoint.method, endpoint.path, strings.NewReader(`{"name":"key","group_id":1,"fallback_to_default_group_when_unavailable":`+value+`}`))
 			req.Header.Set("Content-Type", "application/json")
@@ -169,6 +195,10 @@ func TestKeyWritesRejectRetiredDefaultGroupFallback(t *testing.T) {
 	}
 }
 
+// TestAPIKeyHandler_GetByID_HidesUnauthorizedKeyExistence requests a foreign
+// credential and a missing credential under one subject. It checks both routes
+// return identical not-found envelopes so those cases expose no different
+// lookup result.
 func TestAPIKeyHandler_GetByID_HidesUnauthorizedKeyExistence(t *testing.T) {
 	repo := &apiKeyHandlerSecurityRepoStub{
 		keys: map[int64]*apikey.APIKey{
@@ -200,6 +230,9 @@ func TestAPIKeyHandler_GetByID_HidesUnauthorizedKeyExistence(t *testing.T) {
 	}
 }
 
+// RotateCredential counts replacement and returns its configured error before
+// changing stored text when failed. Success writes the supplied secret on the
+// fixture record; the old-secret compare is left to production storage tests.
 func (r *rotationHTTPRepository) RotateCredential(_ context.Context, key *apikey.APIKey, _ string) error {
 	r.calls++
 	if r.err != nil {
@@ -209,6 +242,9 @@ func (r *rotationHTTPRepository) RotateCredential(_ context.Context, key *apikey
 	return nil
 }
 
+// GetByID returns a shallow copy of the record matching id or ErrAPIKeyNotFound
+// when absent. Pointer and collection fields remain shared with the stored
+// fixture; the context is ignored.
 func (s *apiKeyHandlerSecurityRepoStub) GetByID(ctx context.Context, id int64) (*apikey.APIKey, error) {
 	key, ok := s.keys[id]
 	if !ok {
@@ -218,10 +254,17 @@ func (s *apiKeyHandlerSecurityRepoStub) GetByID(ctx context.Context, id int64) (
 	return &clone, nil
 }
 
+// newAPIKeyHandlerSecurityRouter starts a narrow Key service and registers
+// cleanup after the test. Its router installs the supplied user subject
+// directly and binds the detail endpoint to isolate ownership response
+// behavior. Use this router for rejected lookups; successful presentation would
+// reach its unbound group presenter.
 func newAPIKeyHandlerSecurityRouter(t *testing.T, repo *apiKeyHandlerSecurityRepoStub, userID int64) *gin.Engine {
 	t.Helper()
 	apiKeySvc := apikey.NewAPIKeyService(repo, nil, nil, nil, nil, nil, nil)
 	apiKeySvc.Start()
+	// Join service shutdown after this router scenario so any allocated
+	// authentication resources stop before the supplied fixture can be discarded.
 	t.Cleanup(apiKeySvc.Stop)
 	handler := NewAPIKeyHandler[struct{}](apiKeySvc, nil)
 	router := gin.New()
@@ -233,21 +276,28 @@ func newAPIKeyHandlerSecurityRouter(t *testing.T, repo *apiKeyHandlerSecurityRep
 	return router
 }
 
+// GetByID returns one fresh ordinary user view for any requested identifier.
 func (availableGroupsUsers) GetByID(context.Context, int64) (*apikey.User, error) {
 	return &apikey.User{ID: 1}, nil
 }
 
+// ListActive returns fresh public and exclusive group candidates for access
+// filtering.
 func (availableGroupsRepository) ListActive(context.Context) ([]routing.Group, error) {
 	return []routing.Group{{ID: 1, Status: "active"}, {ID: 2, Status: "active", IsExclusive: true}}, nil
 }
 
-// TestAvailableGroupsOptionalModels checks that lightweight queries skip catalogue work and retain group access filtering.
+// TestAvailableGroupsOptionalModels varies include_models omission, valid
+// booleans and invalid text for one subject. It checks permission-filtered
+// group output, optional model computation and bad-request rejection before
+// presentation.
 func TestAvailableGroupsOptionalModels(t *testing.T) {
 	for _, query := range []string{"", "?include_models=true", "?include_models=false", "?include_models=invalid"} {
 		t.Run(query, func(t *testing.T) {
+			// groupResponse holds the permission-filtered group and optional models inspected here.
 			type groupResponse struct {
-				ID     int64    `json:"id"`
-				Models []string `json:"models,omitempty"`
+				ID     int64    `json:"id"`               // returned record identifier
+				Models []string `json:"models,omitempty"` // presented optional model identifiers
 			}
 			service := apikey.NewAPIKeyService(nil, availableGroupsUsers{}, availableGroupsRepository{}, nil, nil, nil, nil)
 			handler := NewAPIKeyHandler(service, func(group *routing.Group, _ *accessview.GroupCapacitySummary) *groupResponse {
@@ -273,7 +323,7 @@ func TestAvailableGroupsOptionalModels(t *testing.T) {
 			}
 			require.Equal(t, http.StatusOK, recorder.Code)
 			var result struct {
-				Data []groupResponse `json:"data"`
+				Data []groupResponse `json:"data"` // decoded HTTP response payload
 			}
 			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &result))
 			require.Len(t, result.Data, 1)

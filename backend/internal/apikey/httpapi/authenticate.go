@@ -16,36 +16,82 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
-// AuthenticationOptions supplies HTTP input readers and authentication observation callbacks.
+// HTTP credential parsing selects either the generic or Google compatibility
+// rules before loading Key identity. Abuse and header-size checks run first,
+// and a loaded access record can still describe a failed attempt for telemetry
+// and Ops. The adapter returns success after identity checks; group, protocol
+// and funding admission remain the gateway caller's next decisions.
+//
+// Failure kinds preserve the rejection stage while the adapter selects response
+// status, public text and observation callbacks. Google failures use their
+// nested protocol shape; generic failures use the shared error response.
+// Principal publication occurs through SetAccessPrincipal after the caller's
+// admission checks, so diagnostic ownership updates alone cannot establish an
+// authenticated request.
+
+// AuthenticationOptions supplies HTTP input readers, protocol choice and
+// rejection observations.
 type AuthenticationOptions struct {
-	Google          bool
-	Context         func(*gin.Context) context.Context
-	ClientIP        func(*gin.Context) string
-	AbuseClientKey  func(*gin.Context) string
-	NonConsuming    func(*gin.Context) bool
-	Rejected        func(*gin.Context, string)
-	BusinessLimited func(*gin.Context, string)
-	Loaded          func(*gin.Context, *apikey.APIKey)
+	Google bool // Google credential and response mode
+	// Context can replace the standard request context for service lookup. Nil
+	// uses c.Request.Context; callers return a usable context carrying required
+	// request metadata for authentication.
+	Context func(*gin.Context) context.Context // optional service lookup context reader
+	// ClientIP supplies the resolved address passed to identity IP checks. Nil
+	// supplies empty text, which configured IP restrictions reject when the loaded
+	// Key reaches that check.
+	ClientIP func(*gin.Context) string // optional resolved client address reader
+	// AbuseClientKey supplies a stable client bucket independent of credential
+	// text. Nil selects an empty bucket, so the configured abuse limiter records
+	// and checks no client entry.
+	AbuseClientKey func(*gin.Context) string // optional stable client bucket reader
+	// NonConsuming returns true to skip team member allowance enforcement during
+	// this identity check. Nil enforces that check; gateway funding admission uses
+	// its own endpoint classification later.
+	NonConsuming func(*gin.Context) bool // optional retrieval endpoint classification callback
+	// Rejected receives ingress rejection reasons when present. The callback
+	// observes the failed attempt before the adapter writes its response; nil
+	// skips observation and retains error handling.
+	Rejected func(*gin.Context, string) // optional ingress rejection observer
+	// BusinessLimited observes configured permission or allowance rejection when
+	// present. Nil skips this observation while the adapter still returns the same
+	// rejection status and public message.
+	BusinessLimited func(*gin.Context, string) // optional business allowance observer
+	// Loaded receives a request Key whenever a loaded access record exists,
+	// including rejected identity checks. Callers use it for diagnostics and wait
+	// for successful final admission before exposing authenticated access.
+	Loaded func(*gin.Context, *apikey.APIKey) // optional diagnostic loaded-Key observer
 }
 
+// AbortWithError writes the shared gateway error response with the supplied
+// status and aborts Gin handling. Authentication callers provide fixed public
+// code and message text; this helper forwards their supplied values directly.
 func AbortWithError(c *gin.Context, status int, code, message string) {
-	// Authentication callers supply fixed English messages.
 	c.JSON(status, httpx.NewErrorResponse(code, message))
 	c.Abort()
 }
 
+// reject invokes the configured ingress observer with reason when present. A
+// nil callback omits this observation; the authentication caller still owns
+// writing the selected error response and aborting handling.
 func (o AuthenticationOptions) reject(c *gin.Context, reason string) {
 	if o.Rejected != nil {
 		o.Rejected(c, reason)
 	}
 }
 
+// business invokes the configured business-limit observer with reason when
+// present. A nil callback omits the observation; this helper leaves response
+// status and request admission decisions with its authentication caller.
 func (o AuthenticationOptions) business(c *gin.Context, reason string) {
 	if o.BusinessLimited != nil {
 		o.BusinessLimited(c, reason)
 	}
 }
 
+// abort writes and aborts the selected generic or Google failure response.
+// Google responses use status and message while the supplied generic code is
+// omitted; ordinary responses include the supplied code and message.
 func (o AuthenticationOptions) abort(c *gin.Context, status int, code, message string) {
 	if o.Google {
 		AbortGoogleError(c, status, message)
@@ -54,7 +100,18 @@ func (o AuthenticationOptions) abort(c *gin.Context, status int, code, message s
 	}
 }
 
-// Authenticate extracts standard or Google credentials and validates identity before body parsing and routing.
+// Authenticate parses the selected credential form and returns loaded access
+// with true when identity checks succeed. Callers supply a usable Gin request
+// and service, then complete group and funding admission before publishing a
+// principal. Gateway routes apply their protocol gate during later processing.
+//
+// Abuse and header-size checks precede credential lookup, and rejected
+// credential syntax records an invalid-auth failure. NonConsuming disables
+// member spending checks for this identity call when true. Loaded access is
+// recorded for telemetry and the optional Loaded callback before the error is
+// inspected; these diagnostics remain available on failed identity checks.
+// Known failures write and abort in the selected protocol shape and return
+// false.
 func Authenticate(c *gin.Context, auth *apikey.APIKeyService, o AuthenticationOptions) (*apikey.AccessSnapshot, bool) {
 	clientKey := ""
 	if o.AbuseClientKey != nil {
@@ -62,6 +119,8 @@ func Authenticate(c *gin.Context, auth *apikey.APIKeyService, o AuthenticationOp
 	}
 	invalid := func() { auth.RecordInvalidAuthFailure(clientKey) }
 	if retry, blocked := auth.CheckInvalidAuthAbuse(clientKey); blocked {
+		// Round the remaining block upward so Retry-After does not invite
+		// another attempt before the client's observed block deadline has elapsed.
 		seconds := max(int(math.Ceil(retry.Seconds())), 1)
 		c.Header("Retry-After", strconv.Itoa(seconds))
 		o.reject(c, "invalid_auth_rate_limited")
@@ -97,6 +156,8 @@ func Authenticate(c *gin.Context, auth *apikey.APIKeyService, o AuthenticationOp
 				credential = strings.TrimSpace(parts[1])
 			}
 		}
+		// Generic clients prefer a trimmed Bearer value, then raw compatible
+		// Key headers. An unusable bearer value keeps the later header choices available.
 		if credential == "" {
 			credential = c.GetHeader("x-api-key")
 		}
@@ -137,6 +198,8 @@ func Authenticate(c *gin.Context, auth *apikey.APIKeyService, o AuthenticationOp
 		checkLimits = !o.NonConsuming(c)
 	}
 	access, err := auth.Authenticate(ctx, credential, apikey.AuthenticationInput{ClientIP: ip, CheckMemberLimits: checkLimits})
+	// Loaded ownership helps observe rejected attempts too. Record diagnostics
+	// before error mapping while leaving principal publication to later admission.
 	recordAccessOwnership(c, access)
 	if access != nil && o.Loaded != nil {
 		o.Loaded(c, access.KeyView())
@@ -191,6 +254,10 @@ func Authenticate(c *gin.Context, auth *apikey.APIKeyService, o AuthenticationOp
 	return nil, false
 }
 
+// abortTeam writes a protocol-shaped response for recognized team errors and
+// reports whether it handled them. Wrapped causes keep their classification;
+// unrecognized errors return false so the caller can choose its internal-error
+// response.
 func (o AuthenticationOptions) abortTeam(c *gin.Context, err error) bool {
 	if !o.Google {
 		return AbortTeamError(c, err)
@@ -202,7 +269,10 @@ func (o AuthenticationOptions) abortTeam(c *gin.Context, err error) bool {
 	return ok
 }
 
-// SetAccessPrincipal records the actor after routing and billing admission. Callers must complete those checks first.
+// SetAccessPrincipal stores the admitted access pointer and publishes its actor
+// as an API-Key principal. Nil input does nothing; callers complete group and
+// funding admission first, and the stored pointer remains shared with the
+// request owner.
 func SetAccessPrincipal(c *gin.Context, a *apikey.AccessSnapshot) {
 	if a == nil {
 		return
@@ -212,7 +282,10 @@ func SetAccessPrincipal(c *gin.Context, a *apikey.AccessSnapshot) {
 	authctx.SetAuthenticatedPrincipal(c, identity.Principal{UserID: a.ActorUserID, CredentialKind: "api_key"})
 }
 
-// recordAccessOwnership records the matched credential for diagnostics; it does not authenticate the request.
+// recordAccessOwnership updates telemetry with the loaded Key, actor and
+// optional team identifiers. Nil Gin, request or access inputs do nothing; the
+// function publishes no authentication principal, and callers can record it for
+// rejected requests.
 func recordAccessOwnership(c *gin.Context, access *apikey.AccessSnapshot) {
 	if c == nil || c.Request == nil || access == nil {
 		return

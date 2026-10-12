@@ -9,14 +9,18 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/apikey"
 )
 
+// TestIsWindowExpired supplies absent, active, elapsed, and near-boundary
+// starts for all three spending durations. It checks wall-clock expiry results,
+// including an absent start returning expired rather than retaining stale
+// usage.
 func TestIsWindowExpired(t *testing.T) {
 	now := time.Now()
 
 	tests := []struct {
-		name     string
-		start    *time.Time
-		duration time.Duration
-		want     bool
+		name     string        // spending window scenario label
+		start    *time.Time    // supplied window start timestamp
+		duration time.Duration // selected spending window duration
+		want     bool          // expected window expiry result
 	}{
 		{
 			name:     "nil window start (treated as expired)",
@@ -78,15 +82,18 @@ func TestIsWindowExpired(t *testing.T) {
 	}
 }
 
+// TestAPIKey_EffectiveUsage combines current, elapsed, and absent window starts
+// with saved counters. It checks each duration independently returns the saved
+// amount for a current window and zero for an elapsed or absent start.
 func TestAPIKey_EffectiveUsage(t *testing.T) {
 	now := time.Now()
 
 	tests := []struct {
-		name   string
-		key    apikey.APIKey
-		want5h float64
-		want1d float64
-		want7d float64
+		name   string        // usage display scenario label
+		key    apikey.APIKey // Key counters and window starts
+		want5h float64       // expected five-hour USD usage
+		want1d float64       // expected one-day USD usage
+		want7d float64       // expected seven-day USD usage
 	}{
 		{
 			name: "all windows active",
@@ -175,15 +182,18 @@ func TestAPIKey_EffectiveUsage(t *testing.T) {
 	}
 }
 
+// TestAPIKeyRateLimitData_EffectiveUsage exercises billing's aliased window
+// data with current, expired, and absent starts. It checks the three delegated
+// display methods use the same current-usage rules as Key views.
 func TestAPIKeyRateLimitData_EffectiveUsage(t *testing.T) {
 	now := time.Now()
 
 	tests := []struct {
-		name   string
-		data   apikey.APIKeyRateLimitData
-		want5h float64
-		want1d float64
-		want7d float64
+		name   string                     // usage display scenario label
+		data   apikey.APIKeyRateLimitData // billing counters and window starts
+		want5h float64                    // expected five-hour USD usage
+		want1d float64                    // expected one-day USD usage
+		want7d float64                    // expected seven-day USD usage
 	}{
 		{
 			name: "all windows active",
@@ -244,6 +254,9 @@ func TestAPIKeyRateLimitData_EffectiveUsage(t *testing.T) {
 	}
 }
 
+// TestAPIKeyOwnerLockAlwaysDisablesKey begins with an active, valid team
+// credential and applies its owner lock. It checks that the same stored active
+// status becomes inactive when TeamOwnerDisabled is true.
 func TestAPIKeyOwnerLockAlwaysDisablesKey(t *testing.T) {
 	key := validTeamAPIKeyForLifecycleTest()
 	require.True(t, key.IsActive())
@@ -252,6 +265,8 @@ func TestAPIKeyOwnerLockAlwaysDisablesKey(t *testing.T) {
 	require.False(t, key.IsActive())
 }
 
+// rateLimitTimePtr returns a newly allocated timestamp pointer for
+// spending-window cases.
 func rateLimitTimePtr(t time.Time) *time.Time {
 	return &t
 }

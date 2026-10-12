@@ -11,11 +11,28 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/accessview"
 )
 
+// Key repository reads construct identity and group views from the Ent
+// relationships selected by each query. Unselected fields stay at their entity
+// zero values, and several returned slices and pointers retain entity storage
+// until authentication snapshot conversion performs its own copying.
+
+// SQLExecutor supplies the SQL operations used by Key count and presentation
+// reads.
 type SQLExecutor interface {
+	// ExecContext executes the supplied SQL operation with caller arguments and
+	// context, returning its result or failure. Key callers inspect affected-row
+	// counts when ownership or deletion eligibility must be established.
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	// QueryContext returns rows for the supplied SQL and caller arguments.
+	// Successful callers scan, inspect iteration errors and close the rows so the
+	// shared database connection can be reused by later Key operations.
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 }
 
+// userEntityToKeyView maps a selected Ent user into its Key identity view,
+// retaining nil input. Stored scalar pointers remain shared with the entity;
+// notification recipient JSON is parsed into the user's recipient list when
+// nonempty.
 func userEntityToKeyView(u *dbent.User) *keycore.User {
 	if u == nil {
 		return nil
@@ -47,13 +64,18 @@ func userEntityToKeyView(u *dbent.User) *keycore.User {
 		UpdatedAt:                  u.UpdatedAt,
 		DeletedAt:                  u.DeletedAt,
 	}
-	// Accept both string-array and NotifyEmailEntry-array notification JSON.
+	// The saved recipient value accepts legacy strings and contact records;
+	// parse either representation before deduction notices inspect the returned user view.
 	if u.BalanceNotifyExtraEmails != "" && u.BalanceNotifyExtraEmails != "[]" {
 		out.BalanceNotifyExtraEmails = contact.ParseNotifyEmails(u.BalanceNotifyExtraEmails)
 	}
 	return out
 }
 
+// groupEntityToKeyView maps selected Ent group fields into a hydrated routing
+// view, retaining nil input. It decodes routing policy and copies advanced
+// scheduler overrides; other entity collections and scalar pointers can remain
+// shared, and unselected entity fields retain their zero values.
 func groupEntityToKeyView(g *dbent.Group) *routing.Group {
 	if g == nil {
 		return nil

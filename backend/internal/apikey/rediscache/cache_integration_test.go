@@ -15,14 +15,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/rediscontainer"
 )
 
+// ApiKeyCacheSuite hosts isolated Redis-backed creation and daily-counter
+// adapter scenarios.
 type ApiKeyCacheSuite struct {
-	rediscontainer.Suite
+	rediscontainer.Suite // Redis fixture lifetime owner
 }
 
+// TestCreateAttemptCount exercises absent user counters, repeated increments
+// and deletion against isolated Redis clients. It checks zero reads, recorded
+// counts and a positive lifetime within the configured counter duration.
 func (s *ApiKeyCacheSuite) TestCreateAttemptCount() {
 	tests := []struct {
-		name string
-		fn   func(ctx context.Context, rdb *redis.Client, cache *ApiKeyCache)
+		name string                                                           // Redis counter scenario label
+		fn   func(ctx context.Context, rdb *redis.Client, cache *ApiKeyCache) // scenario counter assertion callback
 	}{
 		{
 			name: "missing_key_returns_zero_nil",
@@ -70,7 +75,8 @@ func (s *ApiKeyCacheSuite) TestCreateAttemptCount() {
 
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
-			// Use isolated Redis resources for each case.
+			// Each suite client isolates this scenario's counter names, so earlier
+			// increments cannot affect the missing-key and exact-count assertions in later cases.
 			rdb := s.Client(s.T())
 			cache, ok := NewAPIKeyCache(rdb).(*ApiKeyCache)
 			require.True(s.T(), ok, "Key Redis adapter type")
@@ -81,10 +87,13 @@ func (s *ApiKeyCacheSuite) TestCreateAttemptCount() {
 	}
 }
 
+// TestDailyUsage increments an explicitly named daily counter and separately
+// applies an expiry. It checks retained count and positive TTL through the
+// Redis adapter using isolated resources per scenario.
 func (s *ApiKeyCacheSuite) TestDailyUsage() {
 	tests := []struct {
-		name string
-		fn   func(ctx context.Context, rdb *redis.Client, cache *ApiKeyCache)
+		name string                                                           // Redis counter scenario label
+		fn   func(ctx context.Context, rdb *redis.Client, cache *ApiKeyCache) // scenario counter assertion callback
 	}{
 		{
 			name: "increment_increases_count",
@@ -126,6 +135,9 @@ func (s *ApiKeyCacheSuite) TestDailyUsage() {
 	}
 }
 
+// TestApiKeyCacheSuite runs the creation and daily-counter scenarios through
+// the shared Redis container suite. Its suite owns database isolation and
+// client cleanup for each case.
 func TestApiKeyCacheSuite(t *testing.T) {
 	suite.Run(t, new(ApiKeyCacheSuite))
 }

@@ -4,15 +4,26 @@ import (
 	"context"
 )
 
+// An authenticated request can replace its effective key or Fast policy after
+// group admission. Context updates copy the access record and its TeamID so
+// those scalar decisions stay local, while the request-owned key pointer
+// remains available to later gateway processing.
+
+// accessSnapshotContextKey identifies authenticated access values in standard
+// request contexts.
 type accessSnapshotContextKey struct{}
 
-// WithAccessSnapshot stores the authenticated access snapshot in the context.
-// The struct and TeamID are copied so request policy overrides stay local.
+// WithAccessSnapshot stores an access record with a copied TeamID in ctx. The
+// private key pointer remains shared with the supplied record, so callers keep
+// that request view within its owning request.
 func WithAccessSnapshot(ctx context.Context, access AccessSnapshot) context.Context {
 	access.TeamID = clonePointer(access.TeamID)
 	return context.WithValue(ctx, accessSnapshotContextKey{}, access)
 }
 
+// AccessSnapshotFromContext reads the access record and copies its TeamID
+// before returning. A nil context, absent value, or different stored type
+// returns the zero record with false; the private key pointer remains shared.
 func AccessSnapshotFromContext(ctx context.Context) (AccessSnapshot, bool) {
 	if ctx == nil {
 		return AccessSnapshot{}, false
@@ -22,16 +33,22 @@ func AccessSnapshotFromContext(ctx context.Context) (AccessSnapshot, bool) {
 	return access, ok
 }
 
-// WithFastModePolicy sets the Fast policy on a copy of this request's access snapshot.
+// WithFastModePolicy stores policy in a copied access record for later provider
+// processing. An absent access record starts with zero identity fields; the
+// supplied policy is accepted as given and requires caller normalization.
 func WithFastModePolicy(ctx context.Context, policy string) context.Context {
 	access, _ := AccessSnapshotFromContext(ctx)
 	access.fastModePolicy = policy
 	return WithAccessSnapshot(ctx, access)
 }
 
+// FastModePolicy returns the acceleration policy saved for this request.
 func (a AccessSnapshot) FastModePolicy() string { return a.fastModePolicy }
 
-// WithRuntimeAPIKey publishes a reauthorized key view for this request when the key ID matches.
+// WithRuntimeAPIKey publishes key as the effective view when its ID matches the
+// stored access record. Missing access, nil keys, and mismatched IDs return ctx
+// unchanged; a present User refreshes PayerUserID while the other identity and
+// Fast policy fields retain their values.
 func WithRuntimeAPIKey(ctx context.Context, key *APIKey) context.Context {
 	access, ok := AccessSnapshotFromContext(ctx)
 	if !ok || key == nil || access.KeyID != key.ID {

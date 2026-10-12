@@ -28,29 +28,62 @@ import (
 	usagequery "github.com/TokenFlux/TokenRouter/internal/usage/postgres/query"
 )
 
+// Key configuration edits can overlap billing increments, credential
+// replacement and deletion, so storage applies selected configuration columns
+// to currently nondeleted rows. Composite bindings require a transaction with
+// their owning Key record, while ordinary reads choose only relationships and
+// fields required by their caller. Authentication conversion receives those
+// selected entity values and independently constructs its cached view.
+//
+// Creation locks the PostgreSQL user row before checking the Key count and
+// inserting, keeping concurrent same-user creation under its configured limit.
+// Existing transaction clients leave completion to the caller. Deletion
+// tombstones the unique credential while retaining its row ID, and usage
+// sorting loads all filtered candidates before choosing the page. The store
+// shares its SQL and Ent dependencies and delegates billing counter operations
+// to the separate KeyUsageStore.
+
+// KeyStore persists credential configuration, bindings and selected console or
+// authentication views.
 type KeyStore struct {
-	client      *dbent.Client
-	sql         SQLExecutor
-	usageTotals UsageTotalsReader
+	// client and sql are shared dependencies selected by assembly or a transaction
+	// owner. Keep both usable through reads and writes; transaction-bound stores
+	// leave completion to that owner, while newly opened transactions are closed here.
+	client *dbent.Client // shared Ent credential client
+	sql    SQLExecutor   // shared SQL operation executor
+	// usageTotals is retained for complete-candidate usage ordering. A nil
+	// callback reports an error on that sort path before a page can be selected.
+	usageTotals UsageTotalsReader // configured total-spending observation reader
 }
 
-// UsageTotalsReader loads usage totals by key ID for sorting.
+// UsageTotalsReader loads total spending observations used to sort filtered
+// Keys before pagination.
 type UsageTotalsReader func(context.Context, []int64) (map[int64]float64, error)
 
+// NewKeyStore constructs the Key adapter from shared Ent, SQL and usage-total
+// dependencies. The caller owns their lifetimes; the supplied usage reader is
+// required when listing sorts by usage instead of a stored column.
 func NewKeyStore(client *dbent.Client, sqlDB *sql.DB, usage UsageTotalsReader) *KeyStore {
 	return NewKeyStoreWithSQL(client, sqlDB, usage)
 }
 
+// NewKeyStoreWithSQL retains caller-supplied storage interfaces and the
+// usage-total callback. The caller can supply a transaction-bound client and
+// executor, and owns commit, rollback and final resource closure for those
+// dependencies.
 func NewKeyStoreWithSQL(client *dbent.Client, sqlq SQLExecutor, usage UsageTotalsReader) *KeyStore {
 	return &KeyStore{client: client, sql: sqlq, usageTotals: usage}
 }
 
+// KeyActiveQuery returns a new query excluding soft-deleted credential records.
 func (r *KeyStore) KeyActiveQuery() *dbent.APIKeyQuery {
-	// Exclude soft-deleted keys from ordinary reads.
 	return r.client.APIKey.Query().Where(apikey.DeletedAtIsNil())
 }
 
-// KeyApiKeyFastModePolicyForPersistence supplies a valid default for callers that bypass service validation.
+// KeyApiKeyFastModePolicyForPersistence normalizes an accepted Key Fast choice
+// before storage, defaulting empty input through the shared normalizer.
+// Unsupported text is returned as supplied, leaving validation or persistence
+// rejection to its caller.
 func KeyApiKeyFastModePolicyForPersistence(value string) string {
 	policy, ok := keycore.NormalizeAPIKeyFastModePolicy(value)
 	if ok {
@@ -59,7 +92,9 @@ func KeyApiKeyFastModePolicyForPersistence(value string) string {
 	return value
 }
 
-// KeyApiKeyBillingModeForPersistence supplies a valid default for callers that bypass service validation.
+// KeyApiKeyBillingModeForPersistence returns the normalized funding mode when
+// the shared validator accepts it. Empty input selects auto; unsupported text
+// passes through unchanged so this helper supplies no independent rejection.
 func KeyApiKeyBillingModeForPersistence(value string) string {
 	mode, ok := keycore.NormalizeAPIKeyBillingMode(value)
 	if ok {
@@ -68,6 +103,17 @@ func KeyApiKeyBillingModeForPersistence(value string) string {
 	return value
 }
 
+// Create persists the supplied Key and its complete composite bindings, filling
+// stored identity and timestamps after success. Nil input is rejected before a
+// transaction begins.
+//
+// The PostgreSQL owner row is locked before counting all nondeleted
+// credentials, including managed Keys, and checking a positive user limit. Key
+// creation and binding replacement use the same client. Owned transaction
+// failure triggers rollback; a caller-owned transaction receives no-op
+// completion callbacks and still needs its final commit. Persistence uniqueness
+// failures map to the existing-Key error, and the source record is updated only
+// after the completion callback succeeds.
 func (r *KeyStore) Create(ctx context.Context, key *keycore.APIKey) error {
 	if key == nil {
 		return fmt.Errorf("api key is required")
@@ -92,6 +138,8 @@ func (r *KeyStore) Create(ctx context.Context, key *keycore.APIKey) error {
 	if err != nil {
 		return translatePersistenceError(err, nil, keycore.ErrAPIKeyExists)
 	}
+	// Publish the stored identity after completion succeeds. Caller-owned
+	// transactions use a no-op here and remain responsible for their eventual commit.
 	if err := commit(); err != nil {
 		return err
 	}
@@ -103,7 +151,16 @@ func (r *KeyStore) Create(ctx context.Context, key *keycore.APIKey) error {
 	return nil
 }
 
-// KeyBeginAPIKeyCreateTransaction returns the Ent client, SQL executor, and transaction cleanup functions.
+// KeyBeginAPIKeyCreateTransaction returns the client, executor and completion
+// callbacks for Key insertion. A context Ent transaction supplies its own
+// client with no-op commit and rollback callbacks.
+//
+// Otherwise the store attempts to start a transaction and owns the returned
+// completion callbacks on success. ErrTxStarted identifies a store already
+// bound to a caller transaction; that path requires a configured SQL executor
+// and leaves completion to the caller. Other begin failures are returned, and
+// successful callers defer rollback while using the same returned client and
+// executor for count and insertion.
 func (r *KeyStore) KeyBeginAPIKeyCreateTransaction(ctx context.Context) (*dbent.Client, SQLExecutor, func() error, func(), error) {
 	if existing := dbent.TxFromContext(ctx); existing != nil {
 		client := existing.Client()
@@ -119,14 +176,23 @@ func (r *KeyStore) KeyBeginAPIKeyCreateTransaction(ctx context.Context) (*dbent.
 		return nil, nil, nil, nil, err
 	}
 
-	// A store already bound to a caller transaction leaves commit and rollback to that caller.
+	// ErrTxStarted means this store already uses a transaction-bound client.
+	// Reuse its executor with no-op cleanup so this helper cannot finish caller-owned work.
 	if r.sql == nil {
 		return nil, nil, nil, nil, fmt.Errorf("sql executor is not configured")
 	}
 	return r.client, r.sql, func() error { return nil }, func() {}, nil
 }
 
-// KeyLockAPIKeyOwnerAndCount locks the user on PostgreSQL and counts keys that are not soft-deleted.
+// KeyLockAPIKeyOwnerAndCount reads the nondeleted creator's Key allowance and
+// current nondeleted credential count. PostgreSQL adds a user-row update lock,
+// so callers keep the transaction open through insertion; other dialects use
+// the same reads without that lock. Missing creator rows become
+// ErrUserNotFound.
+//
+// Use the insertion transaction's executor for these reads. Retaining its owner
+// lock through the later insert makes the next cooperating creator count again
+// after the preceding transaction completes, including rollback of failed insertion.
 func (r *KeyStore) KeyLockAPIKeyOwnerAndCount(ctx context.Context, sqlq SQLExecutor, userID int64) (int64, int, error) {
 	lockQuery := `SELECT api_key_limit FROM users WHERE id = $1 AND deleted_at IS NULL`
 	if r.client.Driver().Dialect() == dialect.Postgres {
@@ -149,7 +215,16 @@ func (r *KeyStore) KeyLockAPIKeyOwnerAndCount(ctx context.Context, sqlq SQLExecu
 	return current, limit, nil
 }
 
-// KeyCreateAPIKeyRecord inserts a key using the supplied transaction client.
+// KeyCreateAPIKeyRecord inserts the Key record and replaces its composite
+// mappings using the supplied client. The caller supplies an active transaction
+// when both writes need rollback together; a binding failure can follow record
+// insertion before this helper returns its error.
+//
+// Binding rows use the ID returned by record insertion, so those steps cannot
+// be reversed. Success means insertion and complete binding replacement both
+// finished in the supplied transaction. The returned entity is the owning Key
+// row; after failure, its transaction owner rolls back completed writes before
+// deciding how to retry.
 func KeyCreateAPIKeyRecord(ctx context.Context, client *dbent.Client, key *keycore.APIKey) (*dbent.APIKey, error) {
 	builder := client.APIKey.Create().
 		SetUserID(key.UserID).
@@ -182,6 +257,8 @@ func KeyCreateAPIKeyRecord(ctx context.Context, client *dbent.Client, key *keyco
 		builder.SetIPBlacklist(key.IPBlacklist)
 	}
 
+	// Insert the owning record before its mappings so their foreign key uses
+	// the assigned ID; a later binding failure leaves rollback to the caller.
 	created, err := builder.Save(ctx)
 	if err != nil {
 		return nil, err
@@ -192,8 +269,19 @@ func KeyCreateAPIKeyRecord(ctx context.Context, client *dbent.Client, key *keyco
 	return created, nil
 }
 
-// KeyReplaceCompositeGroupRecords replaces all mappings within the caller's transaction.
+// KeyReplaceCompositeGroupRecords deletes the Key's saved mappings and
+// bulk-inserts the supplied complete replacement. Empty input clears mappings,
+// and IDs or request overrides on the supplied binding records are not
+// persisted.
+//
+// The caller owns transaction consistency across deletion and insertion. A
+// failed bulk insert must roll back the preceding deletion when old mappings
+// need to remain available. The provided Prefix, NormalizedPrefix, GroupID and
+// SortOrder values become storage input; service validation establishes their
+// uniqueness and ordering rules before this helper runs.
 func KeyReplaceCompositeGroupRecords(ctx context.Context, client *dbent.Client, apiKeyID int64, bindings []keycore.APIKeyCompositeGroup) error {
+	// Replace all rows within the caller's transaction; a later bulk-insert
+	// failure requires rollback so the preceding deletion cannot discard saved prefixes.
 	if _, err := client.APIKeyCompositeGroup.Delete().
 		Where(apikeycompositegroup.APIKeyIDEQ(apiKeyID)).
 		Exec(ctx); err != nil {
@@ -214,7 +302,9 @@ func KeyReplaceCompositeGroupRecords(ctx context.Context, client *dbent.Client, 
 	return client.APIKeyCompositeGroup.CreateBulk(builders...).Exec(ctx)
 }
 
-// KeyWithAPIKeyCompositeGroups loads mappings and groups in user-configured order.
+// KeyWithAPIKeyCompositeGroups adds binding and group relationship loading to
+// query. Mappings are ordered by configured SortOrder and then row ID; the
+// supplied query remains the returned query instance for further filtering.
 func KeyWithAPIKeyCompositeGroups(query *dbent.APIKeyQuery) *dbent.APIKeyQuery {
 	return query.WithCompositeGroups(func(q *dbent.APIKeyCompositeGroupQuery) {
 		q.Order(dbent.Asc(apikeycompositegroup.FieldSortOrder), dbent.Asc(apikeycompositegroup.FieldID)).
@@ -222,6 +312,10 @@ func KeyWithAPIKeyCompositeGroups(query *dbent.APIKeyQuery) *dbent.APIKeyQuery {
 	})
 }
 
+// GetByID loads a nondeleted credential with its user, ordinary group and
+// ordered composite binding relationships. Missing rows return
+// ErrAPIKeyNotFound; managed-Key visibility and creator ownership are checked
+// by the user service or handler after loading.
 func (r *KeyStore) GetByID(ctx context.Context, id int64) (*keycore.APIKey, error) {
 	m, err := KeyWithAPIKeyCompositeGroups(r.KeyActiveQuery()).
 		Where(apikey.IDEQ(id)).
@@ -237,7 +331,10 @@ func (r *KeyStore) GetByID(ctx context.Context, id int64) (*keycore.APIKey, erro
 	return KeyApiKeyEntityToService(m), nil
 }
 
-// GetManagedKeyByUserAndGroup finds a hidden managed key for the user, group, and manager.
+// GetManagedKeyByUserAndGroup loads a nondeleted credential matching creator,
+// group and manager, with its ordinary group view. Missing rows return
+// ErrAPIKeyNotFound; Only requires one matching record, so multiple matches
+// remain a persistence error.
 func (r *KeyStore) GetManagedKeyByUserAndGroup(ctx context.Context, userID, groupID int64, managedBy string) (*keycore.APIKey, error) {
 	m, err := r.KeyActiveQuery().
 		Where(
@@ -256,17 +353,16 @@ func (r *KeyStore) GetManagedKeyByUserAndGroup(ctx context.Context, userID, grou
 	return KeyApiKeyEntityToService(m), nil
 }
 
-// CreateManagedKey uses the normal creation path, including the key count limit.
-// The caller sets key.ManagedBy to identify the manager.
+// CreateManagedKey delegates managed credential insertion to the normal Key
+// creation path. Callers set ManagedBy before the call; the creator's
+// nondeleted Key count limit includes this hidden execution credential.
 func (r *KeyStore) CreateManagedKey(ctx context.Context, key *keycore.APIKey) error {
 	return r.Create(ctx, key)
 }
 
-// GetKeyAndOwnerID reads the credential and owner ID for a key.
-// It selects the two fields needed by operations such as deletion.
-// Related user and group records are not loaded.
-// Soft-deleted keys are excluded.
-// A missing active key returns ErrAPIKeyNotFound.
+// GetKeyAndOwnerID selects the stored credential and creator ID for a
+// nondeleted record. It loads no related records, and a missing match reports
+// ErrAPIKeyNotFound for callers preparing deletion or invalidation.
 func (r *KeyStore) GetKeyAndOwnerID(ctx context.Context, id int64) (string, int64, error) {
 	m, err := r.KeyActiveQuery().
 		Where(apikey.IDEQ(id)).
@@ -281,6 +377,9 @@ func (r *KeyStore) GetKeyAndOwnerID(ctx context.Context, id int64) (string, int6
 	return m.Key, m.UserID, nil
 }
 
+// GetByKey loads a nondeleted credential with current user group restrictions,
+// its ordinary group and composite binding relationships. Credential text is
+// passed to storage as given, and an absent record returns ErrAPIKeyNotFound.
 func (r *KeyStore) GetByKey(ctx context.Context, key string) (*keycore.APIKey, error) {
 	m, err := KeyWithAPIKeyCompositeGroups(r.KeyActiveQuery()).
 		Where(apikey.KeyEQ(key)).
@@ -301,6 +400,12 @@ func (r *KeyStore) GetByKey(ctx context.Context, key string) (*keycore.APIKey, e
 	return KeyApiKeyEntityToService(m), nil
 }
 
+// GetByKeyForAuth loads the selected Key, creator-user and ordinary-group columns
+// used for authentication, plus ordered composite groups. Missing records
+// return ErrAPIKeyNotFound. Ordinary-group fields outside its select list
+// retain zero values during view conversion, while composite group
+// relationships use their full load path. In particular, ordinary queries leave
+// UnavailableFallbackGroupID unset because it is outside this select list.
 func (r *KeyStore) GetByKeyForAuth(ctx context.Context, key string) (*keycore.APIKey, error) {
 	m, err := r.KeyActiveQuery().
 		Where(apikey.KeyEQ(key)).
@@ -403,16 +508,30 @@ func (r *KeyStore) GetByKeyForAuth(ctx context.Context, key string) (*keycore.AP
 	return KeyApiKeyEntityToService(m), nil
 }
 
+// Update writes the configuration and reset columns selected by fields on a
+// currently nondeleted Key. An empty mask returns before any write, and a
+// missing matching row reports ErrAPIKeyNotFound.
+//
+// CompositeConfiguration opens an owned transaction when possible so the Key
+// row and replacement mappings commit together; existing transaction contexts
+// or transaction-bound stores leave completion to their owner. Unselected
+// billing counters retain current database values. The update uses one
+// eligibility predicate against concurrent deletion, and the caller record
+// receives the chosen timestamp after selected writes finish. Failed multi-step
+// changes require the owning transaction to roll back.
 func (r *KeyStore) Update(ctx context.Context, key *keycore.APIKey, fields keycore.APIKeyUpdateFields) error {
 	// An empty field mask means the caller requested no writes.
 	if fields.IsEmpty() {
 		return nil
 	}
 
-	// Composite mappings and the key record must change in the same transaction.
+	// The mode flag and saved prefix rows describe one configuration. Own
+	// their transaction together so replacement failure cannot commit only the Key row.
 	if fields.CompositeConfiguration && dbent.TxFromContext(ctx) == nil {
 		tx, err := r.client.Tx(ctx)
 		if err == nil {
+			// Roll back this owned transaction after a failed Key-row or mapping
+			// replacement write so those components cannot commit as a partial configuration.
 			defer func() { _ = tx.Rollback() }()
 			opCtx := dbent.NewTxContext(ctx, tx)
 			if err := r.Update(opCtx, key, fields); err != nil {
@@ -483,7 +602,6 @@ func (r *KeyStore) Update(ctx context.Context, key *keycore.APIKey, fields keyco
 		}
 	}
 
-	// Expiration time
 	if fields.ExpiresAt {
 		if key.ExpiresAt != nil {
 			builder.SetExpiresAt(*key.ExpiresAt)
@@ -512,7 +630,7 @@ func (r *KeyStore) Update(ctx context.Context, key *keycore.APIKey, fields keyco
 		return err
 	}
 	if affected == 0 {
-		// No matching active record remains.
+		// The update predicate found no current nondeleted credential record.
 		return keycore.ErrAPIKeyNotFound
 	}
 	if fields.CompositeConfiguration {
@@ -521,12 +639,16 @@ func (r *KeyStore) Update(ctx context.Context, key *keycore.APIKey, fields keyco
 		}
 	}
 
-	// Reuse the write timestamp; a second query could race with deletion.
+	// Return the timestamp selected for this write after all selected changes
+	// finish; an extra record read could instead observe a concurrent deletion.
 	key.UpdatedAt = now
 	return nil
 }
 
-// RotateCredential conditionally replaces the credential without writing stale configuration or usage fields.
+// RotateCredential replaces the secret and timestamp when ID, creator, old
+// secret, nondeleted state and unmanaged state match. It returns rotation
+// conflict when no row matches, and leaves configuration and usage columns
+// outside the update so a stale view cannot overwrite them.
 func (r *KeyStore) RotateCredential(ctx context.Context, key *keycore.APIKey, oldKey string) error {
 	now := time.Now()
 	affected, err := clientFromContext(ctx, r.client).APIKey.Update().
@@ -551,10 +673,15 @@ func (r *KeyStore) RotateCredential(ctx context.Context, key *keycore.APIKey, ol
 	return nil
 }
 
+// Delete replaces a nondeleted record's credential with a short tombstone and
+// sets its deletion time in one update. An already deleted existing row returns
+// success; an absent ID returns ErrAPIKeyNotFound after an unrestricted
+// existence check.
 func (r *KeyStore) Delete(ctx context.Context, id int64) error {
 	// A short tombstone frees the unique credential while fitting the 128-character column.
 	tombstoneKey := fmt.Sprintf("__deleted__%d__%d", id, time.Now().UnixNano())
-	// Set deleted_at in the update so soft deletion does not depend on hooks.
+	// Replace the unique secret and deletion marker in the same mutation,
+	// making later ordinary lookup reject the record while its retained ID remains available.
 	affected, err := r.client.APIKey.Update().
 		Where(apikey.IDEQ(id), apikey.DeletedAtIsNil()).
 		SetKey(tombstoneKey).
@@ -581,8 +708,15 @@ func (r *KeyStore) Delete(ctx context.Context, id int64) error {
 	return nil
 }
 
-// DeleteWithAudit keeps the historical API name for callers.
-// It atomically soft-deletes the key and replaces the credential with a tombstone, freeing the unique value.
+// DeleteWithAudit retains the historical method name while tombstoning and
+// soft-deleting id. It supplies no separate audit insert.
+//
+// A context transaction uses its existing client; otherwise the store attempts
+// an owned transaction, tolerating ErrTxStarted for a transaction-bound store.
+// The owned path rolls back on failure and commits after mutation. The helper
+// treats an existing tombstone as repeated successful deletion, while an
+// unknown ID reports missing. Transaction-bound callers own final completion
+// and post-commit invalidation.
 func (r *KeyStore) DeleteWithAudit(ctx context.Context, id int64) error {
 	tombstoneKey := fmt.Sprintf("__deleted__%d__%d", id, time.Now().UnixNano())
 
@@ -596,6 +730,8 @@ func (r *KeyStore) DeleteWithAudit(ctx context.Context, id int64) error {
 	}
 	exec := r.client
 	if err == nil {
+		// Roll back an owned transaction on any later failure so preceding
+		// configuration or tombstone work is not committed as a partial operation.
 		defer func() { _ = tx.Rollback() }()
 		exec = tx.Client()
 	}
@@ -610,6 +746,10 @@ func (r *KeyStore) DeleteWithAudit(ctx context.Context, id int64) error {
 	return nil
 }
 
+// KeyDeleteWithTombstone updates credential, deletion time and modification
+// time together through exec. The caller owns any surrounding transaction; an
+// already deleted row succeeds when the store's unrestricted existence query
+// still finds its ID, while an absent ID reports ErrAPIKeyNotFound.
 func (r *KeyStore) KeyDeleteWithTombstone(ctx context.Context, exec *dbent.Client, id int64, tombstoneKey string) error {
 	res, err := exec.ExecContext(ctx, `
 		UPDATE api_keys
@@ -638,6 +778,11 @@ func (r *KeyStore) KeyDeleteWithTombstone(ctx context.Context, exec *dbent.Clien
 	return nil
 }
 
+// KeyApiKeyListByUserIDQuery builds a creator-scoped nondeleted query excluding
+// managed credentials. Text matches name or secret without case, zero group
+// selects unbound ordinary Keys, and nonzero group selects ordinary or
+// composite bindings. Personal and team scope narrow membership; other scope
+// text leaves both eligible.
 func (r *KeyStore) KeyApiKeyListByUserIDQuery(userID int64, filters keycore.APIKeyListFilters) *dbent.APIKeyQuery {
 	q := r.KeyActiveQuery().Where(apikey.UserIDEQ(userID))
 	// Hide server-managed keys, including creative execution keys, from ordinary key lists.
@@ -673,6 +818,11 @@ func (r *KeyStore) KeyApiKeyListByUserIDQuery(userID int64, filters keycore.APIK
 	return q
 }
 
+// ListByUserID counts the filtered creator's visible credentials and returns
+// their requested page with group and binding views. Stored-column ordering
+// uses ID as its tie-breaker; usage ordering delegates to a full-candidate
+// sort. Last nonempty usage IP lookup failures reject the page, while a missing
+// SQL dependency skips those observations.
 func (r *KeyStore) ListByUserID(ctx context.Context, userID int64, params pagination.PaginationParams, filters keycore.APIKeyListFilters) ([]keycore.APIKey, *pagination.PaginationResult, error) {
 	q := r.KeyApiKeyListByUserIDQuery(userID, filters)
 
@@ -709,7 +859,10 @@ func (r *KeyStore) ListByUserID(ctx context.Context, userID int64, params pagina
 	return outKeys, pagination.ResultFromTotal(int64(total), params), nil
 }
 
-// KeyAttachLastUsedIPs loads each page key's latest nonempty usage IP in one batch.
+// KeyAttachLastUsedIPs fills each supplied Key with its latest nonempty usage
+// address using a batch query. Empty input or absent SQL skips the lookup; a
+// successful result mutates the supplied slice and gives each observed address
+// its own pointer.
 func (r *KeyStore) KeyAttachLastUsedIPs(ctx context.Context, keys []keycore.APIKey) error {
 	if len(keys) == 0 || r.sql == nil {
 		return nil
@@ -732,6 +885,10 @@ func (r *KeyStore) KeyAttachLastUsedIPs(ctx context.Context, keys []keycore.APIK
 	return nil
 }
 
+// KeyLatestUsageLogIPs delegates the latest nonempty IP batch query using the
+// client dialect. Empty IDs or absent SQL return an allocated empty map before
+// reading the dialect; query failures are returned for caller presentation
+// handling.
 func (r *KeyStore) KeyLatestUsageLogIPs(ctx context.Context, apiKeyIDs []int64) (result map[int64]string, err error) {
 	// Return before reading the dialect when there is no work or executor.
 	if len(apiKeyIDs) == 0 || r.sql == nil {
@@ -740,6 +897,15 @@ func (r *KeyStore) KeyLatestUsageLogIPs(ctx context.Context, apiKeyIDs []int64) 
 	return usagequery.KeyLatestUsageLogIPs(ctx, r.sql, r.client.Driver().Dialect(), apiKeyIDs)
 }
 
+// KeyListByUserIDWithUsageSort loads all filtered credentials before sorting
+// and selecting a page. It requires the bound usage-total reader and returns
+// lookup failure rather than presenting an arbitrary page.
+//
+// Missing totals use zero map values. The normalized direction applies to total
+// spending and to Key ID ties, giving deterministic selection before
+// pagination. Only the selected page receives latest-IP lookup; that failure
+// rejects the result. The supplied total comes from the preceding query count
+// and can differ from later reads under concurrent database mutation.
 func (r *KeyStore) KeyListByUserIDWithUsageSort(ctx context.Context, q *dbent.APIKeyQuery, params pagination.PaginationParams, total int) ([]keycore.APIKey, *pagination.PaginationResult, error) {
 	keys, err := KeyWithAPIKeyCompositeGroups(q.WithGroup()).
 		Order(dbent.Desc(apikey.FieldID)).
@@ -762,6 +928,8 @@ func (r *KeyStore) KeyListByUserIDWithUsageSort(ctx context.Context, q *dbent.AP
 	}
 
 	sortOrder := params.NormalizedSortOrder(pagination.SortOrderDesc)
+	// Spending is read before page selection, with Key IDs breaking equal
+	// totals in the same direction so missing or tied observations still select a stable page.
 	sort.SliceStable(outKeys, func(i, j int) bool {
 		left := usageTotals[outKeys[i].ID]
 		right := usageTotals[outKeys[j].ID]
@@ -784,6 +952,10 @@ func (r *KeyStore) KeyListByUserIDWithUsageSort(ctx context.Context, q *dbent.AP
 	return pageKeys, pagination.ResultFromTotal(int64(total), params), nil
 }
 
+// VerifyOwnership returns nondeleted requested IDs created by userID, including
+// hidden managed records. Empty input returns an allocated empty result;
+// callers needing presentation visibility apply that independent policy before
+// exposing any credential.
 func (r *KeyStore) VerifyOwnership(ctx context.Context, userID int64, apiKeyIDs []int64) ([]int64, error) {
 	if len(apiKeyIDs) == 0 {
 		return []int64{}, nil
@@ -798,16 +970,24 @@ func (r *KeyStore) VerifyOwnership(ctx context.Context, userID int64, apiKeyIDs 
 	return ids, nil
 }
 
+// CountByUserID returns the creator's count of all nondeleted credential
+// records.
 func (r *KeyStore) CountByUserID(ctx context.Context, userID int64) (int64, error) {
 	count, err := r.KeyActiveQuery().Where(apikey.UserIDEQ(userID)).Count(ctx)
 	return int64(count), err
 }
 
+// ExistsByKey reports whether a nondeleted record uses the supplied credential
+// text.
 func (r *KeyStore) ExistsByKey(ctx context.Context, key string) (bool, error) {
 	count, err := r.KeyActiveQuery().Where(apikey.KeyEQ(key)).Count(ctx)
 	return count > 0, err
 }
 
+// ListByGroupID returns paginated nondeleted Keys bound ordinarily or through a
+// composite mapping to groupID. It loads user and group relationships, uses
+// stored-column ordering, and includes managed records for administrative
+// consumers.
 func (r *KeyStore) ListByGroupID(ctx context.Context, groupID int64, params pagination.PaginationParams) ([]keycore.APIKey, *pagination.PaginationResult, error) {
 	q := r.KeyActiveQuery().Where(apikey.Or(
 		apikey.GroupIDEQ(groupID),
@@ -840,6 +1020,10 @@ func (r *KeyStore) ListByGroupID(ctx context.Context, groupID int64, params pagi
 	return outKeys, pagination.ResultFromTotal(int64(total), params), nil
 }
 
+// KeyApiKeyListOrder returns supported stored-column ordering with a normalized
+// direction and same-direction ID tie-breaker. Unknown fields select ID; usage
+// sorting uses a separate full-candidate path in ListByUserID. Other callers
+// receive the ID default when they supply usage to this helper.
 func KeyApiKeyListOrder(params pagination.PaginationParams) []func(*entsql.Selector) {
 	sortBy := strings.ToLower(strings.TrimSpace(params.SortBy))
 	sortOrder := params.NormalizedSortOrder(pagination.SortOrderDesc)
@@ -859,6 +1043,8 @@ func KeyApiKeyListOrder(params pagination.PaginationParams) []func(*entsql.Selec
 	case "id":
 		field = apikey.FieldID
 	default:
+		// Use stable ID ordering for unrecognized names so a caller still
+		// receives an ordered page using supported stored columns.
 		field = apikey.FieldID
 	}
 
@@ -876,7 +1062,10 @@ func KeyApiKeyListOrder(params pagination.PaginationParams) []func(*entsql.Selec
 	return orders
 }
 
-// SearchAPIKeys searches API keys by user ID and/or keyword (name).
+// SearchAPIKeys returns newest nondeleted records matching optional positive
+// creator ID and case-insensitive name text. It includes managed Keys and
+// passes limit directly to Ent; ordinary group and ordered composite binding
+// relationships accompany the result.
 func (r *KeyStore) SearchAPIKeys(ctx context.Context, userID int64, keyword string, limit int) ([]keycore.APIKey, error) {
 	q := r.KeyActiveQuery()
 	if userID > 0 {
@@ -902,9 +1091,19 @@ func (r *KeyStore) SearchAPIKeys(ctx context.Context, userID int64, keyword stri
 	return outKeys, nil
 }
 
-// ClearGroupIDByGroupID clears ordinary bindings and removes composite mappings for the group.
+// ClearGroupIDByGroupID clears ordinary bindings and removes composite mappings
+// targeting groupID. It uses the context transaction when supplied, and returns
+// ordinary-row plus removed-mapping count.
+//
+// The two writes need a caller-owned transaction when consistency across both
+// steps is required. A mapping deletion failure can follow a completed ordinary
+// clear; without that transaction the first write remains. Composite deletion
+// covers every saved mapping for the group, including mappings whose owning Key
+// is already deleted.
 func (r *KeyStore) ClearGroupIDByGroupID(ctx context.Context, groupID int64) (int64, error) {
 	client := clientFromContext(ctx, r.client)
+	// Clear ordinary references before removing mappings. A later deletion error
+	// requires caller rollback when both binding forms must change together.
 	n, err := client.APIKey.Update().
 		Where(apikey.GroupIDEQ(groupID), apikey.DeletedAtIsNil()).
 		ClearGroupID().
@@ -918,9 +1117,20 @@ func (r *KeyStore) ClearGroupIDByGroupID(ctx context.Context, groupID int64) (in
 	return int64(n + deleted), err
 }
 
-// UpdateGroupIDByUserAndGroup moves the user's key bindings from oldGroupID to newGroupID.
+// UpdateGroupIDByUserAndGroup moves a creator's nondeleted ordinary and
+// composite bindings from oldGroupID to newGroupID. The returned count measures
+// ordinary rows plus processed mapping rows.
+//
+// Each old composite mapping keeps its prefix when moved; if a target mapping
+// already exists for that Key, the old mapping is deleted and the target prefix
+// retained. The method uses a context transaction when supplied but opens none
+// itself, so callers requiring rollback across all writes provide one. Failure
+// can follow earlier completed changes, and the transaction owner decides final
+// completion.
 func (r *KeyStore) UpdateGroupIDByUserAndGroup(ctx context.Context, userID, oldGroupID, newGroupID int64) (int64, error) {
 	client := clientFromContext(ctx, r.client)
+	// Move ordinary bindings first; later mapping failure can follow this write.
+	// A caller-owned transaction provides rollback across both forms of the move.
 	n, err := client.APIKey.Update().
 		Where(apikey.UserIDEQ(userID), apikey.GroupIDEQ(oldGroupID), apikey.DeletedAtIsNil()).
 		SetGroupID(newGroupID).
@@ -955,7 +1165,8 @@ func (r *KeyStore) UpdateGroupIDByUserAndGroup(ctx context.Context, userID, oldG
 	return int64(n + len(bindings)), nil
 }
 
-// CountByGroupID counts non-deleted keys bound directly or through a composite mapping.
+// CountByGroupID counts nondeleted Keys with ordinary or composite binding to
+// groupID.
 func (r *KeyStore) CountByGroupID(ctx context.Context, groupID int64) (int64, error) {
 	count, err := r.KeyActiveQuery().Where(apikey.Or(
 		apikey.GroupIDEQ(groupID),
@@ -964,6 +1175,8 @@ func (r *KeyStore) CountByGroupID(ctx context.Context, groupID int64) (int64, er
 	return int64(count), err
 }
 
+// ListKeysByUserID returns every nondeleted credential created by userID for
+// invalidation.
 func (r *KeyStore) ListKeysByUserID(ctx context.Context, userID int64) ([]string, error) {
 	keys, err := r.KeyActiveQuery().
 		Where(apikey.UserIDEQ(userID)).
@@ -975,6 +1188,8 @@ func (r *KeyStore) ListKeysByUserID(ctx context.Context, userID int64) ([]string
 	return keys, nil
 }
 
+// ListKeysByGroupID returns nondeleted secrets ordinarily or compositely bound
+// to groupID for invalidation.
 func (r *KeyStore) ListKeysByGroupID(ctx context.Context, groupID int64) ([]string, error) {
 	keys, err := r.KeyActiveQuery().
 		Where(apikey.Or(
@@ -989,6 +1204,10 @@ func (r *KeyStore) ListKeysByGroupID(ctx context.Context, groupID int64) ([]stri
 	return keys, nil
 }
 
+// UpdateLastUsed writes supplied usage and modification timestamps on a
+// nondeleted credential. A missing row reports ErrAPIKeyNotFound; the service
+// owns write throttling, and this storage method accepts the caller's time
+// directly.
 func (r *KeyStore) UpdateLastUsed(ctx context.Context, id int64, usedAt time.Time) error {
 	affected, err := r.client.APIKey.Update().
 		Where(apikey.IDEQ(id), apikey.DeletedAtIsNil()).
@@ -1004,6 +1223,16 @@ func (r *KeyStore) UpdateLastUsed(ctx context.Context, id int64, usedAt time.Tim
 	return nil
 }
 
+// KeyApiKeyEntityToService maps selected entity fields and loaded relationships
+// into a Key view, retaining nil input. ModelMapping is copied, while many
+// scalar pointers and IP lists remain shared with the entity.
+//
+// Loaded allowed and denied group rows become sorted user ID lists; only a
+// loaded disabled-public edge marks GroupRestrictionsLoaded. The user view
+// initially acts as both creator and actor until team hydration resolves the
+// payer. Ordinary and composite group conversions use their selected entity
+// data. Missing or unloaded composite edges leave the default slice, while
+// loaded empty edges produce an allocated empty binding list.
 func KeyApiKeyEntityToService(m *dbent.APIKey) *keycore.APIKey {
 	if m == nil {
 		return nil
@@ -1056,6 +1285,8 @@ func KeyApiKeyEntityToService(m *dbent.APIKey) *keycore.APIKey {
 			}
 			slices.Sort(out.User.AllowedGroups)
 		}
+		// Mark restrictions loaded only after this relationship was selected,
+		// including an empty result; unloaded edges leave later permission refresh eligible.
 		if disabledPublicRows, err := m.Edges.User.Edges.UserDisabledPublicGroupsOrErr(); err == nil {
 			out.User.DisabledPublicGroups = make([]int64, 0, len(disabledPublicRows))
 			for _, row := range disabledPublicRows {
@@ -1091,6 +1322,9 @@ func KeyApiKeyEntityToService(m *dbent.APIKey) *keycore.APIKey {
 	return out
 }
 
+// KeyDerefString returns the supplied string value or empty text when nil.
+// Callers use it for nullable persisted group labels; no trimming or
+// interpretation is performed on a present value.
 func KeyDerefString(s *string) string {
 	if s == nil {
 		return ""
@@ -1098,26 +1332,49 @@ func KeyDerefString(s *string) string {
 	return *s
 }
 
+// IncrementQuotaUsed delegates a quota delta for a nondeleted record to
+// KeyUsageStore. The returned value is its updated usage, and missing records
+// report the billing Key-not-found identity; service callers validate any
+// spending-specific amount rule.
 func (r *KeyStore) IncrementQuotaUsed(ctx context.Context, id int64, amount float64) (float64, error) {
 	return billingpostgres.NewKeyUsageStore(r.client, r.sql).IncrementQuotaUsed(ctx, id, amount)
 }
 
+// IncrementQuotaUsedAndGetState delegates the nondeleted Key quota update and
+// conditional exhaustion state read in one SQL operation. It returns current
+// quota, usage, secret and state; this path differs from settlement of
+// already-admitted soft-deleted Keys.
 func (r *KeyStore) IncrementQuotaUsedAndGetState(ctx context.Context, id int64, amount float64) (*keycore.APIKeyQuotaUsageState, error) {
 	return billingpostgres.NewKeyUsageStore(r.client, r.sql).IncrementQuotaUsedAndGetState(ctx, id, amount)
 }
 
+// IncrementRateLimitUsage delegates spending-window increments for a nondeleted
+// Key to KeyUsageStore. It passes cost unchanged, and the SQL helper can report
+// success when no row matched; settlement uses its own admitted-request write
+// path.
 func (r *KeyStore) IncrementRateLimitUsage(ctx context.Context, id int64, cost float64) error {
 	return billingpostgres.NewKeyUsageStore(r.client, r.sql).IncrementRateLimitUsage(ctx, id, cost)
 }
 
+// ResetRateLimitWindows delegates elapsed-window resets to KeyUsageStore using
+// transaction time. It targets nondeleted Keys, retains unelapsed counters, and
+// leaves missing starts unchanged according to that helper's saved-window reset
+// rules.
 func (r *KeyStore) ResetRateLimitWindows(ctx context.Context, id int64) error {
 	return billingpostgres.NewKeyUsageStore(r.client, r.sql).ResetRateLimitWindows(ctx, id)
 }
 
+// GetRateLimitData delegates nondeleted spending counters and saved
+// window-start reads to KeyUsageStore. Missing records return the billing
+// Key-not-found error; the helper owns result-row scanning and closing before
+// this call returns.
 func (r *KeyStore) GetRateLimitData(ctx context.Context, id int64) (result *keycore.APIKeyRateLimitData, err error) {
 	return billingpostgres.NewKeyUsageStore(r.client, r.sql).GetRateLimitData(ctx, id)
 }
 
+// KeyLoadAPIKeyUsageTotals invokes the bound spending reader for supplied Key
+// IDs. Missing callback returns a configuration error; its returned map belongs
+// to the reader, and sorting treats missing entries as zero.
 func (r *KeyStore) KeyLoadAPIKeyUsageTotals(ctx context.Context, ids []int64) (map[int64]float64, error) {
 	if r.usageTotals == nil {
 		return nil, fmt.Errorf("API key usage totals reader is not configured")
@@ -1125,7 +1382,10 @@ func (r *KeyStore) KeyLoadAPIKeyUsageTotals(ctx context.Context, ids []int64) (m
 	return r.usageTotals(ctx, ids)
 }
 
-// clientFromContext returns the context transaction's client, or defaultClient when absent.
+// clientFromContext returns the Ent client stored in the context transaction
+// when present. Otherwise it returns defaultClient unchanged; callers own
+// transaction completion and keep the selected client usable through their
+// operation.
 func clientFromContext(ctx context.Context, defaultClient *dbent.Client) *dbent.Client {
 	if tx := dbent.TxFromContext(ctx); tx != nil {
 		return tx.Client()
@@ -1133,7 +1393,10 @@ func clientFromContext(ctx context.Context, defaultClient *dbent.Client) *dbent.
 	return defaultClient
 }
 
-// translatePersistenceError maps missing rows and unique conflicts to caller-supplied application errors.
+// translatePersistenceError maps recognized missing rows or unique conflicts to
+// the supplied application errors with the persistence cause retained. Nil
+// input returns nil; absent mappings and unrelated failures return the original
+// error for caller handling.
 func translatePersistenceError(err error, notFound, conflict *infraerrors.ApplicationError) error {
 	if err == nil {
 		return nil
@@ -1146,21 +1409,25 @@ func translatePersistenceError(err error, notFound, conflict *infraerrors.Applic
 		return notFound.WithCause(err)
 	}
 
-	// Map unique constraint violations when the caller supplies a conflict error.
+	// Use the caller-supplied conflict identity for recognized unique failures,
+	// retaining their cause so higher-level error matching and diagnostics remain usable.
 	if conflict != nil && isUniqueConstraintViolation(err) {
 		return conflict.WithCause(err)
 	}
 
-	// Other persistence failures pass through unchanged.
 	return err
 }
 
-// isUniqueConstraintViolation delegates PostgreSQL error classification.
+// isUniqueConstraintViolation delegates PostgreSQL unique-constraint error
+// classification to the shared storage helper.
 func isUniqueConstraintViolation(err error) bool {
 	return postgresinfra.IsUniqueConstraintViolation(err)
 }
 
-// scanSingleRow reads one row and closes the result set after scanning.
+// scanSingleRow delegates first-row scanning and result closure to the shared
+// SQL helper. Callers supply destination pointers and arguments; a failed query
+// returns directly before row cleanup is registered. After query success,
+// deferred Close errors are joined with any scan, no-row or iteration error.
 func scanSingleRow(ctx context.Context, q SQLExecutor, query string, args []any, dest ...any) error {
 	return postgresinfra.ScanSingleRow(ctx, q, query, args, dest...)
 }

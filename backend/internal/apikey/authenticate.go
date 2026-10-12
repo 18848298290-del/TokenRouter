@@ -5,48 +5,79 @@ import (
 	"fmt"
 )
 
+// Credential authentication checks identity before the gateway decides whether
+// a request may spend funds. Expired and quota-exhausted states can still
+// produce an identity view for retrieval endpoints, while disabled credentials,
+// inactive users, invalid team relationships and rejected IP addresses stop
+// authentication. A loaded Key can accompany an error so diagnostics can retain
+// ownership information.
+//
+// The resulting access record separates credential creator, hydrated payer and
+// acting member. Consumers check the authentication error before admitting that
+// record, then perform final group, protocol and funding checks at the gateway.
+// The same loaded-key validator serves later connection turns after storage
+// reauthorization; it keeps failure-stage information for HTTP adapters to
+// choose the corresponding response shape.
+
+// Failure stages let HTTP adapters select status, protocol error text and
+// observation callbacks after the same ordered identity checks in authentication.
 const (
-	AuthenticationLookup       AuthenticationFailureKind = "lookup"
-	AuthenticationDisabled     AuthenticationFailureKind = "disabled"
-	AuthenticationTeam         AuthenticationFailureKind = "team"
-	AuthenticationMemberLimit  AuthenticationFailureKind = "member_limit"
-	AuthenticationIP           AuthenticationFailureKind = "ip"
-	AuthenticationUserMissing  AuthenticationFailureKind = "user_missing"
-	AuthenticationUserInactive AuthenticationFailureKind = "user_inactive"
+	AuthenticationLookup       AuthenticationFailureKind = "lookup"        // credential lookup failed
+	AuthenticationDisabled     AuthenticationFailureKind = "disabled"      // credential state rejected
+	AuthenticationTeam         AuthenticationFailureKind = "team"          // team lifecycle rejected
+	AuthenticationMemberLimit  AuthenticationFailureKind = "member_limit"  // member allowance exhausted
+	AuthenticationIP           AuthenticationFailureKind = "ip"            // client address rejected
+	AuthenticationUserMissing  AuthenticationFailureKind = "user_missing"  // payer record missing
+	AuthenticationUserInactive AuthenticationFailureKind = "user_inactive" // payer status rejected
 )
 
+// AccessSnapshot records credential ownership, payer and actor after loading
+// identity data. Its private Key pointer is the view used for this
+// authentication attempt; a returned record accompanied by an error remains
+// diagnostic input until callers establish successful admission.
 // @project-doc docs/architecture/gateway_request_lifecycle.md#apikey_authentication
-// AccessSnapshot separates credential ownership, payer, and actor. Billing resolves the funding source.
-// key belongs to this authentication attempt; L1 and L2 keep separate snapshots.
 type AccessSnapshot struct {
-	KeyID          int64
-	OwnerUserID    int64
-	PayerUserID    int64
-	ActorUserID    int64
-	TeamID         *int64
+	// KeyID identifies the matched credential. OwnerUserID records its creator,
+	// PayerUserID names the hydrated funding user, and ActorUserID names the
+	// member acting through it; personal credentials usually share one user ID.
+	KeyID       int64  // matched credential record identifier
+	OwnerUserID int64  // persisted credential owner identifier
+	PayerUserID int64  // hydrated funding user identifier
+	ActorUserID int64  // acting credential user identifier
+	TeamID      *int64 // copied team scope identifier
+	// key remains a shared pointer to this attempt's loaded view. Context
+	// copying retains it; runtime group helpers publish request-local replacements.
 	key            *APIKey
-	fastModePolicy string
+	fastModePolicy string // selected request acceleration policy
 }
 
-// AuthenticationInput carries the parsed client address and whether to enforce member spending limits.
+// AuthenticationInput supplies the client address and member-allowance
+// enforcement choice.
 type AuthenticationInput struct {
-	ClientIP          string
+	ClientIP string // caller-resolved client address text
+	// CheckMemberLimits enables team spending checks for consuming entry points.
+	// Callers disable it for retrieval operations that still require valid identity.
 	CheckMemberLimits bool
 }
 
+// AuthenticationFailureKind identifies which ordered authentication check
+// rejected a loaded credential.
 type AuthenticationFailureKind string
 
-// AuthenticationFailure records the failure stage; HTTP adapters choose status codes and response bodies.
+// AuthenticationFailure carries rejection stage, optional cause and denied
+// client address.
 type AuthenticationFailure struct {
-	Kind     AuthenticationFailureKind
-	Cause    error
-	ClientIP string
+	Kind     AuthenticationFailureKind // rejected authentication check stage
+	Cause    error                     // optional underlying failure cause
+	ClientIP string                    // denied address for diagnostics
 }
 
-// ipAccessDenied carries the public denial message for HTTP adapters to format.
+// ipAccessDenied is the rejected address rendered in a public denial message.
 type ipAccessDenied string
 
-// KeyView returns the key view owned by this authentication attempt.
+// KeyView returns the Key pointer retained by this authentication attempt. Nil
+// access returns nil; callers treat an access record with an authentication
+// error as diagnostic data until admission has succeeded.
 func (a *AccessSnapshot) KeyView() *APIKey {
 	if a == nil {
 		return nil
@@ -54,6 +85,9 @@ func (a *AccessSnapshot) KeyView() *APIKey {
 	return a.key
 }
 
+// Error returns the underlying cause message when one is available. A failure
+// without a cause returns its stage string, allowing HTTP adapters to map those
+// stage-only rejections independently.
 func (e *AuthenticationFailure) Error() string {
 	if e.Cause != nil {
 		return e.Cause.Error()
@@ -61,11 +95,14 @@ func (e *AuthenticationFailure) Error() string {
 	return string(e.Kind)
 }
 
+// Unwrap returns the optional cause for standard error identity checks.
 func (e *AuthenticationFailure) Unwrap() error { return e.Cause }
 
-// Authenticate checks the key, team, member limits, IP rules, and payer in that order.
-// A non-nil snapshot on failure is diagnostic data; callers must check the error.
-// Funding admission checks expiration and quota later so non-consuming endpoints can read existing data.
+// Authenticate loads a credential view and checks its identity, returning
+// access data on success. Some rejections return loaded access data with an
+// error for diagnostics; callers check the error before using that identity.
+// Group, protocol, quota and funding admission follow at the gateway so
+// retrieval endpoints can reuse the identity checks.
 func (s *APIKeyService) Authenticate(ctx context.Context, credential string, input AuthenticationInput) (*AccessSnapshot, error) {
 	key, err := s.GetByKey(ctx, credential)
 	if err != nil {
@@ -74,7 +111,12 @@ func (s *APIKeyService) Authenticate(ctx context.Context, credential string, inp
 	return s.authenticateKey(key, input)
 }
 
-// authenticateKey validates loaded identity data for initial authentication and later connection turns.
+// authenticateKey validates loaded credential, team, optional member allowance,
+// IP and payer data in that order. Nil input produces a lookup failure; later
+// failures retain the access record for diagnostics. Expired and
+// quota-exhausted states pass the initial state check for later spending
+// admission. Callers compile IP rules before validation and decide whether
+// member allowances apply to the endpoint.
 func (s *APIKeyService) authenticateKey(key *APIKey, input AuthenticationInput) (*AccessSnapshot, error) {
 	if key == nil {
 		return nil, &AuthenticationFailure{Kind: AuthenticationLookup, Cause: ErrAPIKeyNotFound}
@@ -103,6 +145,8 @@ func (s *APIKeyService) authenticateKey(key *APIKey, input AuthenticationInput) 
 	if len(key.IPWhitelist) > 0 || len(key.IPBlacklist) > 0 {
 		if allowed, _ := CheckIPRestrictionWithCompiledRules(input.ClientIP, key.CompiledIPWhitelist, key.CompiledIPBlacklist); !allowed {
 			ip := input.ClientIP
+			// An unavailable resolved address still produces a useful public denial
+			// message; record an explicit placeholder when no client address was supplied.
 			if ip == "" {
 				ip = "unknown"
 			}
@@ -118,4 +162,5 @@ func (s *APIKeyService) authenticateKey(key *APIKey, input AuthenticationInput) 
 	return access, nil
 }
 
+// Error formats the rejected address into the fixed public denial message.
 func (e ipAccessDenied) Error() string { return fmt.Sprintf("Access denied. Your IP is %s", string(e)) }

@@ -9,7 +9,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestNormalizeAPIKeyModelMapping checks trimming and validation of model redirect rules.
+// TestNormalizeAPIKeyModelMapping supplies a padded exact rule alongside an
+// unpadded wildcard rule. It checks the trimmed exact source and target while
+// retaining the accepted wildcard source and its target.
 func TestNormalizeAPIKeyModelMapping(t *testing.T) {
 	normalized, err := NormalizeAPIKeyModelMapping(map[string]string{
 		" codex-auto-review ": " gpt-5.6-luna ",
@@ -22,6 +24,10 @@ func TestNormalizeAPIKeyModelMapping(t *testing.T) {
 	}, normalized)
 }
 
+// TestNormalizeAPIKeyModelMappingRejectsInvalidRules supplies empty,
+// self-targeting, oversized, duplicate, and malformed wildcard rules. It checks
+// the invalid mapping error identity for each shape and for a rule count above
+// the configured maximum.
 func TestNormalizeAPIKeyModelMappingRejectsInvalidRules(t *testing.T) {
 	tests := map[string]map[string]string{
 		"空来源":    {" ": "target"},
@@ -51,6 +57,10 @@ func TestNormalizeAPIKeyModelMappingRejectsInvalidRules(t *testing.T) {
 	require.True(t, errors.Is(err, ErrInvalidAPIKeyModelMapping))
 }
 
+// TestResolveAPIKeyModelMappingPriorityAndSinglePass combines exact,
+// overlapping wildcard, chained-target, and differently cased source rules. It
+// checks exact priority, longest-prefix selection, case-sensitive matching, and
+// return of a target after one pass.
 func TestResolveAPIKeyModelMappingPriorityAndSinglePass(t *testing.T) {
 	mapping := map[string]string{
 		"codex-*":           "wildcard-short",
@@ -77,6 +87,9 @@ func TestResolveAPIKeyModelMappingPriorityAndSinglePass(t *testing.T) {
 	require.Equal(t, "CODEX-review", model)
 }
 
+// TestAppendAPIKeyModelAliases supplies repeated models and unsorted aliases
+// with available and absent targets plus a wildcard source. It checks model deduplication,
+// retained model order, and lexical ordering of the eligible exact aliases.
 func TestAppendAPIKeyModelAliases(t *testing.T) {
 	models := AppendAPIKeyModelAliases(
 		[]string{"gpt-5.6-luna", "claude-sonnet-4-6", "gpt-5.6-luna"},

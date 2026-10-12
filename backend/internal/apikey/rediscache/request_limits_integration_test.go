@@ -17,23 +17,33 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/rediscontainer"
 )
 
-// TestRequestLimitsAtomicAdmission checks shared limits with concurrent clients.
+// TestRequestLimitsAtomicAdmission races distinct request identities against
+// each configured Redis allowance combination. It checks shared admission
+// count, replay idempotence, rejection isolation, retained RPM history,
+// independent Key IDs and pruning of elapsed records.
 func TestRequestLimitsAtomicAdmission(t *testing.T) {
 	client := rediscontainer.New(t)
 	cache := &ApiKeyCache{rdb: client}
 	ctx := context.Background()
 	for _, tc := range []struct {
-		name             string
-		concurrency, rpm int
+		name string // allowance combination scenario label
+		// concurrency sets active capacity and rpm sets rolling admission capacity.
+		// Their combinations share one expected limit while exercising independent
+		// and combined scripts against the same request population.
+		concurrency, rpm int // active request allowance; rolling admission allowance
 	}{
 		{"concurrency", 3, 0}, {"rpm", 0, 3}, {"both", 3, 3},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			// Clear prior-case members before this allowance combination so its
+			// accepted count reflects the fresh concurrent population instead of retained request history.
 			require.NoError(t, client.FlushDB(ctx).Err())
 			var accepted atomic.Int64
 			var wg sync.WaitGroup
 			for i := range 24 {
 				wg.Add(1)
+				// Distinct identities compete inside Redis, so the joined accepted count
+				// exposes any over-admission across the script's shared sorted-set capacity checks.
 				go func(i int) {
 					defer wg.Done()
 					_, err := cache.ReserveRequest(ctx, 1, fmt.Sprint(i), tc.concurrency, tc.rpm)
@@ -46,7 +56,8 @@ func TestRequestLimitsAtomicAdmission(t *testing.T) {
 			require.EqualValues(t, 3, accepted.Load())
 		})
 	}
-	// Replaying a reservation must neither double-count the request nor extend its RPM window.
+	// Replay the same identity before its stored windows expire, checking
+	// that command repetition keeps one member and its first RPM timestamp.
 	require.NoError(t, client.FlushDB(ctx).Err())
 	for _, limits := range [][2]int{{1, 0}, {0, 1}, {1, 1}} {
 		require.NoError(t, client.Del(ctx, requestLimitKeys(9)...).Err())
@@ -63,7 +74,8 @@ func TestRequestLimitsAtomicAdmission(t *testing.T) {
 			require.EqualValues(t, 1, client.ZCard(ctx, requestLimitKeys(9)[1]).Val())
 		}
 	}
-	// Concurrency rejection leaves RPM capacity available after the active slot is released.
+	// Reject the second active request before releasing the first lease;
+	// later successful admission shows that rejection left the other RPM position available.
 	require.NoError(t, client.FlushDB(ctx).Err())
 	_, err := cache.ReserveRequest(ctx, 2, "first", 1, 2)
 	require.NoError(t, err)
@@ -78,13 +90,15 @@ func TestRequestLimitsAtomicAdmission(t *testing.T) {
 	require.Positive(t, retry)
 	require.LessOrEqual(t, retry, time.Minute)
 	require.Zero(t, client.ZCard(ctx, requestLimitKeys(2)[0]).Val())
-	// Different key IDs have independent limits; composite groups share their key ID.
+	// Supply another Key ID after the first Key exhausts RPM to check its
+	// independent allowance, then verify that released lease renewal cannot resurrect it.
 	_, err = cache.ReserveRequest(ctx, 3, "other", 1, 2)
 	require.NoError(t, err)
 	require.NoError(t, cache.RefreshRequest(ctx, 3, "other"))
 	require.NoError(t, cache.ReleaseRequest(ctx, 3, "other"))
 	require.ErrorIs(t, cache.RefreshRequest(ctx, 3, "other"), apikey.ErrKeyLimiterUnavailable)
-	// The next admission prunes expired leases and RPM records.
+	// Insert records older than both windows so subsequent script admission
+	// must reclaim their capacity before accepting the fresh request identity.
 	now := time.Now().Add(-3 * time.Minute).UnixMilli()
 	require.NoError(t, client.ZAdd(ctx, requestLimitKeys(4)[0], redis.Z{Score: float64(now), Member: "stale"}).Err())
 	require.NoError(t, client.ZAdd(ctx, requestLimitKeys(4)[1], redis.Z{Score: float64(now), Member: "stale"}).Err())

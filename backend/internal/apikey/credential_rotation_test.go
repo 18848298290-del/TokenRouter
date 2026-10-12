@@ -9,22 +9,30 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// rotationRepository supports credential replacement; other calls fail to expose accidental configuration or usage writes.
+// rotationRepository stores a replaceable credential and exposes a post-write
+// test callback.
 type rotationRepository struct {
-	APIKeyRepository
-	key      *APIKey
-	err      error
-	onRotate func(*APIKey)
-	calls    int
+	APIKeyRepository         // unused methods require setup
+	key              *APIKey // retained credential storage record
+	err              error   // configured replacement write error
+	// onRotate runs after the fixture changes its secret and timestamps.
+	// Tests install the callback before replacement to model cancellation after persistence.
+	onRotate func(*APIKey) // optional successful replacement callback
+	calls    int           // counted replacement write attempts
 }
 
+// rotationCache retains entry pointers and records hashed deletion and
+// publication attempts.
 type rotationCache struct {
-	APIKeyCache
-	entries   map[string]*APIKeyAuthCacheEntry
-	deleted   []string
-	published []string
+	APIKeyCache                                  // unused cache methods require setup
+	entries     map[string]*APIKeyAuthCacheEntry // retained authentication entry pointers
+	deleted     []string                         // recorded deleted cache identities
+	published   []string                         // recorded published cache identities
 }
 
+// GetByID returns a shallow copy of the retained Key, or ErrAPIKeyNotFound when
+// absent. The fixture ignores ID and context, and nested fields remain shared
+// with its stored record.
 func (r *rotationRepository) GetByID(context.Context, int64) (*APIKey, error) {
 	if r.key == nil {
 		return nil, ErrAPIKeyNotFound
@@ -33,6 +41,10 @@ func (r *rotationRepository) GetByID(context.Context, int64) (*APIKey, error) {
 	return &key, nil
 }
 
+// GetByKeyForAuth returns a shallow copy when the credential equals the
+// retained secret. Missing or differently named credentials return
+// ErrAPIKeyNotFound, and nested fields remain shared for the configured
+// fixture.
 func (r *rotationRepository) GetByKeyForAuth(_ context.Context, credential string) (*APIKey, error) {
 	if r.key == nil || r.key.Key != credential {
 		return nil, ErrAPIKeyNotFound
@@ -41,6 +53,10 @@ func (r *rotationRepository) GetByKeyForAuth(_ context.Context, credential strin
 	return &key, nil
 }
 
+// RotateCredential counts the attempt, checks the old secret, and changes the
+// retained credential and write timestamp. A configured error stops mutation; a
+// successful replacement invokes onRotate when supplied so tests can cancel the
+// caller after persistence.
 func (r *rotationRepository) RotateCredential(_ context.Context, key *APIKey, oldKey string) error {
 	r.calls++
 	if r.err != nil {
@@ -58,15 +74,24 @@ func (r *rotationRepository) RotateCredential(_ context.Context, key *APIKey, ol
 	return nil
 }
 
+// GetAuthCache returns the stored entry pointer for the supplied cache
+// identity, or nil with no error when absent. Entries remain shared, so tests
+// keep snapshot data unchanged while service authentication reconstructs a view.
 func (c *rotationCache) GetAuthCache(_ context.Context, key string) (*APIKeyAuthCacheEntry, error) {
 	return c.entries[key], nil
 }
 
+// SetAuthCache retains the supplied entry pointer in the fixture map. Callers
+// initialize entries before writes; the fixture ignores TTL and context and
+// therefore supplies no expiration or cancellation behavior.
 func (c *rotationCache) SetAuthCache(_ context.Context, key string, entry *APIKeyAuthCacheEntry, _ time.Duration) error {
 	c.entries[key] = entry
 	return nil
 }
 
+// DeleteAuthCache removes and records key when ctx remains usable at entry. A
+// canceled context returns its error before mutation, allowing the rotation
+// test to observe the detached cleanup budget.
 func (c *rotationCache) DeleteAuthCache(ctx context.Context, key string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -76,6 +101,9 @@ func (c *rotationCache) DeleteAuthCache(ctx context.Context, key string) error {
 	return nil
 }
 
+// PublishAuthCacheInvalidation records the hashed identity when the context is
+// usable at entry. Cancellation returns its error before recording, and the
+// fixture sends no real Pub/Sub message.
 func (c *rotationCache) PublishAuthCacheInvalidation(ctx context.Context, key string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -84,6 +112,10 @@ func (c *rotationCache) PublishAuthCacheInvalidation(ctx context.Context, key st
 	return nil
 }
 
+// TestRotateCredentialPreservesKeyAndInvalidatesCredentials rotates a
+// quota-exhausted composite record and cancels its caller immediately after the
+// write. It checks retained configuration and usage, both cache invalidations,
+// old-secret rejection and new-secret lookup.
 func TestRotateCredentialPreservesKeyAndInvalidatesCredentials(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -106,13 +138,16 @@ func TestRotateCredentialPreservesKeyAndInvalidatesCredentials(t *testing.T) {
 	options.Default.APIKeyPrefix = "tr-"
 	svc := NewAPIKeyService(repo, nil, nil, nil, nil, cache, options)
 	svc.initAuthCaches()
+	// Stop after the test so allocated positive and negative local caches
+	// are closed after the fixture's admitted authentication operations have finished.
 	t.Cleanup(svc.Stop)
 	_, err := svc.GetByKey(ctx, original.Key)
 	require.NoError(t, err)
 	svc.authCacheL1.Load().Wait()
 	require.Contains(t, cache.entries, AuthCacheKey(original.Key))
 	repo.onRotate = func(updated *APIKey) {
-		// Cancellation after commit must not skip cleanup; the new credential may also have a negative cache entry.
+		// Insert and flush a negative entry for the generated credential before
+		// canceling the caller, so cleanup must remove both positive and negative state.
 		svc.KeySetAuthCacheL1(AuthCacheKey(updated.Key), &APIKeyAuthCacheEntry{NotFound: true})
 		svc.authNegativeCacheL1.Load().Wait()
 		cancel()
@@ -137,16 +172,20 @@ func TestRotateCredentialPreservesKeyAndInvalidatesCredentials(t *testing.T) {
 	require.Equal(t, original.ID, got.ID)
 }
 
+// TestRotateCredentialRejectsUnauthorizedAndFailedWrites exercises missing,
+// foreign, managed, team-disabled and failed replacement cases. It checks the
+// returned error, allowed write attempts, retained old credential, and absence
+// of cache invalidation on failure.
 func TestRotateCredentialRejectsUnauthorizedAndFailedWrites(t *testing.T) {
 	managedBy := "creative_studio"
 	teamID := int64(10)
 	writeErr := errors.New("write failed")
 	for _, test := range []struct {
-		name      string
-		key       *APIKey
-		writeErr  error
-		want      error
-		wantCalls int
+		name      string  // rotation rejection scenario label
+		key       *APIKey // scenario credential storage record
+		writeErr  error   // scenario replacement write failure
+		want      error   // expected returned error identity
+		wantCalls int     // expected replacement attempt count
 	}{
 		{name: "missing", want: ErrAPIKeyNotFound},
 		{name: "other_owner", key: &APIKey{UserID: 8}, want: ErrAPIKeyNotFound},

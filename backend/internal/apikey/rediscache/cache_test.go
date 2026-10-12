@@ -12,11 +12,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestApiKeyRateLimitKey supplies positive, zero, negative and maximum signed
+// user identifiers. It checks the exact creation-failure Redis name produced
+// for each input without validating user existence.
 func TestApiKeyRateLimitKey(t *testing.T) {
 	tests := []struct {
-		name     string
-		userID   int64
-		expected string
+		name     string // counter naming scenario label
+		userID   int64  // supplied signed user identifier
+		expected string // expected Redis counter name
 	}{
 		{
 			name:     "normal_user_id",
@@ -48,14 +51,22 @@ func TestApiKeyRateLimitKey(t *testing.T) {
 	}
 }
 
+// TestAPIKeyCacheSubscriber_BlocksUntilContextCancellation receives a
+// publication from an active in-memory Redis subscription. It checks the loop
+// remains running while connected and returns a cancellation error after the
+// caller ends its context.
 func TestAPIKeyCacheSubscriber_BlocksUntilContextCancellation(t *testing.T) {
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	// The test owns this Redis client. Close it after subscription cancellation
+	// and the final return observation so its background connection work can end.
 	defer func() { _ = client.Close() }()
 	cache := NewAPIKeyCache(client)
 	ctx, cancel := context.WithCancel(context.Background())
 	received := make(chan string, 1)
 	returned := make(chan error, 1)
+	// Keep subscription processing in a separate goroutine while the test
+	// publishes and observes its lifetime; the buffered return channel records final teardown.
 	go func() {
 		returned <- cache.SubscribeAuthCacheInvalidation(ctx, func(value string) { received <- value })
 	}()

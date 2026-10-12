@@ -8,10 +8,22 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// groupSource adapts the routing repository for authentication fixtures.
-type groupSource struct{ routing.GroupRepository }
+// Cross-module authentication tests use deployment configuration but construct
+// the same Key service as production. The adapter copies cache and team startup
+// values into Options, leaves its lifecycle unstarted for the caller, and binds
+// routing's group Fast normalizer before test requests begin.
 
-// NewService constructs an authentication service for cross-module tests; callers start its lifecycle.
+// groupSource adapts routing's group reader methods to the authentication
+// dependency.
+type groupSource struct {
+	routing.GroupRepository // shared fixture group repository
+}
+
+// NewService constructs a Key service from supplied test dependencies and
+// copied deployment values. Nil groups leave the group reader absent, and nil
+// configuration leaves Options absent. Callers bind additional dependencies,
+// start the service when resources are needed, and stop it after use; the
+// constructor binds routing's Fast policy resolver before return.
 func NewService(keys apikey.APIKeyRepository, users identity.UserRepository, groups routing.GroupRepository, subs billing.UserSubscriptionRepository, rates billing.UserGroupRateRepository, cache apikey.APIKeyCache, cfg *config.Config) *apikey.APIKeyService {
 	var groupReader apikey.GroupRepository
 	if groups != nil {

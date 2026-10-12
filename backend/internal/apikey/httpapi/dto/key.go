@@ -7,65 +7,96 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// Console Key responses combine saved credential configuration with live-count
+// observations and current spending-window display values. The response
+// includes group DTOs chosen by its supplied mapper, while payer user objects
+// stay outside this format so team credentials do not expose the owner's
+// account assets. Callers authorize the console operation before exposing the
+// credential response.
+//
+// Conversion samples effective usage and window expiry independently through
+// wall-clock helpers, then calculates reset timestamps for windows still
+// current at those calls. Model redirects receive a copied map; the other
+// scalar pointers and IP slices retain their input storage. Each composite
+// binding receives its group presentation and displayed prefix, and TeamID
+// presence selects the response scope.
+
+// APIKey is the console credential response with caller-selected group
+// presentation data.
 type APIKey[G any] struct {
-	ID                int64  `json:"id"`
-	UserID            int64  `json:"user_id"`
-	TeamID            *int64 `json:"team_id"`
-	Scope             string `json:"scope"`
-	TeamOwnerDisabled bool   `json:"team_owner_disabled"` // The owner must clear this lock before a member can reactivate the key.
-	Key               string `json:"key"`
-	Name              string `json:"name"`
-	GroupID           *int64 `json:"group_id"`
-	IsComposite       bool   `json:"is_composite"`
-	// CompositeGroups returns group mappings in user-configured order.
-	CompositeGroups         []APIKeyCompositeGroup[G] `json:"composite_groups"`
-	Status                  string                    `json:"status"`
-	FastModePolicy          string                    `json:"fast_mode_policy"`
-	BillingMode             string                    `json:"billing_mode"`
-	PreferredSubscriptionID *int64                    `json:"preferred_subscription_id"`
-	ModelMapping            map[string]string         `json:"model_mapping"`
-	IPWhitelist             []string                  `json:"ip_whitelist"`
-	IPBlacklist             []string                  `json:"ip_blacklist"`
-	LastUsedAt              *time.Time                `json:"last_used_at"`
-	LastUsedIP              *string                   `json:"last_used_ip"` // From the latest usage log that includes an IP address.
-	Quota                   float64                   `json:"quota"`        // Quota limit in USD (0 = unlimited)
-	QuotaUsed               float64                   `json:"quota_used"`   // Used quota amount in USD
-	ExpiresAt               *time.Time                `json:"expires_at"`   // Expiration time (nil = never expires)
-	CreatedAt               time.Time                 `json:"created_at"`
-	UpdatedAt               time.Time                 `json:"updated_at"`
-	// Permits an unavailable group to use its configured fallback group.
-	FallbackWhenGroupUnavailable bool `json:"fallback_when_group_unavailable"`
-	// CurrentConcurrency is the number of active requests for this key.
-	CurrentConcurrency int `json:"current_concurrency"`
-
-	// Rate limit fields
-	// ConcurrencyLimit and RPMLimit use zero for unlimited requests.
-	ConcurrencyLimit int        `json:"concurrency_limit"`
-	RPMLimit         int        `json:"rpm_limit"`
-	RateLimit5h      float64    `json:"rate_limit_5h"`
-	RateLimit1d      float64    `json:"rate_limit_1d"`
-	RateLimit7d      float64    `json:"rate_limit_7d"`
-	Usage5h          float64    `json:"usage_5h"`
-	Usage1d          float64    `json:"usage_1d"`
-	Usage7d          float64    `json:"usage_7d"`
-	Window5hStart    *time.Time `json:"window_5h_start"`
-	Window1dStart    *time.Time `json:"window_1d_start"`
-	Window7dStart    *time.Time `json:"window_7d_start"`
-	Reset5hAt        *time.Time `json:"reset_5h_at,omitempty"`
-	Reset1dAt        *time.Time `json:"reset_1d_at,omitempty"`
-	Reset7dAt        *time.Time `json:"reset_7d_at,omitempty"`
-
-	// Omit user objects from key responses so team keys cannot expose the payer's assets.
-	Group *G `json:"group,omitempty"`
+	ID     int64 `json:"id"`      // persisted credential record identifier
+	UserID int64 `json:"user_id"` // persisted creator user identifier
+	// TeamID and Scope describe the same presentation scope: any present TeamID
+	// selects team, while nil selects personal. Conversion retains the supplied
+	// TeamID pointer, so response consumers treat it as shared input.
+	TeamID            *int64                    `json:"team_id"`             // credential team scope identifier
+	Scope             string                    `json:"scope"`               // personal or team response scope
+	TeamOwnerDisabled bool                      `json:"team_owner_disabled"` // persisted independent owner lock
+	Key               string                    `json:"key"`                 // current authentication credential text
+	Name              string                    `json:"name"`                // saved credential display name
+	GroupID           *int64                    `json:"group_id"`            // ordinary or selected group identifier
+	IsComposite       bool                      `json:"is_composite"`        // prefix selection mode flag
+	CompositeGroups   []APIKeyCompositeGroup[G] `json:"composite_groups"`    // ordered presented composite group bindings
+	Status            string                    `json:"status"`              // stored credential lifecycle state
+	FastModePolicy    string                    `json:"fast_mode_policy"`    // stored Key acceleration preference
+	// BillingMode and PreferredSubscriptionID describe the selected payer funding
+	// choice. Configuration writes and request admission validate eligibility;
+	// listing maps saved values, and the subscription ID remains a shared pointer.
+	BillingMode                  string            `json:"billing_mode"`                    // selected funding source mode
+	PreferredSubscriptionID      *int64            `json:"preferred_subscription_id"`       // selected payer subscription identifier
+	ModelMapping                 map[string]string `json:"model_mapping"`                   // copied Key model redirects
+	IPWhitelist                  []string          `json:"ip_whitelist"`                    // shared allowed IP patterns
+	IPBlacklist                  []string          `json:"ip_blacklist"`                    // shared denied IP patterns
+	LastUsedAt                   *time.Time        `json:"last_used_at"`                    // latest persisted Key touch
+	LastUsedIP                   *string           `json:"last_used_ip"`                    // latest nonempty usage IP
+	Quota                        float64           `json:"quota"`                           // total USD allowance; zero unbounded
+	QuotaUsed                    float64           `json:"quota_used"`                      // saved accumulated USD spending
+	ExpiresAt                    *time.Time        `json:"expires_at"`                      // nil: no expiry
+	CreatedAt                    time.Time         `json:"created_at"`                      // persisted Key creation timestamp
+	UpdatedAt                    time.Time         `json:"updated_at"`                      // latest persisted Key mutation
+	FallbackWhenGroupUnavailable bool              `json:"fallback_when_group_unavailable"` // configured unavailable-target selection flag
+	CurrentConcurrency           int               `json:"current_concurrency"`             // observed active request count
+	// ConcurrencyLimit and RPMLimit use zero for unbounded request allowances.
+	// RateLimit5h, RateLimit1d and RateLimit7d describe separate USD allowances;
+	// Usage5h, Usage1d and Usage7d display zero for ended or absent windows.
+	ConcurrencyLimit int        `json:"concurrency_limit"` // maximum admitted active requests
+	RPMLimit         int        `json:"rpm_limit"`         // maximum admitted requests per minute
+	RateLimit5h      float64    `json:"rate_limit_5h"`     // five-hour USD spending allowance
+	RateLimit1d      float64    `json:"rate_limit_1d"`     // one-day USD spending allowance
+	RateLimit7d      float64    `json:"rate_limit_7d"`     // seven-day USD spending allowance
+	Usage5h          float64    `json:"usage_5h"`          // current five-hour USD spending
+	Usage1d          float64    `json:"usage_1d"`          // current one-day USD spending
+	Usage7d          float64    `json:"usage_7d"`          // current seven-day USD spending
+	Window5hStart    *time.Time `json:"window_5h_start"`   // saved five-hour window start
+	Window1dStart    *time.Time `json:"window_1d_start"`   // saved one-day window start
+	Window7dStart    *time.Time `json:"window_7d_start"`   // saved seven-day window start
+	// Reset5hAt, Reset1dAt and Reset7dAt are present when their saved starts are
+	// current at conversion time. They use start plus the corresponding duration
+	// while the saved start pointers remain shared.
+	Reset5hAt *time.Time `json:"reset_5h_at,omitempty"` // current five-hour reset timestamp
+	Reset1dAt *time.Time `json:"reset_1d_at,omitempty"` // current one-day reset timestamp
+	Reset7dAt *time.Time `json:"reset_7d_at,omitempty"` // current seven-day reset timestamp
+	Group     *G         `json:"group,omitempty"`       // caller-presented selected group data
 }
 
-// APIKeyCompositeGroup is the public group mapping for a composite key.
+// APIKeyCompositeGroup presents a composite prefix and its caller-mapped target
+// group.
 type APIKeyCompositeGroup[G any] struct {
-	GroupID int64  `json:"group_id"`
-	Prefix  string `json:"prefix"`
-	Group   *G     `json:"group,omitempty"`
+	GroupID int64  `json:"group_id"`        // configured target group identifier
+	Prefix  string `json:"prefix"`          // displayed group selection prefix
+	Group   *G     `json:"group,omitempty"` // caller-presented target group data
 }
 
+// APIKeyFromKey builds a console Key response using the supplied group mapper,
+// returning nil for nil input. Callers provide a mapper that accepts a nil
+// group and authorize the operation before exposing the stored secret.
+//
+// ModelMapping is copied, while scalar pointers and IP lists retain their input
+// storage. Effective usage and reset expiry are sampled in separate wall-clock
+// calls, so a window can end during conversion. Current windows receive
+// start-plus-duration reset timestamps; composite groups preserve input order,
+// and any nonnil TeamID selects team scope. The mapper controls group DTO
+// ownership and details.
 func APIKeyFromKey[G any](k *apikey.APIKey, group func(*routing.Group) *G) *APIKey[G] {
 	if k == nil {
 		return nil
@@ -121,6 +152,8 @@ func APIKeyFromKey[G any](k *apikey.APIKey, group func(*routing.Group) *G) *APIK
 	} else {
 		out.Scope = "personal"
 	}
+	// Effective usage and these reset checks sample time independently. A
+	// window can end between them, so reset timestamps follow each check's current state.
 	if k.Window5hStart != nil && !apikey.IsWindowExpired(k.Window5hStart, apikey.RateLimitWindow5h) {
 		t := k.Window5hStart.Add(apikey.RateLimitWindow5h)
 		out.Reset5hAt = &t

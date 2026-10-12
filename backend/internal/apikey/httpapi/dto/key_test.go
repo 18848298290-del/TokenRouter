@@ -12,6 +12,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// TestAPIKeyFromService_MapsLastUsedAt converts a Key with usage time, IP,
+// owner lock and live concurrency observations. It checks those response fields
+// retain the supplied values through the fixture mapper.
 func TestAPIKeyFromService_MapsLastUsedAt(t *testing.T) {
 	lastUsed := time.Now().UTC().Truncate(time.Second)
 	lastUsedIP := "203.0.113.10"
@@ -37,6 +40,9 @@ func TestAPIKeyFromService_MapsLastUsedAt(t *testing.T) {
 	require.Equal(t, 3, out.CurrentConcurrency)
 }
 
+// TestAPIKeyFromService_MapsNilLastUsedAt converts a credential that has no
+// usage time or address. It checks the response exists while both optional
+// usage observation pointers remain nil.
 func TestAPIKeyFromService_MapsNilLastUsedAt(t *testing.T) {
 	src := &apikey.APIKey{
 		ID:     1,
@@ -52,7 +58,9 @@ func TestAPIKeyFromService_MapsNilLastUsedAt(t *testing.T) {
 	require.Nil(t, out.LastUsedIP)
 }
 
-// APIKeyFromService copies a key into a DTO with group details omitted.
+// APIKeyFromService maps a copied Key into a DTO while omitting every group
+// object. Nil input remains nil; the fixture delegates CopyAPIKey's documented
+// sharing and the response mapper's retained pointer behavior.
 func APIKeyFromService(v *apikey.APIKey) *APIKey[json.RawMessage] {
 	return APIKeyFromKey(apikey.CopyAPIKey(v), func(*routing.Group) *json.RawMessage { return nil })
 }

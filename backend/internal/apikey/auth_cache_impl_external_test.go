@@ -18,11 +18,17 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/team"
 )
 
+// teamContextErrorRepository supplies a selected team-context failure to
+// authentication hydration tests.
 type teamContextErrorRepository struct {
-	team.TeamRepository
-	err error
+	team.TeamRepository       // unused team methods require setup
+	err                 error // configured team lookup failure
 }
 
+// TestAPIKeyService_SnapshotRoundTrip_PreservesGroupCaptureControls converts a
+// group with scheduling overrides, session isolation and image allowance
+// through a snapshot. It checks retained values and independently allocated
+// override pointer storage after reconstruction.
 func TestAPIKeyService_SnapshotRoundTrip_PreservesGroupCaptureControls(t *testing.T) {
 	svc := testkit.NewService(nil, nil, nil, nil, nil, nil, nil)
 	svc.Start()
@@ -71,7 +77,9 @@ func TestAPIKeyService_SnapshotRoundTrip_PreservesGroupCaptureControls(t *testin
 	require.True(t, roundTrip.Group.AllowImageGeneration)
 }
 
-// TestAPIKeyAuthSnapshotGroupForceOpenAIFastRoundtrip checks that serialization retains the group Fast flag.
+// TestAPIKeyAuthSnapshotGroupForceOpenAIFastRoundtrip serializes a snapshot
+// carrying the legacy group Fast flag and reconstructs it. It checks current
+// schema acceptance, hydrated group state and retained acceleration enablement.
 func TestAPIKeyAuthSnapshotGroupForceOpenAIFastRoundtrip(t *testing.T) {
 	groupID := int64(50)
 	apiKey := &apikey.APIKey{
@@ -98,7 +106,9 @@ func TestAPIKeyAuthSnapshotGroupForceOpenAIFastRoundtrip(t *testing.T) {
 	require.Equal(t, apikey.KeyApiKeyAuthSnapshotVersion, cached.Snapshot.Version)
 }
 
-// TestAuthSnapshotGroupOpenAIFastPolicy checks that serialization retains Ultra Fast and disabled policies.
+// TestAuthSnapshotGroupOpenAIFastPolicy serializes groups configured for Ultra
+// Fast or forced-off acceleration. It checks current cache reconstruction
+// retains each saved group policy string in the returned Key view.
 func TestAuthSnapshotGroupOpenAIFastPolicy(t *testing.T) {
 	for _, policy := range []string{"force_ultrafast", "force_off"} {
 		key := &apikey.APIKey{ID: 1, UserID: 2, Status: billing.StatusActive, User: &identity.User{ID: 2, Status: billing.StatusActive}, Group: &routing.Group{ID: 3, Status: billing.StatusActive, Hydrated: true, OpenAIFastPolicy: policy}}
@@ -114,6 +124,10 @@ func TestAuthSnapshotGroupOpenAIFastPolicy(t *testing.T) {
 	}
 }
 
+// TestAPIKeyAuthSnapshotGroupFastPolicyByKeyType compares ordinary and
+// composite snapshot construction with a bound policy normalizer. It checks
+// ordinary groups invoke that callback, composite binding groups retain raw
+// policy, and source group values remain unchanged.
 func TestAPIKeyAuthSnapshotGroupFastPolicyByKeyType(t *testing.T) {
 	for _, composite := range []bool{false, true} {
 		name := "ordinary"
@@ -159,6 +173,10 @@ func TestAPIKeyAuthSnapshotGroupFastPolicyByKeyType(t *testing.T) {
 	}
 }
 
+// TestAPIKeyAuthSnapshotGroupPreservesNilAndEmpty supplies absent, zero-valued
+// and explicit empty group collections to snapshot conversion. It checks
+// protocol and candidate-map presence distinctions survive reconstruction and
+// present groups become hydrated.
 func TestAPIKeyAuthSnapshotGroupPreservesNilAndEmpty(t *testing.T) {
 	for _, group := range []*routing.Group{
 		nil,
@@ -185,6 +203,10 @@ func TestAPIKeyAuthSnapshotGroupPreservesNilAndEmpty(t *testing.T) {
 	}
 }
 
+// TestAPIKeyAuthSnapshotGroupCopiesMutableFields mutates original and
+// reconstructed ordinary and composite group policy data after snapshot
+// creation. It checks serialized cached data stays unchanged across supported
+// pointer, map, slice and nested feature changes.
 func TestAPIKeyAuthSnapshotGroupCopiesMutableFields(t *testing.T) {
 	fallbackID := int64(9)
 	topK := 3
@@ -225,6 +247,8 @@ func TestAPIKeyAuthSnapshotGroupCopiesMutableFields(t *testing.T) {
 	before, err := json.Marshal(snapshot)
 	require.NoError(t, err)
 	restored := svc.KeySnapshotToAPIKey("sk-copy-group", snapshot)
+	// Exercise source and both returned group paths against one retained
+	// serialized snapshot so aliasing in each exercised pointer or collection changes the comparison.
 	for _, mutable := range []*routing.Group{group, restored.Group, restored.CompositeGroups[0].Group} {
 		*mutable.AdvancedSchedulerOverrides.LBTopK = 10
 		*mutable.FallbackGroupID = 10
@@ -247,6 +271,10 @@ func TestAPIKeyAuthSnapshotGroupCopiesMutableFields(t *testing.T) {
 	}
 }
 
+// TestAPIKeyService_RejectsV13AuthSnapshotWithoutSessionIsolationFlag supplies
+// a version 13 fixture associated with session isolation. It checks the current
+// version gate returns no Key, no accepted entry and no lookup error, leaving
+// storage reload to its caller.
 func TestAPIKeyService_RejectsV13AuthSnapshotWithoutSessionIsolationFlag(t *testing.T) {
 	groupID := int64(9)
 	svc := newAPIKeyTestService(apiKeyTestDependencies{})
@@ -285,6 +313,10 @@ func TestAPIKeyService_RejectsV13AuthSnapshotWithoutSessionIsolationFlag(t *test
 	}
 }
 
+// TestAPIKeyService_RejectsV21AuthSnapshotWithoutReasoningEffortPolicy supplies
+// a version 21 fixture associated with reasoning rewrite policy. It checks the
+// current version gate returns no Key, no accepted entry and no lookup error,
+// leaving storage reload to its caller.
 func TestAPIKeyService_RejectsV21AuthSnapshotWithoutReasoningEffortPolicy(t *testing.T) {
 	svc := newAPIKeyTestService(apiKeyTestDependencies{})
 
@@ -302,6 +334,10 @@ func TestAPIKeyService_RejectsV21AuthSnapshotWithoutReasoningEffortPolicy(t *tes
 	}
 }
 
+// TestAPIKeyServiceRejectsV26AuthSnapshotWithoutModelMapping supplies a version
+// 26 fixture associated with Key model redirect rules. It checks the current
+// version gate returns no Key, no accepted entry and no lookup error, leaving
+// storage reload to its caller.
 func TestAPIKeyServiceRejectsV26AuthSnapshotWithoutModelMapping(t *testing.T) {
 	svc := newAPIKeyTestService(apiKeyTestDependencies{})
 
@@ -316,6 +352,10 @@ func TestAPIKeyServiceRejectsV26AuthSnapshotWithoutModelMapping(t *testing.T) {
 	}
 }
 
+// TestAPIKeyServiceRejectsV29AuthSnapshotWithoutSchedulerType supplies a
+// version 29 fixture associated with scheduler selection. It checks the current
+// version gate returns no Key, no accepted entry and no lookup error, leaving
+// storage reload to its caller.
 func TestAPIKeyServiceRejectsV29AuthSnapshotWithoutSchedulerType(t *testing.T) {
 	svc := newAPIKeyTestService(apiKeyTestDependencies{})
 
@@ -330,6 +370,10 @@ func TestAPIKeyServiceRejectsV29AuthSnapshotWithoutSchedulerType(t *testing.T) {
 	}
 }
 
+// TestAPIKeyServiceRejectsV30AuthSnapshotWithoutAdvancedSchedulerOverrides
+// supplies a version 30 fixture associated with advanced scheduler overrides.
+// It checks the current version gate returns no Key, no accepted entry and no
+// lookup error, leaving storage reload to its caller.
 func TestAPIKeyServiceRejectsV30AuthSnapshotWithoutAdvancedSchedulerOverrides(t *testing.T) {
 	svc := newAPIKeyTestService(apiKeyTestDependencies{})
 	apiKey, ok, err := svc.KeyApplyAuthCacheEntry("k-legacy-advanced-overrides", &apikey.APIKeyAuthCacheEntry{
@@ -343,6 +387,10 @@ func TestAPIKeyServiceRejectsV30AuthSnapshotWithoutAdvancedSchedulerOverrides(t 
 	}
 }
 
+// TestAPIKeyServiceRejectsV32AuthSnapshotWithoutGroupModelPricing supplies a
+// version 32 fixture associated with former group price data. It checks the
+// current version gate returns no Key, no accepted entry and no lookup error,
+// leaving storage reload to its caller.
 func TestAPIKeyServiceRejectsV32AuthSnapshotWithoutGroupModelPricing(t *testing.T) {
 	svc := newAPIKeyTestService(apiKeyTestDependencies{})
 	apiKey, ok, err := svc.KeyApplyAuthCacheEntry("k-legacy-group-pricing", &apikey.APIKeyAuthCacheEntry{
@@ -356,8 +404,10 @@ func TestAPIKeyServiceRejectsV32AuthSnapshotWithoutGroupModelPricing(t *testing.
 	}
 }
 
-// TestAPIKeyServiceRejectsV33AuthSnapshotWithoutGroupOpenAIFast ensures old
-// snapshots cannot silently omit the group-level Fast policy.
+// TestAPIKeyServiceRejectsV33AuthSnapshotWithoutGroupOpenAIFast supplies a
+// version 33 fixture associated with group acceleration settings. It checks the
+// current version gate returns no Key, no accepted entry and no lookup error,
+// leaving storage reload to its caller.
 func TestAPIKeyServiceRejectsV33AuthSnapshotWithoutGroupOpenAIFast(t *testing.T) {
 	svc := newAPIKeyTestService(apiKeyTestDependencies{})
 	apiKey, ok, err := svc.KeyApplyAuthCacheEntry("k-legacy-group-openai-fast", &apikey.APIKeyAuthCacheEntry{
@@ -371,7 +421,10 @@ func TestAPIKeyServiceRejectsV33AuthSnapshotWithoutGroupOpenAIFast(t *testing.T)
 	}
 }
 
-// TestAPIKeyServiceRejectsV34AuthSnapshotWithoutReasoningEffortOverLimit rejects snapshots predating the over-limit action.
+// TestAPIKeyServiceRejectsV34AuthSnapshotWithoutReasoningEffortOverLimit
+// supplies a version 34 fixture associated with reasoning over-limit handling.
+// It checks the current version gate returns no Key, no accepted entry and no
+// lookup error, leaving storage reload to its caller.
 func TestAPIKeyServiceRejectsV34AuthSnapshotWithoutReasoningEffortOverLimit(t *testing.T) {
 	svc := newAPIKeyTestService(apiKeyTestDependencies{})
 	apiKey, ok, err := svc.KeyApplyAuthCacheEntry("k-legacy-reasoning-over-limit", &apikey.APIKeyAuthCacheEntry{
@@ -385,7 +438,10 @@ func TestAPIKeyServiceRejectsV34AuthSnapshotWithoutReasoningEffortOverLimit(t *t
 	}
 }
 
-// TestAPIKeyServiceRejectsV35AuthSnapshotWithoutFreeOpenAIFast rejects the obsolete snapshot version.
+// TestAPIKeyServiceRejectsV35AuthSnapshotWithoutFreeOpenAIFast supplies a
+// version 35 fixture associated with former free-Fast settings. It checks the
+// current version gate returns no Key, no accepted entry and no lookup error,
+// leaving storage reload to its caller.
 func TestAPIKeyServiceRejectsV35AuthSnapshotWithoutFreeOpenAIFast(t *testing.T) {
 	svc := newAPIKeyTestService(apiKeyTestDependencies{})
 	apiKey, ok, err := svc.KeyApplyAuthCacheEntry("k-legacy-free-openai-fast", &apikey.APIKeyAuthCacheEntry{
@@ -399,6 +455,10 @@ func TestAPIKeyServiceRejectsV35AuthSnapshotWithoutFreeOpenAIFast(t *testing.T) 
 	}
 }
 
+// TestAPIKeyAuthSnapshotRoundTripPreservesBillingMode supplies
+// specified-subscription funding and its selected identifier before conversion.
+// It checks the reconstructed Key retains the funding mode and a present ID
+// with the supplied value.
 func TestAPIKeyAuthSnapshotRoundTripPreservesBillingMode(t *testing.T) {
 	preferredID := int64(101)
 	key := &apikey.APIKey{
@@ -421,6 +481,10 @@ func TestAPIKeyAuthSnapshotRoundTripPreservesBillingMode(t *testing.T) {
 	require.Equal(t, preferredID, *restored.PreferredSubscriptionID)
 }
 
+// TestAPIKeyAuthGroupSnapshotPreservesExplicitEmptyClientProtocols serializes
+// an explicitly empty client protocol set. It checks decoding retains nonnil
+// empty input and reconstruction rejects a client protocol instead of choosing
+// an omitted-list default.
 func TestAPIKeyAuthGroupSnapshotPreservesExplicitEmptyClientProtocols(t *testing.T) {
 	emptySnapshot := apikey.KeyAuthGroupSnapshotFromGroup(&routing.Group{
 		ID: 1,
@@ -437,6 +501,10 @@ func TestAPIKeyAuthGroupSnapshotPreservesExplicitEmptyClientProtocols(t *testing
 	require.False(t, apikey.KeyGroupFromAuthSnapshot(&decodedEmpty).AllowsClientProtocol(protocol.ProtocolAnthropicMessages))
 }
 
+// TestAPIKeyServiceSnapshotRoundTripPreservesIndependentModelMapping converts
+// one Key model alias and then changes its reconstructed target. It checks the
+// current schema and copied redirect values while the cached mapping retains
+// its source target.
 func TestAPIKeyServiceSnapshotRoundTripPreservesIndependentModelMapping(t *testing.T) {
 	svc := testkit.NewService(nil, nil, nil, nil, nil, nil, &config.Config{})
 	svc.Start()
@@ -458,6 +526,9 @@ func TestAPIKeyServiceSnapshotRoundTripPreservesIndependentModelMapping(t *testi
 	require.Equal(t, "gpt-5.6-luna", snapshot.ModelMapping["review"])
 }
 
+// TestAPIKeyService_SnapshotRoundTrip_PreservesReasoningEffortPolicy supplies a
+// reasoning cap, over-limit action and rewrite rule to a group snapshot. It
+// checks all three configured policy values survive reconstruction together.
 func TestAPIKeyService_SnapshotRoundTrip_PreservesReasoningEffortPolicy(t *testing.T) {
 	svc := testkit.NewService(nil, nil, nil, nil, nil, nil, &config.Config{})
 	svc.Start()
@@ -499,6 +570,9 @@ func TestAPIKeyService_SnapshotRoundTrip_PreservesReasoningEffortPolicy(t *testi
 	require.Equal(t, apiKey.Group.ReasoningEffortMappings, roundTrip.Group.ReasoningEffortMappings)
 }
 
+// TestAPIKeySnapshotPreservesIndependentRoutingPolicy converts configured model
+// rules and feature values, then changes the returned map and list. It checks
+// cached policy retains its values and an obsolete schema version is rejected.
 func TestAPIKeySnapshotPreservesIndependentRoutingPolicy(t *testing.T) {
 	svc := testkit.NewService(nil, nil, nil, nil, nil, nil, &config.Config{})
 	groupID := int64(9)
@@ -528,12 +602,16 @@ func TestAPIKeySnapshotPreservesIndependentRoutingPolicy(t *testing.T) {
 	require.Nil(t, cached)
 }
 
+// TestHydrateTeamAPIKeyOnlyMapsMissingContextToMembershipError supplies either
+// a missing-team error or an independent repository failure. It checks
+// hydration maps absence to membership rejection while retaining the unrelated
+// storage error identity.
 func TestHydrateTeamAPIKeyOnlyMapsMissingContextToMembershipError(t *testing.T) {
 	repositoryFailure := errors.New("team repository unavailable")
 	tests := []struct {
-		name    string
-		repoErr error
-		want    error
+		name    string // hydration failure scenario label
+		repoErr error  // supplied team repository failure
+		want    error  // expected returned failure identity
 	}{
 		{name: "team_missing", repoErr: team.ErrTeamNotFound, want: team.ErrTeamMembershipRequired},
 		{name: "repository_failure", repoErr: repositoryFailure, want: repositoryFailure},
@@ -557,6 +635,8 @@ func TestHydrateTeamAPIKeyOnlyMapsMissingContextToMembershipError(t *testing.T) 
 	}
 }
 
+// GetContextByUserID returns the configured failure with no team context for
+// every lookup.
 func (r *teamContextErrorRepository) GetContextByUserID(context.Context, int64) (*team.TeamContext, error) {
 	return nil, r.err
 }

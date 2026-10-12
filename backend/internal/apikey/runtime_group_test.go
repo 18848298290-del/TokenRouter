@@ -9,21 +9,35 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// runtimeGroupRepository returns one configured target group for fallback
+// permission tests.
 type runtimeGroupRepository struct {
-	routing.GroupRepository
-	group *routing.Group
+	routing.GroupRepository                // unused methods require setup
+	group                   *routing.Group // configured fallback target
 }
 
+// GetByIDLite returns the configured target pointer for every requested group
+// ID. The fixture ignores the context and ID, and callers treat its shared
+// group as input during each scenario.
 func (r runtimeGroupRepository) GetByIDLite(context.Context, int64) (*routing.Group, error) {
 	return r.group, nil
 }
 
-// TestRuntimeGroupFallbackPermissionBoundaries checks that fallback respects composite bindings and target group permissions.
+// TestRuntimeGroupFallbackPermissionBoundaries exercises public, exclusive,
+// composite, and team targets with distinct permission states. It checks
+// accepted or rejected resolution, RPM-override replacement, and retention of
+// the previous binding and override.
 func TestRuntimeGroupFallbackPermissionBoundaries(t *testing.T) {
 	for _, scenario := range []struct {
-		name                                                     string
+		name string // permission scenario name
+		// private selects an exclusive target, allowed grants that target, and
+		// disabledPublic denies its public form. composite enables binding checks;
+		// bound includes the target, while team requires a resolvable owner.
+		// private: exclusive target flag; allowed: exclusive target grant;
+		// disabledPublic: public target denial; composite: composite Key mode;
+		// bound: target binding present; team: team payer requirement.
 		private, allowed, disabledPublic, composite, bound, team bool
-		want                                                     bool
+		want                                                     bool // expected resolution success
 	}{
 		{name: "public", want: true},
 		{name: "disabled public", disabledPublic: true},

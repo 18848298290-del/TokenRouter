@@ -11,19 +11,38 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/modelmap"
 )
 
+// A Key model alias redirects one request name to one concrete target before
+// group and provider mapping. Validation trims configured names and permits one
+// trailing wildcard on the source, while runtime resolution gives exact names
+// priority and then chooses the longest matching wildcard. Targets are returned
+// once, so an alias pointing at another source is not resolved again.
+//
+// Model lists expose exact aliases only when their concrete targets appear in
+// the supplied available models. Wildcard sources stay out of enumeration
+// because they describe a range of names. Existing model order is retained
+// after trimming, empty-name removal, and deduplication; eligible aliases are
+// appended in lexical order with names already present omitted.
+
 const (
-	// MaxAPIKeyModelMappingRules bounds snapshot size and request-time matching work.
-	MaxAPIKeyModelMappingRules = 100
-	// MaxAPIKeyModelNameRunes matches the usage_logs model field length.
-	MaxAPIKeyModelNameRunes = 100
+	// Model mapping bounds limit rules examined at request time and fit source
+	// and target names into the usage model field limits.
+	MaxAPIKeyModelMappingRules = 100 // maximum Key redirect entries
+	MaxAPIKeyModelNameRunes    = 100 // maximum model-name runes
 )
 
+// ErrInvalidAPIKeyModelMapping identifies malformed or oversized Key model
+// redirect rules for service and HTTP validation.
 var ErrInvalidAPIKeyModelMapping = infraerrors.BadRequest(
 	"INVALID_API_KEY_MODEL_MAPPING",
 	"invalid API key model mapping",
 )
 
-// NormalizeAPIKeyModelMapping validates rules and returns an independent map with trimmed names.
+// NormalizeAPIKeyModelMapping validates rule counts and names and returns a
+// fresh map of trimmed strings. Nil input produces an empty map; validation
+// stops on an invalid rule, and map iteration determines which competing
+// invalid entry is reported. Source matching remains case sensitive, targets
+// contain no wildcard, and this check does not establish runtime model
+// availability.
 func NormalizeAPIKeyModelMapping(mapping map[string]string) (map[string]string, error) {
 	if len(mapping) > MaxAPIKeyModelMappingRules {
 		return nil, fmt.Errorf("%w: at most %d rules are allowed", ErrInvalidAPIKeyModelMapping, MaxAPIKeyModelMappingRules)
@@ -36,6 +55,8 @@ func NormalizeAPIKeyModelMapping(mapping map[string]string) (map[string]string, 
 		if source == "" || target == "" {
 			return nil, fmt.Errorf("%w: source and target are required", ErrInvalidAPIKeyModelMapping)
 		}
+		// Count Unicode characters so multibyte model names share the storage
+		// length allowance with ASCII names rather than losing space to encoding.
 		if utf8.RuneCountInString(source) > MaxAPIKeyModelNameRunes || utf8.RuneCountInString(target) > MaxAPIKeyModelNameRunes {
 			return nil, fmt.Errorf("%w: model names must not exceed %d characters", ErrInvalidAPIKeyModelMapping, MaxAPIKeyModelNameRunes)
 		}
@@ -56,7 +77,10 @@ func NormalizeAPIKeyModelMapping(mapping map[string]string) (map[string]string, 
 	return normalized, nil
 }
 
-// ResolveModelMapping applies one exact or longest-prefix wildcard match.
+// ResolveModelMapping trims requestedModel and returns its single redirect
+// result with a match flag. Empty input or rules returns the trimmed input with
+// false; exact names precede the longest matching trailing-wildcard source, and
+// targets are not resolved again.
 func ResolveModelMapping(mapping map[string]string, requestedModel string) (string, bool) {
 	requestedModel = strings.TrimSpace(requestedModel)
 	if requestedModel == "" || len(mapping) == 0 {
@@ -65,7 +89,9 @@ func ResolveModelMapping(mapping map[string]string, requestedModel string) (stri
 	return modelmap.Resolve(mapping, requestedModel)
 }
 
-// ResolveModelMapping returns a single redirect result for this key.
+// ResolveModelMapping resolves one alias using this Key's configured model
+// redirects. A nil Key returns the trimmed request name with false, and the
+// returned target receives no additional match against this mapping.
 func (k *APIKey) ResolveModelMapping(requestedModel string) (string, bool) {
 	if k == nil {
 		return strings.TrimSpace(requestedModel), false
@@ -73,14 +99,24 @@ func (k *APIKey) ResolveModelMapping(requestedModel string) (string, bool) {
 	return ResolveModelMapping(k.ModelMapping, requestedModel)
 }
 
-// CloneModelMapping returns an independent map for caching or responses.
+// CloneModelMapping copies string rules into a newly allocated model mapping.
+// Nil and empty inputs both produce a nonnil empty map; subsequent edits to the
+// returned map do not affect its source.
 func CloneModelMapping(mapping map[string]string) map[string]string {
 	cloned := make(map[string]string, len(mapping))
 	maps.Copy(cloned, mapping)
 	return cloned
 }
 
-// AppendAPIKeyModelAliases keeps model order and appends sorted exact aliases whose targets are available.
+// AppendAPIKeyModelAliases returns trimmed, deduplicated models followed by
+// eligible exact aliases in lexical order. Empty names are omitted, and a nil
+// input produces an allocated result.
+//
+// Alias eligibility is tested against the original available-model input after
+// name trimming. A target must already be available; wildcard sources and
+// sources already listed as models are omitted. The returned slice is newly
+// allocated, so appending aliases does not modify the input slice backing
+// storage.
 func AppendAPIKeyModelAliases(models []string, mapping map[string]string) []string {
 	seen := make(map[string]struct{}, len(models)+len(mapping))
 	result := make([]string, 0, len(models)+len(mapping))
@@ -95,11 +131,20 @@ func AppendAPIKeyModelAliases(models []string, mapping map[string]string) []stri
 		seen[model] = struct{}{}
 		result = append(result, model)
 	}
+	// Enumerate against the supplied target set after preserving its model
+	// order; aliases are appended once and cannot make another alias available.
 	result = append(result, AvailableAPIKeyModelAliases(models, mapping)...)
 	return result
 }
 
-// AvailableAPIKeyModelAliases returns sorted exact aliases with available targets, excluding existing model names.
+// AvailableAPIKeyModelAliases returns sorted exact alias names whose targets
+// appear in the supplied models. Model names are trimmed for availability
+// checks; configured source and target strings are used as supplied, so callers
+// pass normalized rules. Wildcard sources and aliases already listed as models
+// are omitted, and nil inputs return a nonnil empty slice.
+//
+// Eligibility uses the supplied model set throughout enumeration. Returning one
+// alias cannot make another alias that targets it eligible in the same result.
 func AvailableAPIKeyModelAliases(models []string, mapping map[string]string) []string {
 	availableTargets := make(map[string]struct{}, len(models))
 	seen := make(map[string]struct{}, len(models)+len(mapping))

@@ -8,7 +8,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestCurrentSnapshotDropsRetiredFields rejects old versions and compares explicitly migrated fixtures with current serialization.
+// TestCurrentSnapshotDropsRetiredFields rejects an obsolete version, then
+// adapts legacy fixture JSON to the current expected shape. It checks
+// serialization after the test-only transformation, excluding the separately
+// represented routing policy from comparison.
 func TestCurrentSnapshotDropsRetiredFields(t *testing.T) {
 	for _, kind := range []string{"full", "empty"} {
 		t.Run(kind, func(t *testing.T) {
@@ -22,6 +25,8 @@ func TestCurrentSnapshotDropsRetiredFields(t *testing.T) {
 			require.Nil(t, cached)
 			var current map[string]any
 			require.NoError(t, json.Unmarshal(original, &current))
+			// Adapt saved test JSON before comparing serialization; this does not
+			// model a production cache migration, because obsolete entries are rejected by version.
 			migrateSnapshotPricingFields(current)
 			migrated, err := json.Marshal(current)
 			require.NoError(t, err)
@@ -45,13 +50,24 @@ func TestCurrentSnapshotDropsRetiredFields(t *testing.T) {
 					}
 				}
 			}
+			// Routing policy has its own current serialized shape. Remove that
+			// field from the comparison copy so these retired-price fixtures compare their intended data.
 			stripPolicy(decoded)
 			require.Equal(t, expected, decoded)
 		})
 	}
 }
 
-// migrateSnapshotPricingFields updates test expectations; production reloads obsolete snapshots.
+// migrateSnapshotPricingFields recursively rewrites legacy fixture maps and
+// lists for current serialization expectations. Callers supply decoded JSON
+// values; maps and nested lists are mutated in place.
+//
+// The transformation removes retired fields, renames saved compatibility keys
+// and wraps scalar protocol targets in ordered lists before snapshot decoding.
+// Version and request allowance fields become current fixture values so shape
+// comparison can proceed. Production rejects obsolete versions and reloads
+// storage, so this helper supplies no runtime migration behavior or persistence
+// guarantee.
 func migrateSnapshotPricingFields(value any) {
 	switch node := value.(type) {
 	case map[string]any:
@@ -75,10 +91,14 @@ func migrateSnapshotPricingFields(value any) {
 		delete(node, "opus_mapped_model")
 		delete(node, "sonnet_mapped_model")
 		delete(node, "haiku_mapped_model")
+		// Rename the fixture's old selection flag to the current configured-target
+		// field so comparison uses the supported serialization key for this same input value.
 		if old, ok := node["fallback_to_default_group_when_unavailable"]; ok {
 			node["fallback_when_group_unavailable"] = old
 			delete(node, "fallback_to_default_group_when_unavailable")
 		}
+		// Current protocol fallbacks encode ordered target lists. Wrap legacy
+		// scalar fixture targets before decoding them into the present snapshot field type.
 		if fallback, ok := node["protocol_fallbacks"].(map[string]any); ok {
 			for source, target := range fallback {
 				if text, ok := target.(string); ok {
@@ -86,10 +106,14 @@ func migrateSnapshotPricingFields(value any) {
 				}
 			}
 		}
+		// The fixture's channel identity now names a pricing configuration. Keep
+		// its value while using the current field name in this comparison representation.
 		if id, ok := node["channel_id"]; ok {
 			node["pricing_config_id"] = id
 			delete(node, "channel_id")
 		}
+		// Shape comparison uses current fixture values. The preceding version-gate
+		// assertion rejects version 40 before any snapshot fields are reconstructed.
 		if _, ok := node["version"]; ok {
 			node["version"] = KeyApiKeyAuthSnapshotVersion
 			node["concurrency_limit"] = float64(0)

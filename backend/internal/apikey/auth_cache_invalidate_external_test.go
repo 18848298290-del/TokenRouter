@@ -10,6 +10,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/config"
 )
 
+// TestAPIKeyService_InvalidateAuthCacheByUserID enumerates two credentials for
+// an owner with shared caching enabled. It checks that invalidation records
+// two attempts through the fixture's shared deletion operation.
 func TestAPIKeyService_InvalidateAuthCacheByUserID(t *testing.T) {
 	cache := &authCacheStub{}
 	repo := &authRepoStub{
@@ -30,6 +33,10 @@ func TestAPIKeyService_InvalidateAuthCacheByUserID(t *testing.T) {
 	require.Len(t, cache.deleteAuthKeys, 2)
 }
 
+// TestAPIKeyService_InvalidateAuthCacheByGroupID enumerates two credentials for
+// a group through the repository fixture. It checks that both supplied
+// credentials produce deletion attempts through the configured shared cache
+// adapter.
 func TestAPIKeyService_InvalidateAuthCacheByGroupID(t *testing.T) {
 	cache := &authCacheStub{}
 	repo := &authRepoStub{
@@ -49,6 +56,9 @@ func TestAPIKeyService_InvalidateAuthCacheByGroupID(t *testing.T) {
 	require.Len(t, cache.deleteAuthKeys, 2)
 }
 
+// TestAPIKeyService_InvalidateAuthCacheByKey supplies one credential to a
+// service with shared caching enabled. It checks that direct invalidation
+// records one deletion attempt through the fixture's shared-cache operation.
 func TestAPIKeyService_InvalidateAuthCacheByKey(t *testing.T) {
 	cache := &authCacheStub{}
 	repo := &authRepoStub{
