@@ -8,11 +8,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestContentModerationKeywordMatcherMatchesLegacyBehavior compares indexed
+// matching with the sequential substring helper across ordered, overlapping,
+// Unicode, duplicate, and empty-entry cases. It checks both the returned
+// spelling and hit flag.
 func TestContentModerationKeywordMatcherMatchesLegacyBehavior(t *testing.T) {
 	tests := []struct {
-		name     string
-		text     string
-		keywords []string
+		name     string   // selected parity scenario name
+		text     string   // text supplied to scanners
+		keywords []string // ordered configured keyword spellings
 	}{
 		{name: "miss", text: "clean prompt", keywords: []string{"blocked", "secret"}},
 		{name: "case insensitive", text: "contains SECRET value", keywords: []string{"secret"}},
@@ -33,21 +37,31 @@ func TestContentModerationKeywordMatcherMatchesLegacyBehavior(t *testing.T) {
 	}
 }
 
+// TestContentModerationKeywordMatcherRandomizedParity generates reproducible
+// mixed-case ASCII inputs and keyword lists from a fixed seed. It checks that
+// one thousand indexed scans return the same hit flag and configured spelling
+// as sequential scans.
 func TestContentModerationKeywordMatcherRandomizedParity(t *testing.T) {
 	rng := rand.New(rand.NewSource(20260714))
+	// Mixed-case ASCII generates case-normalization parity inputs reproducibly.
 	const alphabet = "abcXYZ"
+	// Use a bounded generated sample alongside the explicit overlap and Unicode cases.
 	for iteration := range 1000 {
 		keywords := make([]string, 1+rng.Intn(30))
 		for index := range keywords {
 			length := 1 + rng.Intn(8)
 			var value strings.Builder
 			for range length {
+				// Builder.WriteByte returns a nil error after appending this byte; discard
+				// that result while constructing the seeded keyword input used by both scanners.
 				_ = value.WriteByte(alphabet[rng.Intn(len(alphabet))])
 			}
 			keywords[index] = value.String()
 		}
 		var text strings.Builder
 		for range 20 + rng.Intn(100) {
+			// Discard WriteByte's nil error while constructing the generated scan text;
+			// strings.Builder appends every supplied byte before returning to this loop.
 			_ = text.WriteByte(alphabet[rng.Intn(len(alphabet))])
 		}
 

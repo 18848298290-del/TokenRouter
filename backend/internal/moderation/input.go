@@ -9,21 +9,51 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// Current-turn auditing starts after the latest assistant or model
+// contribution, so prior conversation turns are excluded while later user and
+// tool units remain. Responses tool calls also act as model separators.
+// Protocol extractors retain text and supported image references with source
+// labels and original review positions; structured tool values keep their JSON
+// keys and recursively discover images.
+//
+// Image deduplication keeps the first literal reference and source position.
+// Audit selection then applies separate user and tool rune budgets and image
+// toggles using new selected collections, leaving retained review text
+// available. Original item indexes survive filtering, allowing a flagged image
+// audit unit to point back to the submitted content. Unknown protocol input
+// probes several supported shapes through the same builder.
+
+// contentModerationInputBuilder accumulates selected current-turn units while
+// preserving their source and item positions.
 type contentModerationInputBuilder struct {
-	items      []ContentModerationInputItem
-	textParts  []string
-	images     []string
-	imageItems []ContentModerationImage
-	seenImages map[string]struct{}
+	// items, images, imageItems, and seenImages evolve together during extraction.
+	// A retained image receives the next item index once; later identical
+	// references keep that first occurrence source and position.
+	items      []ContentModerationInputItem // ordered review input units
+	textParts  []string                     // ordered full text fragments
+	images     []string                     // ordered unique image references
+	imageItems []ContentModerationImage     // image reference and position records
+	seenImages map[string]struct{}          // literal image deduplication set
 }
 
-// contentModerationAuditInput applies audit limits to a copy, retaining the full content in the original
-// input.
+// contentModerationAuditInput selects the configured audit content while
+// preserving full retained input for review. Nil configuration returns the
+// supplied value with its shared collections. With configuration, it builds new
+// selected collections and spends user and tool rune budgets independently
+// across text items in their existing order.
+//
+// Disabling tool output also excludes tool images, and disabling images
+// excludes all image units. Original item indexes remain attached to selected
+// images and text, so a flagged image can be mapped back to its review item
+// even after other units were excluded. Joined text separators are added after
+// budget consumption.
 func contentModerationAuditInput(input ContentModerationInput, cfg *ContentModerationConfig) ContentModerationInput {
 	if cfg == nil {
 		return input
 	}
 	input.Normalize()
+	// Spend each source budget across its selected items before joining text;
+	// newline separators added afterward do not consume either configured rune allowance.
 	userRemaining := cfg.AuditUserTextMaxChars
 	toolRemaining := cfg.AuditToolOutputMaxChars
 	items := make([]ContentModerationInputItem, 0, len(input.Items))
@@ -60,6 +90,8 @@ func contentModerationAuditInput(input ContentModerationInput, cfg *ContentModer
 			}
 			images = append(images, image.Reference)
 			imageItems = append(imageItems, image)
+			// Keep the original review index after audit filtering so hit-image metadata
+			// still identifies the submitted unit even when earlier items were skipped.
 			items = append(items, ContentModerationInputItem{
 				Index:    image.SourceIndex,
 				Source:   image.Source,
@@ -77,6 +109,10 @@ func contentModerationAuditInput(input ContentModerationInput, cfg *ContentModer
 	}
 }
 
+// contentModerationRunePrefix returns at most limit runes and the consumed rune
+// count. Nonpositive limits or empty text return empty and zero; a shortened
+// prefix slices at a range boundary in the original bytes instead of allocating
+// a rune slice.
 func contentModerationRunePrefix(text string, limit int) (string, int) {
 	if limit <= 0 || text == "" {
 		return "", 0
@@ -86,6 +122,8 @@ func contentModerationRunePrefix(text string, limit int) (string, int) {
 		return text, runeCount
 	}
 	count := 0
+	// Slice at the original UTF-8 range boundary so truncation retains the input
+	// byte spelling while reporting the rune budget actually consumed by this prefix.
 	for index := range text {
 		if count == limit {
 			return text[:index], count
@@ -95,13 +133,25 @@ func contentModerationRunePrefix(text string, limit int) (string, int) {
 	return text, count
 }
 
-// ExtractContentModerationPromptExcerptFromInput builds the short excerpt used by legacy list fields.
+// ExtractContentModerationPromptExcerptFromInput returns trimmed aggregate text
+// capped at the Cyber excerpt rune limit. It applies no secret redaction, so
+// callers use it for administrator review material under the Cyber retention
+// rules.
 func ExtractContentModerationPromptExcerptFromInput(input ContentModerationInput) string {
 	return trimRawContentModerationText(input.Text, maxCyberWarningPromptExcerptRunes)
 }
 
-// ExtractContentModerationInput extracts current-turn user input and tool results so history is not
-// audited again.
+// ExtractContentModerationInput builds current-turn user and tool content from
+// valid JSON for the supplied protocol. Empty or invalid JSON returns empty.
+// Named protocols choose their extractor; an unknown protocol attempts
+// Responses, Chat, and Gemini shapes together, deduplicating accepted images by
+// literal reference.
+//
+// Message extractors start after the last model or assistant contribution,
+// keeping subsequent tool results and user units in encountered order. Several
+// consecutive user items can therefore belong to the current turn. System and
+// developer messages are skipped by their roles, while reminder text inside
+// selected user content remains available for auditing.
 func ExtractContentModerationInput(protocol string, body []byte) ContentModerationInput {
 	if len(body) == 0 || !gjson.ValidBytes(body) {
 		return ContentModerationInput{}
@@ -120,6 +170,8 @@ func ExtractContentModerationInput(protocol string, body []byte) ContentModerati
 		builder.addText(ContentModerationSourceUser, gjson.GetBytes(body, "prompt").String())
 		collectContentValue(gjson.GetBytes(body, "images"), ContentModerationSourceUser, builder, false)
 	default:
+		// Probe each supported top-level shape when the protocol is unknown; shared
+		// image deduplication keeps identical references from multiplying audit image units.
 		collectResponsesCurrentInput(gjson.GetBytes(body, "input"), builder)
 		collectChatCurrentTurn(gjson.GetBytes(body, "messages"), builder)
 		collectGeminiCurrentTurn(gjson.GetBytes(body, "contents"), builder)
@@ -127,10 +179,15 @@ func ExtractContentModerationInput(protocol string, body []byte) ContentModerati
 	return builder.build()
 }
 
+// newContentModerationInputBuilder constructs an empty accumulator with image
+// deduplication storage initialized for extraction.
 func newContentModerationInputBuilder() *contentModerationInputBuilder {
 	return &contentModerationInputBuilder{seenImages: make(map[string]struct{})}
 }
 
+// addText retains nonblank text as the next review item and aggregate fragment.
+// It preserves the full supplied text and whitespace, normalizes source to user
+// or tool, and treats a nil builder as a no-op.
 func (b *contentModerationInputBuilder) addText(source string, text string) {
 	if b == nil || strings.TrimSpace(text) == "" {
 		return
@@ -145,6 +202,17 @@ func (b *contentModerationInputBuilder) addText(source string, text string) {
 	b.textParts = append(b.textParts, text)
 }
 
+// addImage retains a supported trimmed image reference and assigns its first
+// review position. Nil builders and unsupported references are ignored. The
+// literal reference is also the deduplication key, so the first accepted
+// occurrence supplies the source and SourceIndex even when another source later
+// repeats that image.
+//
+// The review item, image list, and image-position list are appended together.
+// This keeps downstream audit image indexes distinct from original review
+// positions after mixed text and image extraction. References are passed to
+// external audit or later snapshot retrieval; extraction leaves their bytes
+// encoded until those consumers use them.
 func (b *contentModerationInputBuilder) addImage(source string, reference string) {
 	if b == nil {
 		return
@@ -156,6 +224,8 @@ func (b *contentModerationInputBuilder) addImage(source string, reference string
 	if _, ok := b.seenImages[reference]; ok {
 		return
 	}
+	// Record the first reference before assigning its item index. Later tool or
+	// user occurrences retain this source association instead of appending another image unit.
 	b.seenImages[reference] = struct{}{}
 	item := ContentModerationInputItem{
 		Index:    len(b.items),
@@ -172,6 +242,10 @@ func (b *contentModerationInputBuilder) addImage(source string, reference string
 	})
 }
 
+// build returns the accumulated content with new collection slices and
+// newline-joined text. Nil builders return empty input; source is derived from
+// all retained items, and copied item values continue to share their immutable
+// string storage.
 func (b *contentModerationInputBuilder) build() ContentModerationInput {
 	if b == nil {
 		return ContentModerationInput{}
@@ -186,6 +260,16 @@ func (b *contentModerationInputBuilder) build() ContentModerationInput {
 	return input
 }
 
+// collectChatCurrentTurn collects user and tool messages after the last
+// assistant message in an array. Missing arrays contribute nothing. All
+// retained messages after that separator are current input, including several
+// parallel tool replies or consecutive user messages; system and other roles do
+// not add units.
+//
+// User content follows recognized text and image shapes. Tool objects retain
+// their serialized structure and recursively expose images, so keys and values
+// stay visible even when a tool does not return an ordinary text block. The
+// builder preserves first-image positions across both sources.
 func collectChatCurrentTurn(messages gjson.Result, builder *contentModerationInputBuilder) {
 	if !messages.IsArray() {
 		return
@@ -203,6 +287,17 @@ func collectChatCurrentTurn(messages gjson.Result, builder *contentModerationInp
 	}
 }
 
+// collectAnthropicCurrentTurn collects user-role content after the last
+// assistant message. Nonarray histories and other roles contribute nothing. A
+// string becomes user text, while user content arrays distinguish tool_result
+// blocks from ordinary user blocks so risk records identify which source
+// supplied each retained unit.
+//
+// Tool-result content uses structured preservation and recursive image
+// discovery. Other blocks use ordinary text and known-image extraction,
+// including selected user text with reminder tags or cache-control attributes.
+// The extractor keeps those text bytes because metadata attached to a user
+// block does not change its source role.
 func collectAnthropicCurrentTurn(messages gjson.Result, builder *contentModerationInputBuilder) {
 	if !messages.IsArray() {
 		return
@@ -222,6 +317,8 @@ func collectAnthropicCurrentTurn(messages gjson.Result, builder *contentModerati
 			continue
 		}
 		content.ForEach(func(_, block gjson.Result) bool {
+			// Anthropic carries tool replies inside user messages; classify this block
+			// as tool so the returned-output audit toggle governs its retained content.
 			if strings.EqualFold(strings.TrimSpace(block.Get("type").String()), "tool_result") {
 				collectContentValue(block.Get("content"), ContentModerationSourceTool, builder, true)
 				return true
@@ -232,6 +329,17 @@ func collectAnthropicCurrentTurn(messages gjson.Result, builder *contentModerati
 	}
 }
 
+// collectResponsesCurrentInput accepts Responses input as a string, object, or
+// array. Strings become user text, objects use item classification, and missing
+// input contributes nothing. For arrays, the last assistant message or
+// recognized model tool-call item defines the separator before selected user
+// messages and tool outputs.
+//
+// This separator can leave several consecutive user messages in the current
+// input. Classification skips developer instructions and model-generated items,
+// while retained tool objects keep their structure and images for audit review.
+// All selected units share one builder so repeated image references retain
+// their first source position.
 func collectResponsesCurrentInput(input gjson.Result, builder *contentModerationInputBuilder) {
 	switch {
 	case !input.Exists():
@@ -249,6 +357,10 @@ func collectResponsesCurrentInput(input gjson.Result, builder *contentModeration
 	}
 }
 
+// indexAfterLastResponsesModelItem returns the index after the final assistant
+// or recognized model tool call. It scans backward, normalizing role and type
+// spelling; zero means the whole supplied list is eligible for subsequent item
+// classification.
 func indexAfterLastResponsesModelItem(items []gjson.Result) int {
 	for index, item := range slices.Backward(items) {
 		role := strings.ToLower(strings.TrimSpace(item.Get("role").String()))
@@ -260,6 +372,8 @@ func indexAfterLastResponsesModelItem(items []gjson.Result) int {
 	return 0
 }
 
+// isResponsesModelToolCallType reports whether normalized type names identify a
+// supported model-generated tool call.
 func isResponsesModelToolCallType(typ string) bool {
 	switch typ {
 	case "function_call", "custom_tool_call", "mcp_call", "tool_search_call", "computer_call", "local_shell_call":
@@ -269,6 +383,15 @@ func isResponsesModelToolCallType(typ string) bool {
 	}
 }
 
+// collectResponsesInputItem adds recognized user input or supported tool output
+// to the supplied builder. User roles and unroled input_text or input_image
+// items use their content when present, otherwise the item itself. Tool outputs
+// prefer the first present field among output, content, and result.
+//
+// A supported tool-output type with none of those fields contributes its raw
+// item plus recursively discovered images. That recovery keeps an unfamiliar
+// output structure visible instead of treating the recognized tool reply as
+// empty. Unknown roles or unsupported output types contribute no units.
 func collectResponsesInputItem(item gjson.Result, builder *contentModerationInputBuilder) {
 	typ := strings.ToLower(strings.TrimSpace(item.Get("type").String()))
 	role := strings.ToLower(strings.TrimSpace(item.Get("role").String()))
@@ -289,11 +412,14 @@ func collectResponsesInputItem(item gjson.Result, builder *contentModerationInpu
 			return
 		}
 	}
-	// Keep unknown tool-result structures intact so added protocol fields remain visible to moderation.
+	// A recognized tool-output item can lack the expected payload fields. Retain
+	// its raw object and images so this shape remains visible to audit review.
 	builder.addText(ContentModerationSourceTool, item.Raw)
 	collectImagesRecursively(item, ContentModerationSourceTool, builder)
 }
 
+// isResponsesToolOutputType reports whether normalized type names identify a
+// supported returned tool-output item.
 func isResponsesToolOutputType(typ string) bool {
 	switch typ {
 	case "function_call_output", "custom_tool_call_output", "mcp_tool_call_output", "tool_search_output", "computer_call_output", "local_shell_call_output":
@@ -303,6 +429,15 @@ func isResponsesToolOutputType(typ string) bool {
 	}
 }
 
+// collectGeminiCurrentTurn collects user or unroled parts after the final
+// model-role entry. Nonarray contents and parts contribute nothing. It accepts
+// both functionResponse and function_response, preserving the response field
+// when present and otherwise the entire function response as tool content.
+//
+// Ordinary selected parts add user text and compatible inline or file image
+// forms. The source distinction keeps a returned tool object's text and images
+// separate from the user's direct parts for audit toggles, while the common
+// builder retains stable first-occurrence image positions.
 func collectGeminiCurrentTurn(contents gjson.Result, builder *contentModerationInputBuilder) {
 	if !contents.IsArray() {
 		return
@@ -319,6 +454,8 @@ func collectGeminiCurrentTurn(contents gjson.Result, builder *contentModerationI
 			continue
 		}
 		parts.ForEach(func(_, part gjson.Result) bool {
+			// Read both accepted function-response spellings before ordinary user parts,
+			// so returned tool objects receive the tool source and its audit controls.
 			functionResponse := part.Get("functionResponse")
 			if !functionResponse.Exists() {
 				functionResponse = part.Get("function_response")
@@ -328,6 +465,8 @@ func collectGeminiCurrentTurn(contents gjson.Result, builder *contentModerationI
 				if response.Exists() {
 					collectContentValue(response, ContentModerationSourceTool, builder, true)
 				} else {
+					// A response object with no inner response still retains its full shape,
+					// giving auditing the tool fields available in this compatible form.
 					collectContentValue(functionResponse, ContentModerationSourceTool, builder, true)
 				}
 				return true
@@ -339,6 +478,10 @@ func collectGeminiCurrentTurn(contents gjson.Result, builder *contentModerationI
 	}
 }
 
+// indexAfterLastRole returns the position after the last matching normalized
+// role in the supplied list. Zero selects the entire list when that separator
+// is absent, allowing first-turn extraction to use every classified user or
+// tool unit.
 func indexAfterLastRole(items []gjson.Result, role string) int {
 	for i, item := range slices.Backward(items) {
 		if strings.EqualFold(strings.TrimSpace(item.Get("role").String()), role) {
@@ -348,6 +491,16 @@ func indexAfterLastRole(items []gjson.Result, role string) int {
 	return 0
 }
 
+// collectContentValue adds strings, arrays, and objects using the
+// caller-selected source and preservation mode. Arrays recurse in order.
+// Structured tool objects contribute their raw JSON plus recursively found
+// images, keeping unrecognized keys visible in the text sent for audit.
+//
+// Ordinary objects recognize text, nested content, and compatible image fields.
+// Image-shaped blocks contribute images without raw text; other unknown typed
+// blocks retain raw JSON when available. The builder filters unsupported image
+// references and deduplicates them, so recursive discovery and text
+// preservation can safely encounter the same reference more than once.
 func collectContentValue(value gjson.Result, source string, builder *contentModerationInputBuilder, preserveStructured bool) {
 	switch {
 	case !value.Exists():
@@ -360,6 +513,8 @@ func collectContentValue(value gjson.Result, source string, builder *contentMode
 			return true
 		})
 	case value.IsObject():
+		// Tool objects need their keys as well as display text. Keep the serialized
+		// object and separately discover embedded images for image-specific auditing.
 		if preserveStructured && value.Raw != "" {
 			builder.addText(source, value.Raw)
 			collectImagesRecursively(value, source, builder)
@@ -385,10 +540,17 @@ func collectContentValue(value gjson.Result, source string, builder *contentMode
 	}
 }
 
+// addKnownModerationImages probes common URL and MIME/data field spellings on
+// one object. All values pass through the builder's prefix and deduplication
+// rules; this helper does not download or validate encoded image bytes.
 func addKnownModerationImages(builder *contentModerationInputBuilder, source string, value gjson.Result) {
+	// Nested image_url objects and plain URL fields share the same reference
+	// admission so a protocol spelling change does not create another retained image.
 	for _, path := range []string{"image_url.url", "image_url", "url"} {
 		builder.addImage(source, value.Get(path).String())
 	}
+	// Compatible source and MIME/data spellings appear across message protocols;
+	// use the same data-reference builder so each spelling shares image deduplication.
 	for _, fields := range [][2]string{
 		{"source.media_type", "source.data"},
 		{"source.mediaType", "source.data"},
@@ -400,6 +562,10 @@ func addKnownModerationImages(builder *contentModerationInputBuilder, source str
 	}
 }
 
+// collectImagesRecursively finds compatible image references in nested object
+// and array values. Primitive values contribute nothing; caller-selected source
+// follows each discovery, and builder deduplication retains the first accepted
+// position for repeated references.
 func collectImagesRecursively(value gjson.Result, source string, builder *contentModerationInputBuilder) {
 	if value.IsArray() {
 		value.ForEach(func(_, item gjson.Result) bool {
@@ -421,7 +587,13 @@ func collectImagesRecursively(value gjson.Result, source string, builder *conten
 	})
 }
 
+// addGeminiModerationImage accepts camelCase and underscore spellings for
+// Gemini inline data and file references. MIME/data values become a base64 data
+// reference; file URIs still pass through the builder's supported-prefix
+// filter.
 func addGeminiModerationImage(builder *contentModerationInputBuilder, source string, part gjson.Result) {
+	// Gemini accepts both JSON spelling conventions here; funnel them through the
+	// same builder so duplicate inline references retain one review source position.
 	for _, field := range []string{"inline_data", "inlineData"} {
 		inlineData := part.Get(field)
 		if !inlineData.IsObject() {
@@ -433,11 +605,17 @@ func addGeminiModerationImage(builder *contentModerationInputBuilder, source str
 		}
 		addModerationImageData(builder, source, mimeType, inlineData.Get("data").String())
 	}
+	// File-reference spellings use the same prefix check as inline discovery;
+	// unsupported schemes are excluded while HTTP(S) references stay available for later retrieval.
 	for _, path := range []string{"file_data.file_uri", "fileData.fileUri"} {
 		builder.addImage(source, part.Get(path).String())
 	}
 }
 
+// addModerationImageData constructs a data reference from trimmed nonblank MIME
+// and encoded data. The builder subsequently checks its prefix and deduplicates
+// it; byte decoding and MIME validity remain the later snapshot consumer's
+// checks.
 func addModerationImageData(builder *contentModerationInputBuilder, source string, mimeType string, data string) {
 	mimeType = strings.TrimSpace(mimeType)
 	data = strings.TrimSpace(data)
@@ -447,10 +625,17 @@ func addModerationImageData(builder *contentModerationInputBuilder, source strin
 	builder.addImage(source, fmt.Sprintf("data:%s;base64,%s", mimeType, data))
 }
 
+// isSupportedModerationImageReference accepts literal lowercase data:, http://,
+// and https:// prefixes. It performs no URL parsing or byte validation, so its
+// result means eligible for later audit and snapshot handling.
 func isSupportedModerationImageReference(reference string) bool {
 	return strings.HasPrefix(reference, "data:") || strings.HasPrefix(reference, "http://") || strings.HasPrefix(reference, "https://")
 }
 
+// normalizeModerationImages returns a new slice of supported trimmed references
+// in first-occurrence order. Unsupported values and literal duplicates are
+// skipped; references differing after trimming remain distinct, and later
+// consumers validate actual retrieval or decoding.
 func normalizeModerationImages(images []string) []string {
 	out := make([]string, 0, len(images))
 	seen := make(map[string]struct{}, len(images))
@@ -468,6 +653,8 @@ func normalizeModerationImages(images []string) []string {
 	return out
 }
 
+// normalizeContentModerationText removes surrounding whitespace for moderation
+// test-input emptiness checks and construction.
 func normalizeContentModerationText(text string) string {
 	return strings.TrimSpace(text)
 }

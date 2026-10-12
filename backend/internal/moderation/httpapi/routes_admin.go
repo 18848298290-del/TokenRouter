@@ -4,8 +4,15 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// RegisterContentModerationRoutes installs risk-control routes on a group already configured with
-// authentication, rate limiting, and audit middleware.
+// Risk-control management shares the protected administrator route group
+// assembled by app. Full input and image retrieval, key tests, unban commands,
+// and hash mutations inherit that group middleware when these endpoints are
+// mounted beneath /risk-control.
+
+// RegisterContentModerationRoutes mounts configuration, review, key-test,
+// unban, and hash-management handlers below /risk-control. Supply a group
+// already protected by administrator authentication, panel limiting, and audit
+// middleware; app passes its /api/v1/admin group here.
 func RegisterContentModerationRoutes(admin *gin.RouterGroup, endpoint *ContentModerationHandler) {
 	risk := admin.Group("/risk-control")
 	{

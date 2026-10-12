@@ -8,20 +8,35 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-// Storage keys for Cyber session blocking.
+// Combined administrator updates distinguish omitted moderation fields from
+// supplied false switches. Preparation returns writes for fields present in the
+// request, while the session TTL contributes a write only when its decoded
+// value is positive.
+
+// Cyber session-block keys store enablement and decimal lifetime seconds for the
+// combined administrator update participant and the cached gateway settings reader.
 const (
 	SettingKeyCyberSessionBlockEnabled    = "cyber_session_block_enabled"
 	SettingKeyCyberSessionBlockTTLSeconds = "cyber_session_block_ttl_seconds"
 )
 
-// AdminSettings contains moderation management switches and runtime parameters.
+// AdminSettings carries the moderation fields accepted by the combined
+// administrator settings participant.
 type AdminSettings struct {
-	RiskControlEnabled          bool `json:"risk_control_enabled"`
-	CyberSessionBlockEnabled    bool `json:"cyber_session_block_enabled"`
-	CyberSessionBlockTTLSeconds int  `json:"cyber_session_block_ttl_seconds"`
+	// risk center enablement switch
+	RiskControlEnabled bool `json:"risk_control_enabled"`
+	// Cyber session blocking switch
+	CyberSessionBlockEnabled bool `json:"cyber_session_block_enabled"`
+	// CyberSessionBlockTTLSeconds is written by PrepareAdminSettings only when
+	// positive. Omitted or nonpositive values leave the stored TTL key unchanged
+	// through this participant.
+	// seconds
+	CyberSessionBlockTTLSeconds int `json:"cyber_session_block_ttl_seconds"`
 }
 
-// PrepareAdminSettings encodes switches and includes the session-block TTL only when positive.
+// PrepareAdminSettings encodes both switches as boolean strings and a positive
+// TTL as decimal seconds. It returns the supplied value unchanged, omits a
+// nonpositive TTL key, and performs no storage write or validation failure.
 func PrepareAdminSettings(value AdminSettings) (AdminSettings, map[string]string, error) {
 	values := map[string]string{}
 	values[SettingKeyRiskControlEnabled] = strconv.FormatBool(value.RiskControlEnabled)
@@ -33,7 +48,14 @@ func PrepareAdminSettings(value AdminSettings) (AdminSettings, map[string]string
 	return value, values, nil
 }
 
-// SettingsParticipant prepares the risk-control settings supplied in a management request.
+// SettingsParticipant registers moderation fields and their storage keys for
+// combined administrator updates. Its callback converts supplied JSON fields to
+// AdminSettings, then removes generated keys whose corresponding field was
+// absent so partial updates retain other settings.
+//
+// A present false switch survives that presence check and is stored as "false".
+// A nonpositive TTL contributes no write even when present. JSON conversion
+// errors stop preparation before the coordinator persists the returned values.
 func SettingsParticipant() settings.Participant {
 	fields := []string{"risk_control_enabled", "cyber_session_block_enabled", "cyber_session_block_ttl_seconds"}
 	keys := []string{SettingKeyRiskControlEnabled, SettingKeyCyberSessionBlockEnabled, SettingKeyCyberSessionBlockTTLSeconds}
@@ -53,6 +75,8 @@ func SettingsParticipant() settings.Participant {
 		if err != nil {
 			return settings.PreparedChange{}, err
 		}
+		// Keep presence separate from decoded zero values: an omitted switch retains
+		// its stored value, while a supplied false switch contributes a disabling write.
 		for i, field := range fields {
 			if _, ok := input[field]; !ok {
 				delete(values, keys[i])

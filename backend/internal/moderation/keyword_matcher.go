@@ -4,34 +4,69 @@ import (
 	"strings"
 )
 
-// contentModerationKeywordMatcher shares keyword prefixes in a compact Aho-Corasick automaton.
+// Keyword blocking returns the first configured keyword present anywhere in the
+// lowered text, even when a later configured keyword occurs earlier in the
+// prompt. The automaton therefore combines matches by configuration index
+// rather than by encounter position. Failure links also carry earlier suffix
+// matches so overlapping keywords retain that ordering rule.
+//
+// Construction uses linked outgoing edges and one-based head storage while the
+// trie grows. After breadth-first recovery links are ready, packing converts
+// those heads into zero-based sorted edge ranges for runtime searches. The
+// published matcher keeps copied original spellings for its result and
+// immutable lowered-byte transitions for concurrent snapshot readers.
+
+// contentModerationKeywordMatcher is an immutable byte automaton retaining
+// configured keyword order for case-insensitive substring checks.
 type contentModerationKeywordMatcher struct {
+	// nodes, edges, rootTransitions, and keywords are published together after
+	// construction. Match reads their shared storage, so callers keep the
+	// completed matcher immutable during concurrent snapshot use.
+	// packed automaton state records
 	nodes           []contentModerationKeywordNode
-	edges           []contentModerationKeywordEdge
-	rootTransitions [256]int32
-	keywords        []string
+	edges           []contentModerationKeywordEdge // sorted packed outgoing edges
+	rootTransitions [256]int32                     // first-byte target state table
+	keywords        []string                       // original configured keyword spellings
 }
 
+// contentModerationKeywordNode holds failure recovery, best configured match,
+// and outgoing-edge location for one state.
 type contentModerationKeywordNode struct {
-	failure     int32
-	bestKeyword int32
-	edgeStart   uint32
-	edgeCount   uint16
+	failure     int32 // shorter suffix recovery state
+	bestKeyword int32 // earliest keyword index, minus-one absent
+	// edgeStart stores a one-based linked-list head during construction, with zero
+	// meaning absent. Packing replaces it with a zero-based offset interpreted
+	// together with edgeCount by next.
+	edgeStart uint32 // build link or packed offset
+	edgeCount uint16 // packed outgoing edge count
 }
 
+// contentModerationKeywordEdge is one byte-labeled transition in a packed,
+// sorted node range.
 type contentModerationKeywordEdge struct {
-	target int32
-	label  byte
+	target int32 // destination automaton state index
+	label  byte  // lowercased encoded byte label
 }
 
+// contentModerationKeywordBuildEdge links temporary outgoing transitions while
+// the keyword trie is still growing.
 type contentModerationKeywordBuildEdge struct {
-	target      int32
-	nextSibling int32
-	label       byte
+	target      int32 // destination trie state index
+	nextSibling int32 // next edge, minus-one terminates
+	label       byte  // lowercased encoded byte label
 }
 
-// newContentModerationKeywordMatcher builds a read-only index with matches ranked by configured keyword
-// order.
+// newContentModerationKeywordMatcher builds an immutable index that returns the
+// earliest configured keyword found anywhere in text. Empty lists or lists
+// containing only empty strings return nil. It copies original keyword
+// spellings and constructs transitions over their strings.ToLower byte
+// representation.
+//
+// Breadth-first failure links propagate earlier suffix matches, so an
+// overlapping shorter keyword can still outrank a later configured longer
+// keyword. Temporary sibling links are then converted to sorted outgoing ranges
+// and a root transition table. That encoding changes edgeStart interpretation
+// before the matcher is published to snapshot readers.
 func newContentModerationKeywordMatcher(keywords []string) *contentModerationKeywordMatcher {
 	if len(keywords) == 0 {
 		return nil
@@ -69,7 +104,8 @@ func newContentModerationKeywordMatcher(keywords []string) *contentModerationKey
 		return nil
 	}
 
-	// Build failure links breadth first and propagate the earliest configured match to each child.
+	// Establish shorter suffix recovery breadth first so each child inherits an
+	// already resolved failure match and keeps the earliest configured keyword index.
 	queue := make([]int32, 0, len(buildNodes)-1)
 	var rootTransitions [256]int32
 	for edgeIndex := contentModerationKeywordBuildFirstEdge(buildNodes[0]); edgeIndex >= 0; edgeIndex = buildEdges[edgeIndex].nextSibling {
@@ -99,7 +135,8 @@ func newContentModerationKeywordMatcher(keywords []string) *contentModerationKey
 		}
 	}
 
-	// Pack each node's linked edges into a sorted range for binary-search transitions.
+	// Replace build-list heads with packed offsets after failure links are complete;
+	// Match can then search sorted byte ranges without consulting temporary sibling links.
 	edges := make([]contentModerationKeywordEdge, 0, len(buildEdges))
 	var outgoing [256]contentModerationKeywordEdge
 	for nodeIndex := range buildNodes {
@@ -131,10 +168,17 @@ func newContentModerationKeywordMatcher(keywords []string) *contentModerationKey
 	}
 }
 
+// newContentModerationKeywordNode creates an unmatched state with the root
+// failure target and an absent keyword sentinel. Its zero edgeStart represents
+// an empty build list until outgoing construction edges are assigned.
 func newContentModerationKeywordNode() contentModerationKeywordNode {
 	return contentModerationKeywordNode{bestKeyword: -1}
 }
 
+// contentModerationKeywordBuildFirstEdge decodes the temporary one-based list
+// head before packing. Zero returns minus one for no outgoing edge; this helper
+// requires construction nodes because packed offsets use a different
+// interpretation.
 func contentModerationKeywordBuildFirstEdge(node contentModerationKeywordNode) int32 {
 	if node.edgeStart == 0 {
 		return -1
@@ -142,6 +186,10 @@ func contentModerationKeywordBuildFirstEdge(node contentModerationKeywordNode) i
 	return int32(node.edgeStart - 1)
 }
 
+// contentModerationKeywordBuildTransition searches a construction state's
+// linked outgoing edges for one byte. Invalid state indexes or absent
+// transitions return minus one; edges are still sibling-linked and this helper
+// is used before packed range publication.
 func contentModerationKeywordBuildTransition(
 	nodes []contentModerationKeywordNode,
 	edges []contentModerationKeywordBuildEdge,
@@ -159,6 +207,10 @@ func contentModerationKeywordBuildTransition(
 	return -1
 }
 
+// minKeywordIndex returns the earlier nonnegative keyword index, treating
+// negative values as absent matches. Two absent inputs can return the supplied
+// negative sentinel, and configured ordering stays independent of where a
+// substring occurs.
 func minKeywordIndex(left, right int32) int32 {
 	if left < 0 {
 		return right
@@ -169,8 +221,16 @@ func minKeywordIndex(left, right int32) int32 {
 	return right
 }
 
-// Match returns the first configured keyword found in a case-insensitive scan, matching sequential
-// strings.Contains checks.
+// Match returns the earliest configured keyword occurring in
+// strings.ToLower(text), together with its hit flag. Nil or empty matchers and
+// empty text return no hit. It scans lowered bytes and follows failure links
+// when the current state has no transition, preserving overlapping suffix
+// matches.
+//
+// Match combines state results by configured index instead of first text
+// position. Finding index zero can return immediately because no later text
+// match can outrank that keyword; other matches remain candidates until the
+// scan ends. The returned spelling comes from the copied original keyword list.
 func (m *contentModerationKeywordMatcher) Match(text string) (string, bool) {
 	if m == nil || text == "" || len(m.nodes) == 0 || len(m.keywords) == 0 {
 		return "", false
@@ -180,6 +240,8 @@ func (m *contentModerationKeywordMatcher) Match(text string) (string, bool) {
 	bestKeyword := int32(-1)
 	for index := range len(lower) {
 		label := lower[index]
+		// Retry the byte along shorter suffix states so overlapping matches remain
+		// candidates when the current prefix has no outgoing transition for this byte.
 		for {
 			next := m.next(state, label)
 			if next != 0 {
@@ -202,6 +264,9 @@ func (m *contentModerationKeywordMatcher) Match(text string) (string, bool) {
 	return m.keywords[bestKeyword], true
 }
 
+// next returns a packed transition target or root zero when that byte is
+// absent. Root states use the direct table; other valid states binary-search
+// their sorted edge range, while invalid nonroot states return zero.
 func (m *contentModerationKeywordMatcher) next(state int32, label byte) int32 {
 	if state == 0 {
 		return m.rootTransitions[label]

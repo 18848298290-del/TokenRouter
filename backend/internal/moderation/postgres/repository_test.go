@@ -15,25 +15,45 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/moderation"
 )
 
+// Repository fixtures use SQL mocks to observe predicate text, bound
+// attribution, returned review shapes, and transaction call order. Cyber cases
+// bind the production identity participant to that mock transaction, while
+// rollback and atomicity descriptions refer to expected calls rather than live
+// database behavior.
+
+// TestBuildContentModerationLogWhere_BlockFiltersStandardBlocksOnly supplies
+// the singular block selector to the predicate builder. It checks the standard
+// action predicate and absence of keyword/hash action text in the generated
+// query fragment.
 func TestBuildContentModerationLogWhere_BlockFiltersStandardBlocksOnly(t *testing.T) {
 	where, args := buildContentModerationLogWhere(moderation.ContentModerationLogFilter{Result: "block"})
 
 	require.Empty(t, args)
 	sql := strings.Join(where, " AND ")
-	// Keep standard blocks separate from keyword and hash blocks for review by action.
+	// The singular selector selects one action so administrator review can separate
+	// API score blocks from keyword or repeated-hash rejections in its result tabs.
 	require.Contains(t, sql, "l.action = 'block'")
 	require.NotContains(t, sql, "keyword_block")
 	require.NotContains(t, sql, "hash_block")
 }
 
+// TestBuildContentModerationLogWhere_LegacyBlockedIncludesAllBlockActions
+// supplies the combined blocked compatibility selector. It checks that its
+// predicate contains all three supported block actions and contributes no bound
+// arguments.
 func TestBuildContentModerationLogWhere_LegacyBlockedIncludesAllBlockActions(t *testing.T) {
 	where, args := buildContentModerationLogWhere(moderation.ContentModerationLogFilter{Result: "blocked"})
 
 	require.Empty(t, args)
-	// Older clients send blocked during rolling upgrades and expect all blocking actions.
+	// The compatibility selector combines all block actions in one result category;
+	// singular action selectors remain available for the separate administrator review modes.
 	require.Contains(t, strings.Join(where, " AND "), "l.action IN ('block', 'keyword_block', 'hash_block')")
 }
 
+// TestBuildContentModerationLogWhere_KeywordBlockFiltersKeywordBlocksOnly
+// supplies the keyword_block action selector to ordinary filtering. It checks
+// the generated equality predicate and absence of additional arguments for that
+// fixed action selection.
 func TestBuildContentModerationLogWhere_KeywordBlockFiltersKeywordBlocksOnly(t *testing.T) {
 	where, args := buildContentModerationLogWhere(moderation.ContentModerationLogFilter{Result: "keyword_block"})
 
@@ -41,6 +61,10 @@ func TestBuildContentModerationLogWhere_KeywordBlockFiltersKeywordBlocksOnly(t *
 	require.Contains(t, strings.Join(where, " AND "), "l.action = 'keyword_block'")
 }
 
+// TestBuildContentModerationLogWhere_HashBlockFiltersHashBlocksOnly supplies
+// the hash_block action selector to ordinary filtering. It checks the generated
+// equality predicate and absence of additional arguments for that fixed action
+// selection.
 func TestBuildContentModerationLogWhere_HashBlockFiltersHashBlocksOnly(t *testing.T) {
 	where, args := buildContentModerationLogWhere(moderation.ContentModerationLogFilter{Result: "hash_block"})
 
@@ -48,16 +72,24 @@ func TestBuildContentModerationLogWhere_HashBlockFiltersHashBlocksOnly(t *testin
 	require.Contains(t, strings.Join(where, " AND "), "l.action = 'hash_block'")
 }
 
+// TestBuildContentModerationLogWhere_HitExcludesAllBlockActions supplies the
+// hit selector for administrator allowed-risk review. It checks the flagged
+// predicate and exclusion of standard, keyword, and hash blocking actions.
 func TestBuildContentModerationLogWhere_HitExcludesAllBlockActions(t *testing.T) {
 	where, args := buildContentModerationLogWhere(moderation.ContentModerationLogFilter{Result: "hit"})
 
 	require.Empty(t, args)
 	sql := strings.Join(where, " AND ")
-	// Exclude all three blocking actions so hit and blocked results are disjoint.
+	// Allowed-hit review excludes the block action labels, keeping its predicate
+	// disjoint from combined blocked review even when both categories contain flagged records.
 	require.Contains(t, sql, "l.flagged = TRUE")
 	require.Contains(t, sql, "l.action NOT IN ('block', 'keyword_block', 'hash_block')")
 }
 
+// TestContentModerationRepositoryCreateLog_PersistsMatchedKeyword supplies
+// attribution, timing, keyword, and decision values to a SQL mock. It checks
+// argument positions, matched keyword, returned identity/time, and commit
+// sequence; JSON payload arguments remain AnyArg observations.
 func TestContentModerationRepositoryCreateLog_PersistsMatchedKeyword(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := newTestModerationRepository(db)
@@ -147,6 +179,10 @@ func TestContentModerationRepositoryCreateLog_PersistsMatchedKeyword(t *testing.
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestContentModerationRepositoryCreateLogPersistsReviewMedia supplies one
+// image review item and binary snapshot to a SQL mock. It checks parent
+// identity linkage, media argument values, assigned child identity, and commit
+// after both insertions.
 func TestContentModerationRepositoryCreateLogPersistsReviewMedia(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := newTestModerationRepository(db)
@@ -177,6 +213,10 @@ func TestContentModerationRepositoryCreateLogPersistsReviewMedia(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestContentModerationRepositoryCreateLogRollsBackWhenMediaInsertFails makes
+// the SQL mock fail a media insertion after returning a parent identity. It
+// checks propagated deadline error and rollback invocation, rather than
+// executing a live database transaction.
 func TestContentModerationRepositoryCreateLogRollsBackWhenMediaInsertFails(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := newTestModerationRepository(db)
@@ -195,6 +235,10 @@ func TestContentModerationRepositoryCreateLogRollsBackWhenMediaInsertFails(t *te
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestContentModerationRepositoryListLogsReturnsTeamAttribution returns
+// separate actor, billing owner, and team IDs in a mocked list row. It checks
+// default page arguments, returned total, and attribution pointers retained in
+// the decoded summary.
 func TestContentModerationRepositoryListLogsReturnsTeamAttribution(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := newTestModerationRepository(db)
@@ -227,6 +271,10 @@ func TestContentModerationRepositoryListLogsReturnsTeamAttribution(t *testing.T)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestContentModerationRepositoryGetLogReturnsFullReviewPayload returns raw
+// input units, one failed image unit, and separate media metadata from mocked
+// queries. It checks attribution, completion labels, full text, failure text,
+// and absent binary bytes in detail metadata.
 func TestContentModerationRepositoryGetLogReturnsFullReviewPayload(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := newTestModerationRepository(db)
@@ -269,6 +317,10 @@ func TestContentModerationRepositoryGetLogReturnsFullReviewPayload(t *testing.T)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestContentModerationRepositoryListCyberWarningsReturnsTeamAttribution
+// returns a mocked Cyber summary row with actor, owner, and team context. It
+// checks default pagination and separate attribution pointers after warning-row
+// decoding.
 func TestContentModerationRepositoryListCyberWarningsReturnsTeamAttribution(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := newTestModerationRepository(db)
@@ -299,6 +351,9 @@ func TestContentModerationRepositoryListCyberWarningsReturnsTeamAttribution(t *t
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestContentModerationRepositoryGetCyberWarningReturnsTeamAttribution returns
+// a mocked Cyber detail row and an empty media query. It checks that actor,
+// billing owner, and team identifiers survive the full-detail read.
 func TestContentModerationRepositoryGetCyberWarningReturnsTeamAttribution(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := newTestModerationRepository(db)
@@ -328,6 +383,9 @@ func TestContentModerationRepositoryGetCyberWarningReturnsTeamAttribution(t *tes
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestContentModerationRepositoryGetMediaContentReturnsBinary returns one
+// stored image snapshot from the SQL mock for a selected ID. It checks exact
+// binary bytes and the expected query invocation for that media read.
 func TestContentModerationRepositoryGetMediaContentReturnsBinary(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := newTestModerationRepository(db)
@@ -344,6 +402,10 @@ func TestContentModerationRepositoryGetMediaContentReturnsBinary(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestContentModerationRepositoryCountFlaggedByUserSince_ExcludesHashBlock
+// matches the count query against its hash-block exclusion clause. It checks
+// actor and cutoff arguments plus the supplied mock count; the predicate is not
+// executed against stored history here.
 func TestContentModerationRepositoryCountFlaggedByUserSince_ExcludesHashBlock(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := newTestModerationRepository(db)
@@ -359,6 +421,11 @@ func TestContentModerationRepositoryCountFlaggedByUserSince_ExcludesHashBlock(t 
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestContentModerationRepositoryCreateCyberWarningAndApplyUserBan_DisablesUserAtomically
+// sets mocked actor locking, warning insertion, threshold count, identity
+// update, policy update, and commit expectations. It checks their sequence and
+// returned warning fields, while database atomicity itself is outside this
+// SQL-mock case.
 func TestContentModerationRepositoryCreateCyberWarningAndApplyUserBan_DisablesUserAtomically(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := newTestModerationRepository(db)
@@ -443,6 +510,10 @@ func TestContentModerationRepositoryCreateCyberWarningAndApplyUserBan_DisablesUs
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestContentModerationRepositoryCreateCyberWarningAndApplyUserBan_KeepsBelowThreshold
+// supplies a mocked count below the Cyber ban threshold after actor locking and
+// warning insertion. It checks persisted count, false ban observation, commit,
+// and absence of an expected user update.
 func TestContentModerationRepositoryCreateCyberWarningAndApplyUserBan_KeepsBelowThreshold(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := newTestModerationRepository(db)
@@ -510,6 +581,10 @@ func TestContentModerationRepositoryCreateCyberWarningAndApplyUserBan_KeepsBelow
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestContentModerationRepositoryMarkCyberWarningEmailSent expects the marker
+// update for one stored warning ID through the SQL mock. It checks successful
+// execution and fulfilled query expectations, without testing missing-row
+// affected counts.
 func TestContentModerationRepositoryMarkCyberWarningEmailSent(t *testing.T) {
 	db, mock := newSQLMock(t)
 	repo := newTestModerationRepository(db)
@@ -522,16 +597,24 @@ func TestContentModerationRepositoryMarkCyberWarningEmailSent(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// newSQLMock creates a SQL mock and closes its connection at test cleanup.
+// newSQLMock constructs a regexp-query-matching database fixture and registers
+// its close attempt with test cleanup. Construction errors fail the test;
+// cleanup suppresses DB close errors so they do not replace the recorded
+// assertion outcomes.
 func newSQLMock(t *testing.T) (*sql.DB, sqlmock.Sqlmock) {
 	t.Helper()
 	db, m, e := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherRegexp))
 	require.NoError(t, e)
+	// Cleanup owns this fixture DB close attempt after assertions finish. Suppress
+	// close errors here because the tests observe query and transaction expectations directly.
 	t.Cleanup(func() { _ = db.Close() })
 	return db, m
 }
 
-// newTestModerationRepository connects user-status transaction operations to the moderation store.
+// newTestModerationRepository binds the supplied mock DB and production
+// identity participant factory. Each requested participant uses the current SQL
+// transaction, so Cyber fixture expectations exercise the same
+// shared-transaction query path as app assembly.
 func newTestModerationRepository(db *sql.DB) *Store {
 	return NewContentModerationRepository(db, func(tx *sql.Tx) UserStatusTx { return identitypg.NewRiskStatusParticipant(tx) })
 }

@@ -13,27 +13,81 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/pagination"
 )
 
+// Ordinary audit rows and retained image metadata are inserted together, but
+// ordinary hashes, account changes, and notices already occur outside this
+// store transaction. Cyber policy instead locks the actor before inserting
+// warning and media, counts with the new warning present, writes optional
+// disabled status through the same identity transaction participant, and
+// commits its policy fields together.
+//
+// Assigned IDs and time fields reach caller-owned values before commit and can
+// remain after a failed operation. Rollback is attempted on earlier returns; an
+// uncertain commit requires reconciliation. Administrator detail reads load
+// media metadata separately from the owner row, and summaries or pages use
+// separate queries. Retention deletes are also independent commands, so a later
+// error can leave earlier deletions applied.
+
+// Store persists ordinary review records and coordinates Cyber policy with
+// identity on a shared SQL transaction.
 type Store struct {
-	users UserParticipation
-	db    *sql.DB
+	// users is required when a Cyber transaction carries a valid actor ID. It
+	// returns identity operations bound to that same transaction; Store owns
+	// commit and post-return effects remain with moderation.
+	users UserParticipation // same-transaction identity participant factory
+	// db is retained and closed by app. Ordinary operations require a usable
+	// database; CleanupExpiredLogs alone accepts a missing Store or database as a
+	// zero-delete result.
+	db *sql.DB // application-owned shared SQL database
 }
 
+// sqlQueryRower accepts either a database or transaction for shared warning and
+// media insertion.
 type sqlQueryRower interface {
+	// QueryRowContext returns a row whose Scan receives insertion identity or a
+	// count result. The owning insertion supplies context and stable argument values;
+	// a transaction implementation keeps those writes in its caller-owned transaction.
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+	// ExecContext supplies statement execution for a database or transaction.
+	// The insertion helpers currently use QueryRowContext; this method remains part
+	// of their required capability even though those helpers do not invoke it.
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
-// UserStatusTx locks and disables users in the caller's SQL transaction; the caller commits it.
+// UserStatusTx supplies identity locking and status writes bound to the
+// transaction owned by moderation Store.
 type UserStatusTx interface {
+	// LockUser obtains the actor row lock and returns stored status plus whether
+	// that row exists. The caller retains the transaction through warning insertion
+	// and policy application, then owns commit or rollback of the combined work.
 	LockUser(context.Context, int64) (string, bool, error)
+	// SetDisabled requests disabled status inside the same transaction and reports
+	// whether the participant observed a newly changed row. The moderation caller
+	// uses that boolean for postcommit invalidation and notification after successful commit.
 	SetDisabled(context.Context, int64) (bool, error)
 }
+
+// UserParticipation creates identity status operations bound to the supplied
+// moderation-owned SQL transaction.
 type UserParticipation func(*sql.Tx) UserStatusTx
 
+// NewContentModerationRepository binds the shared DB and same-transaction
+// identity factory. Construction opens no transaction or worker; a usable
+// factory is required for valid-actor Cyber operations, and app retains
+// ownership of DB closing.
 func NewContentModerationRepository(db *sql.DB, users UserParticipation) *Store {
 	return &Store{db: db, users: users}
 }
 
+// CreateLog writes an ordinary audit row and its retained media within one SQL
+// transaction. Nil logs are a no-op. JSON encoding occurs before the
+// transaction, then insertion assigns ID and CreatedAt before each media entry
+// receives the shared log-ID pointer and is inserted.
+//
+// Errors before commit leave a deferred rollback attempt; commit errors can
+// leave the database outcome uncertain. Caller-owned row and media values can
+// retain precommit identities on any returned failure and are not proof of
+// durable storage. Ordinary user actions, hashes, and notices run before this
+// method in the service and are outside this transaction.
 func (r *Store) CreateLog(ctx context.Context, log *moderation.ContentModerationLog) error {
 	if log == nil {
 		return nil
@@ -82,6 +136,8 @@ func (r *Store) CreateLog(ctx context.Context, log *moderation.ContentModeration
 	if err != nil {
 		return fmt.Errorf("begin content moderation log tx: %w", err)
 	}
+	// Leave rollback armed through every earlier return; after successful commit
+	// it is inert. Its ignored error cannot resolve an uncertain commit outcome.
 	defer func() { _ = tx.Rollback() }()
 	err = tx.QueryRowContext(ctx, `
 INSERT INTO content_moderation_logs (
@@ -109,18 +165,27 @@ INSERT INTO content_moderation_logs (
 	if err != nil {
 		return fmt.Errorf("insert content moderation log: %w", err)
 	}
+	// Assign the parent identity before inserting each media row in this same
+	// transaction; failed child insertion returns before the parent can be committed here.
 	for index := range log.Media {
 		log.Media[index].LogID = &log.ID
 		if err := insertContentModerationMedia(ctx, tx, &log.Media[index]); err != nil {
 			return err
 		}
 	}
+	// Commit after the ordinary row and every media insert succeeds. A commit
+	// error leaves the caller responsible for reconciling whether the database
+	// applied these writes.
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit content moderation log tx: %w", err)
 	}
 	return nil
 }
 
+// ListLogs returns newest-first ordinary summaries and pagination from separate
+// count and page reads. Page and size default to one and twenty, size caps at
+// one hundred, and SQL ordering ignores requested sort order. Full input,
+// failed-unit detail, and media bytes are omitted from these summaries.
 func (r *Store) ListLogs(ctx context.Context, filter moderation.ContentModerationLogFilter) ([]moderation.ContentModerationLog, *pagination.PaginationResult, error) {
 	where, args := buildContentModerationLogWhere(filter)
 	whereSQL := "WHERE " + strings.Join(where, " AND ")
@@ -137,6 +202,7 @@ func (r *Store) ListLogs(ctx context.Context, filter moderation.ContentModeratio
 	if params.PageSize <= 0 {
 		params.PageSize = 20
 	}
+	// Bound administrator summary page size before decoding retained result rows.
 	if params.PageSize > 100 {
 		params.PageSize = 100
 	}
@@ -160,6 +226,8 @@ LIMIT $`+fmt.Sprint(len(queryArgs)-1)+` OFFSET $`+fmt.Sprint(len(queryArgs)),
 	if err != nil {
 		return nil, nil, fmt.Errorf("list content moderation logs: %w", err)
 	}
+	// Release the query rows after scanning or any early failure; close errors
+	// do not replace the earlier query, scan, or iteration result returned here.
 	defer func() { _ = rows.Close() }()
 
 	items := make([]moderation.ContentModerationLog, 0)
@@ -235,6 +303,8 @@ LIMIT $`+fmt.Sprint(len(queryArgs)-1)+` OFFSET $`+fmt.Sprint(len(queryArgs)),
 			v := int(queueDelay.Int64)
 			item.QueueDelayMS = &v
 		}
+		// Stored JSON can have an incompatible shape despite valid jsonb encoding;
+		// keep initialized or partially decoded observations when these decode errors are ignored.
 		item.CategoryScores = map[string]float64{}
 		_ = json.Unmarshal(scoresRaw, &item.CategoryScores)
 		item.ThresholdSnapshot = map[string]float64{}
@@ -247,7 +317,10 @@ LIMIT $`+fmt.Sprint(len(queryArgs)-1)+` OFFSET $`+fmt.Sprint(len(queryArgs)),
 	return items, paginationResultFromTotal(total, params), nil
 }
 
-// GetLog loads full input and failed units for administrator review; list queries omit these large fields.
+// GetLog loads full ordinary review material and separately queries media
+// metadata for the same ID. It joins current user status, retains initialized
+// or partially decoded JSON after ignored decode errors, and returns wrapped
+// missing-row errors to the service classifier.
 func (r *Store) GetLog(ctx context.Context, id int64) (*moderation.ContentModerationLog, error) {
 	var item moderation.ContentModerationLog
 	var userID, billingUserID, teamID, apiKeyID, groupID, latency, queueDelay sql.NullInt64
@@ -277,6 +350,9 @@ WHERE l.id = $1
 		return nil, fmt.Errorf("get content moderation log: %w", err)
 	}
 	assignContentModerationNullableIDs(&item, userID, billingUserID, teamID, apiKeyID, groupID, latency, queueDelay)
+	// Retain scalar review data after JSON shape failures; ignored errors can
+	// leave partial decoded maps or items, so completeness labels stay the stored
+	// observations.
 	item.CategoryScores = map[string]float64{}
 	item.ThresholdSnapshot = map[string]float64{}
 	_ = json.Unmarshal(scoresRaw, &item.CategoryScores)
@@ -290,6 +366,10 @@ WHERE l.id = $1
 	return &item, nil
 }
 
+// assignContentModerationNullableIDs assigns present SQL identifiers and timing
+// values to independent pointers on the supplied log. Absent values leave
+// fields unchanged; GetLog supplies a fresh zero-valued log so those absences
+// remain nil, and timing integers are converted to int.
 func assignContentModerationNullableIDs(item *moderation.ContentModerationLog, userID sql.NullInt64, billingUserID sql.NullInt64, teamID sql.NullInt64, apiKeyID sql.NullInt64, groupID sql.NullInt64, latency sql.NullInt64, queueDelay sql.NullInt64) {
 	if userID.Valid {
 		value := userID.Int64
@@ -321,6 +401,10 @@ func assignContentModerationNullableIDs(item *moderation.ContentModerationLog, u
 	}
 }
 
+// CountFlaggedByUserSince counts ordinary flagged actor rows at or after since,
+// strictly after the latest stored auto-ban. It excludes hash_block actions and
+// returns zero for nonpositive IDs; the service adds the current yet-unwritten
+// hit outside this read.
 func (r *Store) CountFlaggedByUserSince(ctx context.Context, userID int64, since time.Time) (int, error) {
 	if userID <= 0 {
 		return 0, nil
@@ -346,6 +430,10 @@ WHERE user_id = $1
 	return count, nil
 }
 
+// CreateCyberWarning inserts warning and media sequentially through the
+// database, defaulting a nonpositive ViolationCount to one. Nil warnings are a
+// no-op. It creates no transaction or user-policy work, so later media failure
+// can follow an already committed warning row.
 func (r *Store) CreateCyberWarning(ctx context.Context, warning *moderation.ContentModerationCyberWarning) error {
 	if warning == nil {
 		return nil
@@ -356,6 +444,17 @@ func (r *Store) CreateCyberWarning(ctx context.Context, warning *moderation.Cont
 	return insertContentModerationCyberWarning(ctx, r.db, warning)
 }
 
+// CreateCyberWarningAndApplyUserBan writes warning/media and account-policy
+// effects in one transaction and returns the participant's new-disablement
+// observation after successful commit. Nil warnings return false, nil. A valid
+// actor is locked before insertion; the inserted warning participates in the
+// window count before optional status and warning policy fields are written.
+//
+// Step failures leave deferred rollback to be attempted. Commit errors require
+// outcome reconciliation, and supplied structs can retain identities or policy
+// fields written before the failure. The caller applies authentication
+// invalidation and notices after successful return using the committed warning
+// identity.
 // @project-doc docs/domains/content_moderation.md#moderation_transactions
 func (r *Store) CreateCyberWarningAndApplyUserBan(ctx context.Context, warning *moderation.ContentModerationCyberWarning, policy moderation.ContentModerationCyberWarningPolicy) (bool, error) {
 	if warning == nil {
@@ -368,8 +467,12 @@ func (r *Store) CreateCyberWarningAndApplyUserBan(ctx context.Context, warning *
 	if err != nil {
 		return false, fmt.Errorf("begin content moderation cyber warning tx: %w", err)
 	}
+	// Leave rollback armed through every earlier return; after successful commit
+	// it is inert. Its ignored error cannot resolve an uncertain commit outcome.
 	defer func() { _ = tx.Rollback() }()
 
+	// Lock the actor before warning insertion and counting, keeping competing Cyber
+	// updates for the same user behind this transaction until its commit or rollback.
 	userStatus, userLocked, err := r.lockCyberWarningUserTx(ctx, tx, warning)
 	if err != nil {
 		return false, err
@@ -382,12 +485,23 @@ func (r *Store) CreateCyberWarningAndApplyUserBan(ctx context.Context, warning *
 	if err != nil {
 		return false, err
 	}
+	// Commit after every intended row and policy step succeeds; a commit error
+	// leaves the caller responsible for reconciling whether the database applied the transaction.
 	if err := tx.Commit(); err != nil {
 		return false, fmt.Errorf("commit content moderation cyber warning tx: %w", err)
 	}
 	return autoBanJustApplied, nil
 }
 
+// insertContentModerationCyberWarning inserts serialized warning evidence
+// through a required DB or transaction and fills its ID and CreatedAt. It then
+// links each media item to that warning ID and inserts it. Callers supply
+// nonnil warning data and the intended transaction ownership.
+//
+// A DB caller can retain the warning after later media failure; a transaction
+// caller can roll back the combined writes. In either case, supplied values
+// retain any identity assigned before failure. The method does not commit, roll
+// back, lock users, or apply account policy itself.
 func insertContentModerationCyberWarning(ctx context.Context, q sqlQueryRower, warning *moderation.ContentModerationCyberWarning) error {
 	inputItems, err := json.Marshal(warning.InputItems)
 	if err != nil {
@@ -444,6 +558,8 @@ INSERT INTO content_moderation_cyber_warnings (
 	if err != nil {
 		return fmt.Errorf("insert content moderation cyber warning: %w", err)
 	}
+	// Children share the newly assigned warning identity; the supplied DB or Tx
+	// decides whether earlier insertions survive a later media error on this path.
 	for index := range warning.Media {
 		warning.Media[index].CyberWarningID = &warning.ID
 		if err := insertContentModerationMedia(ctx, q, &warning.Media[index]); err != nil {
@@ -453,6 +569,10 @@ INSERT INTO content_moderation_cyber_warnings (
 	return nil
 }
 
+// lockCyberWarningUserTx obtains status and actor-row existence through the
+// same-transaction identity factory. Missing or nonpositive actor pointers
+// return an unlocked result; valid actors require the factory, and errors
+// return before warning insertion.
 func (r *Store) lockCyberWarningUserTx(ctx context.Context, tx *sql.Tx, warning *moderation.ContentModerationCyberWarning) (string, bool, error) {
 	if warning == nil || warning.UserID == nil || *warning.UserID <= 0 {
 		return "", false, nil
@@ -464,14 +584,28 @@ func (r *Store) lockCyberWarningUserTx(ctx context.Context, tx *sql.Tx, warning 
 	return status, locked, nil
 }
 
+// applyCyberWarningUserBanTx counts and applies Cyber policy after the current
+// warning is inserted and its actor row is locked. Missing actor data or an
+// unlocked row skips policy work. Positive windows count matching warnings
+// after the prior auto-ban, excluding the current warning from that prior-ban
+// lookup; nonpositive windows keep count one.
+//
+// Enabled threshold policy marks AutoBanned and requests disablement unless
+// stored status is already disabled. Warning count and ban fields are updated
+// in the same transaction, while the returned boolean is the identity
+// participant's new-change observation. This path does not check actor role and
+// leaves commit and subsequent effects to the outer method.
 func (r *Store) applyCyberWarningUserBanTx(ctx context.Context, tx *sql.Tx, warning *moderation.ContentModerationCyberWarning, policy moderation.ContentModerationCyberWarningPolicy, userStatus string, userLocked bool) (bool, error) {
 	if warning == nil || warning.UserID == nil || *warning.UserID <= 0 || !userLocked {
 		return false, nil
 	}
 	userID := *warning.UserID
 
+	// Count with the new row already present, but exclude that row when locating
+	// the earlier auto-ban cutoff so caller-supplied ban metadata cannot reset its own count.
 	count := 1
 	if policy.WindowHours > 0 {
+		// Convert policy hours into a relative window at this evaluation time.
 		since := time.Now().Add(-time.Duration(policy.WindowHours) * time.Hour)
 		err := tx.QueryRowContext(ctx, `
 WITH last_auto_ban AS (
@@ -502,6 +636,8 @@ WHERE user_id = $1
 			autoBanJustApplied = applied
 		}
 	}
+	// Save computed warning count and threshold observation in the same transaction
+	// as any identity status write; a later outer commit decides their durable outcome.
 	if _, err := tx.ExecContext(ctx, `
 UPDATE content_moderation_cyber_warnings
 SET violation_count = $2, auto_banned = $3
@@ -512,6 +648,10 @@ WHERE id = $1
 	return autoBanJustApplied, nil
 }
 
+// ListCyberWarnings returns newest-first warning summaries after separate count
+// and page queries. Page and size default and clamp like ordinary lists, and
+// SQL ordering ignores supplied sort order; full input, failed units, and media
+// are loaded by GetCyberWarning.
 func (r *Store) ListCyberWarnings(ctx context.Context, filter moderation.ContentModerationCyberWarningFilter) ([]moderation.ContentModerationCyberWarning, *pagination.PaginationResult, error) {
 	where, args := buildContentModerationCyberWhere(filter)
 	whereSQL := "WHERE " + strings.Join(where, " AND ")
@@ -528,6 +668,7 @@ func (r *Store) ListCyberWarnings(ctx context.Context, filter moderation.Content
 	if params.PageSize <= 0 {
 		params.PageSize = 20
 	}
+	// Bound administrator summary page size before decoding retained result rows.
 	if params.PageSize > 100 {
 		params.PageSize = 100
 	}
@@ -550,6 +691,8 @@ LIMIT $`+fmt.Sprint(len(queryArgs)-1)+` OFFSET $`+fmt.Sprint(len(queryArgs)),
 	if err != nil {
 		return nil, nil, fmt.Errorf("list content moderation cyber warnings: %w", err)
 	}
+	// Release the query rows after scanning or any early failure; close errors
+	// do not replace the earlier query, scan, or iteration result returned here.
 	defer func() { _ = rows.Close() }()
 
 	items := make([]moderation.ContentModerationCyberWarning, 0)
@@ -620,7 +763,10 @@ LIMIT $`+fmt.Sprint(len(queryArgs)-1)+` OFFSET $`+fmt.Sprint(len(queryArgs)),
 	return items, paginationResultFromTotal(total, params), nil
 }
 
-// GetCyberWarning returns the stored current-turn content and media metadata for a Cyber warning.
+// GetCyberWarning loads raw warning review data with current user status and
+// separately queried media metadata. JSON decode errors retain any decoded
+// prefix values; missing rows return wrapped errors recognized by the service,
+// and image bytes remain a separate retrieval.
 func (r *Store) GetCyberWarning(ctx context.Context, id int64) (*moderation.ContentModerationCyberWarning, error) {
 	var item moderation.ContentModerationCyberWarning
 	var userID, billingUserID, teamID, apiKeyID, groupID, providerID sql.NullInt64
@@ -671,6 +817,8 @@ WHERE w.id = $1
 		value := providerID.Int64
 		item.ProviderID = &value
 	}
+	// Retain the warning row even when its JSON payload shape cannot fully decode;
+	// any decoded prefix remains available alongside the stored completion observations.
 	_ = json.Unmarshal(inputItemsRaw, &item.InputItems)
 	_ = json.Unmarshal(failedUnitsRaw, &item.FailedUnits)
 	item.Media, err = r.listContentModerationMedia(ctx, "cyber_warning_id", id)
@@ -680,6 +828,10 @@ WHERE w.id = $1
 	return &item, nil
 }
 
+// insertContentModerationMedia inserts one supplied snapshot through a DB or
+// caller-owned transaction, assigning ID and CreatedAt. Nil media is a no-op;
+// ownership pointers are serialized as supplied, and the schema requires
+// exactly one log or warning owner.
 func insertContentModerationMedia(ctx context.Context, q sqlQueryRower, media *moderation.ContentModerationMedia) error {
 	if media == nil {
 		return nil
@@ -706,6 +858,10 @@ RETURNING id, created_at
 	return nil
 }
 
+// listContentModerationMedia returns snapshot metadata ordered by source index
+// and ID for one owner. Only log_id and cyber_warning_id are accepted column
+// selectors; binary content and owner pointers are omitted from the returned
+// entries.
 func (r *Store) listContentModerationMedia(ctx context.Context, ownerColumn string, ownerID int64) ([]moderation.ContentModerationMedia, error) {
 	if ownerColumn != "log_id" && ownerColumn != "cyber_warning_id" {
 		return nil, errors.New("invalid content moderation media owner")
@@ -719,6 +875,8 @@ ORDER BY source_index ASC, id ASC
 	if err != nil {
 		return nil, fmt.Errorf("list content moderation media: %w", err)
 	}
+	// Release the query rows after scanning or any early failure; close errors
+	// do not replace the earlier query, scan, or iteration result returned here.
 	defer func() { _ = rows.Close() }()
 	items := make([]moderation.ContentModerationMedia, 0)
 	for rows.Next() {
@@ -734,7 +892,9 @@ ORDER BY source_index ASC, id ASC
 	return items, nil
 }
 
-// GetMediaContent loads the binary snapshot. The caller must authenticate and authorize the administrator.
+// GetMediaContent loads the stored binary snapshot and retrieval metadata for a
+// media ID. The caller enforces administrator authorization, and the service
+// separately checks ready status and nonempty content before HTTP delivery.
 func (r *Store) GetMediaContent(ctx context.Context, id int64) (*moderation.ContentModerationMedia, error) {
 	var item moderation.ContentModerationMedia
 	err := r.db.QueryRowContext(ctx, `
@@ -748,6 +908,10 @@ WHERE id = $1
 	return &item, nil
 }
 
+// CountCyberWarningsByUserSince counts stored actor warnings at or after since
+// and strictly after the latest recorded auto-ban. Nonpositive IDs return zero;
+// the transaction policy helper uses its own current-warning-aware query
+// instead of this separate read.
 func (r *Store) CountCyberWarningsByUserSince(ctx context.Context, userID int64, since time.Time) (int, error) {
 	if userID <= 0 {
 		return 0, nil
@@ -771,6 +935,9 @@ WHERE user_id = $1
 	return count, nil
 }
 
+// MarkCyberWarningEmailSent records successful notice delivery for a positive
+// warning ID. Nonpositive IDs are a no-op and affected rows are not checked, so
+// successful execution can return nil when the row is already absent.
 func (r *Store) MarkCyberWarningEmailSent(ctx context.Context, id int64) error {
 	if id <= 0 {
 		return nil
@@ -785,6 +952,15 @@ WHERE id = $1
 	return nil
 }
 
+// GetCyberSummary returns matching warning totals followed by user and provider
+// grouping observations. Total request counts exclude blank request IDs;
+// distinct users and providers exclude null IDs, while group queries can still
+// include their null group.
+//
+// Each grouped list caps at one hundred and chooses a maximum recorded display
+// name/address plus Shanghai local latest-time text. Queries run separately, so
+// concurrent mutations can separate their observed totals. Any query or scan
+// failure returns an error instead of the partially assembled result.
 func (r *Store) GetCyberSummary(ctx context.Context, filter moderation.ContentModerationCyberWarningFilter) (*moderation.ContentModerationCyberSummary, error) {
 	where, args := buildContentModerationCyberWhere(filter)
 	whereSQL := "WHERE " + strings.Join(where, " AND ")
@@ -803,6 +979,8 @@ FROM content_moderation_cyber_warnings w `+whereSQL, args...).Scan(
 	); err != nil {
 		return nil, fmt.Errorf("summary content moderation cyber warnings: %w", err)
 	}
+	// Read capped actor groups separately from totals; concurrent warning writes
+	// can change the grouped sample after the total-count observation was obtained.
 	userRows, err := r.db.QueryContext(ctx, `
 SELECT
     COUNT(*) AS count,
@@ -817,6 +995,8 @@ LIMIT 100`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("summary content moderation cyber warnings by user: %w", err)
 	}
+	// Close actor rows on completion or any later failure; provider-query failure
+	// can still return before this deferred resource release occurs on the error path.
 	defer func() { _ = userRows.Close() }()
 	for userRows.Next() {
 		var item moderation.ContentModerationCyberUserSummary
@@ -834,6 +1014,7 @@ LIMIT 100`, args...)
 		return nil, fmt.Errorf("iterate content moderation cyber user summary: %w", err)
 	}
 
+	// Retain only the largest matching provider groups for administrator display.
 	providerRows, err := r.db.QueryContext(ctx, `
 SELECT
     COUNT(*) AS count,
@@ -848,6 +1029,8 @@ LIMIT 100`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("summary content moderation cyber warnings by provider: %w", err)
 	}
+	// Release provider rows after the grouped scan even when a scan or iteration
+	// error prevents the partially assembled summary from being returned to its caller.
 	defer func() { _ = providerRows.Close() }()
 	for providerRows.Next() {
 		var item moderation.ContentModerationCyberProviderSummary
@@ -867,11 +1050,24 @@ LIMIT 100`, args...)
 	return result, nil
 }
 
+// CleanupExpiredLogs deletes flagged logs, unflagged logs, and Cyber warnings
+// using their supplied creation cutoffs. Nil Store or DB returns a zero-delete
+// result timestamped at entry. With a DB, each delete commits independently; a
+// later failure leaves earlier successful deletions applied and returns no
+// result.
+//
+// Cyber warnings share the hit cutoff, and schema owner references cascade
+// removal to media. RowsAffected errors are suppressed for displayed counts, so
+// returned numbers describe available driver observations. FinishedAt is
+// refreshed after all three commands succeed; the service only publishes
+// observations from that successful result.
 func (r *Store) CleanupExpiredLogs(ctx context.Context, hitBefore time.Time, nonHitBefore time.Time) (*moderation.ContentModerationCleanupResult, error) {
 	result := &moderation.ContentModerationCleanupResult{FinishedAt: time.Now()}
 	if r == nil || r.db == nil {
 		return result, nil
 	}
+	// These deletes are independent commands: hit deletion survives any later
+	// non-hit or warning failure, while the service keeps its previous successful cleanup display.
 	hitExec, err := r.db.ExecContext(ctx, `
 DELETE FROM content_moderation_logs
 WHERE flagged = TRUE AND created_at < $1
@@ -879,6 +1075,8 @@ WHERE flagged = TRUE AND created_at < $1
 	if err != nil {
 		return nil, fmt.Errorf("delete expired hit content moderation logs: %w", err)
 	}
+	// Deletion already succeeded; retain the count returned by the driver while
+	// suppressing its count-read error, which cannot undo this earlier database operation.
 	result.DeletedHit, _ = hitExec.RowsAffected()
 
 	nonHitExec, err := r.db.ExecContext(ctx, `
@@ -888,9 +1086,12 @@ WHERE flagged = FALSE AND created_at < $1
 	if err != nil {
 		return nil, fmt.Errorf("delete expired non-hit content moderation logs: %w", err)
 	}
+	// Keep successful non-hit deletion and the reported driver count while ignoring
+	// any count-read error; later deletion steps remain responsible for their own results.
 	result.DeletedNonHit, _ = nonHitExec.RowsAffected()
 
-	// Cyber warnings share the hit retention period; foreign keys cascade deletion to their media.
+	// Cyber warnings use the hit cutoff, and schema owner references cascade media
+	// deletion; this command is still independent of the two earlier log deletes.
 	cyberExec, err := r.db.ExecContext(ctx, `
 DELETE FROM content_moderation_cyber_warnings
 WHERE created_at < $1
@@ -898,12 +1099,17 @@ WHERE created_at < $1
 	if err != nil {
 		return nil, fmt.Errorf("delete expired content moderation cyber warnings: %w", err)
 	}
+	// This warning deletion has already completed; retain its reported driver count
+	// while suppressing any count-read error in the otherwise successful cleanup result.
 	result.DeletedCyber, _ = cyberExec.RowsAffected()
 
 	result.FinishedAt = time.Now()
 	return result, nil
 }
 
+// nullableIntPtr returns the pointed integer for a SQL argument or nil to
+// encode SQL NULL. It keeps present zero values distinct from absent timing,
+// and callers provide the timing unit with the field.
 func nullableIntPtr(value *int) any {
 	if value == nil {
 		return nil
@@ -911,6 +1117,11 @@ func nullableIntPtr(value *int) any {
 	return *value
 }
 
+// buildContentModerationLogWhere returns predicates and numbered arguments for
+// ordinary list filtering. It keeps individual blocking actions distinct and
+// supports blocked as their combined compatibility value. Request IDs expand
+// through request_lookup_ids, search retains SQL wildcards inside percent
+// wrapping, and nonzero time limits are inclusive.
 func buildContentModerationLogWhere(filter moderation.ContentModerationLogFilter) ([]string, []any) {
 	where := []string{"l.id IS NOT NULL"}
 	args := make([]any, 0)
@@ -920,10 +1131,12 @@ func buildContentModerationLogWhere(filter moderation.ContentModerationLogFilter
 	}
 	switch strings.ToLower(strings.TrimSpace(filter.Result)) {
 	case "hit", "flagged":
-		// Hits are flagged requests that were allowed, so exclude every blocking action.
+		// The hit filter selects flagged allowed observations; exclude all three block
+		// actions so administrator hit review remains distinct from blocked review across action modes.
 		where = append(where, "l.flagged = TRUE AND l.action NOT IN ('block', 'keyword_block', 'hash_block')")
 	case "blocked":
-		// The legacy blocked filter includes every blocking action for older API clients.
+		// The combined blocked selector accepts all block action labels, while the
+		// singular selectors below give administrator review an action-specific result set.
 		where = append(where, "l.action IN ('block', 'keyword_block', 'hash_block')")
 	case "block":
 		where = append(where, "l.action = 'block'")
@@ -960,6 +1173,10 @@ func buildContentModerationLogWhere(filter moderation.ContentModerationLogFilter
 	return where, args
 }
 
+// buildContentModerationCyberWhere returns common warning predicates and
+// numbered arguments for lists and summary queries. Request IDs expand through
+// request_lookup_ids; optional actor/provider IDs compare exactly, search keeps
+// wildcard behavior, and nonzero lower/upper creation limits are inclusive.
 func buildContentModerationCyberWhere(filter moderation.ContentModerationCyberWarningFilter) ([]string, []any) {
 	where := []string{"w.id IS NOT NULL"}
 	args := make([]any, 0)
@@ -991,7 +1208,8 @@ func buildContentModerationCyberWhere(filter moderation.ContentModerationCyberWa
 	return where, args
 }
 
-// paginationResultFromTotal builds pagination metadata from the total and requested page.
+// paginationResultFromTotal delegates total/page metadata construction to the
+// shared pagination helper for repository lists.
 func paginationResultFromTotal(total int64, params pagination.PaginationParams) *pagination.PaginationResult {
 	return pagination.ResultFromTotal(total, params)
 }

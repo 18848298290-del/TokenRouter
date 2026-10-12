@@ -8,6 +8,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/notification"
 )
 
+// TestBuildContentModerationAccountDisabledEmailBody_ContainsBanDetails
+// supplies a threshold-reaching observation and HTML-sensitive branding. It
+// checks the disabled-state message, count, displayed category and score, and
+// escaped site name in the generated body.
 func TestBuildContentModerationAccountDisabledEmailBody_ContainsBanDetails(t *testing.T) {
 	userID := int64(1001)
 	cfg := defaultContentModerationConfig()
@@ -29,6 +33,10 @@ func TestBuildContentModerationAccountDisabledEmailBody_ContainsBanDetails(t *te
 	require.Contains(t, body, "TokenRouter &lt;Admin&gt;")
 }
 
+// buildContentModerationAccountDisabledEmailBody converts moderation values for
+// the notification HTML formatter. A nil log produces an empty body through
+// that formatter; a present log requires configuration for its displayed
+// threshold.
 func buildContentModerationAccountDisabledEmailBody(site string, v *ContentModerationLog, c *ContentModerationConfig) string {
 	return notification.BuildContentModerationAccountDisabledEmailBody(site, riskLog(v), riskPolicy(c))
 }

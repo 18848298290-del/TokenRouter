@@ -6,6 +6,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestContentModerationAuditInputAppliesSourceLimitsAndToggles applies
+// independent user and tool limits to mixed text and images. It checks retained
+// source positions, shorter text, tool-image exclusion, and total image
+// exclusion under their respective switches.
 func TestContentModerationAuditInputAppliesSourceLimitsAndToggles(t *testing.T) {
 	input := ContentModerationInput{
 		Text: "abcdef\n123456",
@@ -42,8 +46,10 @@ func TestContentModerationAuditInputAppliesSourceLimitsAndToggles(t *testing.T) 
 	require.Empty(t, audit.ImageItems)
 }
 
-// TestExtractContentModerationInput_AnthropicAgentToolLoopExtractsToolResult checks extraction of the
-// current tool-loop result.
+// TestExtractContentModerationInput_AnthropicAgentToolLoopExtractsToolResult
+// supplies an assistant tool call followed by a user-carried tool result. It
+// checks that the selected text is the tool reply, its source is tool, and its
+// image list is empty.
 func TestExtractContentModerationInput_AnthropicAgentToolLoopExtractsToolResult(t *testing.T) {
 	body := []byte(`{
 		"messages": [
@@ -60,6 +66,9 @@ func TestExtractContentModerationInput_AnthropicAgentToolLoopExtractsToolResult(
 	require.Equal(t, ContentModerationSourceTool, input.Source)
 }
 
+// TestExtractContentModerationInput_AnthropicFirstTurnExtractsUser supplies a
+// first-turn Anthropic user message with no assistant separator. It checks that
+// the user text is returned as the aggregate moderation input.
 func TestExtractContentModerationInput_AnthropicFirstTurnExtractsUser(t *testing.T) {
 	body := []byte(`{
 		"messages": [
@@ -72,6 +81,9 @@ func TestExtractContentModerationInput_AnthropicFirstTurnExtractsUser(t *testing
 	require.Equal(t, "Q1", input.Text)
 }
 
+// TestExtractContentModerationInput_AnthropicMultiTurnExtractsLatestUser
+// supplies an earlier user and assistant exchange followed by another user
+// message. It checks that the aggregate text contains the later turn alone.
 func TestExtractContentModerationInput_AnthropicMultiTurnExtractsLatestUser(t *testing.T) {
 	body := []byte(`{
 		"messages": [
@@ -86,6 +98,9 @@ func TestExtractContentModerationInput_AnthropicMultiTurnExtractsLatestUser(t *t
 	require.Equal(t, "Q2", input.Text)
 }
 
+// TestExtractContentModerationInput_AnthropicStreamResendExtractsResend
+// supplies a partial assistant response followed by a user resend message. It
+// checks that the later resend text becomes the selected aggregate input.
 func TestExtractContentModerationInput_AnthropicStreamResendExtractsResend(t *testing.T) {
 	body := []byte(`{
 		"messages": [
@@ -100,6 +115,9 @@ func TestExtractContentModerationInput_AnthropicStreamResendExtractsResend(t *te
 	require.Equal(t, "重发", input.Text)
 }
 
+// TestExtractContentModerationInput_OpenAIChatAgentToolLoopExtractsToolResult
+// supplies a Chat assistant tool call and a subsequent tool reply. It checks
+// the reply text, tool source label, and empty image list.
 func TestExtractContentModerationInput_OpenAIChatAgentToolLoopExtractsToolResult(t *testing.T) {
 	body := []byte(`{
 		"messages": [
@@ -117,6 +135,10 @@ func TestExtractContentModerationInput_OpenAIChatAgentToolLoopExtractsToolResult
 	require.Equal(t, ContentModerationSourceTool, input.Source)
 }
 
+// TestExtractContentModerationInput_OpenAIChatMultiTurnExtractsLatestUser
+// supplies Chat history with a completed assistant turn and later user message.
+// It checks that the selected aggregate text comes from that later user
+// message.
 func TestExtractContentModerationInput_OpenAIChatMultiTurnExtractsLatestUser(t *testing.T) {
 	body := []byte(`{
 		"messages": [
@@ -131,6 +153,10 @@ func TestExtractContentModerationInput_OpenAIChatMultiTurnExtractsLatestUser(t *
 	require.Equal(t, "Q2", input.Text)
 }
 
+// TestExtractContentModerationInput_GeminiAgentToolLoopExtractsFunctionResponse
+// supplies a model function call followed by its function response. It checks
+// that the response object remains JSON text and receives the tool source label
+// with no images.
 func TestExtractContentModerationInput_GeminiAgentToolLoopExtractsFunctionResponse(t *testing.T) {
 	body := []byte(`{
 		"contents": [
@@ -147,6 +173,9 @@ func TestExtractContentModerationInput_GeminiAgentToolLoopExtractsFunctionRespon
 	require.Equal(t, ContentModerationSourceTool, input.Source)
 }
 
+// TestExtractContentModerationInput_GeminiFirstTurnExtractsUser supplies one
+// Gemini user part before any model reply. It checks that its Unicode text
+// becomes the aggregate current-turn moderation input.
 func TestExtractContentModerationInput_GeminiFirstTurnExtractsUser(t *testing.T) {
 	body := []byte(`{
 		"contents": [
@@ -159,6 +188,9 @@ func TestExtractContentModerationInput_GeminiFirstTurnExtractsUser(t *testing.T)
 	require.Equal(t, "你好", input.Text)
 }
 
+// TestExtractContentModerationInput_GeminiMultiTurnExtractsLatestUser supplies
+// a Gemini model reply between two user turns. It checks that the selected
+// aggregate text comes from the user entry after that model separator.
 func TestExtractContentModerationInput_GeminiMultiTurnExtractsLatestUser(t *testing.T) {
 	body := []byte(`{
 		"contents": [
@@ -173,6 +205,9 @@ func TestExtractContentModerationInput_GeminiMultiTurnExtractsLatestUser(t *test
 	require.Equal(t, "Q2", input.Text)
 }
 
+// TestExtractContentModerationInput_ResponsesAgentToolLoopExtractsToolOutput
+// supplies Responses history ending in a function-call output. It checks that
+// the output text is selected with tool source and an empty image list.
 func TestExtractContentModerationInput_ResponsesAgentToolLoopExtractsToolOutput(t *testing.T) {
 	body := []byte(`{
 		"input":[
@@ -189,6 +224,10 @@ func TestExtractContentModerationInput_ResponsesAgentToolLoopExtractsToolOutput(
 	require.Equal(t, ContentModerationSourceTool, input.Source)
 }
 
+// TestExtractContentModerationPromptExcerpt_ResponsesUsesCurrentToolOutput
+// supplies an earlier credential-bearing user message and later tool output. It
+// checks that both aggregate text and Cyber excerpt contain the current tool
+// result.
 func TestExtractContentModerationPromptExcerpt_ResponsesUsesCurrentToolOutput(t *testing.T) {
 	body := []byte(`{
 		"input":[
@@ -206,6 +245,10 @@ func TestExtractContentModerationPromptExcerpt_ResponsesUsesCurrentToolOutput(t 
 	require.Equal(t, "all passed", excerpt)
 }
 
+// TestExtractContentModerationInput_ResponsesLastUserMessageExtracted supplies
+// a completed Responses assistant turn followed by another user message. It
+// checks that the aggregate moderation text is the user text after that
+// separator.
 func TestExtractContentModerationInput_ResponsesLastUserMessageExtracted(t *testing.T) {
 	body := []byte(`{
 		"input":[
@@ -220,6 +263,9 @@ func TestExtractContentModerationInput_ResponsesLastUserMessageExtracted(t *test
 	require.Equal(t, "latest", input.Text)
 }
 
+// TestExtractContentModerationInput_ResponsesLastIsAssistantSkipped supplies
+// Responses input whose final item is an assistant message. It checks that no
+// later text or image remains eligible for current-turn moderation.
 func TestExtractContentModerationInput_ResponsesLastIsAssistantSkipped(t *testing.T) {
 	body := []byte(`{
 		"input":[
@@ -234,6 +280,10 @@ func TestExtractContentModerationInput_ResponsesLastIsAssistantSkipped(t *testin
 	require.Empty(t, input.Images)
 }
 
+// TestExtractContentModerationInput_ChatCollectsParallelToolResultsAndDeduplicatesImages
+// supplies parallel Chat tool replies sharing one image reference. It checks
+// retained structured text, excluded earlier request text, one image reference,
+// and the tool source label.
 func TestExtractContentModerationInput_ChatCollectsParallelToolResultsAndDeduplicatesImages(t *testing.T) {
 	body := []byte(`{
 		"messages":[
@@ -253,6 +303,10 @@ func TestExtractContentModerationInput_ChatCollectsParallelToolResultsAndDedupli
 	require.Equal(t, ContentModerationSourceTool, input.Source)
 }
 
+// TestExtractContentModerationInput_ResponsesCollectsAllSupportedToolOutputs
+// supplies five supported Responses tool-output variants after a function call.
+// It checks their text values and structured object are retained with a common
+// tool source.
 func TestExtractContentModerationInput_ResponsesCollectsAllSupportedToolOutputs(t *testing.T) {
 	body := []byte(`{
 		"input":[
@@ -274,6 +328,10 @@ func TestExtractContentModerationInput_ResponsesCollectsAllSupportedToolOutputs(
 	require.Equal(t, ContentModerationSourceTool, input.Source)
 }
 
+// TestExtractContentModerationInput_AnthropicKeepsSystemRemindersAndEphemeralUserText
+// supplies Anthropic user text containing reminder tags and cache metadata. It
+// checks that those selected text values remain present and no image is
+// extracted.
 func TestExtractContentModerationInput_AnthropicKeepsSystemRemindersAndEphemeralUserText(t *testing.T) {
 	body := []byte(`{
 		"messages": [
@@ -296,6 +354,9 @@ func TestExtractContentModerationInput_AnthropicKeepsSystemRemindersAndEphemeral
 	require.Empty(t, input.Images)
 }
 
+// TestExtractContentModerationInput_OpenAIChatUsesLastUserMessage supplies Chat
+// system text, older history, and a later user text/image message. It checks
+// the selected user text and image while excluding older and system text.
 func TestExtractContentModerationInput_OpenAIChatUsesLastUserMessage(t *testing.T) {
 	body := []byte(`{
 		"model":"gpt-5.5",
@@ -315,6 +376,9 @@ func TestExtractContentModerationInput_OpenAIChatUsesLastUserMessage(t *testing.
 	require.NotContains(t, input.Text, "system prompt")
 }
 
+// TestExtractContentModerationInput_OpenAIImagesIncludesPromptAndImages
+// supplies an image request with a prompt, HTTP image, and inline image. It
+// checks that text and both literal references remain in their submitted order.
 func TestExtractContentModerationInput_OpenAIImagesIncludesPromptAndImages(t *testing.T) {
 	body := []byte(`{
 		"prompt":"replace background",
@@ -330,6 +394,10 @@ func TestExtractContentModerationInput_OpenAIImagesIncludesPromptAndImages(t *te
 	require.Equal(t, []string{"https://example.com/source.png", "data:image/png;base64,aGVsbG8="}, input.Images)
 }
 
+// TestExtractContentModerationInput_OpenAIResponsesCodexPayloadUsesLastUserMessage
+// supplies developer instructions and two consecutive user messages before any
+// assistant separator. It checks that both user texts are joined and developer
+// text is excluded.
 func TestExtractContentModerationInput_OpenAIResponsesCodexPayloadUsesLastUserMessage(t *testing.T) {
 	body := []byte(`{
 		"model":"gpt-5.5",
