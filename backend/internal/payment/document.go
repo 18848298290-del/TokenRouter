@@ -8,7 +8,16 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
-// GetOrderPaymentDocument returns the user order's Stripe invoice or legacy receipt.
+// Stripe orders can retain hosted invoice and PDF links, while legacy
+// PaymentIntent orders may need a provider receipt lookup. Document
+// queries prefer usable stored links and ask the order's provider when
+// those links are absent, keeping ownership checks at the user query
+// entry point.
+
+// GetOrderPaymentDocument returns an owned order's Stripe invoice or
+// legacy receipt. GetOrder checks the supplied user ID and maps storage
+// errors to not-found before document selection; the helper can then
+// return stored links or query the provider.
 func (s *OrderQueries) GetOrderPaymentDocument(ctx context.Context, orderID, userID int64) (*PaymentDocumentResponse, error) {
 	order, err := s.GetOrder(ctx, orderID, userID)
 	if err != nil {
@@ -17,7 +26,10 @@ func (s *OrderQueries) GetOrderPaymentDocument(ctx context.Context, orderID, use
 	return s.GetOrderPaymentDocumentValue(ctx, order)
 }
 
-// AdminGetOrderPaymentDocument returns an order invoice or receipt for administrator access.
+// AdminGetOrderPaymentDocument returns an order invoice or receipt
+// after reading its ID. The caller establishes administrator access;
+// this method applies no user-ownership comparison, and document
+// selection still requires a Stripe order.
 func (s *OrderQueries) AdminGetOrderPaymentDocument(ctx context.Context, orderID int64) (*PaymentDocumentResponse, error) {
 	order, err := s.GetOrderByID(ctx, orderID)
 	if err != nil {
@@ -26,6 +38,11 @@ func (s *OrderQueries) AdminGetOrderPaymentDocument(ctx context.Context, orderID
 	return s.GetOrderPaymentDocumentValue(ctx, order)
 }
 
+// GetOrderPaymentDocumentValue returns usable stored invoice links or
+// asks the order provider for an invoice or receipt. Pass an order
+// authorized by the caller; nil input is not-found, and non-Stripe
+// orders or providers without document support are rejected. A provider
+// result without a usable URL is also not-found.
 func (s *OrderQueries) GetOrderPaymentDocumentValue(ctx context.Context, order *Order) (*PaymentDocumentResponse, error) {
 	if order == nil {
 		return nil, infraerrors.NotFound("NOT_FOUND", "order not found")
@@ -38,6 +55,9 @@ func (s *OrderQueries) GetOrderPaymentDocumentValue(ctx context.Context, order *
 		return doc, nil
 	}
 
+	// Legacy PaymentIntent orders can lack stored invoice links. Resolve
+	// the historical order provider and use its invoice ID or trade
+	// number to obtain the available document.
 	prov, err := s.provider(ctx, order)
 	if err != nil {
 		return nil, fmt.Errorf("load order provider: %w", err)
@@ -56,6 +76,10 @@ func (s *OrderQueries) GetOrderPaymentDocumentValue(ctx context.Context, order *
 	return doc, nil
 }
 
+// PaymentDocumentFromOrder returns an invoice document when the order
+// contains a nonblank hosted or PDF URL. Hosted links take precedence;
+// URLs are trimmed, while invoice ID and status are copied as stored.
+// Nil orders and absent links return nil.
 func PaymentDocumentFromOrder(order *Order) *PaymentDocumentResponse {
 	if order == nil {
 		return nil
@@ -66,6 +90,9 @@ func PaymentDocumentFromOrder(order *Order) *PaymentDocumentResponse {
 		return nil
 	}
 	url := hostedURL
+	// A PDF can be the only stored invoice link. Use it as the openable
+	// URL while retaining the separate PDF field for clients that
+	// want the download.
 	if url == "" {
 		url = pdfURL
 	}

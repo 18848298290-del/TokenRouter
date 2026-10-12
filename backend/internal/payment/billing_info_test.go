@@ -6,14 +6,18 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// TestPSValidateBillingInfo supplies missing identity fields, malformed
+// email, an incomplete tax pair, and accepted email/tax alternatives.
+// It checks the first structured error reason or successful validation
+// for each listed request.
 func TestPSValidateBillingInfo(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name         string
-		info         *BillingInfo
-		fallbackMail string
-		wantReason   string
+		name         string       // validation scenario label
+		info         *BillingInfo // supplied billing identity
+		fallbackMail string       // fallback buyer email
+		wantReason   string       // expected structured error reason
 	}{
 		{
 			name:         "requires billing info",
@@ -92,6 +96,10 @@ func TestPSValidateBillingInfo(t *testing.T) {
 	}
 }
 
+// TestPSBillingInfoSnapshotTrimsAndOmitsEmptyValues builds a snapshot
+// from padded identity and address text. It checks trimmed values,
+// uppercase country text, nested address shape, and omission of the
+// blank second address line.
 func TestPSBillingInfoSnapshotTrimsAndOmitsEmptyValues(t *testing.T) {
 	t.Parallel()
 
@@ -146,6 +154,9 @@ func TestPSBillingInfoSnapshotTrimsAndOmitsEmptyValues(t *testing.T) {
 	}
 }
 
+// TestPSBillingInfoSnapshotReturnsNilForEmptyInfo supplies whitespace
+// identity and address text, then nil input. It checks that neither
+// case produces a sparse map for an empty normalized billing record.
 func TestPSBillingInfoSnapshotReturnsNilForEmptyInfo(t *testing.T) {
 	t.Parallel()
 

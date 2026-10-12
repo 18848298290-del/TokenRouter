@@ -4,14 +4,17 @@ import (
 	"testing"
 )
 
+// TestCalculatePayAmount formats two-decimal channel charges across
+// zero, negative, fractional, and large percentage-fee cases. It checks
+// the expected strings, including upward rounding of small nonzero fees.
 func TestCalculatePayAmount(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		amount   float64
-		feeRate  float64
-		expected string
+		name     string  // fee scenario label
+		amount   float64 // channel base amount
+		feeRate  float64 // configured fee percentage
+		expected string  // expected channel charge string
 	}{
 		{
 			name:     "zero fee rate returns same amount",
@@ -47,19 +50,19 @@ func TestCalculatePayAmount(t *testing.T) {
 			name:     "fee rounds UP small remainder",
 			amount:   10.00,
 			feeRate:  3.33,
-			expected: "10.34", // 10 * 3.33 / 100 = 0.333 -> round up -> 0.34
+			expected: "10.34", // Ceiling a 0.333 fee gives 0.34 before adding the base.
 		},
 		{
 			name:     "very small amount",
 			amount:   0.01,
 			feeRate:  1,
-			expected: "0.02", // 0.01 * 1/100 = 0.0001 -> round up -> 0.01 -> total 0.02
+			expected: "0.02", // A nonzero 0.0001 fee rounds up to one minor unit.
 		},
 		{
 			name:     "large amount",
 			amount:   99999.99,
 			feeRate:  10,
-			expected: "109999.99", // 99999.99 * 10/100 = 9999.999 -> round up -> 10000.00 -> total 109999.99
+			expected: "109999.99", // Ceiling the 9999.999 fee adds 10000.00 to the base.
 		},
 		{
 			name:     "100 percent fee rate doubles amount",
@@ -71,7 +74,7 @@ func TestCalculatePayAmount(t *testing.T) {
 			name:     "precision 0.01 fee difference",
 			amount:   100.00,
 			feeRate:  1.01,
-			expected: "101.01", // 100 * 1.01/100 = 1.01
+			expected: "101.01", // An exact 1.01 fee retains its two-decimal amount.
 		},
 		{
 			name:     "precision 0.02 fee",
@@ -95,7 +98,7 @@ func TestCalculatePayAmount(t *testing.T) {
 			name:     "fractional fee that causes rounding up",
 			amount:   33.33,
 			feeRate:  7.77,
-			expected: "35.92", // 33.33 * 7.77 / 100 = 2.589741 -> round up -> 2.59 -> total 35.92
+			expected: "35.92", // Ceiling the 2.589741 fee gives 2.59 before addition.
 		},
 	}
 
@@ -110,14 +113,17 @@ func TestCalculatePayAmount(t *testing.T) {
 	}
 }
 
+// TestCalculatePayAmountWithFee combines fixed and percentage fees in
+// a two-decimal currency. It compares the complete breakdown for
+// independent, combined, rounded, and absent fee components.
 func TestCalculatePayAmountWithFee(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name string
-		base float64
-		fee  FeeConfig
-		want FeeBreakdown
+		name string       // fee scenario label
+		base float64      // channel base amount
+		fee  FeeConfig    // configured fee components
+		want FeeBreakdown // expected full fee breakdown
 	}{
 		{
 			name: "fixed fee only",
@@ -162,15 +168,19 @@ func TestCalculatePayAmountWithFee(t *testing.T) {
 	}
 }
 
+// TestCalculatePayAmountForCurrency applies the same percentage-fee
+// calculation to JPY, KWD, ISK, and CNY. It checks whole-unit,
+// three-decimal, legacy whole-unit display, and ordinary two-decimal
+// formatted charge strings.
 func TestCalculatePayAmountForCurrency(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		amount   float64
-		feeRate  float64
-		currency string
-		expected string
+		name     string  // fee scenario label
+		amount   float64 // channel base amount
+		feeRate  float64 // configured fee percentage
+		currency string  // channel currency code
+		expected string  // expected channel charge string
 	}{
 		{
 			name:     "zero decimal currency rounds fee up to whole unit",

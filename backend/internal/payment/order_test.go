@@ -7,10 +7,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestGenerateOutTradeNo checks the merchant order number format and date.
+// TestGenerateOutTradeNo generates one merchant order number around
+// two clock observations. It checks the prefix, date and random-suffix
+// shape, and accepts either surrounding date if generation crosses
+// midnight.
 func TestGenerateOutTradeNo(t *testing.T) {
 	t.Parallel()
 
+	// Observe the date before and after generation so a midnight crossing
+	// can accept either observed day while still checking the complete
+	// merchant-number format.
 	before := time.Now().Format("20060102")
 	got := GenerateOutTradeNo()
 	after := time.Now().Format("20060102")

@@ -7,6 +7,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestUpdatePlanRequest_UnmarshalNullablePatchFields decodes into fresh
+// requests with omitted, null, zero, and positive nullable fields.
+// It checks omitted presence bits and the received null, zero, and positive
+// pointer values, keeping clearing distinguishable from omission and a numeric
+// zero replacement.
 func TestUpdatePlanRequest_UnmarshalNullablePatchFields(t *testing.T) {
 	var omitted UpdatePlanRequest
 	require.NoError(t, json.Unmarshal([]byte(`{"name":"Basic"}`), &omitted))

@@ -7,6 +7,16 @@ import (
 	infraerrors "github.com/TokenFlux/TokenRouter/internal/pkg/apperror"
 )
 
+// Stripe invoice checkout requires buyer identity and an email, and
+// tax identity is accepted as a type/value pair. Input normalization
+// trims each field, uppercases country text, and represents an empty
+// address or complete empty record as absent before sparse snapshot
+// construction and validation.
+
+// NilIfEmpty returns nil for an exactly empty string and a pointer
+// to the supplied value otherwise. Whitespace is retained, so callers
+// that need blank-value removal trim their input before using this
+// helper.
 func NilIfEmpty(s string) *string {
 	if s == "" {
 		return nil
@@ -14,6 +24,10 @@ func NilIfEmpty(s string) *string {
 	return &s
 }
 
+// TrimBillingInfo returns a new normalized billing record and optional
+// address, or nil when every normalized field is empty. Strings are
+// trimmed and country text is uppercased; the returned address is
+// separately allocated when it contains a retained value.
 func TrimBillingInfo(info *BillingInfo) *BillingInfo {
 	if info == nil {
 		return nil
@@ -33,6 +47,9 @@ func TrimBillingInfo(info *BillingInfo) *BillingInfo {
 			State:      strings.TrimSpace(info.Address.State),
 			PostalCode: strings.TrimSpace(info.Address.PostalCode),
 		}
+		// Keep an address only when normalization retains one of its fields,
+		// so BillingInfoSnapshot can omit a blank address object from the
+		// persisted checkout data.
 		if addr.Country != "" || addr.Line1 != "" || addr.Line2 != "" || addr.City != "" || addr.State != "" || addr.PostalCode != "" {
 			trimmed.Address = addr
 		}
@@ -43,6 +60,11 @@ func TrimBillingInfo(info *BillingInfo) *BillingInfo {
 	return trimmed
 }
 
+// BillingInfoSnapshot returns fresh sparse maps containing normalized
+// nonempty billing values, or nil for an empty record. It omits
+// blank address fields and the absent address object; callers apply
+// ValidateBillingInfo separately when checkout requires valid identity
+// information.
 func BillingInfoSnapshot(info *BillingInfo) map[string]any {
 	info = TrimBillingInfo(info)
 	if info == nil {
@@ -88,6 +110,11 @@ func BillingInfoSnapshot(info *BillingInfo) map[string]any {
 	return snapshot
 }
 
+// ValidateBillingInfo checks a normalized record for a name, an email
+// accepted by mail.ParseAddress, and paired tax-ID type/value fields.
+// An empty supplied email uses the trimmed fallback email. The function
+// returns the first structured error and leaves the supplied record
+// unchanged; it does not validate address or tax-number formats.
 func ValidateBillingInfo(info *BillingInfo, fallbackEmail string) error {
 	info = TrimBillingInfo(info)
 	if info == nil {

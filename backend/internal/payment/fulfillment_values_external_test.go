@@ -9,6 +9,10 @@ import (
 	paymenttestkit "github.com/TokenFlux/TokenRouter/internal/payment/testkit"
 )
 
+// TestExpectedNotificationProviderKeyForOrderUsesSnapshotProviderKey
+// registers a current Alipay binding but records EasyPay in the order
+// snapshot. With no explicit instance key, it checks that expected
+// notification identity still comes from the historical snapshot.
 func TestExpectedNotificationProviderKeyForOrderUsesSnapshotProviderKey(t *testing.T) {
 	t.Parallel()
 

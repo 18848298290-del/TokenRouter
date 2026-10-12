@@ -6,16 +6,43 @@ import (
 	"strings"
 )
 
+// Payment confirmation can arrive after a channel configuration changes,
+// so an order retains merchant and currency facts from its checkout.
+// A typed snapshot reads those persisted attributes for notification
+// comparisons, while orders with missing legacy attributes can still
+// follow their compatibility paths. Snapshot presence means some recorded
+// data exists, not that every merchant field or schema version is valid.
+//
+// String attributes retain trimmed string values; numeric version markers
+// accept the ordinary integer, float, and decimal-string forms handled
+// by the reader. Notification validation compares the supported provider's
+// recorded expected fields with reported metadata, leaving signature,
+// provider binding, and paid-amount checks to their owning callers.
+// Currency lookup normalizes the recorded currency when possible and
+// uses the compatibility default when the snapshot cannot supply one.
+
+// OrderProviderSnapshot retains typed checkout merchant, channel, and currency
+// attributes.
 type OrderProviderSnapshot struct {
-	SchemaVersion      int
-	ProviderInstanceID string
-	ProviderKey        string
-	PaymentMode        string
-	MerchantAppID      string
-	MerchantID         string
-	Currency           string
+	SchemaVersion      int    // recorded snapshot version
+	ProviderInstanceID string // selected channel instance
+	ProviderKey        string // selected provider implementation
+	PaymentMode        string // recorded checkout mode
+	MerchantAppID      string // recorded merchant application
+	MerchantID         string // recorded merchant identity
+	Currency           string // recorded currency text
 }
 
+// PsOrderProviderSnapshot returns a new typed view of the order's
+// recorded provider attributes, or nil for missing input and an all-empty
+// view. A nonzero version alone makes the view present; this reader
+// does not validate supported schema versions or merchant completeness.
+//
+// The source map can contain values from JSON decoding or older writers,
+// so the version reader accepts several numeric representations while
+// identity readers retain strings. Unsupported identity values become
+// empty, allowing provider-specific validation to distinguish recorded
+// expected fields from legacy missing attributes.
 func PsOrderProviderSnapshot(order *Order) *OrderProviderSnapshot {
 	if order == nil || len(order.ProviderSnapshot) == 0 {
 		return nil
@@ -42,6 +69,10 @@ func PsOrderProviderSnapshot(order *Order) *OrderProviderSnapshot {
 	return snapshot
 }
 
+// PsSnapshotStringValue returns a trimmed snapshot string or an empty
+// value for any other representation. Merchant and currency readers
+// interpret the empty result as an absent attribute; this helper does
+// not stringify numeric or structured input.
 func PsSnapshotStringValue(value any) string {
 	switch typed := value.(type) {
 	case string:
@@ -51,6 +82,10 @@ func PsSnapshotStringValue(value any) string {
 	}
 }
 
+// PsSnapshotIntValue reads accepted integer, float, or decimal-string
+// version markers using ordinary Go conversions. Unsupported types and
+// failed string parsing return zero; numeric casts do not validate
+// schema versions or guard their integer range.
 func PsSnapshotIntValue(value any) int {
 	switch typed := value.(type) {
 	case int:
@@ -69,11 +104,24 @@ func PsSnapshotIntValue(value any) int {
 			return n
 		}
 	}
+	// An unreadable version contributes no marker to snapshot presence.
+	// Other recorded identity strings can still make the typed view
+	// nonempty, so version parsing failure does not discard them.
 	return 0
 }
 
-// ValidateProviderSnapshotMetadata compares reported merchant identity and currency with the order snapshot.
-// A missing snapshot or empty metadata skips validation for legacy orders and providers.
+// ValidateProviderSnapshotMetadata compares reported merchant and
+// currency metadata with the recorded attributes for supported provider
+// keys. Nil order, empty metadata, or an absent typed snapshot skips
+// these comparisons for legacy input. An unrecognized provider key also
+// selects no comparison branch.
+//
+// A recorded expected value requires a reported value and compares
+// trimmed text case-insensitively. The checked fields depend on the
+// provider, and supplied WeChat or Airwallex success-status metadata
+// is checked when present. Callers separately establish notification
+// signatures, provider binding, and paid-amount validity before applying
+// any payment transition.
 func ValidateProviderSnapshotMetadata(order *Order, providerKey string, metadata map[string]string) error {
 	if order == nil || len(metadata) == 0 {
 		return nil
@@ -173,6 +221,10 @@ func ValidateProviderSnapshotMetadata(order *Order, providerKey string, metadata
 	return nil
 }
 
+// ProviderMerchantIdentityMetadata returns merchant attributes from an
+// optional MerchantIdentityProvider. A nil provider or unsupported
+// interface returns nil; the reporter's map is returned as supplied,
+// so this wrapper adds no ownership copy or validation.
 func ProviderMerchantIdentityMetadata(prov Provider) map[string]string {
 	if prov == nil {
 		return nil
@@ -184,11 +236,18 @@ func ProviderMerchantIdentityMetadata(prov Provider) map[string]string {
 	return reporter.MerchantIdentityMetadata()
 }
 
+// PaymentOrderCurrency returns a normalized recorded currency when the
+// order snapshot can supply one. Missing snapshots, empty currency, or
+// invalid currency text selects CNY; normalization checks code syntax
+// and retains accepted unlisted codes.
 func PaymentOrderCurrency(order *Order) string {
 	if snapshot := PsOrderProviderSnapshot(order); snapshot != nil {
 		if currency, err := NormalizePaymentCurrency(snapshot.Currency); err == nil {
 			return currency
 		}
 	}
+	// A historical order can lack a usable recorded currency. Returning
+	// the compatibility default lets refund and reporting consumers retain
+	// their existing currency interpretation for that row.
 	return DefaultPaymentCurrency
 }

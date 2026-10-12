@@ -8,7 +8,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestFixedProviderWindowRequiresStrictlyPositiveLimit checks that nonpositive and NaN limits do not reset usage.
+// TestFixedProviderWindowRequiresStrictlyPositiveLimit supplies zero,
+// negative, and NaN limits to fixed-mode reconciliation. It checks
+// that they do not reset, then verifies the UTC midnight boundary
+// for a positive limit and retention when stored start equals it.
 func TestFixedProviderWindowRequiresStrictlyPositiveLimit(t *testing.T) {
 	now := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
 	for _, limit := range []float64{0, -1, math.NaN()} {

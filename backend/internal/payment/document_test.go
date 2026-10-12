@@ -4,6 +4,10 @@ import (
 	"testing"
 )
 
+// TestPaymentDocumentFromOrderPrefersHostedInvoiceURL supplies hosted
+// and PDF invoice links together. It checks hosted-link trimming and
+// precedence, invoice type, retained PDF link, and the copied invoice
+// ID and status.
 func TestPaymentDocumentFromOrderPrefersHostedInvoiceURL(t *testing.T) {
 	t.Parallel()
 
@@ -42,6 +46,9 @@ func TestPaymentDocumentFromOrderPrefersHostedInvoiceURL(t *testing.T) {
 	}
 }
 
+// TestPaymentDocumentFromOrderFallsBackToPDFURL supplies only a padded
+// PDF link. It checks the trimmed PDF as the primary URL and PDF field,
+// with an empty hosted-link field.
 func TestPaymentDocumentFromOrderFallsBackToPDFURL(t *testing.T) {
 	t.Parallel()
 
@@ -65,6 +72,10 @@ func TestPaymentDocumentFromOrderFallsBackToPDFURL(t *testing.T) {
 	}
 }
 
+// TestPaymentDocumentFromOrderReturnsNilWithoutLinks supplies an
+// invoice ID without document URLs and a nil order. It requires both
+// inputs to return nil instead of a document containing no openable
+// link.
 func TestPaymentDocumentFromOrderReturnsNilWithoutLinks(t *testing.T) {
 	t.Parallel()
 
