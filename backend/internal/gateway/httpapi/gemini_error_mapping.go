@@ -6,12 +6,27 @@ import (
 	"strings"
 )
 
+// Google error objects can describe a failure more specifically than the HTTP
+// status alone. Messages error presentation uses the mapped category and
+// optional status override while keeping message selection in the HTTP output
+// adapter.
+
+// ClaudeErrorMapping supplies the Messages category and optional presentation
+// overrides.
 type ClaudeErrorMapping struct {
-	Type       string
-	Message    string
+	Type string // Anthropic error category
+	// Message is empty in MapGeminiErrorBodyToClaudeError; output adapters select
+	// their client message after combining the mapping with HTTP status.
+	Message string
+	// StatusCode overrides HTTP mapping when positive; zero leaves that decision
+	// to the consuming Gemini output adapter and its status-specific defaults.
 	StatusCode int
 }
 
+// MapGeminiErrorBodyToClaudeError extracts an Anthropic error category from a
+// Google error object. Empty, malformed or empty-error bodies return nil.
+// Message stays empty, and only INVALID_ARGUMENT, NOT_FOUND and
+// RESOURCE_EXHAUSTED supply status overrides.
 func MapGeminiErrorBodyToClaudeError(body []byte) *ClaudeErrorMapping {
 	if len(body) == 0 {
 		return nil
@@ -19,11 +34,13 @@ func MapGeminiErrorBodyToClaudeError(body []byte) *ClaudeErrorMapping {
 
 	var parsed struct {
 		Error struct {
-			Code    int    `json:"code"`
-			Message string `json:"message"`
-			Status  string `json:"status"`
-		} `json:"error"`
+			Code    int    `json:"code"`    // upstream numeric status
+			Message string `json:"message"` // upstream diagnostic message
+			Status  string `json:"status"`  // Google error category
+		} `json:"error"` // decoded upstream error
 	}
+	// Unreadable error bytes leave mapping unavailable; output can still classify
+	// the actual HTTP status rather than treating parse failure as another upstream error.
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		return nil
 	}
@@ -35,6 +52,8 @@ func MapGeminiErrorBodyToClaudeError(body []byte) *ClaudeErrorMapping {
 		Type:    MapGeminiStatusToClaudeErrorType(parsed.Error.Status),
 		Message: "",
 	}
+	// An unknown Google category still identifies an error object, so expose the
+	// generic upstream category and let HTTP output complete the status and message.
 	if mapped.Type == "" {
 		mapped.Type = "upstream_error"
 	}
@@ -47,13 +66,18 @@ func MapGeminiErrorBodyToClaudeError(body []byte) *ClaudeErrorMapping {
 	case "RESOURCE_EXHAUSTED":
 		mapped.StatusCode = http.StatusTooManyRequests
 	default:
-		// Keep StatusCode unset and let HTTP status mapping decide.
+		// Other Google categories supply a type while leaving the status to the
+		// consuming adapter, which also sees the actual upstream HTTP response.
 	}
 
-	// Keep messages generic by default; upstream error message can be long or include sensitive fragments.
+	// The body can contain provider internals, so this mapper leaves message
+	// selection to HTTP output, where configured rules and status handling apply.
 	return mapped
 }
 
+// MapGeminiStatusToClaudeErrorType returns the Anthropic category for a
+// trimmed, case-insensitive Google status. An unknown status returns an empty
+// string so the caller can select its own upstream-error category.
 func MapGeminiStatusToClaudeErrorType(status string) string {
 	switch strings.ToUpper(strings.TrimSpace(status)) {
 	case "INVALID_ARGUMENT":

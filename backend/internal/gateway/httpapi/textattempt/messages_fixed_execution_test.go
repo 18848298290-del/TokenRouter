@@ -17,7 +17,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// TestFixedMessagesOpenUsesBoundDependenciesAndExplicitState checks fixed dependencies and independent request state.
+// Opening Messages execution must reuse fixed service bindings while
+// allocating fresh request state. The observation fixture mutates source
+// metadata after an errored result is converted, protecting partial usage and
+// the specific timing, header and size copies consumed by the text loop.
+
+// TestFixedMessagesOpenUsesBoundDependenciesAndExplicitState opens two
+// requests on one runtime. Both bridges must share the bound dependency
+// pointer while keeping distinct state and preserving the first request’s
+// model after the second opens.
 func TestFixedMessagesOpenUsesBoundDependenciesAndExplicitState(t *testing.T) {
 	dependencies := &messageExecutionDependencies{}
 	runtime := &Runtime{dependencies: dependencies}
@@ -44,7 +52,10 @@ func TestFixedMessagesOpenUsesBoundDependenciesAndExplicitState(t *testing.T) {
 	}
 }
 
-// TestMessageObservedAttemptRetainsPartialUsageAndCopiesMetadata checks partial failure usage and copied mutable metadata.
+// TestMessageObservedAttemptRetainsPartialUsageAndCopiesMetadata converts
+// usage with a cancellation error, then mutates original timing, headers and
+// output sizes. The attempt must remain Served/HasUsage and keep the captured
+// metadata values.
 func TestMessageObservedAttemptRetainsPartialUsageAndCopiesMetadata(t *testing.T) {
 	first := 12
 	result := &forwardcore.MessagesResult{Model: "model", Usage: upstream.TokenUsage{OutputTokens: 2}, UpstreamHeaders: http.Header{"X-Request-Id": []string{"upstream"}}, FirstTokenMs: &first, ImageOutputSizes: []string{"1K"}}

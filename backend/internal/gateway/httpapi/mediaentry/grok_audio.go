@@ -27,25 +27,49 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// grokRealtimeAdapter opens a Realtime connection for the selected provider.
+// Voice completion starts from measured audio units, and Realtime produces
+// units only after audio has actually been observed during a positive session
+// duration. The saved provider selection connects slot acquisition, credential
+// resolution and execution for one HTTP or WebSocket request.
+//
+// Before submitting usage, the adapter retains or generates a prefixed
+// financial request identity and captures caller, provider, endpoint and
+// payload evidence. A body-free operation can use the endpoint as its payload
+// fingerprint input. Forwarded Voice results clone headers and scalar
+// AudioUsage records as they cross adapter layers, so completion consumes the
+// captured request data after the original execution returns.
+
+// grokRealtimeAdapter retains one request's selected provider through Realtime
+// setup and completion.
 type grokRealtimeAdapter struct {
-	h         *Runtime
-	c         *gin.Context
-	apiKey    *apikey.APIKey
-	reqLog    *zap.Logger
+	h      *Runtime       // shared media runtime
+	c      *gin.Context   // active HTTP request
+	apiKey *apikey.APIKey // authenticated caller key
+	reqLog *zap.Logger    // request diagnostic logger
+	// selection is replaced by SelectRealtime. Later operations require a
+	// successful selection and use its provider rather than snapshot arguments.
 	selection *gatewaycapture.SelectionResult
 }
 
-// grokVoiceAdapter connects provider selection, HTTP execution, and completion capture.
+// grokVoiceAdapter retains HTTP funding and provider selection for Voice
+// completion.
 type grokVoiceAdapter struct {
-	h            *Runtime
-	c            *gin.Context
-	apiKey       *apikey.APIKey
-	subscription *billing.UserSubscription
-	reqLog       *zap.Logger
-	selection    *gatewaycapture.SelectionResult
+	h      *Runtime       // shared media runtime
+	c      *gin.Context   // active HTTP request
+	apiKey *apikey.APIKey // authenticated caller key
+	// subscription is captured for this Voice request and can be nil for
+	// balance funding; completion receives the same optional funding choice.
+	subscription *billing.UserSubscription // optional request funding subscription
+	reqLog       *zap.Logger               // request diagnostic logger
+	// selection is replaced by SelectVoice. Later operations require a
+	// successful selection and use its provider rather than snapshot arguments.
+	selection *gatewaycapture.SelectionResult
 }
 
+// grokRealtimeBillingResult returns a new Realtime billing result from elapsed
+// time and observed audio. Missing audio or nonpositive duration returns nil;
+// a new connection receives a generated prefixed request ID and minutes-based
+// usage.
 func grokRealtimeBillingResult(model string, elapsed time.Duration, audioObserved bool) *forwardcore.OpenAIResult {
 	usage := gatewaymedia.RealtimeAudioUsage(elapsed, audioObserved)
 	if usage == nil {
@@ -54,7 +78,17 @@ func grokRealtimeBillingResult(model string, elapsed time.Duration, audioObserve
 	return &forwardcore.OpenAIResult{RequestID: gatewaycapture.StableRealtimeBillingRequestID(""), Model: model, Duration: elapsed, AudioUsage: usage}
 }
 
-// recordGrokVoiceUsage settles TTS, STT, or Realtime audio usage using group audio pricing.
+// recordGrokVoiceUsage captures measured TTS, STT or Realtime usage for
+// mandatory completion submission. Missing outer dependencies or AudioUsage
+// returns immediately; callers provide a hydrated Key.User when recording
+// proceeds. Existing prefixed request IDs are retained, and missing IDs are
+// generated through the mode-specific helper.
+//
+// The payload fingerprint uses body bytes, then endpoint text when no body
+// hash exists. Endpoint and provider identities, client metadata, funding and
+// pricing fields are captured before the queued callback runs. Recording
+// errors are logged after execution; this operation performs no additional
+// upstream request and leaves completion persistence to the shared recorder.
 func (h *Runtime) recordGrokVoiceUsage(
 	c *gin.Context,
 	apiKey *apikey.APIKey,
@@ -70,7 +104,8 @@ func (h *Runtime) recordGrokVoiceUsage(
 	if result.AudioUsage == nil {
 		return
 	}
-	// Generate a settlement ID for Realtime, TTS, and STT when the caller omitted one.
+	// Keep an existing prefixed financial key when completion receives it; blank
+	// identities need one generated seed so later recording can retain that same key.
 	if mode := strings.TrimSpace(result.AudioUsage.Mode); mode == "realtime" {
 		result.RequestID = gatewaycapture.StableRealtimeBillingRequestID(result.RequestID)
 	} else {
@@ -80,6 +115,8 @@ func (h *Runtime) recordGrokVoiceUsage(
 	clientIP := clientip.GetClientIP(c)
 	sessionID := gatewayhttp.ExtractClientSessionID(c)
 	requestPayloadHash := billing.HashUsageRequestPayload(body)
+	// Body-free resource/session calls still need fingerprint input for completion;
+	// the endpoint identifies that operation when no request body supplies a hash.
 	if requestPayloadHash == "" {
 		requestPayloadHash = billing.HashUsageRequestPayload([]byte(endpoint))
 	}
@@ -92,6 +129,8 @@ func (h *Runtime) recordGrokVoiceUsage(
 	}
 
 	pricingFields := gatewayhttp.ClientRequestedUsageFields(c, routing.GroupMappingResult{}, model, result.UpstreamModel)
+	// Capture request metadata before submission; the callback reads completionInput
+	// and its captured logger after Gin request state may have been released.
 	completionInput := gatewaycapture.CaptureOpenAI(c.Request.Context(), &gatewaycapture.OpenAICapture{
 		Result:             result,
 		APIKey:             apiKey,
@@ -124,6 +163,10 @@ func (h *Runtime) recordGrokVoiceUsage(
 	})
 }
 
+// SelectRealtime selects a Grok provider under the current Key group and
+// exclusion set. It saves the selected execution target; absent
+// selection/provider returns false with its error, and later setup requires
+// true.
 func (p *grokRealtimeAdapter) SelectRealtime(ctx context.Context, excluded map[int64]struct{}) (providercore.ProviderSnapshot, bool, error) {
 	selected, _, err := p.h.bindings.Common.Selection.SelectProviderWithSchedulerForCapability(ctx, p.apiKey.GroupID, "", "", "", excluded, egress.OpenAIUpstreamTransportHTTPSSE, providercore.OpenAIEndpointCapabilityTextGeneration, false, false, capability.PlatformGrok)
 	p.selection = selected
@@ -133,16 +176,27 @@ func (p *grokRealtimeAdapter) SelectRealtime(ctx context.Context, excluded map[i
 	return gatewaycapture.ExecutionSnapshot(selected.Provider), true, err
 }
 
+// AcquireRealtime acquires or waits for the saved selection's provider slot
+// through the HTTP support adapter. It ignores context/snapshot arguments,
+// uses the active request and requires SelectRealtime to have captured a
+// provider.
 func (p *grokRealtimeAdapter) AcquireRealtime(_ context.Context, _ providercore.ProviderSnapshot) (func(), bool) {
 	var started bool
 	return p.h.bindings.Common.Support.AcquireResponsesProviderSlot(p.c, p.apiKey.GroupID, "", p.selection, false, &started, p.reqLog)
 }
 
+// RealtimeCredential resolves credentials for the provider saved by successful
+// Realtime selection. It returns that callback's token and error, ignoring the
+// supplied snapshot because execution continues against the captured request
+// target.
 func (p *grokRealtimeAdapter) RealtimeCredential(ctx context.Context, _ providercore.ProviderSnapshot) (string, error) {
 	token, _, err := p.h.bindings.Platform.Credential(ctx, p.c, p.selection.Provider)
 	return token, err
 }
 
+// OpenRealtime opens the saved provider using supplied token and model. A
+// platform opening error returns no connection; the successful result is
+// passed to Realtime orchestration, which owns closing its acquired session.
 func (p *grokRealtimeAdapter) OpenRealtime(ctx context.Context, _ providercore.ProviderSnapshot, token, model string) (upstream.FrameConn, error) {
 	conn, err := p.h.bindings.Platform.OpenRealtime(ctx, p.selection.Provider, token, model)
 	if err != nil {
@@ -151,6 +205,9 @@ func (p *grokRealtimeAdapter) OpenRealtime(ctx context.Context, _ providercore.P
 	return conn, nil
 }
 
+// RealtimeOpenFailed logs failed pre-accept setup and observes provider health
+// for the saved selection. A positive RealtimeDialError status overrides the
+// 502 default; the snapshot argument supplies the diagnostic provider ID.
 func (p *grokRealtimeAdapter) RealtimeOpenFailed(ctx context.Context, selected providercore.ProviderSnapshot, err error) {
 	p.reqLog.Warn("grok_realtime.pre_accept_failed", zap.Int64("provider_id", selected.ID), zap.Error(err))
 	status := http.StatusBadGateway
@@ -161,6 +218,9 @@ func (p *grokRealtimeAdapter) RealtimeOpenFailed(ctx context.Context, selected p
 	p.h.bindings.Platform.RealtimeError(ctx, p.selection.Provider, status, []byte(err.Error()))
 }
 
+// SelectVoice selects a Grok provider using grok-4.5 as the scheduling model.
+// It saves the execution target and returns false for absent
+// selection/provider, with the error retained for Voice orchestration.
 func (p *grokVoiceAdapter) SelectVoice(ctx context.Context, excluded map[int64]struct{}) (providercore.ProviderSnapshot, bool, error) {
 	selected, _, err := p.h.bindings.Common.Selection.SelectProviderWithSchedulerForCapability(ctx, p.apiKey.GroupID, "", "", "grok-4.5", excluded, egress.OpenAIUpstreamTransportHTTPSSE, providercore.OpenAIEndpointCapabilityTextGeneration, false, false, capability.PlatformGrok)
 	p.selection = selected
@@ -170,11 +230,17 @@ func (p *grokVoiceAdapter) SelectVoice(ctx context.Context, excluded map[int64]s
 	return gatewaycapture.ExecutionSnapshot(selected.Provider), true, err
 }
 
+// AcquireVoice acquires or waits for the saved Voice selection's provider
+// slot. It uses the active HTTP request and ignores supplied context/snapshot
+// arguments, so callers first complete successful SelectVoice execution.
 func (p *grokVoiceAdapter) AcquireVoice(_ context.Context, _ providercore.ProviderSnapshot) (func(), bool) {
 	var started bool
 	return p.h.bindings.Common.Support.AcquireResponsesProviderSlot(p.c, p.apiKey.GroupID, "", p.selection, false, &started, p.reqLog)
 }
 
+// ForwardVoice invokes the saved provider with endpoint, body and Content-Type
+// from the Voice request. Any returned result clones headers and AudioUsage
+// for the outcome; typed failover errors separately supply retry eligibility.
 func (p *grokVoiceAdapter) ForwardVoice(ctx context.Context, _ providercore.ProviderSnapshot, request gatewaymedia.VoiceRequest) gatewaymedia.VoiceOutcome {
 	result, err := p.h.bindings.Platform.Voice(ctx, p.c, p.selection.Provider, request.Endpoint, request.Body, request.ContentType)
 	outcome := gatewaymedia.VoiceOutcome{Err: err}
@@ -187,6 +253,10 @@ func (p *grokVoiceAdapter) ForwardVoice(ctx context.Context, _ providercore.Prov
 	return outcome
 }
 
+// CompleteVoice captures the saved provider's returned audio result for
+// completion. A nil result is ignored, while headers and scalar AudioUsage are
+// copied before mode-specific financial identity and request metadata are
+// recorded.
 func (p *grokVoiceAdapter) CompleteVoice(_ context.Context, _ providercore.ProviderSnapshot, request gatewaymedia.VoiceRequest, result *gatewaymedia.VoiceResult) {
 	if result == nil {
 		return
@@ -195,7 +265,9 @@ func (p *grokVoiceAdapter) CompleteVoice(_ context.Context, _ providercore.Provi
 	p.h.recordGrokVoiceUsage(p.c, p.apiKey, p.selection.Provider, p.subscription, request.Endpoint, request.Body, value)
 }
 
-// cloneGrokAudioUsage gives completion its own usage snapshot.
+// cloneGrokAudioUsage copies the scalar audio mode and quantity for the next
+// adapter consumer. Nil input returns nil; the returned struct can be changed
+// independently because AudioUsage currently contains no mutable references.
 func cloneGrokAudioUsage(value *protocol.AudioUsage) *protocol.AudioUsage {
 	if value == nil {
 		return nil
@@ -204,10 +276,16 @@ func cloneGrokAudioUsage(value *protocol.AudioUsage) *protocol.AudioUsage {
 	return &copy
 }
 
+// Relay delegates the saved runtime's bidirectional Realtime frame handling
+// and audio-observed result.
 func (p *grokRealtimeAdapter) Relay(ctx context.Context, client, server upstream.FrameConn) (bool, error) {
 	return p.h.bindings.Platform.RelayRealtime(ctx, client, server)
 }
 
+// CompleteRealtime records a selected provider's audio session using elapsed
+// duration. Callers invoke it after relay has confirmed audio; the method
+// supplies that observed flag itself, reads the current optional subscription
+// and skips a nonpositive duration before capturing completion.
 func (p *grokRealtimeAdapter) CompleteRealtime(_ context.Context, _ providercore.ProviderSnapshot, model string, elapsed time.Duration) {
 	subscription, _ := gatewayhttp.SubscriptionFromContext(p.c)
 	result := grokRealtimeBillingResult(model, elapsed, true)

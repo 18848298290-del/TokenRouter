@@ -30,54 +30,139 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
 )
 
+// Native Gemini requests carry their model in the URL while conversation
+// identity comes from request content and client metadata. Prompt replacement
+// precedes moderation, digest matching and forwarding so those consumers
+// examine the same body. Group mapping resolves the execution model, and the
+// original URL model remains available for response and billing state.
+//
+// An explicit CLI directory digest is checked for session ownership before
+// scheduling. A cached provider association bypasses conversation-chain
+// matching; otherwise a matching digest chain can recover a prior session and
+// seed sticky selection. User concurrency is acquired before the final funding
+// check, and native requests disable Messages heartbeat output so waiting does
+// not inject another protocol's frames.
+
+// GeminiCLITmpDirRegex extracts the first sixty-four hexadecimal characters
+// after a Gemini CLI temporary-directory prefix for request session identity.
 var GeminiCLITmpDirRegex = regexp.MustCompile(`/\.gemini/tmp/([A-Fa-f0-9]{64})`)
 
-type GeminiNativeOptions struct{ MaxSwitches int }
+// GeminiNativeOptions retains native HTTP configuration supplied during
+// application assembly.
+type GeminiNativeOptions struct {
+	// MaxSwitches records the configured Gemini switch count. The HTTP handler
+	// retains it while the supplied execution.Executor owns provider attempts.
+	MaxSwitches int
+}
 
+// GeminiNativeBackend supplies admission and session operations for native
+// Gemini requests.
 type GeminiNativeBackend interface {
+	// Access returns the effective API key and whether authentication supplied
+	// it. Native admission rejects a false result or nil key before reading
+	// caller or group state.
 	Access(*gin.Context) (*apikey.APIKey, bool)
+	// HasForcedPlatform reports whether request authentication installed a forced
+	// upstream platform.
 	HasForcedPlatform(*gin.Context) bool
+	// SafeModelSegment reports whether a model can safely occupy one URL segment.
 	SafeModelSegment(string) bool
+	// ObserveRequest records the client model and stream intent for request
+	// diagnostics.
 	ObserveRequest(*gin.Context, string, bool)
+	// ObserveEndpoint records the request endpoint and its streaming execution
+	// category.
 	ObserveEndpoint(*gin.Context, bool)
+	// Moderate checks the replaced Gemini body using the authenticated caller and
+	// key. Nil or an unblocked decision permits admission; a blocked decision
+	// supplies the client rejection message and status.
 	Moderate(*gin.Context, *zap.Logger, *apikey.APIKey, authctx.AuthSubject, string, []byte) *moderation.Decision
+	// Plan resolves the effective group and model mapping for this request.
 	Plan(context.Context, *apikey.APIKey, string) routing.RoutePlan
+	// BindPlan installs the resolved routing plan in the active request context.
+	// Call it after group/model planning so execution receives the same mapping
+	// that admission retained for completion.
 	BindPlan(*gin.Context, routing.RoutePlan)
+	// BindErrors makes final upstream error rules available to this HTTP request.
+	// Call it before waiting and execution so their final output can apply the
+	// configured service or use default messages when unbound.
 	BindErrors(*gin.Context)
+	// Eligibility rechecks the key's funding after user concurrency admission has
+	// waited. The optional subscription identifies subscription-funded requests,
+	// and a returned error stops execution with billing-specific status and retry
+	// guidance.
 	Eligibility(context.Context, *apikey.APIKey, *billing.UserSubscription) error
+	// Isolate checks ownership of an explicit Gemini CLI session identity. A
+	// conflict rejects admission, while other errors become temporary
+	// unavailability; the handler invokes this before upstream provider
+	// selection.
 	Isolate(context.Context, *apikey.APIKey, int64, string) error
+	// CachedSession returns a sticky provider association for the group and
+	// session key. Native admission discards its lookup error; the returned
+	// provider identity alone determines whether digest recovery can run.
 	CachedSession(context.Context, *int64, string) (int64, error)
+	// Prefetch installs provider and group hints for subsequent execution
+	// selection. The pair describes this request's sticky association and is
+	// installed before the executor receives its request-state snapshot.
 	Prefetch(*gin.Context, int64, int64)
+	// DigestChain derives ordered content digests from the parsed Gemini
+	// conversation.
 	DigestChain(*protocolgemini.GeminiRequest) string
+	// PrefixHash scopes conversation matching by caller, key, client metadata and
+	// model.
 	PrefixHash(int64, int64, string, string, string, string) string
+	// FindSession searches group-scoped conversation history using the prefix and
+	// digest chain. When found is true, the handler uses the returned UUID,
+	// provider and matched chain to recover sticky execution.
 	FindSession(context.Context, int64, string, string) (string, int64, string, bool)
+	// DigestSessionKey forms a sticky identity from a prefix and session UUID.
 	DigestSessionKey(string, string) string
+	// BindSticky saves the selected provider against the group and session key.
+	// Native admission uses the result as a best-effort association; a failed
+	// write does not terminate this request.
 	BindSticky(context.Context, *int64, string, int64) error
+	// FailoverObservation records request-level provider-switch diagnostics using
+	// the supplied context and values.
 	FailoverObservation(context.Context, string, map[string]any)
 }
-type GeminiNativeHandler struct {
-	executor execution.Executor
-	RequestLifetime
 
-	options     GeminiNativeOptions
-	backend     GeminiNativeBackend
-	prompt      MessagesPrompt
-	concurrency *ConcurrencyHelper
-	newID       func() string
+// GeminiNativeHandler prepares native HTTP identity and admission before
+// delegated execution.
+type GeminiNativeHandler struct {
+	executor        execution.Executor // selected request execution
+	RequestLifetime                    // application request barrier
+
+	options     GeminiNativeOptions // retained HTTP configuration
+	backend     GeminiNativeBackend // admission and session services
+	prompt      MessagesPrompt      // request prompt replacement
+	concurrency *ConcurrencyHelper  // shared concurrency service
+	newID       func() string       // new digest-session UUID
 }
 
-type GeminiPathParseError struct{ message string }
+// GeminiPathParseError carries the client-visible native model-action path
+// failure.
+type GeminiPathParseError struct {
+	message string // client path error
+}
 
+// NewGeminiNativeHandler retains the supplied HTTP dependencies for native
+// requests. Callers bind usable admission, prompt, concurrency and execution
+// services; newID supplies a UUID when digest recovery creates a session.
 func NewGeminiNativeHandler(options GeminiNativeOptions, backend GeminiNativeBackend, prompt MessagesPrompt, concurrency *ConcurrencyHelper, newID func() string, executor execution.Executor) *GeminiNativeHandler {
 	return &GeminiNativeHandler{executor: executor, options: options, backend: backend, prompt: prompt, concurrency: concurrency, newID: newID}
 }
 
-// WriteGoogleError writes a Google-format JSON error.
+// WriteGoogleError writes a Google JSON error with the selected HTTP status.
+// Model-attribute failure state can replace status and message before the
+// shared HTTP-to-Google status mapping chooses the error name.
 func WriteGoogleError(c *gin.Context, status int, message string) {
 	status, message = modelAttributeError(c, status, message)
 	c.JSON(status, gin.H{"error": gin.H{"code": status, "message": message, "status": HTTPStatusToGoogleStatus(status)}})
 }
 
+// geminiNativeIsolationError reports whether an isolation error was presented
+// to the client. Nil returns false; a session conflict writes 403 and other
+// errors write 503 using the native Google envelope.
 func geminiNativeIsolationError(c *gin.Context, err error) bool {
 	if err == nil {
 		return false
@@ -90,8 +175,21 @@ func geminiNativeIsolationError(c *gin.Context, err error) bool {
 	return true
 }
 
+// Error returns the client-facing message stored in this path parse error.
 func (e *GeminiPathParseError) Error() string { return e.message }
 
+// GeminiV1BetaModels prepares the URL model action and invokes native Gemini
+// execution after authentication, group permission, prompt replacement and
+// moderation. Callers supply authenticated key and subject state through
+// middleware. The user slot is released on completion or client cancellation,
+// and funding is checked again after waiting.
+//
+// CLI identity is checked for ownership before provider execution. A cached
+// association supplies the provider hint; when absent, digest matching can
+// recover a conversation and bind its provider. The execution request keeps
+// the original model beside its group-mapped Gemini model and signature state
+// so forwarding and completion can interpret each identity at its owning
+// layer.
 // @project-doc docs/interfaces/gemini_upstream.md#gemini_protocol_dispatch
 func (h *GeminiNativeHandler) GeminiV1BetaModels(c *gin.Context) {
 	done, accepted := h.BeginRequest(c, "google")
@@ -168,7 +266,8 @@ func (h *GeminiNativeHandler) GeminiV1BetaModels(c *gin.Context) {
 		return
 	}
 
-	// Capture the effective group and mapping in the route plan.
+	// Retain the URL model beside the group mapping, so execution can use the
+	// mapped Gemini target while completion still identifies the client's requested model.
 	groupMappingRoutePlan := h.backend.Plan(c.Request.Context(), apiKey, modelName)
 	groupMapping := groupMappingRoutePlan.Mapping()
 	h.backend.BindPlan(c, groupMappingRoutePlan)
@@ -179,7 +278,8 @@ func (h *GeminiNativeHandler) GeminiV1BetaModels(c *gin.Context) {
 
 	subscription, _ := SubscriptionFromContext(c)
 
-	// Native Gemini requests must not receive Claude heartbeat frames.
+	// Waiting uses the same concurrency service with heartbeat output disabled,
+	// because native Gemini consumers do not interpret Anthropic ping frames.
 	geminiConcurrency := NewConcurrencyHelper(h.concurrency.Service(), SSEPingFormatNone, 0)
 
 	streamStarted := false
@@ -190,7 +290,8 @@ func (h *GeminiNativeHandler) GeminiV1BetaModels(c *gin.Context) {
 		WriteGoogleError(c, http.StatusTooManyRequests, err.Error())
 		return
 	}
-	// Release the user slot on request cancellation, including connection loss.
+	// Return this user slot on either cancellation or request exit. The wrapped
+	// callback allows disconnect cleanup and the deferred path to race safely.
 	userReleaseFunc = scheduler.WrapRelease(c.Request.Context(), scheduler.ReleaseOnCancel, userReleaseFunc)
 	if userReleaseFunc != nil {
 		defer userReleaseFunc()
@@ -211,7 +312,10 @@ func (h *GeminiNativeHandler) GeminiV1BetaModels(c *gin.Context) {
 	sessionHash := ExtractGeminiCLISessionHash(c, body)
 	explicitGeminiCLISession := sessionHash != ""
 	if sessionHash == "" {
-		// Other clients use the shared session hash derived from request content and metadata.
+		// Without a CLI directory identity, shared detection uses parsed content and
+		// caller metadata so ordinary native clients can still obtain sticky routing.
+		// Session parsing is advisory: invalid input can leave no content seed while
+		// execution still receives the request body for its selected native action.
 		parsedReq, _ := requeststate.ParseGatewayRequest(requeststate.NewRequestBodyRef(body), capability.PlatformGemini)
 		if parsedReq != nil {
 			parsedReq.SessionContext = &requeststate.SessionContext{
@@ -232,7 +336,8 @@ func (h *GeminiNativeHandler) GeminiV1BetaModels(c *gin.Context) {
 		}
 	}
 
-	// Read the bound provider so later attempts can detect a provider switch.
+	// A sticky lookup is advisory: its error is discarded and the returned identity
+	// controls whether the following digest path searches for a conversation association.
 	var sessionBoundProviderID int64
 	if sessionKey != "" {
 		sessionBoundProviderID, _ = h.backend.CachedSession(c.Request.Context(), apiKey.GroupID, sessionKey)
@@ -245,7 +350,8 @@ func (h *GeminiNativeHandler) GeminiV1BetaModels(c *gin.Context) {
 		}
 	}
 
-	// When there is no provider binding, try matching the conversation digest chain.
+	// Digest recovery runs only after the sticky lookup found no provider. It
+	// compares the mapped model and content chain within this caller's prefix.
 	var geminiDigestChain string
 	var geminiPrefixHash string
 	var geminiSessionUUID string
@@ -253,6 +359,8 @@ func (h *GeminiNativeHandler) GeminiV1BetaModels(c *gin.Context) {
 	useDigestFallback := sessionBoundProviderID == 0
 
 	if useDigestFallback {
+		// Malformed JSON or an empty conversation skips digest recovery; forwarding
+		// still uses the supplied body, so identity discovery does not replace payload validation.
 		var geminiReq protocolgemini.GeminiRequest
 		if err := json.Unmarshal(body, &geminiReq); err == nil && len(geminiReq.Contents) > 0 {
 			geminiDigestChain = h.backend.DigestChain(&geminiReq)
@@ -289,10 +397,13 @@ func (h *GeminiNativeHandler) GeminiV1BetaModels(c *gin.Context) {
 					if sessionKey == "" {
 						sessionKey = h.backend.DigestSessionKey(geminiPrefixHash, foundUUID)
 					}
+					// Recovery can proceed with its matched provider even if persisting the
+					// advisory sticky association fails; the attempt already carries that identity.
 					_ = h.backend.BindSticky(c.Request.Context(), apiKey.GroupID, sessionKey, foundProviderID)
 				} else {
 					geminiSessionUUID = h.newID()
-					// Give new digest sessions a key for subsequent sticky requests.
+					// A newly assigned UUID also seeds sticky selection, allowing later
+					// digest-matched requests to continue with the provider chosen for this session.
 					if sessionKey == "" {
 						sessionKey = h.backend.DigestSessionKey(geminiPrefixHash, geminiSessionUUID)
 					}
@@ -341,9 +452,15 @@ func (h *GeminiNativeHandler) GeminiV1BetaModels(c *gin.Context) {
 		StreamStarted: &streamStarted,
 		Concurrency:   geminiConcurrency,
 	}
+	// The bound executor is responsible for terminal client output. This admission
+	// adapter discards its result and error after supplying synchronous HTTP output.
 	_, _ = h.executor.Execute(c.Request.Context(), request, output)
 }
 
+// ParseGeminiModelAction separates the model from its action after trimming
+// the path. Colon syntax wins over the compatible slash form; missing or
+// malformed separators return a path error, while action validity is left to
+// downstream execution.
 func ParseGeminiModelAction(rest string) (model string, action string, err error) {
 	rest = strings.TrimSpace(rest)
 	if rest == "" {
@@ -355,7 +472,8 @@ func ParseGeminiModelAction(rest string) (model string, action string, err error
 		return rest[:i], rest[i+1:], nil
 	}
 
-	// Compatibility syntax: {model}/{action}.
+	// Slash syntax accepts clients using a path action. Keep it after the colon
+	// branch so an input containing both separators follows the native delimiter.
 	if i := strings.Index(rest, "/"); i > 0 && i < len(rest)-1 {
 		return rest[:i], rest[i+1:], nil
 	}
@@ -363,6 +481,16 @@ func ParseGeminiModelAction(rest string) (model string, action string, err error
 	return "", "", &GeminiPathParseError{"invalid model action path"}
 }
 
+// ExtractGeminiCLISessionHash extracts a session seed from the first Gemini
+// CLI temporary-directory pattern in the raw body. No match returns an empty
+// string so admission can use shared content identity. A matched body requires
+// a usable Gin context for the privileged-user header.
+//
+// When that trimmed header is present, SHA-256 combines it with the directory
+// digest and returns hexadecimal text. Without it, the directory digest itself
+// is returned. This distinguishes the same directory signal used by different
+// privileged users while keeping clients that supply no such header eligible
+// for native session detection.
 func ExtractGeminiCLISessionHash(c *gin.Context, body []byte) string {
 	match := GeminiCLITmpDirRegex.FindSubmatch(body)
 	if len(match) < 2 {
@@ -373,30 +501,43 @@ func ExtractGeminiCLISessionHash(c *gin.Context, body []byte) string {
 	privilegedUserID := strings.TrimSpace(c.GetHeader("x-gemini-api-privileged-user-id"))
 
 	if privilegedUserID != "" {
-		// Combine user identity with the directory hash to scope the session.
+		// Separate the user identity from the directory digest before hashing, so
+		// another privileged user presenting that directory signal gets a different key.
 		combined := privilegedUserID + ":" + tmpDirHash
 		hash := sha256.Sum256([]byte(combined))
 		return hex.EncodeToString(hash[:])
 	}
 
-	// Without a privileged user ID, use the directory hash directly.
+	// Directory-only clients retain their existing seed; admission adds the
+	// Gemini namespace and performs ownership isolation when that seed is explicit.
 	return tmpDirHash
 }
 
+// TruncateGeminiDigestChain limits a diagnostic chain to its first fifty bytes
+// plus an ellipsis. Shorter values pass through unchanged; the result is a log
+// label and is not used for session matching.
 func TruncateGeminiDigestChain(chain string) string {
 	if len(chain) <= 50 {
 		return chain
 	}
+	// Retain a bounded diagnostic prefix while lookup continues using the full chain.
 	return chain[:50] + "..."
 }
 
+// GeminiShortPrefix returns at most n leading bytes for a diagnostic label.
+// Nonpositive n or a short value returns the original string; truncation does
+// not validate UTF-8 character boundaries.
 func GeminiShortPrefix(value string, n int) string {
 	if n <= 0 || len(value) <= n {
 		return value
 	}
+	// This diagnostic limit counts bytes, so callers choose ASCII identity labels.
 	return value[:n]
 }
 
+// geminiGroupID dereferences a group identity, using zero when no group is
+// bound. Digest lookup receives that zero value for an ungrouped key rather
+// than dereferencing a missing pointer.
 func geminiGroupID(groupID *int64) int64 {
 	if groupID == nil {
 		return 0

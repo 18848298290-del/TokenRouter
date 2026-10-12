@@ -19,67 +19,165 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// Qoder compatible Messages and Responses requests retain client body and
+// model alongside the group-mapped attempt body. Funding admission runs before
+// user-slot acquisition, and the runtime bridge later chooses the client wire
+// protocol while completion retains the original input and route mapping. The
+// manually assembled Chat handler uses the same admission path.
+//
+// Wait registration can fail without rejecting a request, but an explicitly
+// full queue stops before slot polling. Only successfully counted waiters are
+// released. Slot cleanup uses cancellation for buffered requests and explicit
+// completion for streams, allowing streaming work to finish after client
+// cancellation; the attempt bridge owns provider resources and the serial text
+// loop decides recovery and switching.
+
+// Qoder endpoint values select client envelopes and wire conversion for the
+// shared compatible admission and forwarding path.
 const (
-	QoderChat      QoderEndpoint = "chat_completions"
-	QoderMessages  QoderEndpoint = "messages"
-	QoderResponses QoderEndpoint = "responses"
+	QoderChat      QoderEndpoint = "chat_completions" // OpenAI Chat client format
+	QoderMessages  QoderEndpoint = "messages"         // Anthropic Messages client format
+	QoderResponses QoderEndpoint = "responses"        // OpenAI Responses client format
 )
 
-// QoderEndpoint identifies the client-facing Qoder protocol format.
+// QoderEndpoint identifies the client protocol expected from compatible Qoder
+// output.
 type QoderEndpoint string
 
+// QoderCompatibleCall captures admitted client identity, route and input for
+// serial attempts.
 type QoderCompatibleCall struct {
-	Endpoint           QoderEndpoint
-	Key                *apikey.APIKey
-	Subject            authctx.AuthSubject
-	Subscription       *billing.UserSubscription
-	Body, AttemptBody  []byte
+	Endpoint QoderEndpoint       // selected client protocol format
+	Key      *apikey.APIKey      // effective authenticated request key
+	Subject  authctx.AuthSubject // authenticated request subject identity
+	// Subscription is optional funding state retained for completion; nil lets
+	// the bound funding service apply its balance-funded admission path.
+	Subscription *billing.UserSubscription // optional request funding subscription
+	// Body and AttemptBody distinguish original client input from group-mapped
+	// forwarding bytes. Completion hashes Body while the attempt bridge forwards
+	// AttemptBody, retaining client model identity separately.
+	// Body: retained original client input.
+	// AttemptBody: group-mapped provider attempt input.
+	Body, AttemptBody []byte
+	// Model: original requested client model
+	// SessionHash: Qoder sticky session identity
 	Model, SessionHash string
-	Stream             bool
-	StreamStarted      *bool
-	Plan               routing.RoutePlan
-	Log                *zap.Logger
+	Stream             bool // validated client stream intent
+	// StreamStarted is shared with slot waits and HTTP error output; callers
+	// provide a nonnil pointer for the lifetime of synchronous execution.
+	StreamStarted *bool
+	Plan          routing.RoutePlan // captured group model route
+	Log           *zap.Logger       // request-scoped diagnostic logger
 }
+
+// QoderCompatibleBackend supplies admission and serial execution operations
+// for Qoder HTTP requests.
 type QoderCompatibleBackend interface {
+	// Enter joins the backend request barrier and returns its cleanup callback.
+	// Callers invoke cleanup after an accepted request finishes; an error rejects
+	// admission before authentication and request-body work.
 	Enter() (func(), error)
+	// Access returns the effective request Key and presence flag for admission.
+	// The handler requires a nonnil usable Key when present and rejects absent
+	// authentication before reading the client body.
 	Access(*gin.Context) (*apikey.APIKey, bool)
+	// BindErrors installs configured passthrough error rules for this request. An
+	// unconfigured rule service may leave the context unchanged, allowing later
+	// output to use the shared protocol defaults.
 	BindErrors(*gin.Context)
+	// PrepareClient installs protocol-specific client context from valid JSON
+	// input. Messages detects Claude identity before provider work; other
+	// endpoints can leave that client-specific state unchanged while retaining
+	// ordinary request metadata.
 	PrepareClient(*gin.Context, []byte, QoderEndpoint)
+	// ObserveRequest stores the client model and streaming intent in Ops state.
 	ObserveRequest(*gin.Context, string, bool)
+	// ObserveEndpoint stores the normalized endpoint and request execution
+	// category for Ops.
 	ObserveEndpoint(*gin.Context, bool)
+	// ObserveAuthLatency records elapsed request admission time in request-local
+	// Ops observations.
 	ObserveAuthLatency(*gin.Context, time.Duration)
+	// Plan resolves group/model routing and installs the plan for execution. The
+	// runtime can return a zero plan when execution is absent; configured
+	// execution retains the original client identity for completion.
 	Plan(*gin.Context, *apikey.APIKey, string) routing.RoutePlan
+	// AttemptBody returns the provider attempt bytes selected by group mapping.
+	// An unconfigured execution or unmapped plan retains the original body, so
+	// callers keep that body separately for completion input.
 	AttemptBody([]byte, routing.RoutePlan) []byte
+	// Eligibility checks request funding using the Key and optional subscription.
+	// An unconfigured funding service permits admission, while a returned error
+	// stops the request before user-slot acquisition and provider selection.
 	Eligibility(context.Context, *apikey.APIKey, *billing.UserSubscription) error
+	// SessionHash derives Qoder sticky identity from explicit request seeds
+	// before content fallback. Empty means no usable identity; callers retain
+	// this result beside the client model for later provider selection and
+	// binding.
 	SessionHash(*gin.Context, QoderEndpoint, []byte, int64) string
+	// Execution creates request-local serial attempt ports from captured
+	// admission state. The caller keeps the Gin request and stream flag usable
+	// through the loop, while completion inputs are captured before asynchronous
+	// recording.
 	Execution(*gin.Context, QoderCompatibleCall) textflow.QoderCompatiblePorts
+	// ConcurrencyError presents user/provider admission failure in the chosen
+	// client protocol. The supplied stream state determines whether plain JSON or
+	// a streaming error can be written after a slot wait.
 	ConcurrencyError(*gin.Context, error, string, bool, QoderEndpoint)
 }
-type QoderCompatibleHandler struct {
-	RequestLifetime
 
-	backend      QoderCompatibleBackend
-	concurrency  *ConcurrencyHelper
-	maxProviders int
+// QoderCompatibleHandler admits requests and delegates attempt recovery to the
+// text loop.
+type QoderCompatibleHandler struct {
+	RequestLifetime // shared application request barrier
+
+	backend QoderCompatibleBackend // shared compatible admission backend
+	// concurrency is optional; a nil helper skips user queue registration and
+	// slot acquisition while retaining the remaining admission and execution
+	// flow.
+	concurrency  *ConcurrencyHelper // optional user concurrency helper
+	maxProviders int                // distinct provider attempt allowance
 }
 
+// NewQoderCompatibleHandler retains shared admission dependencies and the
+// distinct-provider allowance. A nil concurrency helper skips user-slot
+// handling; callers provide a usable backend, and the text loop still selects
+// an initial provider for a nonpositive allowance.
 func NewQoderCompatibleHandler(backend QoderCompatibleBackend, concurrency *ConcurrencyHelper, max int) *QoderCompatibleHandler {
 	return &QoderCompatibleHandler{backend: backend, concurrency: concurrency, maxProviders: max}
 }
-func (h *QoderCompatibleHandler) Messages(c *gin.Context)  { h.handle(c, QoderMessages) }
+
+// Messages runs compatible Qoder admission using the Anthropic Messages client
+// format.
+func (h *QoderCompatibleHandler) Messages(c *gin.Context) { h.handle(c, QoderMessages) }
+
+// Responses runs compatible Qoder admission using the OpenAI Responses client
+// format.
 func (h *QoderCompatibleHandler) Responses(c *gin.Context) { h.handle(c, QoderResponses) }
 
-// ChatCompletions supports manually assembled handlers; the production Chat path calls Execute.
+// ChatCompletions runs the shared Qoder compatible path for manually assembled
+// Chat handlers. Production native Chat admission uses QoderChatHandler with
+// its Executor binding, so this entry still requires a configured compatible
+// backend.
 func (h *QoderCompatibleHandler) ChatCompletions(c *gin.Context) { h.handle(c, QoderChat) }
 
+// errorResponse delegates a plain Qoder error using the chosen client
+// protocol.
 func (h *QoderCompatibleHandler) errorResponse(c *gin.Context, status int, kind, message string, endpoint QoderEndpoint) {
 	WriteQoderError(c, status, kind, message, endpoint)
 }
 
+// handleConcurrencyError delegates slot failure presentation to the bound
+// compatible backend. The endpoint and started flag preserve the request’s
+// response format after queue waits that may have written keepalive output.
 func (h *QoderCompatibleHandler) handleConcurrencyError(c *gin.Context, err error, kind string, started bool, endpoint QoderEndpoint) {
 	h.backend.ConcurrencyError(c, err, kind, started, endpoint)
 }
 
+// qoderReleaseMode selects cleanup behavior from client stream intent.
+// Streaming slots wait for explicit completion, while buffered slots also
+// release on cancellation so interrupted synchronous requests do not retain
+// those resources.
 func qoderReleaseMode(stream bool) scheduler.ReleaseMode {
 	if stream {
 		return scheduler.ReleaseOnCompletion
@@ -87,6 +185,16 @@ func qoderReleaseMode(stream bool) scheduler.ReleaseMode {
 	return scheduler.ReleaseOnCancel
 }
 
+// handle admits a compatible Qoder request under both handler and backend
+// request barriers. It requires authenticated Key and subject state, validates
+// client model/stream fields, and captures routing plus original and mapped
+// bodies before provider selection. Funding is checked before the user wait.
+//
+// An optional concurrency helper registers a waiter before slot acquisition.
+// Counter errors permit waiting without a recorded entry; an explicit queue
+// refusal stops immediately, and only counted entries are released. After
+// acquiring the slot, cleanup uses the request’s stream mode and the serial
+// text loop owns attempts, partial completion, refresh and switching.
 func (h *QoderCompatibleHandler) handle(c *gin.Context, endpoint QoderEndpoint) {
 	format := "openai"
 	if endpoint == QoderMessages {
@@ -183,6 +291,8 @@ func (h *QoderCompatibleHandler) handle(c *gin.Context, endpoint QoderEndpoint) 
 	if h.concurrency != nil {
 		waitEntry, err := h.concurrency.EnterUserWait(c.Request.Context(), subject.UserID, maxWait)
 		canWait := waitEntry.Allowed
+		// A counter-store error permits slot acquisition without a recorded waiter;
+		// only an explicit full-queue result rejects this request before slot polling.
 		if err != nil {
 			reqLog.Warn("qoder.user_wait_counter_increment_failed", zap.Error(err))
 		} else if !canWait {
@@ -191,6 +301,8 @@ func (h *QoderCompatibleHandler) handle(c *gin.Context, endpoint QoderEndpoint) 
 		} else {
 			waitCounted = true
 		}
+		// Track the counted entry until acquisition or request exit; this flag
+		// prevents a failed registration or early release from decrementing it again.
 		defer func() {
 			if waitCounted {
 				waitEntry.Release()
@@ -207,6 +319,8 @@ func (h *QoderCompatibleHandler) handle(c *gin.Context, endpoint QoderEndpoint) 
 			waitEntry.Release()
 			waitCounted = false
 		}
+		// Streams retain their slot until explicit execution completion, allowing
+		// upstream draining after client cancellation; buffered requests also release on cancellation.
 		userRelease = scheduler.WrapRelease(c.Request.Context(), qoderReleaseMode(reqStream), userRelease)
 		if userRelease != nil {
 			defer userRelease()

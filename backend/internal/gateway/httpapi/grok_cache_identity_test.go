@@ -20,6 +20,22 @@ import (
 	xai "github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// Grok cache identity separates API Keys and final models while allowing
+// stable session or prompt-prefix reuse across turns. Header/body precedence
+// and raw tool intent affect which seed reaches upstream; Free provider policy
+// independently determines whether native search tools accompany that identity.
+// Compact requests leave both the isolated cache key and injected tools absent.
+//
+// Concurrent determinism uses an immutable shared prompt and a separate Gin
+// context for each worker. The result channel holds one value per worker so
+// producers can finish before collection starts. Waiting for all producers
+// before closing the channel lets the test compare completed identities without
+// racing a send against closure.
+
+// TestGrokResponsesCacheIdentityIncludesPromotedCodexTools patches two
+// additional-tools payloads with the same user prompt. It checks that promoted
+// lookup and read_file declarations produce different nonempty isolated cache
+// identities.
 func TestGrokResponsesCacheIdentityIncludesPromotedCodexTools(t *testing.T) {
 	c := newGrokCacheTestContext(4503)
 	lookupBody := []byte(`{"model":"grok","input":[{"type":"additional_tools","tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}]},{"type":"message","role":"user","content":"same prompt"}]}`)
@@ -37,6 +53,9 @@ func TestGrokResponsesCacheIdentityIncludesPromotedCodexTools(t *testing.T) {
 	require.NotEqual(t, lookupIdentity, readIdentity)
 }
 
+// TestGrokPreviousResponseSessionSeed compares a Responses ID with a Messages
+// ID and absent IDs. It checks that the previous-response seed accepts the
+// Responses identity and leaves the other supplied cases empty.
 func TestGrokPreviousResponseSessionSeed(t *testing.T) {
 	require.Equal(t, "grok-prev-resp:resp_abc123", gatewaysession.GrokPreviousResponseSeed([]byte(`{"previous_response_id":"resp_abc123"}`)))
 	require.Empty(t, gatewaysession.GrokPreviousResponseSeed([]byte(`{"previous_response_id":"msg_abc123"}`)))
@@ -44,6 +63,10 @@ func TestGrokPreviousResponseSessionSeed(t *testing.T) {
 	require.Empty(t, gatewaysession.GrokPreviousResponseSeed([]byte(`{}`)))
 }
 
+// TestResolveGrokCacheIdentityUsesPreviousResponseIDWhenNoOtherSeed uses a
+// previous response as the available session signal. It checks deterministic
+// model scoping and verifies an added prompt_cache_key selects a different
+// identity.
 func TestResolveGrokCacheIdentityUsesPreviousResponseIDWhenNoOtherSeed(t *testing.T) {
 	c := newGrokCacheTestContext(301)
 	// Use previous_response_id with no prompt_cache_key, identity headers, or reusable prefix.
@@ -66,6 +89,10 @@ func TestResolveGrokCacheIdentityUsesPreviousResponseIDWhenNoOtherSeed(t *testin
 	require.NotEqual(t, got, cacheID)
 }
 
+// TestResolveGrokCacheIdentityStableAcrossAppendOnlyTurns adds assistant and
+// user history beneath unchanged instructions and tools. It checks that both
+// turns produce the same nonempty 36-character identity for the same Key and
+// model.
 func TestResolveGrokCacheIdentityStableAcrossAppendOnlyTurns(t *testing.T) {
 	c := newGrokCacheTestContext(101)
 	round1 := []byte(`{"model":"grok","instructions":"be concise","tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}],"input":[{"role":"user","content":"first question"}]}`)
@@ -79,6 +106,10 @@ func TestResolveGrokCacheIdentityStableAcrossAppendOnlyTurns(t *testing.T) {
 	require.Equal(t, first, second)
 }
 
+// TestResolveGrokCacheIdentityStableAcrossIndependentPromptsWithSamePrefix
+// changes user questions beneath the same instructions and tools. It checks
+// that the reusable prefix selects one stable nonempty identity across both
+// independent prompt fixtures.
 func TestResolveGrokCacheIdentityStableAcrossIndependentPromptsWithSamePrefix(t *testing.T) {
 	c := newGrokCacheTestContext(102)
 	firstBody := []byte(`{"model":"grok","instructions":"be concise","tools":[{"type":"function","name":"lookup"}],"input":[{"role":"user","content":"Question A"}]}`)
@@ -91,6 +122,10 @@ func TestResolveGrokCacheIdentityStableAcrossIndependentPromptsWithSamePrefix(t 
 	require.Equal(t, first, second)
 }
 
+// TestResolveGrokCacheIdentityStablePrefixIsolation varies Key, upstream
+// model, instructions, system content and tools around one prefix. It checks
+// each changed dimension produces an identity distinct from the baseline
+// fixture.
 func TestResolveGrokCacheIdentityStablePrefixIsolation(t *testing.T) {
 	baseBody := []byte(`{"model":"grok","instructions":"be concise","tools":[{"type":"function","name":"lookup"}],"input":[{"role":"system","content":"System A"},{"role":"user","content":"Question A"}]}`)
 	differentInstructions := []byte(`{"model":"grok","instructions":"be detailed","tools":[{"type":"function","name":"lookup"}],"input":[{"role":"system","content":"System A"},{"role":"user","content":"Question B"}]}`)
@@ -105,6 +140,10 @@ func TestResolveGrokCacheIdentityStablePrefixIsolation(t *testing.T) {
 	require.NotEqual(t, base, ResolveGrokCacheIdentity(newGrokCacheTestContext(103), differentTools, "", "grok-4.5"))
 }
 
+// TestResolveGrokCacheIdentityFallsBackWhenStablePrefixIsEmpty provides two
+// different user strings with empty tools. It checks content anchoring
+// produces distinct nonempty identities when no reusable instructions or tool
+// prefix is available.
 func TestResolveGrokCacheIdentityFallsBackWhenStablePrefixIsEmpty(t *testing.T) {
 	c := newGrokCacheTestContext(105)
 	firstBody := []byte(`{"model":"grok","tools":[],"input":"Question A"}`)
@@ -118,6 +157,10 @@ func TestResolveGrokCacheIdentityFallsBackWhenStablePrefixIsEmpty(t *testing.T) 
 	require.NotEqual(t, first, second)
 }
 
+// TestResolveGrokCacheIdentitySkipsUnanchoredFallback supplies absent,
+// assistant-only and empty user input fixtures. It checks those requests
+// produce no cache identity when no reusable prefix or explicit session signal
+// exists.
 func TestResolveGrokCacheIdentitySkipsUnanchoredFallback(t *testing.T) {
 	c := newGrokCacheTestContext(106)
 	tests := [][]byte{
@@ -132,6 +175,9 @@ func TestResolveGrokCacheIdentitySkipsUnanchoredFallback(t *testing.T) {
 	}
 }
 
+// TestResolveGrokCacheIdentityIsolatesAPIKeyAndMappedModel keeps prompt bytes
+// fixed while changing Key or final model. It checks that each caller/model
+// scope differs from the nonempty baseline identity for the same content.
 func TestResolveGrokCacheIdentityIsolatesAPIKeyAndMappedModel(t *testing.T) {
 	body := []byte(`{"model":"grok","input":"same prompt"}`)
 
@@ -144,6 +190,10 @@ func TestResolveGrokCacheIdentityIsolatesAPIKeyAndMappedModel(t *testing.T) {
 	require.NotEqual(t, base, otherModel)
 }
 
+// TestResolveGrokCacheIdentityUsesAndIsolatesNativeConversationHeader keeps a
+// native conversation header while changing body and explicit argument. It
+// checks stable opaque output and confirms the raw session label does not
+// appear in the identity.
 func TestResolveGrokCacheIdentityUsesAndIsolatesNativeConversationHeader(t *testing.T) {
 	c := newGrokCacheTestContext(301)
 	c.Request.Header.Set(GrokConversationIDHeader, "raw-native-conversation")
@@ -159,6 +209,10 @@ func TestResolveGrokCacheIdentityUsesAndIsolatesNativeConversationHeader(t *test
 	require.NotContains(t, first, "raw-native-conversation")
 }
 
+// TestResolveGrokCacheIdentityExplicitHeaderPriority supplies session,
+// conversation, native Grok and body signals together. It checks the generic
+// session header determines the same identity as that header supplied on its
+// own.
 func TestResolveGrokCacheIdentityExplicitHeaderPriority(t *testing.T) {
 	body := []byte(`{"model":"grok","prompt_cache_key":"body-key","input":"hi"}`)
 	c := newGrokCacheTestContext(401)
@@ -174,11 +228,14 @@ func TestResolveGrokCacheIdentityExplicitHeaderPriority(t *testing.T) {
 	require.Equal(t, want, got)
 }
 
+// TestResolveGrokCacheIdentityIDEHeaderPriority removes IDE headers in their
+// expected precedence order. It checks each remaining header and verifies the
+// body cache key wins when only the native Grok conversation label remains.
 func TestResolveGrokCacheIdentityIDEHeaderPriority(t *testing.T) {
 	body := []byte(`{"model":"grok","prompt_cache_key":"body-key","input":"hi"}`)
 	headers := []struct {
-		name  string
-		value string
+		name  string // scenario subtest label
+		value string // supplied control value
 	}{
 		{name: OpenCodeSessionAffinityHeader, value: "opencode-affinity"},
 		{name: OpenCodeSessionIDHeader, value: "opencode-session-id"},
@@ -213,10 +270,10 @@ func TestResolveGrokCacheIdentityIDEHeaderPriority(t *testing.T) {
 	}
 }
 
-// TestResolveGrokCacheIdentitySideCallSharesParentCacheKey checks parent cache identity for side calls.
-// Turn summaries and title refreshes can use a new X-Grok-Conv-Id while supplying
-// the parent session as prompt_cache_key. The body key must retain the parent cache identity.
-
+// TestResolveGrokCacheIdentitySideCallSharesParentCacheKey changes the native
+// conversation label for summary and title calls. It checks their parent
+// prompt_cache_key produces the same identity as the main turn's native
+// session label.
 func TestResolveGrokCacheIdentitySideCallSharesParentCacheKey(t *testing.T) {
 	parentSession := "6f1c2f46-0f5e-4f9d-9d4e-2f0f1c3d5b7a"
 
@@ -237,15 +294,21 @@ func TestResolveGrokCacheIdentitySideCallSharesParentCacheKey(t *testing.T) {
 	require.Equal(t, mainIdentity, titleIdentity)
 }
 
+// uuidNew formats one fixed UUID-like value for side-call fixture labels.
+// Repeated calls return the same string; the summary and title tests
+// distinguish their labels with different prefixes.
 func uuidNew() string {
 	return fmt.Sprintf("%08x-%04x-4%03x-9%03x-%012x", 0x1234, 0x5678, 0x9abc, 0xdef0, 0x1234567890ab)
 }
 
+// TestExplicitGrokCacheSeedPriority removes headers in priority order beside a
+// body cache key. It checks the selected raw seed and verifies the explicit
+// argument supplies the final missing-body seed.
 func TestExplicitGrokCacheSeedPriority(t *testing.T) {
 	c := newGrokCacheTestContext(403)
 	headers := []struct {
-		name  string
-		value string
+		name  string // scenario subtest label
+		value string // supplied control value
 	}{
 		{name: ClaudeCodeSessionHeader, value: "claude-session"},
 		{name: "session_id", value: "generic-session"},
@@ -279,10 +342,14 @@ func TestExplicitGrokCacheSeedPriority(t *testing.T) {
 	require.Equal(t, "explicit-argument", explicitGrokCacheSeed(c, []byte(`{"model":"grok"}`), "explicit-argument"))
 }
 
+// TestResolveGrokCacheIdentityIDEHeadersAreStableIsolatedAndOpaque varies
+// bodies beneath each supported IDE header. It checks stability, opaque output
+// and isolation when the Key or final upstream model changes for the same raw
+// session.
 func TestResolveGrokCacheIdentityIDEHeadersAreStableIsolatedAndOpaque(t *testing.T) {
 	tests := []struct {
-		name   string
-		header string
+		name   string // scenario subtest label
+		header string // client identity header
 	}{
 		{name: "OpenCode affinity", header: OpenCodeSessionAffinityHeader},
 		{name: "OpenCode session ID", header: OpenCodeSessionIDHeader},
@@ -314,6 +381,10 @@ func TestResolveGrokCacheIdentityIDEHeadersAreStableIsolatedAndOpaque(t *testing
 	}
 }
 
+// TestOpenCodeResponsesHeaderAndBodyCacheSignalsConverge uses matching
+// OpenCode headers and a body cache key across turns. It checks one isolated
+// identity reaches body and Grok headers while the raw session label
+// disappears.
 func TestOpenCodeResponsesHeaderAndBodyCacheSignalsConverge(t *testing.T) {
 	const rawSession = "opencode-session-42"
 	c := newGrokCacheTestContext(901)
@@ -338,6 +409,10 @@ func TestOpenCodeResponsesHeaderAndBodyCacheSignalsConverge(t *testing.T) {
 	require.NotContains(t, string(patched), rawSession)
 }
 
+// TestResolveGrokCacheIdentityPrefersClaudeCodeSession changes request content
+// beneath a Claude session header and metadata session fixture. It checks both
+// forms retain stable identity across their respective turns despite other
+// cache signals.
 func TestResolveGrokCacheIdentityPrefersClaudeCodeSession(t *testing.T) {
 	c := newGrokCacheTestContext(701)
 	c.Request.Header.Set(ClaudeCodeSessionHeader, "cc-session-abc")
@@ -359,6 +434,10 @@ func TestResolveGrokCacheIdentityPrefersClaudeCodeSession(t *testing.T) {
 	require.Equal(t, metaID, ResolveGrokCacheIdentity(metaOnly, metaBody2, "", "grok-4.5"))
 }
 
+// TestResolveGrokCacheIdentityFailsClosedWithoutAPIKeyContext supplies session
+// signals with no positive Key identity and an absent HTTP context. It checks
+// both cases return empty cache identity so unrelated callers cannot share
+// unscoped routing.
 func TestResolveGrokCacheIdentityFailsClosedWithoutAPIKeyContext(t *testing.T) {
 	c := newGrokCacheTestContext(0)
 	c.Request.Header.Set(GrokConversationIDHeader, "native-session")
@@ -367,6 +446,10 @@ func TestResolveGrokCacheIdentityFailsClosedWithoutAPIKeyContext(t *testing.T) {
 	require.Empty(t, ResolveGrokCacheIdentity(nil, []byte(`{"model":"grok","prompt_cache_key":"key"}`), "key", "grok-4.5"))
 }
 
+// TestApplyGrokCacheIdentityWritesResponsesBodyAndHeader applies an isolated
+// identity to a tool-free Responses body and native header. It checks injected
+// routing tools, header replacement/removal and removal of unscoped raw cache
+// keys.
 func TestApplyGrokCacheIdentityWritesResponsesBodyAndHeader(t *testing.T) {
 	sourceBody := []byte(`{"model":"grok-4.5","prompt_cache_key":"raw-client-key"}`)
 	body, err := xai.ApplyGrokResponsesCacheIdentity(sourceBody, sourceBody, "isolated-id", true)
@@ -395,13 +478,17 @@ func TestApplyGrokCacheIdentityWritesResponsesBodyAndHeader(t *testing.T) {
 	require.False(t, gjson.GetBytes(unscopedBody, "tool_choice").Exists())
 }
 
+// TestGrokFreeMessagesClientToolCacheDefaultsOnForKnownFree varies missing and
+// automatic tool choice for a known Free provider. It checks function
+// declarations retain order with native search companions and the expected
+// choice presence.
 func TestGrokFreeMessagesClientToolCacheDefaultsOnForKnownFree(t *testing.T) {
 	provider := gatewaytestkit.HealthyGrokOAuthProvider(901, "access-token")
 	provider.Record.Credentials["subscription_tier"] = " FREE "
 	tests := []struct {
-		name           string
-		toolChoiceJSON string
-		wantChoice     bool
+		name           string // scenario subtest label
+		toolChoiceJSON string // inserted tool-choice JSON
+		wantChoice     bool   // expected choice field presence
 	}{
 		{name: "missing tool choice"},
 		{name: "automatic tool choice", toolChoiceJSON: `,"tool_choice":"auto"`, wantChoice: true},
@@ -429,8 +516,10 @@ func TestGrokFreeMessagesClientToolCacheDefaultsOnForKnownFree(t *testing.T) {
 	}
 }
 
-// TestGrokFreeFunctionToolCacheRouteConvertsNamedSearchFunctions checks conversion and deduplication of named search
-// functions.
+// TestGrokFreeFunctionToolCacheRouteConvertsNamedSearchFunctions supplies
+// duplicate web_search functions beside other client functions. It checks
+// conversion to deduplicated native tools and verifies applying the rule again
+// yields equivalent JSON.
 func TestGrokFreeFunctionToolCacheRouteConvertsNamedSearchFunctions(t *testing.T) {
 	provider := gatewaytestkit.HealthyGrokOAuthProvider(916, "access-token")
 	provider.Record.Credentials["subscription_tier"] = "free"
@@ -461,11 +550,15 @@ func TestGrokFreeFunctionToolCacheRouteConvertsNamedSearchFunctions(t *testing.T
 	require.JSONEq(t, string(patched), string(second))
 }
 
+// TestGrokFreeMessagesClientToolCacheDefaultsWithMissingProviderSetting varies
+// absent, empty and unrelated provider metadata. It checks a known Free
+// provider still receives native search companions when no explicit cache
+// setting exists.
 func TestGrokFreeMessagesClientToolCacheDefaultsWithMissingProviderSetting(t *testing.T) {
 	body := []byte(`{"model":"grok","tools":[{"type":"function","name":"view_image","parameters":{"type":"object"}}],"tool_choice":"auto"}`)
 	tests := []struct {
-		name  string
-		extra map[string]any
+		name  string         // scenario subtest label
+		extra map[string]any // provider metadata fixture
 	}{
 		{name: "nil extra"},
 		{name: "empty extra", extra: map[string]any{}},
@@ -489,6 +582,10 @@ func TestGrokFreeMessagesClientToolCacheDefaultsWithMissingProviderSetting(t *te
 	}
 }
 
+// TestApplyGrokCacheIdentityAppendsNativeToolsWhenSearchPresent supplies a
+// client web_search function beside lookup. It checks the Free route converts
+// that named search declaration and adds x_search beside the retained client
+// function.
 func TestApplyGrokCacheIdentityAppendsNativeToolsWhenSearchPresent(t *testing.T) {
 	provider := gatewaytestkit.HealthyGrokOAuthProvider(901, "access-token")
 	provider.Record.Credentials["subscription_tier"] = " FREE "
@@ -508,6 +605,9 @@ func TestApplyGrokCacheIdentityAppendsNativeToolsWhenSearchPresent(t *testing.T)
 	require.Equal(t, "x_search", tools[2].Get("type").String())
 }
 
+// TestGrokFreeClientToolCacheProviderOptIn enables cache routing in a known
+// Free provider's metadata. It checks both ordinary client functions remain
+// ordered before appended native web and X search tools.
 func TestGrokFreeClientToolCacheProviderOptIn(t *testing.T) {
 	provider := gatewaytestkit.HealthyGrokOAuthProvider(9011, "access-token")
 	provider.Record.Credentials["subscription_tier"] = "free"
@@ -527,11 +627,15 @@ func TestGrokFreeClientToolCacheProviderOptIn(t *testing.T) {
 	require.Equal(t, "x_search", tools[3].Get("type").String())
 }
 
+// TestGrokFreeMessagesClientToolCacheProviderOptOut supplies false and
+// malformed provider setting values. It checks the listed known Free requests
+// keep equivalent JSON when explicit metadata disables ordinary client-tool
+// cache routing.
 func TestGrokFreeMessagesClientToolCacheProviderOptOut(t *testing.T) {
 	body := []byte(`{"model":"grok","tools":[{"type":"function","name":"view_image","parameters":{"type":"object"}}],"tool_choice":"auto"}`)
 	tests := []struct {
-		name  string
-		value any
+		name  string // scenario subtest label
+		value any    // supplied control value
 	}{
 		{name: "explicit false", value: false},
 		{name: "string false is malformed", value: "false"},
@@ -553,6 +657,9 @@ func TestGrokFreeMessagesClientToolCacheProviderOptOut(t *testing.T) {
 	}
 }
 
+// TestGrokFreeClientToolCacheRequestOptInOverridesProviderOptOut sets provider
+// opt-out and a recognized request opt-in header. It checks the request
+// override retains the client function and adds both native search companions.
 func TestGrokFreeClientToolCacheRequestOptInOverridesProviderOptOut(t *testing.T) {
 	provider := gatewaytestkit.HealthyGrokOAuthProvider(9014, "access-token")
 	provider.Record.Credentials["subscription_tier"] = "free"
@@ -573,6 +680,10 @@ func TestGrokFreeClientToolCacheRequestOptInOverridesProviderOptOut(t *testing.T
 	require.Equal(t, "x_search", tools[2].Get("type").String())
 }
 
+// TestGrokFreeChatRequestClientToolCacheDefaultsOnWithoutClientFingerprint
+// uses a Chat path with known Free provider metadata and no fingerprint. It
+// checks default routing retains the client function and appends native web
+// and X search tools.
 func TestGrokFreeChatRequestClientToolCacheDefaultsOnWithoutClientFingerprint(t *testing.T) {
 	provider := gatewaytestkit.HealthyGrokOAuthProvider(90140, "access-token")
 	provider.Record.Credentials["subscription_tier"] = "free"
@@ -590,6 +701,10 @@ func TestGrokFreeChatRequestClientToolCacheDefaultsOnWithoutClientFingerprint(t 
 	require.Equal(t, "x_search", tools[2].Get("type").String())
 }
 
+// TestGrokFreeClientToolCacheClaudeDesktopResponsesAutoOptIn supplies complete
+// desktop headers with both CLI app labels and no explicit provider setting.
+// It checks the known Free payload retains client functions with native search
+// companions.
 func TestGrokFreeClientToolCacheClaudeDesktopResponsesAutoOptIn(t *testing.T) {
 	provider := gatewaytestkit.HealthyGrokOAuthProvider(90141, "access-token")
 	provider.Record.Credentials["subscription_tier"] = "free"
@@ -598,7 +713,8 @@ func TestGrokFreeClientToolCacheClaudeDesktopResponsesAutoOptIn(t *testing.T) {
 	for _, xApp := range []string{"cli", "cli-bg"} {
 		t.Run(xApp, func(t *testing.T) {
 			c := newGrokCacheTestContext(90141)
-			// Use a different User-Agent suffix to verify detection does not depend on desktop description text.
+			// Vary the desktop description beside complete fingerprint headers. Known
+			// Free default policy also permits routing, so this case does not isolate detection.
 			c.Request.Header.Set("User-Agent", "claude-cli/2.1.215 (external, future-desktop, agent-sdk/0.3.215)")
 			c.Request.Header.Set("X-App", xApp)
 			c.Request.Header.Set("anthropic-client-platform", "desktop_app")
@@ -617,6 +733,10 @@ func TestGrokFreeClientToolCacheClaudeDesktopResponsesAutoOptIn(t *testing.T) {
 	}
 }
 
+// TestGrokFreeClientToolCacheClaudeDesktopFingerprintRequiresAllSignals varies
+// missing desktop signals while provider cache routing is explicitly disabled.
+// It checks equivalent output under that configured policy; this fixture does
+// not independently isolate fingerprint rejection.
 func TestGrokFreeClientToolCacheClaudeDesktopFingerprintRequiresAllSignals(t *testing.T) {
 	provider := gatewaytestkit.HealthyGrokOAuthProvider(90142, "access-token")
 	provider.Record.Credentials["subscription_tier"] = "free"
@@ -624,12 +744,12 @@ func TestGrokFreeClientToolCacheClaudeDesktopFingerprintRequiresAllSignals(t *te
 	body := []byte(`{"model":"grok","tools":[{"type":"function","name":"Read","parameters":{"type":"object"}}],"tool_choice":"auto"}`)
 
 	tests := []struct {
-		name     string
-		path     string
-		ua       string
-		xApp     string
-		platform string
-		session  string
+		name     string // scenario subtest label
+		path     string // request endpoint path
+		ua       string // client user agent
+		xApp     string // client app header
+		platform string // client platform header
+		session  string // explicit client session
 	}{
 		{
 			name:     "chat path",
@@ -719,6 +839,10 @@ func TestGrokFreeClientToolCacheClaudeDesktopFingerprintRequiresAllSignals(t *te
 	}
 }
 
+// TestGrokFreeClientToolCacheExplicitRequestOptOut supplies each recognized
+// opt-out value to a known Free Chat request. It checks equivalent JSON for
+// these automatic-tool-choice fixtures after the local request control is
+// applied.
 func TestGrokFreeClientToolCacheExplicitRequestOptOut(t *testing.T) {
 	provider := gatewaytestkit.HealthyGrokOAuthProvider(90144, "access-token")
 	provider.Record.Credentials["subscription_tier"] = "free"
@@ -738,6 +862,10 @@ func TestGrokFreeClientToolCacheExplicitRequestOptOut(t *testing.T) {
 	}
 }
 
+// TestGrokFreeClientToolCacheClaudeDesktopAutoOptInDoesNotOverridePaidTier
+// supplies the complete desktop fingerprint to a paid provider. It checks the
+// payload remains equivalent because desktop activation does not make that
+// provider eligible for the Free route.
 func TestGrokFreeClientToolCacheClaudeDesktopAutoOptInDoesNotOverridePaidTier(t *testing.T) {
 	provider := gatewaytestkit.HealthyGrokOAuthProvider(90143, "access-token")
 	provider.Record.Credentials["subscription_tier"] = "supergrok"
@@ -754,6 +882,10 @@ func TestGrokFreeClientToolCacheClaudeDesktopAutoOptInDoesNotOverridePaidTier(t 
 	require.JSONEq(t, string(body), string(patched))
 }
 
+// TestGrokFreeRequestClientSearchFunctionUsesDefaultProviderPolicy supplies a
+// named search function beside view_image for a known Free provider. It checks
+// default policy converts search intent and appends the missing native search
+// companion.
 func TestGrokFreeRequestClientSearchFunctionUsesDefaultProviderPolicy(t *testing.T) {
 	provider := gatewaytestkit.HealthyGrokOAuthProvider(9015, "access-token")
 	provider.Record.Credentials["subscription_tier"] = "free"
@@ -770,6 +902,10 @@ func TestGrokFreeRequestClientSearchFunctionUsesDefaultProviderPolicy(t *testing
 	require.Equal(t, "x_search", tools[2].Get("type").String())
 }
 
+// TestGrokFreeRequestToolChoiceNoneUsesSafeCacheRoute supplies a disabled tool
+// choice with an ordinary client function. It checks the function remains
+// beside appended web_search and x_search declarations in this Free routing
+// fixture.
 func TestGrokFreeRequestToolChoiceNoneUsesSafeCacheRoute(t *testing.T) {
 	provider := gatewaytestkit.HealthyGrokOAuthProvider(9016, "access-token")
 	provider.Record.Credentials["subscription_tier"] = "free"
@@ -787,6 +923,10 @@ func TestGrokFreeRequestToolChoiceNoneUsesSafeCacheRoute(t *testing.T) {
 	require.Equal(t, "none", gjson.GetBytes(patched, "tool_choice").String())
 }
 
+// TestApplyGrokCacheIdentityRecognizesResponsesLiteAdditionalTools retains
+// additional-tools input as original intent beside a promoted current body. It
+// checks isolated identity is written while the existing function stays alone
+// and choice remains absent.
 func TestApplyGrokCacheIdentityRecognizesResponsesLiteAdditionalTools(t *testing.T) {
 	intentBody := []byte(`{"model":"grok","input":[{"type":"additional_tools","tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}]},{"type":"message","role":"user","content":"hello"}]}`)
 	patchedBody := []byte(`{"model":"grok-4.5","tools":[{"type":"function","name":"lookup","parameters":{"type":"object"}}],"input":[{"type":"message","role":"user","content":"hello"}]}`)
@@ -801,6 +941,10 @@ func TestApplyGrokCacheIdentityRecognizesResponsesLiteAdditionalTools(t *testing
 	require.Equal(t, "isolated-id", gjson.GetBytes(patched, "prompt_cache_key").String())
 }
 
+// TestGrokFreeCacheRoutePreservesMixedSupportedToolsWithSearchIntent mixes
+// function, shell and native web_search tools for a Free provider. It checks
+// those declarations retain order while the missing x_search companion is
+// appended.
 func TestGrokFreeCacheRoutePreservesMixedSupportedToolsWithSearchIntent(t *testing.T) {
 	provider := gatewaytestkit.HealthyGrokOAuthProvider(9012, "access-token")
 	provider.Record.Credentials["subscription_tier"] = "free"
@@ -819,6 +963,10 @@ func TestGrokFreeCacheRoutePreservesMixedSupportedToolsWithSearchIntent(t *testi
 	require.Equal(t, "x_search", tools[3].Get("type").String())
 }
 
+// TestGrokClientToolCacheOptInDoesNotOverridePaidTier sets provider opt-in
+// beside a paid subscription tier. It checks equivalent JSON because the
+// configured flag alone does not establish eligibility for Free-specific tool
+// routing.
 func TestGrokClientToolCacheOptInDoesNotOverridePaidTier(t *testing.T) {
 	provider := gatewaytestkit.HealthyGrokOAuthProvider(9013, "access-token")
 	provider.Record.Credentials["subscription_tier"] = "supergrok"
@@ -831,13 +979,17 @@ func TestGrokClientToolCacheOptInDoesNotOverridePaidTier(t *testing.T) {
 	require.JSONEq(t, string(body), string(patched))
 }
 
+// TestApplyGrokCacheIdentityRequiresPatchedFunctionTools varies missing,
+// empty, native-only and unsupported patched tools beneath function intent. It
+// checks identity is written while tool existence and raw representation stay
+// unchanged in these cases.
 func TestApplyGrokCacheIdentityRequiresPatchedFunctionTools(t *testing.T) {
 	provider := gatewaytestkit.HealthyGrokOAuthProvider(902, "access-token")
 	provider.Record.Credentials["subscription_tier"] = "free"
 	intentBody := []byte(`{"model":"grok","tools":[{"type":"function","name":"lookup"}],"tool_choice":"auto"}`)
 	tests := []struct {
-		name        string
-		patchedBody string
+		name        string // scenario subtest label
+		patchedBody string // filtered request JSON
 	}{
 		{name: "missing tools", patchedBody: `{"model":"grok-4.5"}`},
 		{name: "empty tools", patchedBody: `{"model":"grok-4.5","tools":[]}`},
@@ -861,13 +1013,17 @@ func TestApplyGrokCacheIdentityRequiresPatchedFunctionTools(t *testing.T) {
 	}
 }
 
+// TestGrokFreeMessagesFunctionToolCacheRouteRequiresKnownFreeTier varies
+// credential, billing and quota evidence across Free, paid and unknown
+// providers. It checks native-tool injection follows the supplied tier
+// evidence, including paid evidence overriding stale Free signals.
 func TestGrokFreeMessagesFunctionToolCacheRouteRequiresKnownFreeTier(t *testing.T) {
 	// A web_search function triggers search-tool injection; ordinary client functions retain their declarations.
 	intentBody := []byte(`{"model":"grok","tools":[{"type":"function","name":"lookup"},{"type":"function","name":"web_search"}],"tool_choice":"auto"}`)
 	tests := []struct {
-		name     string
-		provider *gatewayprovider.ExecutionProvider
-		wantMix  bool
+		name     string                             // scenario subtest label
+		provider *gatewayprovider.ExecutionProvider // configured provider fixture
+		wantMix  bool                               // expected native-tool injection
 	}{
 		{
 			name: "free credential tier",
@@ -1003,6 +1159,10 @@ func TestGrokFreeMessagesFunctionToolCacheRouteRequiresKnownFreeTier(t *testing.
 	}
 }
 
+// TestGrokFreeMessagesFunctionToolCacheRouteRequiresIdentity passes a known
+// Free function request with empty cache identity. It checks the body remains
+// equivalent and retains its original single declaration when isolated routing
+// is unavailable.
 func TestGrokFreeMessagesFunctionToolCacheRouteRequiresIdentity(t *testing.T) {
 	provider := gatewaytestkit.HealthyGrokOAuthProvider(915, "access-token")
 	provider.Record.Credentials["subscription_tier"] = "free"
@@ -1015,10 +1175,14 @@ func TestGrokFreeMessagesFunctionToolCacheRouteRequiresIdentity(t *testing.T) {
 	require.Len(t, gjson.GetBytes(patched, "tools").Array(), 1)
 }
 
+// TestApplyGrokCacheIdentityPreservesIneligibleClientToolFields varies tool
+// shapes and choices rejected by cache injection. It checks the isolated key
+// is written while existence and raw bytes of tools and choice retain their
+// supplied representations.
 func TestApplyGrokCacheIdentityPreservesIneligibleClientToolFields(t *testing.T) {
 	tests := []struct {
-		name string
-		body string
+		name string // scenario subtest label
+		body string // input JSON fixture
 	}{
 		{
 			name: "empty tools array",
@@ -1089,10 +1253,14 @@ func TestApplyGrokCacheIdentityPreservesIneligibleClientToolFields(t *testing.T)
 	}
 }
 
+// TestApplyGrokCacheIdentityUsesPreSanitizationToolIntent provides unsupported
+// original declarations beside an already stripped current body. It checks
+// identity assignment does not treat filtering as permission to create native
+// tools or a choice.
 func TestApplyGrokCacheIdentityUsesPreSanitizationToolIntent(t *testing.T) {
 	tests := []struct {
-		name       string
-		intentBody string
+		name       string // scenario subtest label
+		intentBody string // original tool-intent JSON
 	}{
 		{
 			name:       "unsupported tools removed by sanitizer",
@@ -1118,6 +1286,9 @@ func TestApplyGrokCacheIdentityUsesPreSanitizationToolIntent(t *testing.T) {
 	}
 }
 
+// TestApplyGrokCacheIdentityWithoutFreeTierRoutingOnlyWritesIdentity disables
+// Free routing while supplying an isolated key for tool-free input. It checks
+// the key is assigned and no tools or tool_choice fields are introduced.
 func TestApplyGrokCacheIdentityWithoutFreeTierRoutingOnlyWritesIdentity(t *testing.T) {
 	sourceBody := []byte(`{"model":"grok-4.5","input":"hello"}`)
 	body, err := xai.ApplyGrokResponsesCacheIdentity(sourceBody, sourceBody, "isolated-id", false)
@@ -1128,6 +1299,9 @@ func TestApplyGrokCacheIdentityWithoutFreeTierRoutingOnlyWritesIdentity(t *testi
 	require.False(t, gjson.GetBytes(body, "tool_choice").Exists())
 }
 
+// TestGrokCompactRequestSkipsCacheIdentityAndNativeTools uses the compact
+// route with a raw cache key. It checks identity resolution stays empty and
+// application removes the key without adding tools or a tool choice.
 func TestGrokCompactRequestSkipsCacheIdentityAndNativeTools(t *testing.T) {
 	c := newGrokCacheTestContext(701)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses/compact", nil)
@@ -1143,9 +1317,16 @@ func TestGrokCompactRequestSkipsCacheIdentityAndNativeTools(t *testing.T) {
 	require.False(t, gjson.GetBytes(patched, "tool_choice").Exists())
 }
 
+// TestResolveGrokCacheIdentityConcurrentDeterminism resolves one immutable
+// prompt in fifty independent request contexts concurrently. It checks every
+// worker returns the same nonempty identity for the same Key and final model.
 func TestResolveGrokCacheIdentityConcurrentDeterminism(t *testing.T) {
+	// Fifty independent callers exercise deterministic identity under concurrent execution.
 	const workers = 50
 	body := []byte(`{"model":"grok","messages":[{"role":"system","content":"stable"},{"role":"user","content":"hello"}]}`)
+	// Capacity matches the worker count so every producer can publish before
+	// Wait completes. Wait and close finish the producer phase before collection,
+	// preventing a blocked send or a send to the closed result channel.
 	identities := make(chan string, workers)
 	var wg sync.WaitGroup
 	for range workers {
@@ -1166,7 +1347,9 @@ func TestResolveGrokCacheIdentityConcurrentDeterminism(t *testing.T) {
 	require.NotEmpty(t, first)
 }
 
-// TestGrokCacheHeaderBrandCompatibility checks legacy headers and precedence of current-header opt-out.
+// TestGrokCacheHeaderBrandCompatibility combines legacy opt-in with absent or
+// recognized current opt-out values. It checks legacy routing is honored only
+// when the current header is absent in the supplied cases.
 func TestGrokCacheHeaderBrandCompatibility(t *testing.T) {
 	for _, value := range []string{"", "0", "false"} {
 		provider := gatewaytestkit.HealthyGrokOAuthProvider(9014, "access-token")
@@ -1190,10 +1373,17 @@ func TestGrokCacheHeaderBrandCompatibility(t *testing.T) {
 	}
 }
 
+// explicitGrokCacheSeed returns the prioritized raw session seed before
+// identity isolation. It delegates supplied HTTP/body/argument precedence, and
+// an absent usable signal produces an empty result for caller fallback.
 func explicitGrokCacheSeed(c *gin.Context, body []byte, explicitKey string) string {
 	return xai.ExplicitCacheSeed(grokCacheInput(c, explicitKey, ""), body)
 }
 
+// TestCodexUnsupportedAdditionalToolsDoNotBecomeToolFreeCacheIntent filters
+// unsupported additional tools before Free routing sees the patched intent. It
+// checks isolated identity remains while neither tools nor choice are injected
+// into the resulting body.
 func TestCodexUnsupportedAdditionalToolsDoNotBecomeToolFreeCacheIntent(t *testing.T) {
 	body := []byte(`{
 		"model":"grok-4.5","tool_choice":"auto",

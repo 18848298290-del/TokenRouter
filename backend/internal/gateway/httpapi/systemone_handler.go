@@ -13,19 +13,38 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/systemone"
 )
 
+// SystemOne accepts synchronous structured decision input and reuses shared
+// authentication, moderation and concurrency admission. Its HTTP handler
+// passes a validated model/body and mapping into the decision loop, then
+// leaves provider retries and completion qualification to systemone.Run before
+// final error presentation.
+
 // SystemOneHTTPExecution runs a decision request and writes its final error.
 type SystemOneHTTPExecution interface {
-	systemone.Ports
+	systemone.Ports // serial decision execution operations
+	// End presents the final execution error when HTTP output is still available.
+	// The request owner invokes it after systemone.Run, including nil on success,
+	// so already delivered answers remain the final response.
 	End(error)
 }
 
 // SystemOneHTTPPorts supplies the request factory and content moderation for SystemOne.
 type SystemOneHTTPPorts interface {
+	// NewSystemOne captures request identity, validated input and output state
+	// for the decision loop. The returned execution retains selected-provider
+	// state across its serial operations and is ended after the loop returns.
 	NewSystemOne(*gin.Context, AuxiliaryHTTPInput, *zap.Logger, *bool) SystemOneHTTPExecution
+	// ModerateSystemOne checks extracted structured content and reports whether
+	// it rejected the request. True means client error output has been presented,
+	// so the handler stops before concurrency and provider execution.
 	ModerateSystemOne(*gin.Context, *zap.Logger, string, []byte) bool
 }
 
-// SystemOne handles synchronous decision requests; systemone.Run owns provider failover.
+// SystemOne validates synchronous decision input and performs shared request
+// admission before provider execution. Middleware supplies key and subject
+// state; moderation sees extracted content before user-slot acquisition, and
+// funding is checked again after that wait. The acquired user release is
+// deferred until request handling ends.
 func (h *AuxiliaryHandler) SystemOne(c *gin.Context) {
 	done, accepted := h.BeginRequest(c, "systemone")
 	if !accepted {
@@ -87,12 +106,16 @@ func (h *AuxiliaryHandler) SystemOne(c *gin.Context) {
 	run.End(systemone.Run(c.Request.Context(), h.ports.MaxSwitches(), run))
 }
 
-// IsSystemOneEndpoint reports whether a path is the decision endpoint, allowing a trailing slash.
+// IsSystemOneEndpoint reports whether a path is exactly the SystemOne endpoint
+// after removing one trailing slash. Additional path segments or another
+// remaining slash do not match this endpoint predicate.
 func IsSystemOneEndpoint(path string) bool {
 	return strings.TrimSuffix(path, "/") == EndpointSystemOne
 }
 
-// WriteSystemOneError writes gateway errors shared by authentication, admission, and execution.
+// WriteSystemOneError writes the SystemOne gateway error envelope while the
+// response is unwritten. Empty code and param values are omitted; once a
+// response was written, this helper returns without adding another error body.
 func WriteSystemOneError(c *gin.Context, status int, kind, code, param, message string) {
 	if c.Writer.Written() {
 		return

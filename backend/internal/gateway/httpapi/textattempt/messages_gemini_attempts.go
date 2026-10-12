@@ -21,18 +21,38 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
 )
 
-// geminiMessageAttemptBridge adapts Gemini-backed Messages attempts to the shared text loop.
+// Forced Gemini-backed Messages retains its own mapped model and body beside
+// original client input. Provider selection uses sticky identity without the
+// Anthropic session-limit inputs, and forwarding chooses native Gemini or
+// Antigravity Gemini for the selected platform. The shared text loop still
+// owns provider failover and interprets returned output observations.
+//
+// Selection leases are reused or obtained under a wait plan; only counted
+// waiters are released, and acquired slots share cancellation cleanup with
+// forwarding return. Byte changes mark retry commitment independently of
+// physical writer state. Completion fills missing reasoning from client
+// parsing and model policy, then captures original input, group pricing and
+// the attempt cache-billing flag before asynchronous recording.
+
+// geminiMessageAttemptBridge adapts mapped Gemini Messages input to serial
+// text attempts.
 type geminiMessageAttemptBridge struct {
-	messageAttemptBridge
-	forwardModel string
-	forwardBody  []byte
-	groupMapping routing.GroupMappingResult
+	messageAttemptBridge // shared request-local attempt observations
+	// forwardModel, forwardBody and groupMapping come from forced-Gemini
+	// preparation, while embedded body and reqModel retain client input for
+	// completion metadata and pricing identity.
+	forwardModel string                     // prepared mapped Gemini model
+	forwardBody  []byte                     // prepared mapped Gemini request bytes
+	groupMapping routing.GroupMappingResult // retained group pricing/model mapping
 }
 
-// Select chooses a provider using the request's model and session hash.
+// Select retains a Gemini-capable provider under request group, model, session
+// and exclusions. It supplies empty metadata identity and actor zero to bypass
+// Anthropic session-limit inputs, then stores target identity for acquisition
+// and Ops.
 func (b *geminiMessageAttemptBridge) Select(excluded map[int64]struct{}) (textflow.Selection, error) {
 	var err error
-	b.selection, err = b.binding().selectProvider(b.c.Request.Context(), b.apiKey.GroupID, b.sessionKey, b.reqModel, excluded, "", int64(0)) // Gemini does not apply the Anthropic session limit.
+	b.selection, err = b.binding().selectProvider(b.c.Request.Context(), b.apiKey.GroupID, b.sessionKey, b.reqModel, excluded, "", int64(0))
 	if err != nil {
 		return textflow.Selection{}, err
 	}
@@ -41,7 +61,10 @@ func (b *geminiMessageAttemptBridge) Select(excluded map[int64]struct{}) (textfl
 	return gatewaycapture.CaptureTextSelection(b.provider), nil
 }
 
-// FirstSelectionFailure reports group policy errors or diagnoses initial provider unavailability.
+// FirstSelectionFailure presents an initial Gemini routing failure after
+// checking business errors. Model-not-found retains diagnosis, while other
+// failures record applicable capacity limitation and provider-unavailability
+// details; the unused bool does not alter this path.
 func (b *geminiMessageAttemptBridge) FirstSelectionFailure(err error, _ bool) {
 	if handleGroupSelectionBusinessError(b.c, err, *b.streamStarted, func(status int, errType string, message string, responseStarted bool) {
 		b.binding().handleStreamingAwareError(b.c, status, errType, message, responseStarted)
@@ -66,9 +89,18 @@ func (b *geminiMessageAttemptBridge) FirstSelectionFailure(err error, _ bool) {
 	b.binding().handleStreamingAwareError(b.c, cls.Status, cls.ErrType, message, *b.streamStarted)
 }
 
-// Acquire acquires a provider slot and binds the sticky session after waiting.
+// Acquire reuses the selected provider lease or waits under its required plan.
+// Missing plan rejects forwarding; after a successful wait it best-effort
+// binds sticky identity, while an already acquired selection skips that bind.
+//
+// Registration errors permit uncounted waiting and explicit queue refusal
+// rejects before slot polling. Counted ownership is released after acquisition
+// or failure, then provider cleanup is wrapped for cancellation. Unlike base
+// Messages, this method does not attach that callback to SessionAttempts;
+// Forward owns its explicit release when the attempt returns.
 func (b *geminiMessageAttemptBridge) Acquire() bool {
-	// Reuse the selection's slot or wait according to its plan.
+	// Preserve a selection-owned lease; waiting is used only when selection did
+	// not acquire the provider resource and supplied its explicit wait plan.
 	b.providerReleaseFunc = b.selection.ReleaseFunc
 	if !b.selection.Acquired {
 		if b.selection.WaitPlan == nil {
@@ -84,6 +116,8 @@ func (b *geminiMessageAttemptBridge) Acquire() bool {
 		providerWaitCounted := false
 		waitEntry, err := b.binding().concurrencyHelper.EnterProviderWait(b.c.Request.Context(), b.provider.Record.ID, b.selection.WaitPlan.MaxWaiting)
 		canWait := waitEntry.Allowed
+		// Counter errors permit uncounted waiting, while explicit refusal rejects
+		// before slot polling and never owns a queue entry that needs cleanup.
 		if err != nil {
 			b.reqLog.Warn("gateway.provider_wait_counter_increment_failed", zap.Int64("provider_id", b.provider.Record.ID), zap.Error(err))
 		} else if !canWait {
@@ -97,6 +131,8 @@ func (b *geminiMessageAttemptBridge) Acquire() bool {
 		if err == nil && canWait {
 			providerWaitCounted = true
 		}
+		// Release only an owned registration and clear its flag so both acquisition
+		// outcomes can share cleanup without decrementing a failed or released entry.
 		releaseWait := func() {
 			if providerWaitCounted {
 				waitEntry.Release()
@@ -124,13 +160,24 @@ func (b *geminiMessageAttemptBridge) Acquire() bool {
 			b.reqLog.Warn("gateway.bind_sticky_session_failed", zap.Int64("provider_id", b.provider.Record.ID), zap.Error(err))
 		}
 	}
-	// Release the provider slot when the request times out or disconnects.
+	// Share explicit forwarding cleanup with request cancellation through the
+	// lease wrapper, keeping either path from returning the acquired slot twice.
 	b.providerReleaseFunc = scheduler.WrapRelease(b.c.Request.Context(), scheduler.ReleaseOnCancel, b.providerReleaseFunc)
 
 	return true
 }
 
-// Forward dispatches Gemini-backed Messages to Gemini or Antigravity.
+// Forward dispatches retained Gemini input through the selected platform and
+// returns attempt observations. Callers first Select and Acquire, and keep the
+// request-local bridge serial; Antigravity receives session options, while
+// other selected platforms use the native Gemini forwarding callback.
+//
+// The byte baseline is captured after acquisition and before output,
+// separating retry commitment from already written HTTP headers. Forward
+// releases the provider lease before schedule reporting and preserves partial
+// result/error observations. A classified UpstreamFailoverError supplies retry
+// policy to the text loop, which decides later recovery rather than replaying
+// here.
 func (b *geminiMessageAttemptBridge) Forward(state textflow.AttemptState) textflow.Outcome {
 	var err error
 	// Carry the attempt's provider-switch state into forwarding.
@@ -139,7 +186,8 @@ func (b *geminiMessageAttemptBridge) Forward(state textflow.AttemptState) textfl
 	if state.SwitchCount > 0 {
 		requestCtx = requeststate.WithProviderSwitchCount(requestCtx, state.SwitchCount)
 	}
-	// Compare writer size after forwarding to prevent failover once output has been sent.
+	// Capture after slot waits so retry commitment observes this forwarding’s
+	// bytes independently of headers or keepalives already written during admission.
 	b.writerSizeBeforeForward = b.c.Writer.Size()
 	if b.provider.Record.Platform == capability.PlatformAntigravity {
 		b.result, err = b.binding().forwardAntigravityGemini(
@@ -169,7 +217,10 @@ func (b *geminiMessageAttemptBridge) Forward(state textflow.AttemptState) textfl
 	return out
 }
 
-// Success increments the RPM counter for eligible Anthropic OAuth or setup-token providers.
+// Success best-effort increments RPM after a successful eligible Anthropic
+// OAuth/setup-token provider attempt. A positive configured base limit is
+// required; selection and increment remain separate, and counter-write failure
+// is logged without replacing served output.
 func (b *geminiMessageAttemptBridge) Success() {
 	// Count successful forwarding toward the provider's soft RPM limit.
 	// Selection and increment are separate, so concurrent requests can temporarily exceed the limit.
@@ -181,7 +232,16 @@ func (b *geminiMessageAttemptBridge) Success() {
 	}
 }
 
-// Complete captures the Gemini-backed Messages result for usage recording.
+// Complete captures a served Gemini-backed Messages result for completion
+// recording. It requires a nonnil result and retained parsed client request;
+// observed reasoning wins before parsed output effort and a model-dependent
+// thinking default fill missing effort.
+//
+// Original body supplies the request fingerprint and copied completion input,
+// while group mapping retains requested/upstream pricing identities. The
+// attempt cache-billing flag is captured by value before provider completion
+// capture and worker submission. Recorder errors are logged using captured
+// identities, keeping asynchronous work independent of later Gin reads.
 func (b *geminiMessageAttemptBridge) Complete(state textflow.AttemptState) {
 	// Capture request metadata while the HTTP context is available.
 	userAgent := b.c.GetHeader("User-Agent")
@@ -190,6 +250,8 @@ func (b *geminiMessageAttemptBridge) Complete(state textflow.AttemptState) {
 	inboundEndpoint := gatewayhttp.GetInboundEndpoint(b.c)
 	upstreamEndpoint := gatewayhttp.GetUpstreamEndpoint(b.c, b.provider.Record.Platform)
 
+	// Retain observed effort first, then fill from client output intent and an
+	// applicable thinking default selected by upstream model before client model.
 	if b.result.ReasoningEffort == nil {
 		b.result.ReasoningEffort = protocol.NormalizeClaudeOutputEffort(b.parsedReq.OutputEffort)
 	}
@@ -201,13 +263,14 @@ func (b *geminiMessageAttemptBridge) Complete(state textflow.AttemptState) {
 		b.result.ReasoningEffort = gatewaycapture.DefaultEffortForThinkingEnabled(protocolModel)
 	}
 
-	// Submit usage recording through the configured worker pool.
-	// Capture the cache-billing flag by value so completion does not retain the failover body.
+	// Retain the attempt’s cache-billing choice as a scalar before asynchronous
+	// submission, so completion does not depend on mutable recovery state afterward.
 	forceCacheBilling := state.ForceCacheBilling
 
 	clientSessionID := gatewayhttp.ExtractClientSessionID(b.c)
 	gatewayhttp.StampForwardRequestedReasoningEffort(b.result, b.c)
-	// Capture funding and request data before queueing so the worker uses this snapshot.
+	// Snapshot funding, pricing and copied client body before worker submission,
+	// keeping later recording tied to this completed attempt rather than mutable HTTP state.
 	completionInput := gatewaycapture.CaptureMessages(gatewayhttp.CompletionContext(b.c), &gatewaycapture.MessagesCapture{
 		Result: b.result,
 
@@ -243,6 +306,10 @@ func (b *geminiMessageAttemptBridge) Complete(state textflow.AttemptState) {
 	})
 }
 
+// Begin initializes current funding and the single-provider recovery hint for
+// this bridge. It deliberately does not create base Messages session tracking
+// or prepare another body, because forced-Gemini input was captured before
+// this loop.
 func (b *geminiMessageAttemptBridge) Begin() {
 	b.currentAPIKey = b.apiKey
 	b.currentSubscription = b.subscription
@@ -250,8 +317,20 @@ func (b *geminiMessageAttemptBridge) Begin() {
 		b.SingleProviderRetry()
 	}
 }
+
+// PrepareAttempt reports readiness using the forced-Gemini input already
+// captured at Open. It always returns true and performs no parsing or
+// validation here, so callers retain the prepared forwarding body and model.
 func (b *geminiMessageAttemptBridge) PrepareAttempt() bool { return true }
-func (b *geminiMessageAttemptBridge) Abandon(int64)        {}
+
+// Abandon leaves prior-provider session cleanup absent for this Gemini bridge.
+// Selection does not register base Messages SessionAttempts here, so the
+// unused identifier has no per-attempt session resource to finish.
+func (b *geminiMessageAttemptBridge) Abandon(int64) {}
+
+// Exhausted delegates final attempt failure under the Gemini platform
+// identity. It ignores the supplied platform string, retaining the stream flag
+// for the base bridge’s classified or generic exhaustion presentation.
 func (b *geminiMessageAttemptBridge) Exhausted(err *textflow.AttemptFailure, _ string, stream bool) {
 	b.messageAttemptBridge.Exhausted(err, capability.PlatformGemini, stream)
 }

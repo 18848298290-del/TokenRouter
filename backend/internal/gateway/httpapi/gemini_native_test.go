@@ -18,13 +18,21 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// Gemini native admission carries client model, signature and conversation-
+// digest state into the shared executor. These scenarios compare sticky and
+// digest recovery alongside CLI path identity, checking that moderation sees
+// the request before mapped execution begins.
+
+// TestExtractGeminiCLISessionHash supplies directory patterns with and without
+// privileged-user identity. It checks the combined SHA-256 value, directory-
+// only result and empty result when no directory pattern is present.
 func TestExtractGeminiCLISessionHash(t *testing.T) {
 	tests := []struct {
-		name             string
-		body             string
-		privilegedUserID string
-		wantEmpty        bool
-		wantHash         string
+		name             string // scenario subtest label
+		body             string // raw native request
+		privilegedUserID string // optional identity header
+		wantEmpty        bool   // expected missing identity
+		wantHash         string // expected captured digest
 	}{
 		{
 			name:             "with privileged-user-id and tmp dir",
@@ -79,12 +87,15 @@ func TestExtractGeminiCLISessionHash(t *testing.T) {
 	}
 }
 
+// TestGeminiCLITmpDirRegex presents valid CLI paths, surrounding text and an
+// insufficient digest. It checks the matched capture and rejects the short
+// hash and unrelated text fixtures.
 func TestGeminiCLITmpDirRegex(t *testing.T) {
 	tests := []struct {
-		name      string
-		input     string
-		wantMatch bool
-		wantHash  string
+		name      string // scenario subtest label
+		input     string // input fixture text
+		wantMatch bool   // expected regex match
+		wantHash  string // expected captured digest
 	}{
 		{
 			name:      "valid tmp dir path",
@@ -124,12 +135,15 @@ func TestGeminiCLITmpDirRegex(t *testing.T) {
 	}
 }
 
+// TestSafeShortPrefix checks empty, short, exact and longer values against a
+// byte-prefix length. It protects unchanged output for a nonpositive limit and
+// the requested prefix for longer strings.
 func TestSafeShortPrefix(t *testing.T) {
 	tests := []struct {
-		name  string
-		input string
-		n     int
-		want  string
+		name  string // scenario subtest label
+		input string // input fixture text
+		n     int    // maximum prefix bytes
+		want  string // expected prefix text
 	}{
 		{name: "空字符串", input: "", n: 8, want: ""},
 		{name: "长度小于截断值", input: "abc", n: 8, want: "abc"},
@@ -145,6 +159,10 @@ func TestSafeShortPrefix(t *testing.T) {
 	}
 }
 
+// TestGeminiNativePrefacePreservesModerationBeforeMapping blocks moderation on
+// an intentionally invalid body. It checks request observation and prompt
+// replacement ordering, then confirms the blocked response ends preparation
+// before execution.
 func TestGeminiNativePrefacePreservesModerationBeforeMapping(t *testing.T) {
 	base := &prefaceBackend{key: prefaceKey(), block: true}
 	p := &geminiPrefaceBackend{base: base}
@@ -156,6 +174,10 @@ func TestGeminiNativePrefacePreservesModerationBeforeMapping(t *testing.T) {
 	require.Contains(t, w.Body.String(), "blocked")
 }
 
+// TestGeminiNativePrefaceCarriesSignatureAndDigestState exercises native and
+// streaming actions with sticky and digest-recovered providers. It checks
+// original and mapped models, signature hints, funding pointers and native
+// concurrency output passed to execution.
 func TestGeminiNativePrefaceCarriesSignatureAndDigestState(t *testing.T) {
 	for _, action := range []string{"generateContent", "streamGenerateContent"} {
 		for _, bound := range []int64{65, 0} {

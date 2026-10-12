@@ -23,9 +23,34 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// grokVideoObserver logs video task events; media checks completion eligibility and claims settlement.
-type grokVideoObserver struct{ log *zap.Logger }
+// A video status request needs the provider and group that accepted its task,
+// even after a composite Key loses that group mapping. The adapter restores
+// saved ownership into a request-local Key view and delegates completion
+// claiming to the shared video-task service.
+//
+// Image usage can be recorded immediately, while video usage waits for
+// completed observations and a claimed task. Completion captures funding,
+// client metadata and pricing before queue submission. The task identifier
+// used to release a failed claim remains separate from the stable financial
+// request ID derived for settlement, and an unsuccessful recording attempts
+// claim release so later polls can retry.
 
+// grokVideoObserver writes recognized video-task notices to the supplied
+// request logger.
+type grokVideoObserver struct {
+	log *zap.Logger // request diagnostic logger
+}
+
+// resolveCompositeGrokVideoAPIKey restores task-scoped group and provider
+// identity for a composite Key query. A missing runtime/Gateway binding or Key
+// returns an error. Saved ownership is resolved before current mappings,
+// permitting queries for a task whose mapping has since been removed.
+//
+// The returned Key copies the outer record and installs a new group-ID
+// pointer. It retains the existing matching Group pointer when available;
+// otherwise it creates a minimal active hydrated group view for this old-task
+// lookup. The original Key's GroupID remains unchanged, and callers use the
+// returned view for the bound task rather than new media admission.
 func (h *Runtime) resolveCompositeGrokVideoAPIKey(
 	ctx context.Context,
 	apiKey *apikey.APIKey,
@@ -48,12 +73,17 @@ func (h *Runtime) resolveCompositeGrokVideoAPIKey(
 	if owner.BindingIndex >= 0 {
 		selected.Group = apiKey.CompositeGroups[owner.BindingIndex].Group
 	} else {
+		// Saved ownership can outlive the Key's mappings; this minimal group
+		// supplies the old task's identity for query handling after that mapping disappeared.
 		selected.Group = &routing.Group{ID: owner.GroupID, Status: billing.StatusActive, Hydrated: true}
 	}
 	return &selected, owner.ProviderID, nil
 }
 
-// grokMediaRequiredCapability restricts generation requests. Status queries use the task-bound provider.
+// grokMediaRequiredCapability returns the media-generation scheduler
+// capability for creation endpoints. Status and content queries return empty
+// capability because their task-bound provider is reused rather than
+// requalified for new media generation.
 func grokMediaRequiredCapability(endpoint grok.GrokMediaEndpoint) providercore.OpenAIEndpointCapability {
 	if endpoint.IsGenerationRequest() {
 		return providercore.OpenAIEndpointCapabilityGrokMediaGeneration
@@ -61,6 +91,10 @@ func grokMediaRequiredCapability(endpoint grok.GrokMediaEndpoint) providercore.O
 	return ""
 }
 
+// grokMediaScheduleModel prefers a nonblank observed upstream model for
+// scheduling feedback. Without that result identity, it applies provider
+// mapping to routingModel, or returns its trimmed value when no provider
+// exists.
 func grokMediaScheduleModel(provider *gatewaycapture.ExecutionProvider, routingModel string, result *forwardcore.OpenAIResult) string {
 	if result != nil && strings.TrimSpace(result.UpstreamModel) != "" {
 		return result.UpstreamModel
@@ -71,14 +105,31 @@ func grokMediaScheduleModel(provider *gatewaycapture.ExecutionProvider, routingM
 	return gatewaycapture.ExecutionModelPolicy(provider).Mapped(routingModel)
 }
 
+// isGrokVideoCreateEndpoint reports whether this media endpoint starts
+// asynchronous video work.
 func isGrokVideoCreateEndpoint(endpoint grok.GrokMediaEndpoint) bool {
 	return gatewaymedia.IsVideoCreate(string(endpoint))
 }
 
+// shouldRecordGrokMediaUsage permits immediate recording for a nonnil image
+// result with a usable request model and positive image count. Video creation,
+// status and content paths use their separate completion logic.
 func shouldRecordGrokMediaUsage(endpoint grok.GrokMediaEndpoint, requestModel string, result *forwardcore.OpenAIResult) bool {
 	return result != nil && gatewaymedia.RecordImmediateImages(string(endpoint), requestModel, result.ImageCount)
 }
 
+// prepareGrokVideoCompletionBilling merges completed task observations with
+// saved pricing data after a successful billing claim. Missing
+// runtime/Gateway, Key or status result returns nil. The task service scopes
+// lookup and claiming by subject.UserID and Key ID; callers supply a logger
+// when service notices can be emitted.
+//
+// A nil service result means no recording should proceed, including missing
+// completion evidence, claim failure or an existing claim. A successful result
+// copies the outer status result and replaces its financial identity, model
+// and video dimensions with prepared values. Other nested data remains from
+// statusResult; recording owns the later settlement and failure-release
+// attempt.
 func prepareGrokVideoCompletionBilling(
 	ctx context.Context,
 	h *Runtime,
@@ -110,6 +161,9 @@ func prepareGrokVideoCompletionBilling(
 	return &merged
 }
 
+// firstNonEmptyString returns the first trimmed nonblank value from its
+// arguments. Empty or whitespace-only inputs are skipped, and an entirely
+// empty sequence returns an empty string for the caller's fallback.
 func firstNonEmptyString(values ...string) string {
 	for _, v := range values {
 		if s := strings.TrimSpace(v); s != "" {
@@ -119,6 +173,17 @@ func firstNonEmptyString(values ...string) string {
 	return ""
 }
 
+// recordGrokMediaUsage captures media observations and funding before
+// submitting completion recording. A nil result is ignored; other dependencies
+// and a hydrated Key.User are caller requirements. Body-free queries can use
+// task identity as their payload fingerprint input.
+//
+// Positive video units derive a stable financial request ID from
+// result.ResponseID or the supplied task ID, while claim release prefers the
+// supplied task ID. The captured completion input and user/Key IDs reach the
+// queued callback. A recorder error attempts to release the video claim, logs
+// a failed release and leaves client presentation unchanged because execution
+// has already returned its response.
 func recordGrokMediaUsage(
 	c *gin.Context,
 	h *Runtime,
@@ -141,6 +206,8 @@ func recordGrokMediaUsage(
 	clientIP := clientip.GetClientIP(c)
 	sessionID := gatewayhttp.ExtractClientSessionID(c)
 	payloadForHash := body
+	// Queries can have no body; include their task identity in the captured
+	// payload fingerprint so settlement evidence still identifies the requested operation.
 	if len(payloadForHash) == 0 && strings.TrimSpace(requestID) != "" {
 		payloadForHash = []byte(requestID)
 	}
@@ -149,6 +216,8 @@ func recordGrokMediaUsage(
 
 	pricingUsageFields := gatewayhttp.ClientRequestedUsageFields(c, groupMapping, requestModel, result.UpstreamModel)
 	videoTaskID := ""
+	// Video settlement uses a task-stable financial key, while the separately
+	// captured task ID remains available to undo this request's failed billing claim.
 	if result.VideoCount > 0 {
 		videoTaskID = strings.TrimSpace(firstNonEmptyString(requestID, result.ResponseID))
 		if stable := gatewaymedia.StableGrokVideoBillingRequestID(firstNonEmptyString(result.ResponseID, requestID)); stable != "" {
@@ -159,6 +228,8 @@ func recordGrokMediaUsage(
 		}
 	}
 	requestPayloadHash := billing.HashUsageRequestPayload(payloadForHash)
+	// Capture values before queueing so completion uses this request's selected
+	// provider, funding and pricing even after the HTTP handler releases its state.
 	completionInput := gatewaycapture.CaptureOpenAI(c.Request.Context(), &gatewaycapture.OpenAICapture{
 		Result:             result,
 		APIKey:             apiKey,
@@ -188,6 +259,8 @@ func recordGrokMediaUsage(
 	actorID, keyID := subject.UserID, apiKey.ID
 	h.submitOpenAIUsageRecordTask(c, result, func(ctx context.Context) {
 		if err := completionRecorder.Record(ctx, completionInput, true); err != nil {
+			// Failed persistence leaves this completion unrecorded; attempt to release
+			// its claim so a later observation can retry, and report release failures.
 			if videoTaskID != "" {
 				if releaseErr := videoTasks.ReleaseGrokVideoBilling(ctx, videoTaskID, actorID, keyID); releaseErr != nil {
 					reqLog.Warn("grok_media.video_billing_claim_release_failed",
@@ -202,6 +275,9 @@ func recordGrokMediaUsage(
 	})
 }
 
+// ObserveVideo logs the recognized bind, storage, loading and billing-claim
+// notice kinds. Unknown kinds are ignored; a usable logger is required when a
+// recognized notice emits its task and failure metadata.
 func (o grokVideoObserver) ObserveVideo(n gatewaymedia.VideoNotice) {
 	switch n.Kind {
 	case "bind_failed":

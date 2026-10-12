@@ -30,15 +30,36 @@ import (
 	groktestkit "github.com/TokenFlux/TokenRouter/internal/upstream/grok/testkit"
 )
 
+// Grok Responses forwarding carries cache and tool identities through OAuth
+// CLI or API Key transport. Decryption recovery strips rejected ciphertext
+// while keeping the prior response anchor and summary available, and compact
+// conversion returns encrypted state beside the observed usage. Buffered JSON
+// and streaming clients exercise those transformations through the same HTTP
+// request fixtures.
+//
+// Tool restoration can suppress or expand upstream events, changing the number
+// of client frames. The scripted stream derives each event label from its JSON
+// type, and its reader captures that label with one validated payload before
+// clearing the label. Assertions compare the restored label/type pair and
+// consecutive sequence numbers so rewritten events keep their client identity.
+
+// grokRateLimitRepeatCooldown reconstructs the observed ten-minute limit window
+// in the recovery fixture so conditional clearing can compare both saved timestamps.
 const (
 	grokRateLimitRepeatCooldown = 10 * time.Minute
 )
 
+// grokProtocolSSEFrame stores an event name beside its JSON fixture payload.
 type grokProtocolSSEFrame struct {
-	event string
-	data  []byte
+	// event and data describe one captured frame. Restoration tests compare the
+	// event label with the JSON type while inspecting the same payload's item fields.
+	event string // declared SSE event
+	data  []byte // JSON frame payload
 }
 
+// TestIsGrokModelSpecificFreeUsage compares free-use messages with and without
+// the selected model name. It checks the predicate accepts explicit
+// model-scoped examples and rejects generic exhaustion text for that model.
 func TestIsGrokModelSpecificFreeUsage(t *testing.T) {
 	require.True(t, providercore.IsGrokModelSpecificFreeUsage(
 		"you've used all the included free usage for model grok-4.5", "grok-4.5"))
@@ -46,6 +67,9 @@ func TestIsGrokModelSpecificFreeUsage(t *testing.T) {
 	require.False(t, providercore.IsGrokModelSpecificFreeUsage("free usage exhausted", "grok-4.5"))
 }
 
+// TestGrokStickyAffinitySeed_ScopesByModel derives affinity from the same
+// session under two model bodies. It checks deterministic output for repeated
+// input and a distinct versioned seed when the requested model changes.
 func TestGrokStickyAffinitySeed_ScopesByModel(t *testing.T) {
 	a := gatewaysession.GrokStickyAffinitySeed("session-1", []byte(`{"model":"grok-4.5"}`))
 	b := gatewaysession.GrokStickyAffinitySeed("session-1", []byte(`{"model":"grok-4.3"}`))
@@ -55,6 +79,10 @@ func TestGrokStickyAffinitySeed_ScopesByModel(t *testing.T) {
 	require.Contains(t, a, "grok-affinity:v1:")
 }
 
+// TestApplyGrokUpstreamFailure_ModelSpecificFreeUsage observes a
+// model-specific Free exhaustion response on an OAuth provider. It checks only
+// the named model is blocked and no provider-wide temporary scheduling write
+// occurs.
 func TestApplyGrokUpstreamFailure_ModelSpecificFreeUsage(t *testing.T) {
 	repo := &grokQuotaProviderRepo{}
 	svc := newWSFixture(wsFixtureInputs{providers: repo})
@@ -68,6 +96,10 @@ func TestApplyGrokUpstreamFailure_ModelSpecificFreeUsage(t *testing.T) {
 	require.False(t, providercore.IsGrokModelQuotaBlocked(provider.Record.ID, "grok-4.3", time.Now()))
 }
 
+// TestApplyGrokUpstreamFailure_SpendingLimitRemainsRecoverable observes a
+// spending-limit response with no billing-period snapshot. It checks one
+// recoverable rate-limit write near the probe cooldown and no temporary
+// scheduling write.
 func TestApplyGrokUpstreamFailure_SpendingLimitRemainsRecoverable(t *testing.T) {
 	repo := &grokQuotaProviderRepo{}
 	svc := newWSFixture(wsFixtureInputs{providers: repo})
@@ -78,10 +110,14 @@ func TestApplyGrokUpstreamFailure_SpendingLimitRemainsRecoverable(t *testing.T) 
 
 	require.Equal(t, 1, repo.rateLimitedCalls)
 	require.Zero(t, repo.tempUnschedCalls)
-	// A missing billing-period snapshot uses a short probe cooldown that can recover.
+	// A missing billing-period snapshot uses the probe cooldown. Allow two
+	// seconds between health observation and assertion when comparing its reset time.
 	require.WithinDuration(t, time.Now().Add(10*time.Minute), repo.lastRateLimitResetAt, 2*time.Second)
 }
 
+// TestForwardGrokResponses_PropagatesSearchCountFromJSON returns web and X
+// search call objects in a buffered response. It checks both search units and
+// observed input/output tokens reach the forward result for completion.
 func TestForwardGrokResponses_PropagatesSearchCountFromJSON(t *testing.T) {
 	body := []byte(`{"model":"grok","input":"search something","tools":[{"type":"web_search"}],"stream":false}`)
 	recorder := httptest.NewRecorder()
@@ -117,6 +153,9 @@ func TestForwardGrokResponses_PropagatesSearchCountFromJSON(t *testing.T) {
 	require.Equal(t, 5, result.Usage.OutputTokens)
 }
 
+// TestForwardGrokResponses_PropagatesSearchCountFromSSE repeats one search
+// call across item.done and completed events. It checks streaming execution
+// reports one search unit after deduplicating the repeated call identity.
 func TestForwardGrokResponses_PropagatesSearchCountFromSSE(t *testing.T) {
 	body := []byte(`{"model":"grok","input":"search","tools":[{"type":"web_search"}],"stream":true}`)
 	recorder := httptest.NewRecorder()
@@ -141,6 +180,10 @@ func TestForwardGrokResponses_PropagatesSearchCountFromSSE(t *testing.T) {
 	require.Equal(t, 1, result.SearchCount, "stream SearchCount must be wired and deduped")
 }
 
+// TestForwardGrokResponsesCodexAdditionalToolsUsesMixedCacheIntent supplies
+// functions, custom and namespace declarations through additional_tools. It
+// checks lowered supported tools, native search companions and one isolated
+// identity reach upstream while the local control header stays absent.
 func TestForwardGrokResponsesCodexAdditionalToolsUsesMixedCacheIntent(t *testing.T) {
 	body := []byte(`{
 		"model":"grok-4.5",
@@ -202,6 +245,10 @@ func TestForwardGrokResponsesCodexAdditionalToolsUsesMixedCacheIntent(t *testing
 	require.Empty(t, upstream.lastReq.Header.Get("X-TokenRouter-Grok-Client-Tool-Cache"))
 }
 
+// TestForwardGrokResponsesClaudeDesktopClientToolsUseCacheRoute sends two
+// desktop turns with unchanged session and declarations. It checks stable
+// cache identity, native search companions and cached-token observations while
+// client fingerprint headers stay local.
 func TestForwardGrokResponsesClaudeDesktopClientToolsUseCacheRoute(t *testing.T) {
 	firstBody := []byte(`{
 		"model":"grok-4.5","stream":false,"instructions":"You are Claude Desktop.",
@@ -298,6 +345,10 @@ func TestForwardGrokResponsesClaudeDesktopClientToolsUseCacheRoute(t *testing.T)
 	require.Equal(t, secondIdentity, upstream.requests[1].Header.Get(GrokConversationIDHeader))
 }
 
+// TestForwardGrokResponsesCompactRoundTrip returns encrypted reasoning and
+// summary text to a compact request. It checks summary preparation, metadata
+// removal and a client compaction item retaining encrypted state, summary and
+// observed usage.
 func TestForwardGrokResponsesCompactRoundTrip(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -357,6 +408,10 @@ func TestForwardGrokResponsesCompactRoundTrip(t *testing.T) {
 	require.Equal(t, "compact summary", gjson.Get(recorder.Body.String(), "output.0.summary.0.text").String())
 }
 
+// TestForwardGrokResponsesStreamingDefaultsEmptyModelTo45AndSnapshots streams
+// a request with no model through the default fixture settings. It checks
+// outbound model/header/cache controls, returned usage and reasoning, and the
+// provider quota snapshot observation.
 func TestForwardGrokResponsesStreamingDefaultsEmptyModelTo45AndSnapshots(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -418,6 +473,10 @@ func TestForwardGrokResponsesStreamingDefaultsEmptyModelTo45AndSnapshots(t *test
 	require.NotNil(t, repo.updates[52]["grok_usage_snapshot"])
 }
 
+// TestForwardGrokResponsesAPIKeyUsesXAIResponses streams a mapped request
+// through an API Key provider. It checks the public API endpoint, bearer
+// authentication, removed metadata and returned response/token observations
+// without OAuth CLI identity.
 func TestForwardGrokResponsesAPIKeyUsesXAIResponses(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -464,6 +523,10 @@ func TestForwardGrokResponsesAPIKeyUsesXAIResponses(t *testing.T) {
 	require.Equal(t, 1, result.Usage.OutputTokens)
 }
 
+// TestForwardGrokResponsesUsesMetadataSessionForCacheIdentityWithoutForwardingMetadata
+// changes user content beneath encoded metadata session identity. It checks
+// both requests receive the same isolated key while neither forwarded body
+// retains the client metadata field.
 func TestForwardGrokResponsesUsesMetadataSessionForCacheIdentityWithoutForwardingMetadata(t *testing.T) {
 	firstBody := []byte(`{"model":"grok-4.5","input":"first turn","metadata":{"user_id":"{\"session_id\":\"metadata-session\"}"},"stream":false}`)
 	secondBody := []byte(`{"model":"grok-4.5","input":"different second turn","metadata":{"user_id":"{\"session_id\":\"metadata-session\"}"},"stream":false}`)
@@ -515,6 +578,10 @@ func TestForwardGrokResponsesUsesMetadataSessionForCacheIdentityWithoutForwardin
 	require.False(t, gjson.GetBytes(upstream.bodies[1], "metadata").Exists())
 }
 
+// TestForwardGrokResponsesRetriesInvalidEncryptedContentOnce returns a
+// recoverable decryption error followed by success. It checks one replay keeps
+// summary, prior response anchor, credentials and cache identity while
+// removing ciphertext and first-error Ops state.
 func TestForwardGrokResponsesRetriesInvalidEncryptedContentOnce(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -600,12 +667,16 @@ func TestForwardGrokResponsesRetriesInvalidEncryptedContentOnce(t *testing.T) {
 	require.False(t, hasTerminalStatus)
 }
 
+// TestForwardGrokResponsesInvalidEncryptedContentRecoveryDoesNotOvermatch
+// varies error code/message and available encrypted reasoning. It checks
+// nonmatching evidence returns an error after exactly one request, leaving the
+// replay exception unavailable for those fixtures.
 func TestForwardGrokResponsesInvalidEncryptedContentRecoveryDoesNotOvermatch(t *testing.T) {
 	matchingError := `{"code":"invalid-argument","error":"Could not decrypt the provided encrypted_content."}`
 	tests := []struct {
-		name         string
-		requestBody  string
-		responseBody string
+		name         string // scenario subtest label
+		requestBody  string // input request JSON
+		responseBody string // scripted error JSON
 	}{
 		{
 			name:         "different top-level code",
@@ -657,6 +728,10 @@ func TestForwardGrokResponsesInvalidEncryptedContentRecoveryDoesNotOvermatch(t *
 	}
 }
 
+// TestForwardGrokResponsesInvalidEncryptedContentRecoveryNestedErrorShape
+// places the decryption message in a nested error object. It checks the
+// recognized shape allows a second exchange with ciphertext removed and
+// returns the successful result.
 func TestForwardGrokResponsesInvalidEncryptedContentRecoveryNestedErrorShape(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -695,6 +770,10 @@ func TestForwardGrokResponsesInvalidEncryptedContentRecoveryNestedErrorShape(t *
 	require.False(t, gjson.GetBytes(upstream.bodies[1], "input.0.encrypted_content").Exists())
 }
 
+// TestForwardGrokResponsesInvalidEncryptedContentRetryFailureIsTerminal
+// returns the decryption error on both exchanges. It checks two requests,
+// stripped replay reasoning and terminal Ops status without attributing the
+// first recoverable request as final failure.
 func TestForwardGrokResponsesInvalidEncryptedContentRetryFailureIsTerminal(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -746,6 +825,10 @@ func TestForwardGrokResponsesInvalidEncryptedContentRetryFailureIsTerminal(t *te
 	require.Equal(t, http.StatusBadRequest, c.GetInt(OpsUpstreamStatusCodeKey))
 }
 
+// TestForwardGrokResponsesNonStreamingUsesCacheIdentityAndCachedUsage buffers
+// cached usage after an expired rate-limit observation. It checks isolated
+// body/header identity, retained current usage and conditional recovery using
+// the observed limit timestamps.
 func TestForwardGrokResponsesNonStreamingUsesCacheIdentityAndCachedUsage(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -796,8 +879,10 @@ func TestForwardGrokResponsesNonStreamingUsesCacheIdentityAndCachedUsage(t *test
 	require.Equal(t, observedResetAt, repo.recoveryObservedReset)
 }
 
-// TestForwardGrokResponsesFreeFunctionToolsUseCacheCapableMixedRoute checks platform-tool injection for Free OAuth
-// function-tool requests.
+// TestForwardGrokResponsesFreeFunctionToolsUseCacheCapableMixedRoute executes
+// known Free function and named-search intent with automatic choice. It checks
+// a nonempty isolated key, retained client function and native search
+// declarations reach the selected upstream request.
 func TestForwardGrokResponsesFreeFunctionToolsUseCacheCapableMixedRoute(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -842,6 +927,10 @@ func TestForwardGrokResponsesFreeFunctionToolsUseCacheCapableMixedRoute(t *testi
 	require.Equal(t, "auto", gjson.GetBytes(upstream.lastBody, "tool_choice").String())
 }
 
+// TestForwardGrokResponsesFailoverKeepsCacheIdentityAcrossProviders executes a
+// failing provider followed manually by another provider on the same request.
+// It checks both exchanges share isolated identity while each uses its own
+// bearer credential.
 func TestForwardGrokResponsesFailoverKeepsCacheIdentityAcrossProviders(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -894,6 +983,9 @@ func TestForwardGrokResponsesFailoverKeepsCacheIdentityAcrossProviders(t *testin
 	require.Equal(t, "Bearer access-token-b", upstream.requests[1].Header.Get("Authorization"))
 }
 
+// TestForwardGrokResponsesRejectsMappedImageModelWithClientError maps a
+// request alias to an image-only Grok model. It checks a 400 model-parameter
+// response and nil result direct the caller toward the image endpoint.
 func TestForwardGrokResponsesRejectsMappedImageModelWithClientError(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -922,6 +1014,9 @@ func TestForwardGrokResponsesRejectsMappedImageModelWithClientError(t *testing.T
 	require.Contains(t, gjson.GetBytes(recorder.Body.Bytes(), "error.message").String(), "grok-imagine-image-quality")
 }
 
+// TestForwardGrokResponsesClientToolNameConflictReturns400 gives a custom tool
+// and function the same declaration name. It checks a tools-parameter error is
+// presented and the scripted transport receives no upstream request.
 func TestForwardGrokResponsesClientToolNameConflictReturns400(t *testing.T) {
 	body := []byte(`{
 		"model":"grok","stream":false,"input":"hello",
@@ -948,6 +1043,10 @@ func TestForwardGrokResponsesClientToolNameConflictReturns400(t *testing.T) {
 	require.Empty(t, upstream.requests, "an ambiguous request must not reach xAI")
 }
 
+// TestForwardGrokResponsesMalformedToolSearchOutputReturns400BeforeUpstream
+// supplies discovered-tool output without required call identity. It checks
+// the malformed tool representation returns a 400 tools error before any
+// scripted upstream exchange.
 func TestForwardGrokResponsesMalformedToolSearchOutputReturns400BeforeUpstream(t *testing.T) {
 	body := []byte(`{
 		"model":"grok","stream":false,
@@ -972,6 +1071,10 @@ func TestForwardGrokResponsesMalformedToolSearchOutputReturns400BeforeUpstream(t
 	require.Empty(t, upstream.requests, "malformed lowered output must not reach xAI")
 }
 
+// TestForwardGrokResponsesOAuthRestoresClientToolsNonStreaming returns lowered
+// custom, tool-search and namespace functions through OAuth JSON. It checks
+// client tool kinds, names, input and namespace are restored while the
+// upstream request uses function forms.
 func TestForwardGrokResponsesOAuthRestoresClientToolsNonStreaming(t *testing.T) {
 	body := groktestkit.ClientToolsRequest(false)
 	recorder := httptest.NewRecorder()
@@ -1026,6 +1129,10 @@ func TestForwardGrokResponsesOAuthRestoresClientToolsNonStreaming(t *testing.T) 
 	require.Equal(t, "send_message", gjson.GetBytes(response, "output.2.name").String())
 }
 
+// TestForwardGrokResponsesAPIKeyRestoresClientToolsFromSSEForNonStreamingRequest
+// returns lowered tool events as SSE to a JSON client request. It checks valid
+// buffered JSON restores custom input, tool-search execution and namespace
+// identity in the final output.
 func TestForwardGrokResponsesAPIKeyRestoresClientToolsFromSSEForNonStreamingRequest(t *testing.T) {
 	body := groktestkit.ClientToolsRequest(false)
 	recorder := httptest.NewRecorder()
@@ -1062,6 +1169,10 @@ func TestForwardGrokResponsesAPIKeyRestoresClientToolsFromSSEForNonStreamingRequ
 	require.Equal(t, "send_message", gjson.GetBytes(response, "output.2.name").String())
 }
 
+// TestForwardGrokResponsesAPIKeyRestoresClientToolsStreaming streams lowered
+// tool events with suppression and expansion. It checks restored item kinds
+// and argument events, preserved extension data and consecutive sequence
+// numbers beginning at the upstream seed.
 func TestForwardGrokResponsesAPIKeyRestoresClientToolsStreaming(t *testing.T) {
 	body := groktestkit.ClientToolsRequest(true)
 	recorder := httptest.NewRecorder()
@@ -1133,6 +1244,10 @@ func TestForwardGrokResponsesAPIKeyRestoresClientToolsStreaming(t *testing.T) {
 	require.Equal(t, "collaboration", gjson.GetBytes(completed.data, "response.output.2.namespace").String())
 }
 
+// grokProtocolOAuthProvider returns fresh ready OAuth credentials for
+// client-tool protocol scenarios. Expiration is set beyond the refresh skew,
+// and its paid tier avoids Free tool injection interfering with restoration
+// assertions.
 func grokProtocolOAuthProvider(id int64) *gatewayprovider.ExecutionProvider {
 	return &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -1147,6 +1262,9 @@ func grokProtocolOAuthProvider(id int64) *gatewayprovider.ExecutionProvider {
 	}
 }
 
+// grokProtocolAPIKeyProvider returns a fresh active API Key Grok provider with
+// public Responses URL. Tests use its credential map for scripted exchanges,
+// and it has one configured concurrency slot.
 func grokProtocolAPIKeyProvider(id int64) *gatewayprovider.ExecutionProvider {
 	return &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -1157,6 +1275,10 @@ func grokProtocolAPIKeyProvider(id int64) *gatewayprovider.ExecutionProvider {
 	}
 }
 
+// assertGrokProtocolRequestLowered checks client-only declarations and history
+// become Responses function forms. It fails the current test if custom,
+// namespace or tool-search proxy names, tool choice or paired input
+// representations differ.
 func assertGrokProtocolRequestLowered(t *testing.T, body []byte) {
 	t.Helper()
 	require.True(t, json.Valid(body))
@@ -1177,6 +1299,16 @@ func assertGrokProtocolRequestLowered(t *testing.T, body []byte) {
 	require.False(t, gjson.GetBytes(body, "input.4.namespace").Exists())
 }
 
+// grokProtocolUpstreamSSE builds the lowered custom, namespace and tool-search
+// stream used by restoration scenarios. Its fixed event sequence starts at
+// forty, carries split custom arguments and includes all completed tool
+// outputs with terminal token usage.
+//
+// Each frame label is read from its JSON type before serialization, keeping
+// the two event identities consistent for the HTTP output assertions. The
+// script includes intermediate proxy argument events that restoration can
+// suppress or expand, and the final client sequence is checked separately
+// after that transformation.
 func grokProtocolUpstreamSSE() string {
 	events := []string{
 		`{"type":"response.created","sequence_number":40,"response":{"id":"resp_protocol_stream","model":"grok-4.5"},"upstream_extension":{"preserved":true}}`,
@@ -1197,11 +1329,23 @@ func grokProtocolUpstreamSSE() string {
 	var out strings.Builder
 	for _, event := range events {
 		typ := gjson.Get(event, "type").String()
+		// Derive the wire label from JSON type so fixture headers and payloads
+		// identify the same event when restoration later rewrites their client representation.
 		fmt.Fprintf(&out, "event: %s\ndata: %s\n\n", typ, event)
 	}
 	return out.String()
 }
 
+// parseGrokProtocolSSEFrames pairs fixture event labels with validated JSON
+// data lines. It accepts the supplied one-event/one-data-line layout, ignores
+// non-data lines and DONE, and fails the test when data arrives with no
+// remembered label.
+//
+// After one payload is captured, its label is cleared so another data line
+// cannot silently reuse that event identity. Returned payload bytes are newly
+// converted from the data string and retain their JSON text. This helper is
+// for the scripted fixture layout; it does not join multiple data lines into a
+// general SSE event.
 func parseGrokProtocolSSEFrames(t *testing.T, body string) []grokProtocolSSEFrame {
 	t.Helper()
 	var frames []grokProtocolSSEFrame
@@ -1218,12 +1362,18 @@ func parseGrokProtocolSSEFrames(t *testing.T, body string) []grokProtocolSSEFram
 		}
 		require.NotEmpty(t, event, "every data frame from this upstream should retain an event field")
 		require.JSONEq(t, data, data)
+		// Capture the current label with its payload before resetting it; later
+		// assertions compare this pair after tool-event suppression and expansion.
 		frames = append(frames, grokProtocolSSEFrame{event: event, data: []byte(data)})
 		event = ""
 	}
 	return frames
 }
 
+// requireGrokProtocolFrame returns the first matching fixture event,
+// optionally filtered by a JSON path string. An empty path matches the event
+// alone; missing evidence fails the current test rather than supplying a
+// usable frame.
 func requireGrokProtocolFrame(t *testing.T, frames []grokProtocolSSEFrame, eventType, path, value string) grokProtocolSSEFrame {
 	t.Helper()
 	for _, frame := range frames {

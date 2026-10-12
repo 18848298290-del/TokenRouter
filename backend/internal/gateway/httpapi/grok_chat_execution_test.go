@@ -8,14 +8,23 @@ import (
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 )
 
+// Grok Chat bridge admission distinguishes representable client fields from
+// requests that need native Chat. The eligibility table checks supported text,
+// images and function history alongside rejected legacy or malformed controls,
+// and runtime cases add the selected model and cache identity requirements.
+
+// TestGrokChatResponsesBridgeEligibility presents supported and rejected Chat
+// field combinations to the codec. It checks both the eligibility result and
+// exact rejection reason, including images, functions, histories and nullable
+// controls.
 func TestGrokChatResponsesBridgeEligibility(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name   string
-		body   string
-		want   bool
-		reason string
+		name   string // scenario subtest label
+		body   string // input Chat JSON
+		want   bool   // expected bridge eligibility
+		reason string // expected rejection reason
 	}{
 		{
 			name: "plain text chat",
@@ -203,6 +212,10 @@ func TestGrokChatResponsesBridgeEligibility(t *testing.T) {
 	}
 }
 
+// TestGrokChatResponsesRuntimeEligibility varies supported Grok model IDs and
+// cache identity presence. It checks eligible mapped model variants and
+// rejects older/build-free models or a missing identity in the listed
+// fixtures.
 func TestGrokChatResponsesRuntimeEligibility(t *testing.T) {
 	t.Parallel()
 	require.True(t, gatewayprovider.GrokBodyCodec().GrokChatResponsesRuntimeEligible("grok-4.5", "isolated-id"))

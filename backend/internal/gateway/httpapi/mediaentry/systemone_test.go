@@ -27,14 +27,24 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// SystemOne usage warnings retain the served decision and correlate its
+// unknown usage with the request attempt. These fixtures also check
+// Jev-specific final error rules and verify repeated provider exchanges share
+// one initial RPM admission while later funding checks skip that increment.
+
+// systemOneFunds permits fixture funding admission so RPM behavior can be
+// observed.
 type systemOneFunds struct{}
 
+// systemOneRPM counts serial RPM admissions for one decision request fixture.
 type systemOneRPM struct {
-	scheduler.UserRPMCache
-	calls int
+	scheduler.UserRPMCache     // unused RPM cache operations
+	calls                  int // serial RPM admission count
 }
 
-// TestSystemOneFailoverRules checks platform matching, monitoring suppression, and Retry-After on exhaustion.
+// TestSystemOneFailoverRules exhausts a Jev request under Jev, unrelated and
+// unrestricted response rules. It checks applicable rewrite/monitoring
+// behavior and preserves Retry-After for every platform fixture.
 func TestSystemOneFailoverRules(t *testing.T) {
 	for _, platform := range []string{"jev", "openai", ""} {
 		t.Run(platform, func(t *testing.T) {
@@ -66,8 +76,10 @@ func TestSystemOneFailoverRules(t *testing.T) {
 	}
 }
 
-// TestSystemOneMissingUsageRetainsSuccessfulRequest checks warning correlation while retaining the
-// successful response.
+// TestSystemOneMissingUsageRetainsSuccessfulRequest adds invalid-usage
+// observation after a successful answer was written. It checks the request
+// remains completed with HTTP 200 and gains one correlated usage_unknown
+// attempt and usage_invalid Ops event.
 func TestSystemOneMissingUsageRetainsSuccessfulRequest(t *testing.T) {
 	var saved telemetry.RequestRecord
 	ctx := telemetry.WithRequestCapture(context.Background(), telemetry.RequestRecord{RequestID: "local", State: "completed", Status: 200}, func(record telemetry.RequestRecord) { saved = record })
@@ -89,14 +101,21 @@ func TestSystemOneMissingUsageRetainsSuccessfulRequest(t *testing.T) {
 	require.Equal(t, "usage_invalid", typed[0].Kind)
 }
 
+// Check permits fixture funding input and returns a successful admission
+// result.
 func (systemOneFunds) Check(context.Context, billing.CheckInput) error { return nil }
 
+// IncrementUserRPM increments and returns the serial fixture admission count.
+// It ignores user/context inputs and reports no cache error, allowing the test
+// to distinguish initial counting from later skipped checks.
 func (r *systemOneRPM) IncrementUserRPM(context.Context, int64) (int, error) {
 	r.calls++
 	return r.calls, nil
 }
 
-// TestSystemOneConsumesOneRPM checks that repeated upstream attempts share the initial RPM admission.
+// TestSystemOneConsumesOneRPM performs initial funding admission followed by
+// two selected-provider exchanges. It checks both forwards succeed while the
+// RPM cache increments once because repeated funding checks skip counting.
 func TestSystemOneConsumesOneRPM(t *testing.T) {
 	cache := &systemOneRPM{}
 	checker := admission.NewFundingAdmission(systemOneFunds{}, scheduler.NewRPMAdmission(cache, nil, scheduler.Diagnostics{}))

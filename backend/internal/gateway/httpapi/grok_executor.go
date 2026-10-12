@@ -18,22 +18,34 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
+// Grok Responses request construction uses the selected provider's route and
+// credentials, with CLI headers reserved for OAuth providers. Header overrides
+// run through the shared execution binding, and the supplied cache identity
+// ties body preparation to the upstream conversation header.
+
 // @project-doc docs/interfaces/grok_upstream.md#grok_account_contract
 // GrokExecutor binds single-attempt platform dependencies; the request owner handles failover and completion.
 type GrokExecutor struct {
-	Attributes  *routing.ModelAttributeService
-	FastPolicy  *gatewayadapter.ExecutionFastPolicy
-	Credentials *gatewayadapter.RequestCredentials
-	Transport   httpclient.UpstreamTransport
-	Failure     *UpstreamTransportFailure
-	Output      *OpenAIResponseOutput
-	Health      *provideradapter.GrokHealth
-	Routes      gatewayadapter.GrokRoutes
-	TLS         *egressprovider.TLSProfiles
-	Dialer      openai.WSClientDialer
-	Enter       func() (func(), error)
+	Attributes  *routing.ModelAttributeService      // resolved model capability service
+	FastPolicy  *gatewayadapter.ExecutionFastPolicy // request service-tier policy
+	Credentials *gatewayadapter.RequestCredentials  // shared request credential resolver
+	Transport   httpclient.UpstreamTransport        // provider-isolated HTTP transport
+	Failure     *UpstreamTransportFailure           // transport failure presentation
+	Output      *OpenAIResponseOutput               // shared Responses output handling
+	Health      *provideradapter.GrokHealth         // Grok provider health observer
+	Routes      gatewayadapter.GrokRoutes           // provider endpoint route resolver
+	// TLS selects a request fingerprint; a nil service lets TLSProfile return nil
+	// for the shared transport's ordinary profile.
+	TLS    *egressprovider.TLSProfiles
+	Dialer openai.WSClientDialer // shared upstream WebSocket dialer
+	// Enter registers the platform attempt with application shutdown tracking.
+	// A successful entry supplies cleanup that the invoked executor releases.
+	Enter func() (func(), error)
 }
 
+// TLSProfile resolves this provider's TLS selection with optional router
+// matches. A nil executor or missing TLS service returns nil, allowing the
+// shared HTTP transport to use its ordinary profile.
 func (s *GrokExecutor) TLSProfile(target *gatewayadapter.ExecutionProvider, matches ...egress.TLSFingerprintRouterMatchResult) *tlsfingerprint.Profile {
 	if s == nil || s.TLS == nil {
 		return nil
@@ -41,7 +53,10 @@ func (s *GrokExecutor) TLSProfile(target *gatewayadapter.ExecutionProvider, matc
 	return s.TLS.ResolveRequestTLS(gatewayadapter.ExecutionTLSSelection(target, matches))
 }
 
-// BuildResponsesRequest resolves the current default URL and forwards allowed request headers.
+// BuildResponsesRequest builds one authenticated Responses request using the
+// selected provider route and optional runtime default. It forwards
+// OpenAI-Beta and supplies OAuth CLI and cache headers through Grok construction
+// before applying supported provider overrides.
 func (s *GrokExecutor) BuildResponsesRequest(ctx context.Context, c *gin.Context, target *gatewayadapter.ExecutionProvider, body []byte, token, identity string, runtimeDefault bool) (*http.Request, error) {
 	targetURL, err := s.Routes.Responses(target, runtimeDefault)
 	if err != nil {

@@ -5,6 +5,15 @@ import (
 	"time"
 )
 
+// Realtime audio billing needs actual observed audio and positive connection
+// duration. These fixtures inspect refusal of unobserved/empty sessions and
+// the generated identity and minutes-based quantity for two independent
+// measured audio connections.
+
+// TestGrokRealtimeBillingResultRequiresObservedAudio supplies an unobserved
+// session and a zero-duration observed session. It checks both return no
+// billing result before any completion recorder or financial operation is
+// involved.
 func TestGrokRealtimeBillingResultRequiresObservedAudio(t *testing.T) {
 	if grokRealtimeBillingResult("grok-voice-latest", time.Second, false) != nil {
 		t.Fatal("a session without observed audio must not be billed")
@@ -14,6 +23,10 @@ func TestGrokRealtimeBillingResultRequiresObservedAudio(t *testing.T) {
 	}
 }
 
+// TestGrokRealtimeBillingResultUsesForcedUniqueID creates two independent
+// ninety-second observed sessions. It checks a nonempty first request ID,
+// different IDs for the two results and one and a half Realtime minutes in
+// the first returned usage record.
 func TestGrokRealtimeBillingResultUsesForcedUniqueID(t *testing.T) {
 	first := grokRealtimeBillingResult("grok-voice-latest", 90*time.Second, true)
 	second := grokRealtimeBillingResult("grok-voice-latest", 90*time.Second, true)

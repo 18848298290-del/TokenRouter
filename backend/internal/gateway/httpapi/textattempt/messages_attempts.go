@@ -28,31 +28,91 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
-// messageAttemptBridge adapts one Messages attempt and captures completion.Input before asynchronous recording.
+// Messages attempts retain client body/model identity while preparing
+// group-mapped provider input. Selection and session tracking establish the
+// target before slot acquisition; the serial text loop owns failover, while
+// this bridge owns each forwarding operation and captures its completion
+// observations. User-message queue policy can serialize or delay requests
+// independently of provider concurrency.
+//
+// Serial leases can release on cancellation, upstream acceptance or return,
+// using one wrapped callback and clearing the callback before later attempts.
+// Output byte changes prevent replay after forwarding. Completion captures
+// current group funding, pricing and cache-billing state before worker
+// submission, allowing group fallback to replace its authorized snapshot
+// without erasing triggered billing policy. Sticky success refreshes an
+// existing provider binding only when selection retained that provider,
+// preserving affinity when another provider temporarily served the request.
+
+// messageAttemptBridge retains request-local Messages selection, resources and
+// completion state for serial attempts.
 type messageAttemptBridge struct {
-	fixed                                          *messageExecutionDependencies
-	c                                              *gin.Context
-	apiKey, currentAPIKey                          *apikey.APIKey
-	subject                                        authctx.AuthSubject
-	subscription, currentSubscription              *billing.UserSubscription
-	parsedReq, attemptParsedReq                    *requeststate.ParsedRequest
-	body                                           []byte
-	reqModel, platform, sessionKey                 string
+	// shared bound execution services
+	fixed *messageExecutionDependencies
+	c     *gin.Context // active Gin request context
+	// apiKey and currentAPIKey begin with the admitted Key; fallback replaces
+	// both with its authorized group snapshot. Completion reads currentAPIKey
+	// with currentSubscription, while subject remains the original caller.
+	// apiKey: admitted effective funding key.
+	// currentAPIKey: current authorized funding key.
+	apiKey, currentAPIKey *apikey.APIKey
+	// authenticated caller and concurrency identity
+	subject authctx.AuthSubject
+	// subscription and currentSubscription begin with the optional admitted
+	// funding choice. Authorized group fallback replaces both; Complete reads
+	// currentSubscription alongside currentAPIKey for the served attempt.
+	// subscription: admitted optional funding subscription.
+	// currentSubscription: current authorized funding subscription.
+	subscription, currentSubscription *billing.UserSubscription
+	// parsedReq and attemptParsedReq distinguish retained client parsing from
+	// per-attempt model/body reconstruction. body and reqModel preserve original
+	// identity for fallback rebuilding and completion pricing.
+	// parsedReq: retained parsed client input.
+	// attemptParsedReq: current mapped provider input.
+	parsedReq, attemptParsedReq *requeststate.ParsedRequest
+	body                        []byte // retained original request bytes
+	// reqModel: original client requested model.
+	// platform: optional forced selection platform.
+	// sessionKey: sticky conversation lookup identity.
+	reqModel, platform, sessionKey string
+	// reqStream: client streaming intent.
+	// isClaudeCodeClient: detected Claude client flag.
+	// hasBoundSession: observed sticky provider presence.
 	reqStream, isClaudeCodeClient, hasBoundSession bool
-	streamStarted                                  *bool
-	sessionBoundProviderID                         int64
-	reqLog                                         *zap.Logger
-	fallbackGroupID                                *int64
-	sessionAttempts                                *scheduler.SessionAttempts
-	selection                                      *gatewaycapture.SelectionResult
-	provider                                       *gatewaycapture.ExecutionProvider
-	providerReleaseFunc                            func()
-	attemptGroupMapping                            routing.GroupMappingResult
-	writerSizeBeforeForward                        int
-	result                                         *forwardcore.MessagesResult
+	// streamStarted is shared with queue/slot waits and protocol error output.
+	// Admission supplies a nonnil pointer throughout the synchronous text loop.
+	streamStarted          *bool       // shared HTTP streaming marker
+	sessionBoundProviderID int64       // cached sticky provider identity
+	reqLog                 *zap.Logger // request-scoped diagnostic logger
+	// fallbackGroupID comes from the admitted group during Begin; replay requires
+	// a distinct positive target and an authorized resolver before changing
+	// current funding.
+	fallbackGroupID *int64 // configured prompt-too-long target group
+	// sessionAttempts is created by Begin for base Messages. Its tracked entries
+	// own session outcomes and attached releases; Gemini overrides do not create
+	// it here.
+	// request session/resource completion tracker
+	sessionAttempts *scheduler.SessionAttempts
+	// selection and provider belong to the current serial attempt; Acquire sets
+	// providerReleaseFunc, Forward captures writerSizeBeforeForward and result,
+	// and the text loop consumes those observations before another Select.
+	selection *gatewaycapture.SelectionResult // current provider selection result
+	// current selected execution provider
+	provider *gatewaycapture.ExecutionProvider
+	// providerReleaseFunc wraps the selected slot release for cancellation and
+	// normal forwarding return; tracked session entries can also own that cleanup.
+	providerReleaseFunc func() // wrapped current slot cleanup
+	// current attempt model/pricing mapping
+	attemptGroupMapping     routing.GroupMappingResult
+	writerSizeBeforeForward int // forward response byte baseline
+	// last observed forwarding result
+	result *forwardcore.MessagesResult
 }
 
-// PrepareAttempt resolves the model and body for the current attempt.
+// PrepareAttempt rebuilds mapped provider input under the current authorized
+// Key. It retains original client model/body for subsequent attempts;
+// preparation errors write an admission response and return false before
+// provider selection proceeds.
 func (b *messageAttemptBridge) PrepareAttempt() bool {
 	var err error
 	b.attemptParsedReq, b.attemptGroupMapping, err = b.binding().prepareGatewayAttemptRequest(
@@ -66,7 +126,10 @@ func (b *messageAttemptBridge) PrepareAttempt() bool {
 	return true
 }
 
-// Select chooses a provider that supports the requested model.
+// Select chooses and retains a provider under the current group, session,
+// excluded identifiers and authenticated subject. Begin and successful
+// preparation precede serial use; a nonempty session key also registers this
+// target in request session tracking.
 func (b *messageAttemptBridge) Select(excluded map[int64]struct{}) (textflow.Selection, error) {
 	b.reqLog.Info("sticky.selecting_provider",
 		zap.String("session_key", b.sessionKey),
@@ -97,7 +160,10 @@ func (b *messageAttemptBridge) Select(excluded map[int64]struct{}) (textflow.Sel
 	return gatewaycapture.CaptureTextSelection(b.provider), nil
 }
 
-// FirstSelectionFailure converts initial selection failure into a client error.
+// FirstSelectionFailure presents an initial routing error using current
+// funding and model context. Business errors take precedence over availability
+// diagnosis; model-not-found retains its diagnostic message, while other cases
+// record applicable capacity limitation and provider-unavailability details.
 func (b *messageAttemptBridge) FirstSelectionFailure(err error, fallbackUsed bool) {
 	if handleGroupSelectionBusinessError(b.c, err, *b.streamStarted, func(status int, errType string, message string, responseStarted bool) {
 		b.binding().handleStreamingAwareError(b.c, status, errType, message, responseStarted)
@@ -123,7 +189,10 @@ func (b *messageAttemptBridge) FirstSelectionFailure(err error, fallbackUsed boo
 	b.binding().handleStreamingAwareError(b.c, cls.Status, cls.ErrType, message, *b.streamStarted)
 }
 
-// Intercept directly answers recognized warmup requests when interception is enabled.
+// Intercept writes a local warmup response when the selected provider enables
+// interception and input matches a recognized probe. Callers Select first; an
+// already acquired selection slot is released before local output, and true
+// ends the text loop.
 func (b *messageAttemptBridge) Intercept() bool {
 	if b.provider.View().IsInterceptWarmupEnabled() {
 		interceptType := clientmeta.DetectInterceptType(b.body, b.reqModel, b.parsedReq.MaxTokens, b.isClaudeCodeClient)
@@ -143,9 +212,19 @@ func (b *messageAttemptBridge) Intercept() bool {
 	return false
 }
 
-// Acquire acquires a provider slot and binds the sticky session after a successful wait.
+// Acquire obtains the selected provider slot and reports whether forwarding
+// can proceed. A retained selection lease is reused; otherwise a wait plan is
+// required, and successful waiting best-effort binds sticky identity before
+// execution.
+//
+// Queue registration errors allow uncounted waiting, but an explicit full
+// queue rejects before slot polling. Only counted entries are released after
+// timed acquisition or failure. Slot cleanup is wrapped for cancellation and
+// attached to any tracked session attempt, sharing cleanup with early
+// forwarding return and final session outcome handling.
 func (b *messageAttemptBridge) Acquire() bool {
-	// Reuse the selection's slot or wait according to its plan.
+	// Preserve the selection’s acquired lease; only a missing lease path joins
+	// its explicit wait plan before provider forwarding can use the resource.
 	b.providerReleaseFunc = b.selection.ReleaseFunc
 	if !b.selection.Acquired {
 		if b.selection.WaitPlan == nil {
@@ -161,6 +240,8 @@ func (b *messageAttemptBridge) Acquire() bool {
 		providerWaitCounted := false
 		waitEntry, err := b.binding().concurrencyHelper.EnterProviderWait(b.c.Request.Context(), b.provider.Record.ID, b.selection.WaitPlan.MaxWaiting)
 		canWait := waitEntry.Allowed
+		// Registration failure leaves no counted waiter but permits slot acquisition;
+		// an explicit full queue stops before polling and cannot own a decrement.
 		if err != nil {
 			b.reqLog.Warn("gateway.provider_wait_counter_increment_failed", zap.Int64("provider_id", b.provider.Record.ID), zap.Error(err))
 		} else if !canWait {
@@ -174,6 +255,8 @@ func (b *messageAttemptBridge) Acquire() bool {
 		if err == nil && canWait {
 			providerWaitCounted = true
 		}
+		// Clear counted ownership when releasing so failed and successful acquisition
+		// share cleanup without decrementing an unregistered or already released entry.
 		releaseWait := func() {
 			if providerWaitCounted {
 				waitEntry.Release()
@@ -205,14 +288,28 @@ func (b *messageAttemptBridge) Acquire() bool {
 			b.reqLog.Warn("gateway.bind_sticky_session_failed", zap.Int64("provider_id", b.provider.Record.ID), zap.Error(err))
 		}
 	}
-	// Release the provider slot when the request times out or disconnects.
+	// Share cancellation cleanup with explicit forwarding release; session tracking
+	// attaches this callback only when it already has an entry for the provider.
 	b.providerReleaseFunc = scheduler.WrapRelease(b.c.Request.Context(), scheduler.ReleaseOnCancel, b.providerReleaseFunc)
 	b.sessionAttempts.Own(b.provider.Record.ID, b.providerReleaseFunc)
 
 	return true
 }
 
-// Forward applies queue and compatibility policies before dispatching to the selected platform.
+// Forward applies queue policy and compatibility before dispatching the
+// captured provider attempt. It requires Begin, preparation, selection and
+// acquisition in the serial text loop; queue/throttle failures are logged
+// while provider forwarding still proceeds.
+//
+// A serial lease is shared by cancellation and upstream acceptance. After
+// platform dispatch returns, explicit cleanup releases it and clears the
+// acceptance callback. A body-preparation error before dispatch returns before
+// those steps: cleanup then relies on cancellation or a tracked session entry,
+// and the callback remains on attemptParsedReq. Cache-billing policy is
+// retained in request context for group fallback, while writer byte changes
+// independently mark retry commitment. The
+// returned outcome retains partial observations and distinguishes policy,
+// prompt-too-long and classified failover errors for the outer loop.
 func (b *messageAttemptBridge) Forward(state textflow.AttemptState) textflow.Outcome {
 	var err error
 	// Queue mode determines whether to serialize or apply a soft RPM delay.
@@ -229,7 +326,8 @@ func (b *messageAttemptBridge) Forward(state textflow.AttemptState) textflow.Out
 			b.reqLog,
 		)
 		if qErr != nil {
-			// Queue acquisition failures are logged and allow forwarding to proceed.
+			// Queue-store failure does not become provider failure here; retain its
+			// diagnostic and continue with the independently acquired provider concurrency slot.
 			b.reqLog.Warn("gateway.umq_acquire_failed",
 				zap.Int64("provider_id", b.provider.Record.ID),
 				zap.Error(qErr),
@@ -239,7 +337,8 @@ func (b *messageAttemptBridge) Forward(state textflow.AttemptState) textflow.Out
 		}
 
 	case queuepolicy.MessageQueueThrottle:
-		// Apply an RPM-based delay while concurrency slots remain independently limited.
+		// Throttling controls dispatch timing separately from the acquired provider
+		// slot; a delay error is logged below while forwarding continues on that slot.
 		baseRPM := gatewaycapture.ExecutionRuntimeConfig(b.provider).GetBaseRPM()
 		if tErr := b.binding().userMsgQueueHelper.ThrottleWithPing(
 			b.c, b.provider.Record.ID, baseRPM, b.reqStream, b.streamStarted,
@@ -261,13 +360,19 @@ func (b *messageAttemptBridge) Forward(state textflow.AttemptState) textflow.Out
 		}
 	}
 
-	// Release the serial lease on cancellation when serialize mode created one.
+	// One wrapped serial lease serves cancellation, acceptance and return cleanup,
+	// preventing those independently triggered paths from releasing the same queue resource twice.
 	queueRelease = scheduler.WrapRelease(b.c.Request.Context(), scheduler.ReleaseOnCancel, queueRelease)
 	b.sessionAttempts.Own(b.provider.Record.ID, queueRelease)
-	// Use the wrapped release callback so upstream acceptance also unregisters cancellation cleanup.
+	// Upstream acceptance ends queue serialization before stream completion; use
+	// the wrapped callback so this early release also unregisters its cancellation observer.
 	b.attemptParsedReq.OnUpstreamAccepted = queueRelease
 
-	// Apply Bedrock body-field and anthropic-beta filtering before either forwarding path.
+	// Replace parsed input with the Bedrock-compatible body before dispatch so
+	// body-field and beta filtering applies consistently to either selected forwarding path.
+	// Preparation failure precedes explicit queue/provider cleanup and callback
+	// clearing below; wrapped cancellation release and any tracked entry still own
+	// those resources when this branch exits.
 	if err := b.attemptParsedReq.ReplaceBody(b.binding().bedrockCompat(b.c, b.attemptParsedReq.Body.Bytes(), b.attemptParsedReq.Model, b.provider, b.currentAPIKey.GroupID)); err != nil {
 		b.binding().errorResponse(b.c, http.StatusBadRequest, "invalid_request_error", "Failed to parse request body")
 		return textflow.Outcome{Stop: true}
@@ -281,12 +386,14 @@ func (b *messageAttemptBridge) Forward(state textflow.AttemptState) textflow.Out
 		requestCtx = requeststate.WithProviderSwitchCount(requestCtx, state.SwitchCount)
 	}
 	if state.ForceCacheBilling {
-		// Pass the failover cache-billing flag to synchronous response rewriting.
+		// Carry triggered cache billing into response rewriting and persist it on
+		// the HTTP context because group fallback reconstructs subsequent attempt state.
 		requestCtx = requeststate.WithForceCacheBilling(requestCtx)
-		// Group fallback rebuilds attempts, so retain the triggered billing policy in the request context.
+
 		b.c.Request = b.c.Request.WithContext(requestCtx)
 	}
-	// Compare writer size after forwarding to prevent failover once output has been sent.
+	// Capture after queue waits so forwarding output can be distinguished from
+	// earlier keepalives when the outer loop decides whether replay remains permitted.
 	b.writerSizeBeforeForward = b.c.Writer.Size()
 	if b.provider.Record.Platform == capability.PlatformAntigravity {
 		b.result, err = b.binding().forwardAntigravity(requestCtx, b.c, b.provider, attemptBody, b.hasBoundSession)
@@ -294,11 +401,13 @@ func (b *messageAttemptBridge) Forward(state textflow.AttemptState) textflow.Out
 		b.result, err = b.binding().forwardMessages(requestCtx, b.c, b.provider, b.attemptParsedReq)
 	}
 
-	// Release a serial lease that the acceptance callback has not already released.
+	// The same wrapped callback also covers upstream failures before acceptance,
+	// releasing any serial lease that no acceptance event has yet ended.
 	if queueRelease != nil {
 		queueRelease()
 	}
-	// Clear the callback so a later failover attempt cannot invoke the previous lease's callback.
+	// Remove this attempt’s acceptance callback after forwarding so reconstructed
+	// or reused parsed input cannot invoke a prior provider’s serial cleanup.
 	b.attemptParsedReq.OnUpstreamAccepted = nil
 
 	if b.providerReleaseFunc != nil {
@@ -323,7 +432,18 @@ func (b *messageAttemptBridge) Forward(state textflow.AttemptState) textflow.Out
 	return out
 }
 
-// Complete captures usage and request data and submits completion work.
+// Complete captures measured result and current authorized funding for
+// asynchronous completion. A nil result does nothing; callers invoke it after
+// the text loop selects served output, using the retained provider and mapped
+// attempt state.
+//
+// Observed reasoning effort wins, then parsed output effort and an applicable
+// thinking default fill missing effort. Attempt-body bytes supply payload
+// hashing, original body bytes supply captured request reasoning, and group
+// mapping preserves client/upstream pricing identities. The cache-billing flag
+// combines current attempt state with retained fallback context before
+// capture, so worker submission cannot erase billing policy or reread mutable
+// Gin state.
 func (b *messageAttemptBridge) Complete(state textflow.AttemptState) {
 	usageResult := b.result
 
@@ -337,6 +457,8 @@ func (b *messageAttemptBridge) Complete(state textflow.AttemptState) {
 	inboundEndpoint := gatewayhttp.GetInboundEndpoint(b.c)
 	upstreamEndpoint := gatewayhttp.GetUpstreamEndpoint(b.c, b.provider.Record.Platform)
 
+	// Keep observed provider effort first; parsed effort and a thinking default
+	// fill only missing observations using upstream model identity before client identity.
 	if usageResult.ReasoningEffort == nil {
 		usageResult.ReasoningEffort = protocol.NormalizeClaudeOutputEffort(b.attemptParsedReq.OutputEffort)
 	}
@@ -348,11 +470,13 @@ func (b *messageAttemptBridge) Complete(state textflow.AttemptState) {
 		usageResult.ReasoningEffort = gatewaycapture.DefaultEffortForThinkingEnabled(protocolModel)
 	}
 
-	// Capture the cache-billing flag by value so completion does not retain the failover body.
+	// Read both attempt and retained context billing flags before capture, keeping
+	// a triggered provider-switch policy after the group fallback loop resets state.
 	forceCacheBilling := state.ForceCacheBilling || requeststate.IsForceCacheBilling(b.Context())
 
 	clientSessionID := gatewayhttp.ExtractClientSessionID(b.c)
-	// Capture funding and request data before queueing so the worker uses this snapshot.
+	// Snapshot current group funding and request data before submission, so the
+	// worker records the completed attempt without consulting later mutable request state.
 	completionInput := gatewaycapture.CaptureMessages(gatewayhttp.CompletionContext(b.c), &gatewaycapture.MessagesCapture{
 		Result: usageResult,
 
@@ -388,7 +512,17 @@ func (b *messageAttemptBridge) Complete(state textflow.AttemptState) {
 	})
 }
 
-// OtherFailure writes any missing client error and logs the forwarding failure.
+// OtherFailure presents any missing client failure and logs provider/proxy
+// diagnostics. New non-SSE bytes can count as an already communicated failure
+// without parsing the body; otherwise semantic-commit-aware fallback output
+// decides whether another response is attempted.
+//
+// The forwarding byte baseline comes from this attempt, separating its
+// response from earlier admission writes. SSE progress remains eligible for
+// terminal handling, while an existing committed response stays unchanged
+// through the bound fallback writer. The logged fallback flag reports the
+// presentation decision, not a guarantee that all error bytes reached the
+// client.
 func (b *messageAttemptBridge) OtherFailure(err error) {
 	upstreamErrorAlreadyCommunicated := gatewayhttp.ForwardErrorAlreadyCommunicated(b.c, b.writerSizeBeforeForward, err)
 	wroteFallback := false
@@ -416,7 +550,16 @@ func (b *messageAttemptBridge) OtherFailure(err error) {
 	b.reqLog.Error("gateway.forward_failed", forwardFailedFields...)
 }
 
-// Success increments applicable RPM counters and updates sticky-session bindings.
+// Success best-effort updates applicable RPM accounting and sticky affinity
+// after successful forwarding. The RPM check and increment are separate
+// operations, so this soft limit can be exceeded by concurrent requests and
+// write failure is only logged.
+//
+// A nonempty sticky key is bound when no provider was previously bound or the
+// selected provider matches that binding. A different selected provider leaves
+// the existing association intact, letting later requests return to the
+// original provider; sticky persistence failure does not undo the already
+// served response.
 func (b *messageAttemptBridge) Success() {
 	// Count successful forwarding toward the provider's soft RPM limit.
 	// Selection and increment are separate, so concurrent requests can temporarily exceed the limit.
@@ -439,7 +582,13 @@ func (b *messageAttemptBridge) Success() {
 	}
 }
 
+// Context returns the active request context used by serial Messages attempts.
 func (b *messageAttemptBridge) Context() context.Context { return b.c.Request.Context() }
+
+// Begin initializes current funding, configured fallback target and request
+// session tracking. Callers invoke it once before preparation/selection; a
+// single-provider group installs the retry hint so outer recovery can use its
+// corresponding policy.
 func (b *messageAttemptBridge) Begin() {
 	b.currentAPIKey = b.apiKey
 	b.currentSubscription = b.subscription
@@ -452,16 +601,33 @@ func (b *messageAttemptBridge) Begin() {
 	}
 }
 
+// Finish delegates final served outcome to request session tracking when it
+// exists. Callers run it after the text loop ends; the tracker coordinates
+// session retention and any owned resource cleanup with earlier attempt
+// releases.
 func (b *messageAttemptBridge) Finish(served bool) {
 	if b.sessionAttempts != nil {
 		b.sessionAttempts.Finish(scheduler.AttemptOutcome{Served: served})
 	}
 }
 
+// SingleProviderRetry installs the request hint used by single-provider
+// recovery policy. Begin calls it after detecting one provider in the current
+// group, before the text loop starts its attempt decisions.
 func (b *messageAttemptBridge) SingleProviderRetry() {
 	b.c.Request = b.c.Request.WithContext(requeststate.WithSingleProviderRetry(b.Context(), true))
 }
+
+// Canceled delegates client-gone presentation to the shared HTTP helper. A
+// canceled request retains already written status or selects 499 before
+// output; the text loop ends cancellation handling without using the helper’s
+// recognition result.
 func (b *messageAttemptBridge) Canceled() { gatewayhttp.FailoverClientGone(b.c) }
+
+// Exhausted presents final classified failover using the selected or retained
+// platform. Nil failure delegates generic 502 using current stream state; only
+// an UpstreamFailoverError cause receives detailed presentation, and other
+// causes produce no output here.
 func (b *messageAttemptBridge) Exhausted(err *textflow.AttemptFailure, platform string, forceStream bool) {
 	if platform == "" {
 		platform = b.platform
@@ -475,6 +641,9 @@ func (b *messageAttemptBridge) Exhausted(err *textflow.AttemptFailure, platform 
 	}
 }
 
+// PolicyFailure presents a recognized Anthropic beta-block policy error and
+// records local business limitation. Other error types do nothing; callers
+// classify the error before invoking this terminal policy path.
 func (b *messageAttemptBridge) PolicyFailure(err error) {
 	if original, ok := errors.AsType[*anthropic.BetaBlockedError](err); ok {
 		gatewayhttp.MarkOpsClientBusinessLimited(b.c, gatewayhttp.OpsClientBusinessLimitedReasonLocalPolicyDenied)
@@ -482,10 +651,21 @@ func (b *messageAttemptBridge) PolicyFailure(err error) {
 	}
 }
 
+// Switched delegates provider-switch observation for the current retained
+// selection result.
 func (b *messageAttemptBridge) Switched() {
 	b.binding().providerSwitched(b.selection)
 }
+
+// Abandon delegates prior-provider session cleanup before selection switches
+// to another target. Begin must have created session tracking; its tracked
+// resources and session state finish as an unserved attempt.
 func (b *messageAttemptBridge) Abandon(id int64) { b.sessionAttempts.Abandon(id) }
+
+// TempUnscheduleRetryableError delegates temporary scheduling suppression for
+// an UpstreamFailoverError cause. Other causes do nothing; callers provide the
+// current recovery context and provider identity after the text loop
+// classifies a retryable failure.
 func (b *messageAttemptBridge) TempUnscheduleRetryableError(ctx context.Context, id int64, err *textflow.AttemptFailure) {
 	if original, ok := errors.AsType[*forwardcore.UpstreamFailoverError](err.Cause); ok {
 		b.binding().tempUnschedule(ctx, id, original)

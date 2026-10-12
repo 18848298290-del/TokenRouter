@@ -9,6 +9,15 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// A streaming Qoder Responses request needs the Responses failure envelope,
+// with its client model preserved. The fixture installs stream observation
+// before presenting an upstream error and decodes the terminal frame to
+// protect status, code and message.
+
+// TestQoderGatewayStreamingAwareError_ResponsesStreamingEmitsResponseFailed
+// installs a streaming Responses model before upstream failure. Output must
+// contain response.failed with failed status and the client model, code and
+// message, without an Anthropic error shape.
 func TestQoderGatewayStreamingAwareError_ResponsesStreamingEmitsResponseFailed(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)

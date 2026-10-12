@@ -21,12 +21,28 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
+// Antigravity failures are presented using the protocol that entered the
+// gateway. Messages error output applies administrator rules after recording
+// upstream diagnostics, while compatible output uses its platform-safe message
+// selection and status mapping. Native Google output retains a smaller status-
+// name table.
+//
+// Error observation keeps provider and upstream request identity separate from
+// the client envelope. Mapped Messages output records those observations
+// before rule matching and returns a diagnostic error after presentation.
+// Collected compatible-stream failures preserve failover and cancellation
+// signals for orchestration; parse, timeout and line-size failures instead
+// receive committed protocol error output when this adapter handles them.
+
 // AntigravityOutput holds the current HTTP request and fixed output options.
 type AntigravityOutput struct {
-	GoogleOutput
-	Options googleforward.Options
+	GoogleOutput                       // synchronous request output
+	Options      googleforward.Options // fixed diagnostic output settings
 }
 
+// ClaudeError marks final presentation committed and writes an Anthropic error
+// envelope. It returns the supplied message as an error so request
+// orchestration can still report failure after synchronous client output.
 func (s *AntigravityOutput) ClaudeError(status int, errType, message string) error {
 	c := s.Context
 
@@ -38,6 +54,16 @@ func (s *AntigravityOutput) ClaudeError(status int, errType, message string) err
 	return fmt.Errorf("%s", message)
 }
 
+// MappedClaudeError records sanitized upstream diagnostics and presents an
+// Antigravity failure as a Messages error. The caller supplies a selected
+// provider, response status and upstream request identity. Commit state is
+// installed before diagnostic recording and client output.
+//
+// A matching response rule determines status, type and message. Otherwise HTTP
+// status selects platform defaults; bad requests use Antigravity's safe
+// passthrough selector, while authentication, permission and other failures
+// use their respective messages. The returned error keeps the upstream status
+// and sanitized diagnostic message after presentation for the request owner.
 func (s *AntigravityOutput) MappedClaudeError(provider *gatewayprovider.ExecutionProvider, upstreamStatus int, upstreamRequestID string, body []byte) error {
 	c := s.Context
 
@@ -65,7 +91,8 @@ func (s *AntigravityOutput) MappedClaudeError(provider *gatewayprovider.Executio
 		Detail: upstreamDetail,
 	})
 
-	// Log upstream details when enabled; this diagnostic body is not the client response.
+	// Enabled diagnostic logging keeps the bounded upstream body separate from
+	// the safe client message chosen by response rules or Antigravity defaults.
 	if logBody {
 		logging.LegacyPrintf("service.antigravity_gateway", "[antigravity-Forward] upstream_error status=%d body=%s", upstreamStatus, logredact.TruncateLine(body, maxBytes))
 	}
@@ -124,6 +151,9 @@ func (s *AntigravityOutput) MappedClaudeError(provider *gatewayprovider.Executio
 	return fmt.Errorf("upstream error: %d message=%s", upstreamStatus, upstreamMsg)
 }
 
+// GoogleError commits and writes Antigravity's native Google error envelope.
+// Its explicit status table maps unknown HTTP values to UNKNOWN, and the
+// supplied message is returned as an error after output.
 func (s *AntigravityOutput) GoogleError(status int, message string) error {
 	c := s.Context
 
@@ -152,6 +182,9 @@ func (s *AntigravityOutput) GoogleError(status int, message string) error {
 	return fmt.Errorf("%s", message)
 }
 
+// AntigravityCompatError commits and writes an OpenAI-compatible error with
+// nil param and code fields. The returned ordinary error contains the message,
+// so final presentation and execution failure remain visible independently.
 func (s *AntigravityOutput) AntigravityCompatError(
 	status int,
 	errType string,
@@ -171,6 +204,10 @@ func (s *AntigravityOutput) AntigravityCompatError(
 	return errors.New(message)
 }
 
+// MappedAntigravityCompatError records the sanitized Google-platform message
+// and provider identity before compatible error output. It applies MapStatus
+// and Antigravity's safe passthrough selector, marks the response committed
+// and returns the diagnostic failure.
 func (s *AntigravityOutput) MappedAntigravityCompatError(
 	provider *gatewayprovider.ExecutionProvider,
 	upstreamStatus int,
@@ -211,7 +248,13 @@ func (s *AntigravityOutput) MappedAntigravityCompatError(
 	return fmt.Errorf("upstream error: %d %s", upstreamStatus, message)
 }
 
+// MapAntigravityCollectionError maps a nonnil collected-stream failure to
+// compatible client output. Failover, cancellation and deadline errors pass
+// through for orchestration; interval timeout, scanner overflow and other
+// parse failures write their specific committed envelope.
 func (s *AntigravityOutput) MapAntigravityCollectionError(err error) error {
+	// Preserve outer-loop and cancellation decisions before presenting parse failures,
+	// because writing an error response here would close their available retry path.
 	if _, ok := errors.AsType[*protocolforward.UpstreamFailoverError](err); ok {
 		return err
 	}

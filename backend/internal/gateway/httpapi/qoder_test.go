@@ -14,7 +14,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/middleware"
 )
 
+// Qoder admission accepts omitted stream intent but rejects an explicitly
+// nonboolean JSON field. The request-size fixture applies middleware before
+// body reading, protecting the shared error label when the first byte beyond
+// the configured limit is consumed.
+
+// TestRequestBodyLimitTooLarge sends one byte beyond a middleware-enforced
+// request limit. Reading must return HTTP 413 with the shared size message
+// instead of admitting the oversized payload.
 func TestRequestBodyLimitTooLarge(t *testing.T) {
+	// A tiny limit exercises the exact first-byte overflow boundary.
 	limit := int64(16)
 	router := gin.New()
 	router.Use(middleware.RequestBodyLimit(limit))
@@ -44,12 +53,15 @@ func TestRequestBodyLimitTooLarge(t *testing.T) {
 	require.Contains(t, recorder.Body.String(), BodyTooLargeMessage(limit))
 }
 
+// TestParseOpenAICompatibleStream covers omitted, true, false, string, number
+// and null JSON stream fields. Only omission and booleans must be valid, with
+// omission retaining buffered intent.
 func TestParseOpenAICompatibleStream(t *testing.T) {
 	tests := []struct {
-		name       string
-		body       string
-		wantStream bool
-		wantOK     bool
+		name       string // stream field case label
+		body       string // encoded request JSON fixture
+		wantStream bool   // expected client stream intent
+		wantOK     bool   // expected field type validity
 	}{
 		{name: "missing", body: `{"model":"gpt-5"}`, wantStream: false, wantOK: true},
 		{name: "true", body: `{"model":"gpt-5","stream":true}`, wantStream: true, wantOK: true},

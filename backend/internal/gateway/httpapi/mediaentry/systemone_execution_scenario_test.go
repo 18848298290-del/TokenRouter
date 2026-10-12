@@ -1,8 +1,5 @@
 package mediaentry
 
-// These tests cover pool retries across systemone.go, httpapi/systemone_forward.go, and
-// gateway/systemone/execute.go.
-
 import (
 	"context"
 	"io"
@@ -28,17 +25,32 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// A SystemOne pool retry stays on one selected provider and holds its lease
+// through the successful answer. This scenario joins HTTP classification with
+// the media adapter and decision loop, observing two exchanges, one completion
+// capture and one final lease release.
+
+// systemOnePoolTransport scripts an initial service error followed by served
+// decisions.
 type systemOnePoolTransport struct {
-	httpclient.UpstreamTransport
-	calls int
+	httpclient.UpstreamTransport     // unused transport operations
+	calls                        int // serial exchange call count
 }
 
+// systemOnePoolRun counts completion and lease release around the real HTTP
+// adapter.
 type systemOnePoolRun struct {
-	*systemOneRun
+	*systemOneRun // real decision adapter
+	// completed and released are counted by callbacks in the same serial Run.
+	// The test inspects them after execution returns to distinguish completion
+	// capture from final provider-lease release.
+	// completed: captured completion call count; released: provider release call count.
 	completed, released int
 }
 
-// Do fails the first request with 503 and succeeds on the next attempt.
+// Do returns HTTP 503 for the first fixture exchange and a valid decision for
+// every later call. It ignores request parameters, creates a fresh response
+// body and mutates its unsynchronized serial call count.
 func (p *systemOnePoolTransport) Do(*http.Request, string, int64, int) (*http.Response, error) {
 	p.calls++
 	status := http.StatusOK
@@ -50,20 +62,31 @@ func (p *systemOnePoolTransport) Do(*http.Request, string, int64, int) (*http.Re
 	return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
 }
 
+// Select returns the provider already installed in this fixture selection.
+// Exclusions and context are ignored because the scenario protects
+// same-provider pool retry rather than distinct provider replacement.
 func (p *systemOnePoolRun) Select(context.Context, map[int64]struct{}) (provider.ProviderSnapshot, error) {
 	return p.selection.Provider.Record.RoutingSnapshot(), nil
 }
 
+// Acquire supplies one fixture release callback and reports successful
+// admission. The callback increments the serial release counter, letting the
+// scenario inspect release after both pool exchanges have finished.
 func (p *systemOnePoolRun) Acquire(context.Context) (func(), bool) {
 	return func() { p.released++ }, true
 }
 
+// Report accepts fixture scheduling feedback while leaving its counters
+// unchanged.
 func (p *systemOnePoolRun) Report(context.Context, systemone.Outcome) {}
 
+// Complete increments the serial count of captured served decision
+// completions.
 func (p *systemOnePoolRun) Complete(context.Context, upstream.AttemptResult) { p.completed++ }
 
-// TestSystemOnePoolRetryExecution checks HTTP classification, the adapter retry budget, and orchestration
-// together.
+// TestSystemOnePoolRetryExecution returns a retryable 503 followed by a valid
+// decision with no provider-switch allowance. It checks two exchanges share
+// one lease, one completion and the delivered vendor-version answer.
 func TestSystemOnePoolRetryExecution(t *testing.T) {
 	transport := &systemOnePoolTransport{}
 	prices := testkit.ResolverWithCards(t, testkit.Calculator(nil, map[string]*pricing.ModelPricing{"jev-latest": {InputPricePerToken: 4.2e-8}}), nil)

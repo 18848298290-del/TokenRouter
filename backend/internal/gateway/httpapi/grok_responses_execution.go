@@ -13,6 +13,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// Grok Responses and Composer image descriptions share request preparation,
+// transport policy and response observation. Each HTTP attempt keeps its own
+// model observer, while image bridging delegates image replacement and usage
+// aggregation to the Grok implementation using this provider's execution
+// services.
+
+// ForwardResponses starts a request-local upstream-model observation and
+// delegates the selected provider to grokforward.Forward. The deferred capture
+// stamps any returned result; the runtime decides which successful or handled
+// error observations reach that result.
 func (s *GrokExecutor) ForwardResponses(
 	ctx context.Context,
 	c *gin.Context,
@@ -29,6 +39,9 @@ func (s *GrokExecutor) ForwardResponses(
 	return result, err
 }
 
+// BridgeComposerImages delegates Composer image replacement to Grok with a
+// description callback for this provider and token. It returns the transformed
+// body, aggregated description usage, applicability flag and any image-preflight error.
 func (s *GrokExecutor) BridgeComposerImages(
 	ctx context.Context,
 	c *gin.Context,
@@ -41,8 +54,10 @@ func (s *GrokExecutor) BridgeComposerImages(
 	})
 }
 
-// DescribeComposerImage runs a single-image preflight with Grok Responses configuration and shared provider
-// observation and error handling.
+// DescribeComposerImage performs a single-image Responses description using
+// the supplied provider token. It shares the executor's attribute, route,
+// transport and observation services, returning description text and measured
+// usage to Composer bridging.
 func (s *GrokExecutor) DescribeComposerImage(
 	ctx context.Context,
 	c *gin.Context,

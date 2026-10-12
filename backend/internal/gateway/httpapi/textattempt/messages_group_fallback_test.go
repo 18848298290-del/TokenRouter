@@ -29,7 +29,23 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
-// newFallbackMessageBridge opens and begins a request snapshot with authorization and cache fixtures.
+// Group fallback must preserve admitted caller and platform restrictions while
+// replacing only authorized target-group funding and routing state. These
+// fixtures start with an old sticky provider and explicit metadata isolation,
+// then verify target-group lookup, context snapshots and effective HTTP Key
+// pointers after a prompt-too-long response.
+//
+// Replay is rejected after cancellation, output, prior fallback or invalid
+// authorization, and an absent resolver presents the mapped original error.
+// The cache-billing fixture triggers a provider switch before fallback and
+// checks that rebuilding attempt state retains that billing choice. A failed
+// new-group sticky lookup must leave old hints cleared rather than restore the
+// prior provider association.
+
+// newFallbackMessageBridge opens and begins a Messages fixture with old-group
+// sticky state and explicit isolation metadata. It installs session tracking
+// and default route planning when absent; callers supply fallback policy
+// callbacks and keep the returned bridge serial.
 func newFallbackMessageBridge(t *testing.T, bindings Bindings) (*messageAttemptBridge, *apikey.APIKey, *httptest.ResponseRecorder) {
 	t.Helper()
 	targetID, groupID := int64(20), int64(10)
@@ -37,6 +53,8 @@ func newFallbackMessageBridge(t *testing.T, bindings Bindings) (*messageAttemptB
 	ctx := requeststate.WithGroup(context.Background(), key.Group)
 	ctx = requeststate.WithClientProtocol(ctx, protocol.ProtocolAnthropicMessages)
 	ctx = apikey.WithForcePlatform(ctx, "antigravity")
+	// Start with an old-group binding so successful fallback must explicitly
+	// clear it before target-group cache lookup can install any replacement hint.
 	ctx = requeststate.WithPrefetchedStickySession(ctx, 100, groupID)
 	ctx = apikey.WithAccessSnapshot(ctx, apikey.AccessSnapshot{KeyID: key.ID, OwnerUserID: key.UserID, ActorUserID: 50, PayerUserID: key.User.ID})
 	ctx = apikey.WithRuntimeAPIKey(ctx, key)
@@ -66,6 +84,10 @@ func newFallbackMessageBridge(t *testing.T, bindings Bindings) (*messageAttemptB
 	return bridge, key, recorder
 }
 
+// authorizedMessageFallback returns a Key copy bound to an active target group
+// permitting Messages. It replaces Group and GroupID while retaining the
+// copied caller/funding identity; callers use it as the resolver’s authorized
+// fixture result.
 func authorizedMessageFallback(key *apikey.APIKey, id int64) *apikey.APIKey {
 	resolved := apikey.CopyAPIKey(key)
 	resolved.GroupID = &id
@@ -73,8 +95,10 @@ func authorizedMessageFallback(key *apikey.APIKey, id int64) *apikey.APIKey {
 	return resolved
 }
 
-// TestMessageGroupFallbackPreservesBoundaryAndRefreshesSnapshots checks retained platform restrictions and shared
-// target-group funding state.
+// TestMessageGroupFallbackPreservesBoundaryAndRefreshesSnapshots authorizes a
+// new group with subscription and sticky binding. Fallback must retain
+// caller/platform/cache/isolation policy, replace effective funding/routing
+// views consistently and leave the original Key’s group unchanged.
 func TestMessageGroupFallbackPreservesBoundaryAndRefreshesSnapshots(t *testing.T) {
 	resolveCalls, stickyCalls := 0, 0
 	sub := &billing.UserSubscription{ID: 90}
@@ -133,8 +157,9 @@ func TestMessageGroupFallbackPreservesBoundaryAndRefreshesSnapshots(t *testing.T
 	require.Same(t, bridge.currentAPIKey, authKey)
 }
 
-// TestMessageGroupFallbackStopsBeforeReplay checks that output, prior fallback, and invalid targets prevent
-// another authorization.
+// TestMessageGroupFallbackStopsBeforeReplay varies cancellation, output,
+// stream state, prior use, invalid target and unrelated failures. Each case
+// must reject replay before resolver invocation and retain the admitted group.
 func TestMessageGroupFallbackStopsBeforeReplay(t *testing.T) {
 	for _, name := range []string{"cancelled", "written", "stream_started", "already_used", "self_target", "missing_target", "unrelated_error"} {
 		t.Run(name, func(t *testing.T) {
@@ -167,6 +192,10 @@ func TestMessageGroupFallbackStopsBeforeReplay(t *testing.T) {
 	}
 }
 
+// TestMessageGroupFallbackRejectsAuthorizationAndFundingErrors returns group,
+// subscription, isolation and RPM failures from target resolution. Fallback
+// must present their mapped status/message and applicable retry guidance while
+// retaining original group funding.
 func TestMessageGroupFallbackRejectsAuthorizationAndFundingErrors(t *testing.T) {
 	for _, denied := range []error{apikey.ErrGroupNotAllowed, billing.ErrPreferredSubscriptionGroup, session.ErrSessionIsolationConflict, scheduler.ErrGroupRPMExceeded} {
 		t.Run(denied.Error(), func(t *testing.T) {
@@ -185,6 +214,10 @@ func TestMessageGroupFallbackRejectsAuthorizationAndFundingErrors(t *testing.T) 
 	}
 }
 
+// TestMessageGroupFallbackRequiresAuthorizedResolverAndTargetProtocol first
+// omits the resolver, then returns a target permitting only Responses. The
+// mapped error or HTTP 403 must end replay without replacing the original
+// Messages group.
 func TestMessageGroupFallbackRequiresAuthorizedResolverAndTargetProtocol(t *testing.T) {
 	mapped := 0
 	bridge, _, _ := newFallbackMessageBridge(t, Bindings{Forward: ForwardPorts{WriteMappedClaudeError: func(*gin.Context, *gatewaycapture.ExecutionProvider, int, string, []byte) error {
@@ -203,8 +236,10 @@ func TestMessageGroupFallbackRequiresAuthorizedResolverAndTargetProtocol(t *test
 	require.Equal(t, int64(10), *bridge.currentAPIKey.GroupID)
 }
 
-// TestMessageGroupFallbackKeepsCacheBillingAcrossAttemptReset checks that a provider-switch billing flag survives
-// the new group's first attempt.
+// TestMessageGroupFallbackKeepsCacheBillingAcrossAttemptReset triggers cache
+// billing on a failed switched-provider attempt before group fallback. The
+// subsequent reset attempt must retain the context billing flag and forward
+// successfully under the new state.
 func TestMessageGroupFallbackKeepsCacheBillingAcrossAttemptReset(t *testing.T) {
 	forwards := 0
 	bridge, _, _ := newFallbackMessageBridge(t, Bindings{
@@ -238,6 +273,10 @@ func TestMessageGroupFallbackKeepsCacheBillingAcrossAttemptReset(t *testing.T) {
 	require.Equal(t, 2, forwards)
 }
 
+// TestMessageGroupFallbackClearsStickyWhenTargetHasNoBinding fails sticky
+// lookup after successful target authorization. Fallback must still succeed
+// while clearing bound-provider flags and prefetch hints instead of retaining
+// the old group’s association.
 func TestMessageGroupFallbackClearsStickyWhenTargetHasNoBinding(t *testing.T) {
 	bridge, _, _ := newFallbackMessageBridge(t, Bindings{
 		ResolveFallback: func(_ context.Context, key *apikey.APIKey, id int64, _ protocol.ProtocolID) (*apikey.APIKey, *billing.UserSubscription, error) {

@@ -22,10 +22,32 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// Anthropic SSE input can carry tool arguments across fragments and report
+// cache usage before its final message event. Chat and Responses conversion
+// must preserve those observations while producing their distinct buffered or
+// streaming envelopes. The fixtures cover compact fields and alternate frame
+// layouts rather than requiring one upstream serialization.
+//
+// Layout rewriting preserves event payload meaning while moving the event type
+// into the SSE field, splitting data across lines or removing the final
+// separator. Failure readers then separate complete trailing JSON from
+// truncated input and accumulated frame overflow. These cases protect usable
+// usage and terminal results, and verify that partial output or failed
+// terminal writes cannot claim semantic response commitment.
+
+// conversionReadFailure injects an unexpected EOF after fixture bytes are
+// consumed.
 type conversionReadFailure struct{}
 
-type conversionFailingWriter struct{ gin.ResponseWriter }
+// conversionFailingWriter retains Gin metadata while rejecting response body
+// writes.
+type conversionFailingWriter struct {
+	gin.ResponseWriter // underlying Gin metadata and headers
+}
 
+// TestHandleCCBufferedFromAnthropic_ToolArgumentsAreValidJSON splits one tool
+// argument object across two Anthropic deltas. Buffered Chat output must join
+// those fragments into a single valid JSON arguments string.
 func TestHandleCCBufferedFromAnthropic_ToolArgumentsAreValidJSON(t *testing.T) {
 	t.Parallel()
 
@@ -57,11 +79,11 @@ func TestHandleCCBufferedFromAnthropic_ToolArgumentsAreValidJSON(t *testing.T) {
 			Message struct {
 				ToolCalls []struct {
 					Function struct {
-						Arguments string `json:"arguments"`
-					} `json:"function"`
-				} `json:"tool_calls"`
-			} `json:"message"`
-		} `json:"choices"`
+						Arguments string `json:"arguments"` // JSON-encoded argument object
+					} `json:"function"` // converted tool function details
+				} `json:"tool_calls"` // converted function call entries
+			} `json:"message"` // converted assistant message body
+		} `json:"choices"` // converted Chat response choices
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	require.Len(t, body.Choices, 1)
@@ -70,6 +92,10 @@ func TestHandleCCBufferedFromAnthropic_ToolArgumentsAreValidJSON(t *testing.T) {
 	require.JSONEq(t, `{"city":"Paris"}`, args)
 }
 
+// TestHandleCCBufferedFromAnthropic_PreservesMessageStartCacheUsageAndReasoning
+// supplies initial cache buckets, later output usage and a reasoning hint.
+// Buffered Chat conversion must retain each usage bucket, the hint, joined
+// text and stop reason.
 func TestHandleCCBufferedFromAnthropic_PreservesMessageStartCacheUsageAndReasoning(t *testing.T) {
 	t.Parallel()
 
@@ -108,7 +134,9 @@ func TestHandleCCBufferedFromAnthropic_PreservesMessageStartCacheUsageAndReasoni
 	require.Equal(t, "stop", gjson.GetBytes(rec.Body.Bytes(), "choices.0.finish_reason").String())
 }
 
-// TestHandleCCBufferedFromAnthropic_CompactSSEFormat checks SSE fields with no space after the colon.
+// TestHandleCCBufferedFromAnthropic_CompactSSEFormat omits spaces after SSE
+// field colons in an Anthropic text stream. Buffered Chat conversion must
+// still retain text and all supplied input, output and cache buckets.
 func TestHandleCCBufferedFromAnthropic_CompactSSEFormat(t *testing.T) {
 	t.Parallel()
 
@@ -140,6 +168,10 @@ func TestHandleCCBufferedFromAnthropic_CompactSSEFormat(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `"OK"`, "紧凑格式事件必须被解析并产出响应内容")
 }
 
+// TestHandleCCStreamingFromAnthropic_CompactSSEFormat supplies compact
+// Anthropic fields through a complete text stream. Streaming Chat conversion
+// must preserve usage buckets and emit its DONE marker after interpreting
+// those events.
 func TestHandleCCStreamingFromAnthropic_CompactSSEFormat(t *testing.T) {
 	t.Parallel()
 
@@ -174,6 +206,10 @@ func TestHandleCCStreamingFromAnthropic_CompactSSEFormat(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `[DONE]`)
 }
 
+// TestHandleCCStreamingFromAnthropic_PreservesMessageStartCacheUsageAndReasoning
+// supplies initial cache usage, trailing output usage and a reasoning hint.
+// Streaming Chat conversion must retain those values and finish the client
+// stream with DONE.
 func TestHandleCCStreamingFromAnthropic_PreservesMessageStartCacheUsageAndReasoning(t *testing.T) {
 	t.Parallel()
 
@@ -214,6 +250,9 @@ func TestHandleCCStreamingFromAnthropic_PreservesMessageStartCacheUsageAndReason
 	require.Contains(t, rec.Body.String(), `[DONE]`)
 }
 
+// TestHandleCCBufferedFromAnthropic_WritesToolCall supplies one Anthropic
+// lookup tool with a JSON argument delta. Buffered Chat output must preserve
+// the function name and encode the supplied object in its arguments string.
 func TestHandleCCBufferedFromAnthropic_WritesToolCall(t *testing.T) {
 	t.Parallel()
 
@@ -245,13 +284,23 @@ func TestHandleCCBufferedFromAnthropic_WritesToolCall(t *testing.T) {
 	require.JSONEq(t, `{"q":"hi"}`, gjson.GetBytes(rec.Body.Bytes(), "choices.0.message.tool_calls.0.function.arguments").String())
 }
 
-// conversionResponseFixture supplies a scanner, runtime, and close callback for response conversion tests.
+// conversionResponseFixture adapts a response body and headers into
+// synchronous conversion input. Callers provide a nonnil body; converters own
+// closing it through the callback, while the scanner and header map remain
+// tied to that response.
 func conversionResponseFixture(resp *http.Response) forward.Response {
 	scanner := bufio.NewScanner(resp.Body)
+	// Keep fixture lines above the smaller cumulative-frame limits under test.
 	scanner.Buffer(make([]byte, 0, 64*1024), 500*1024*1024)
-	return forward.Response{StatusCode: resp.StatusCode, Close: func() { _ = resp.Body.Close() }, Runtime: bridge.Runtime{Now: time.Now, ReadRandom: rand.Read}, RequestID: resp.Header.Get("x-request-id"), Headers: resp.Header, Lines: scanner}
+	return forward.Response{StatusCode: resp.StatusCode, Close: func() {
+		// Conversion invokes this cleanup after consuming fixture input; close errors
+		// are excluded from the simulated read and terminal failures asserted here.
+		_ = resp.Body.Close()
+	}, Runtime: bridge.Runtime{Now: time.Now, ReadRandom: rand.Read}, RequestID: resp.Header.Get("x-request-id"), Headers: resp.Header, Lines: scanner}
 }
 
+// conversionToolAnthropicSSEStream returns a complete Anthropic lookup-tool
+// stream with input and output usage.
 func conversionToolAnthropicSSEStream() string {
 	return strings.Join([]string{
 		"event: message_start",
@@ -275,6 +324,8 @@ func conversionToolAnthropicSSEStream() string {
 	}, "\n")
 }
 
+// namespaceToolAnthropicStream returns an Anthropic tool stream using a
+// flattened namespace name.
 func namespaceToolAnthropicStream() string {
 	return strings.Join([]string{
 		`event: message_start`,
@@ -295,12 +346,18 @@ func namespaceToolAnthropicStream() string {
 	}, "\n")
 }
 
+// namespaceToolMapping returns the client namespace identity for the flattened
+// fixture tool.
 func namespaceToolMapping() bridge.ResponsesClientToolMapping {
 	return bridge.ResponsesClientToolMapping{NamespaceTools: map[string]bridge.ResponsesNamespaceName{
 		"codex_app__read_thread": {Namespace: "codex_app", Name: "read_thread"},
 	}}
 }
 
+// TestHandleResponsesBufferedStreamingResponse_RestoresNamespaceTool supplies
+// the flattened Anthropic namespace tool and matching client mapping. Buffered
+// Responses output must restore the namespace and short name while removing
+// the flattened name.
 func TestHandleResponsesBufferedStreamingResponse_RestoresNamespaceTool(t *testing.T) {
 	t.Parallel()
 
@@ -316,6 +373,10 @@ func TestHandleResponsesBufferedStreamingResponse_RestoresNamespaceTool(t *testi
 	require.NotContains(t, rec.Body.String(), `"name":"codex_app__read_thread"`)
 }
 
+// TestHandleResponsesBufferedStreamingResponse_ToolArgumentsAreValidJSON
+// converts an Anthropic lookup stream into buffered Responses output. The
+// single function-call item must retain its type and a valid JSON arguments
+// object.
 func TestHandleResponsesBufferedStreamingResponse_ToolArgumentsAreValidJSON(t *testing.T) {
 	t.Parallel()
 
@@ -328,9 +389,9 @@ func TestHandleResponsesBufferedStreamingResponse_ToolArgumentsAreValidJSON(t *t
 
 	var body struct {
 		Output []struct {
-			Type      string `json:"type"`
-			Arguments string `json:"arguments"`
-		} `json:"output"`
+			Type      string `json:"type"`      // client output item discriminator
+			Arguments string `json:"arguments"` // JSON-encoded argument object
+		} `json:"output"` // converted Responses output items
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	require.Len(t, body.Output, 1)
@@ -338,6 +399,10 @@ func TestHandleResponsesBufferedStreamingResponse_ToolArgumentsAreValidJSON(t *t
 	require.JSONEq(t, `{"query":"status"}`, body.Output[0].Arguments)
 }
 
+// TestHandleResponsesStreamingResponse_RestoresNamespaceTool streams the
+// flattened Anthropic namespace tool through Responses conversion. Client item
+// events must expose the original namespace and short name without the
+// flattened spelling.
 func TestHandleResponsesStreamingResponse_RestoresNamespaceTool(t *testing.T) {
 	t.Parallel()
 
@@ -353,6 +418,10 @@ func TestHandleResponsesStreamingResponse_RestoresNamespaceTool(t *testing.T) {
 	require.NotContains(t, rec.Body.String(), `"name":"codex_app__read_thread"`)
 }
 
+// TestHandleResponsesBufferedStreamingResponse_PreservesMessageStartCacheUsage
+// supplies initial Anthropic cache buckets and later output usage. Buffered
+// Responses conversion must retain those accounting values and expose the
+// cache-read count in client usage.
 func TestHandleResponsesBufferedStreamingResponse_PreservesMessageStartCacheUsage(t *testing.T) {
 	t.Parallel()
 
@@ -384,6 +453,10 @@ func TestHandleResponsesBufferedStreamingResponse_PreservesMessageStartCacheUsag
 	require.Contains(t, rec.Body.String(), `"cached_tokens":9`)
 }
 
+// TestHandleResponsesStreamingResponse_PreservesMessageStartCacheUsage
+// converts initial cache buckets and trailing output usage in a complete
+// Anthropic stream. Streaming Responses must retain every bucket and emit a
+// completed response event.
 func TestHandleResponsesStreamingResponse_PreservesMessageStartCacheUsage(t *testing.T) {
 	t.Parallel()
 
@@ -418,13 +491,18 @@ func TestHandleResponsesStreamingResponse_PreservesMessageStartCacheUsage(t *tes
 	require.Contains(t, rec.Body.String(), `response.completed`)
 }
 
+// TestHandleResponsesBufferedStreamingResponse_CompactSSEFormat supplies
+// Anthropic events with compact colon fields and a text block. Buffered
+// Responses must retain the text and supplied input/output usage despite that
+// layout.
 func TestHandleResponsesBufferedStreamingResponse_CompactSSEFormat(t *testing.T) {
 	t.Parallel()
 
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 
-	// Compact SSE omits the space after each field colon.
+	// Remove colon whitespace while keeping the same JSON events, isolating SSE
+	// field parsing from the payload and usage preservation asserted after conversion.
 	resp := &http.Response{
 		Header: http.Header{"x-request-id": []string{"rid_compact"}},
 		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
@@ -448,13 +526,17 @@ func TestHandleResponsesBufferedStreamingResponse_CompactSSEFormat(t *testing.T)
 	require.Contains(t, rec.Body.String(), `"OK"`)
 }
 
+// TestHandleResponsesStreamingResponse_CompactSSEFormat uses compact Anthropic
+// colon fields in a complete text stream. Streaming Responses must preserve
+// input/output usage and emit its response.completed event after conversion.
 func TestHandleResponsesStreamingResponse_CompactSSEFormat(t *testing.T) {
 	t.Parallel()
 
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
 
-	// Streaming and buffered conversion accept the same compact SSE layout.
+	// Use the same colon-without-space layout as buffered fixtures so stream
+	// completion depends on parsed events rather than whitespace-specific field recognition.
 	resp := &http.Response{
 		Header: http.Header{"x-request-id": []string{"rid_compact_stream"}},
 		Body: io.NopCloser(strings.NewReader(strings.Join([]string{
@@ -481,7 +563,10 @@ func TestHandleResponsesStreamingResponse_CompactSSEFormat(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `response.completed`)
 }
 
-// TestMessagesConversionSSEFormats sends the same text and tool events with different SSE layouts.
+// TestMessagesConversionSSEFormats varies six SSE layouts for text and
+// namespace-tool input across four conversion modes. Usage, tool identity,
+// arguments and exactly one Responses completion must remain consistent across
+// the matrix.
 func TestMessagesConversionSSEFormats(t *testing.T) {
 	textStream := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_test\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"upstream-model\",\"content\":[],\"usage\":{\"input_tokens\":0}}}\n\n" +
 		"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
@@ -552,11 +637,22 @@ func TestMessagesConversionSSEFormats(t *testing.T) {
 	}
 }
 
-// conversionSSEFormat varies SSE layout, including data-only frames and event-only type fields.
+// conversionSSEFormat rewrites fixture frames into the selected compatibility
+// layout while retaining their event meaning. Callers supply valid
+// object-shaped JSON for multiline and event-only-type cases; deletion errors
+// fail the test. Unknown format values use ordinary emitted frames.
+//
+// Event-only-type removes the payload type while retaining the SSE event
+// field, and data-only retains the payload type while omitting that field.
+// Multiline inserts a second data line after the object opening; EOF removes
+// final separators so conversion must consume the trailing frame. Comments add
+// ignored heartbeat/id fields without altering the event payload.
 func conversionSSEFormat(t *testing.T, body, format string) string {
 	t.Helper()
 	var result strings.Builder
 	openai.ForEachOpenAISSEFrame(body, func(eventType string, data []byte) {
+		// Move type identity into the SSE event field for this variant; the
+		// converter must recover that identity even when the JSON member is absent.
 		if format == "event_only_type" {
 			var err error
 			data, err = sjson.DeleteBytes(data, "type")
@@ -569,20 +665,28 @@ func conversionSSEFormat(t *testing.T, body, format string) string {
 			_, _ = result.WriteString(": heartbeat\nid: test\n")
 		}
 		payload := string(data)
+		// Split after the opening brace so joining data lines reconstructs a valid
+		// object while preserving the arguments and usage already carried by it.
 		if format == "multiline" {
 			payload = "{\ndata:" + strings.TrimPrefix(payload, "{")
 		}
 		_, _ = result.WriteString("data:" + payload + "\n\n")
 	})
+	// Omit the final frame separator to force conversion to consume valid
+	// trailing data at EOF instead of requiring a subsequent blank line.
 	if format == "eof" {
 		return strings.TrimRight(result.String(), "\n")
 	}
 	return result.String()
 }
 
+// Read always returns zero bytes with the injected unexpected-EOF error.
 func (conversionReadFailure) Read([]byte) (int, error) { return 0, io.ErrUnexpectedEOF }
 
-// TestMessagesConversionSSEFailures checks trailing usage, truncated JSON, and accumulated frame limits.
+// TestMessagesConversionSSEFailures injects read failure after complete,
+// truncated or oversized Anthropic frames in all conversion modes. Complete
+// trailing usage and terminals must survive, while invalid tails retain
+// partial input usage and prevent duplicate outer fallback output.
 func TestMessagesConversionSSEFailures(t *testing.T) {
 	const start = "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_failure\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"m\",\"content\":[],\"usage\":{\"input_tokens\":10}}}\n\n"
 	const usage = "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"max_tokens\"},\"usage\":{\"output_tokens\":25}}\n"
@@ -613,6 +717,7 @@ func TestMessagesConversionSSEFailures(t *testing.T) {
 				reader := io.MultiReader(strings.NewReader(body), conversionReadFailure{})
 				resp := &http.Response{Body: io.NopCloser(reader)}
 				input := conversionResponseFixture(resp)
+				// Bound accumulated frame data below the repeated-line fixture total.
 				input.MaxSSEFrameBytes = 512
 				output := NewMessageForwardBoundary(c, nil).ConversionOutput(strings.HasPrefix(mode, "responses"), &messageforward.AttemptState{})
 				var result *forward.Result
@@ -666,7 +771,8 @@ func TestMessagesConversionSSEFailures(t *testing.T) {
 					require.NotContains(t, rec.Body.String(), "response.completed")
 					require.NotContains(t, rec.Body.String(), "[DONE]")
 				}
-				// Repeat the outer OtherFailure check; a delivered terminal event or JSON response stays unchanged.
+				// Repeat the outer failure decision after conversion has presented its
+				// result, protecting complete terminal or JSON output from a second error.
 				responseBody := rec.Body.String()
 				if !OpenAIForwardErrorAlreadyCommunicated(c, before, err) {
 					require.False(t, DefaultOpenAIErrorOutput().EnsureResponse(c, false, err))
@@ -677,10 +783,13 @@ func TestMessagesConversionSSEFailures(t *testing.T) {
 	}
 }
 
+// Write always rejects body bytes with the injected closed-pipe error.
 func (conversionFailingWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
 
-// TestConversionTerminalCommit checks that partial output and write failures leave error handling to the
-// caller.
+// TestConversionTerminalCommit writes a Responses delta followed by a terminal
+// event through normal and failing writers. Only a successfully written
+// terminal may mark semantic commitment; partial or failed writes leave it
+// unset.
 func TestConversionTerminalCommit(t *testing.T) {
 	for _, failWrite := range []bool{false, true} {
 		rec := httptest.NewRecorder()

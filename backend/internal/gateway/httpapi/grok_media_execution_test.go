@@ -33,31 +33,60 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// Grok media completion distinguishes task acceptance from billable
+// done/video.url evidence. These fixtures inspect authenticated relay versus
+// signed download requests, safe header and URL rewriting, image output
+// validation and provider error policy before eventual video settlement data
+// is assembled.
+
+// grokMediaContentUpstreamStub records request pointers and returns queued or
+// fallback responses. Its fields are unsynchronized; tests use the fixture
+// serially and supply response bodies for execution to consume and close.
 type grokMediaContentUpstreamStub struct {
-	request   *http.Request
-	requests  []*http.Request
-	response  *http.Response
-	responses []*http.Response
+	// request and requests retain the last and complete submitted request pointers;
+	// tests inspect their final headers and URLs after serial execution returns.
+	request  *http.Request   // last submitted request
+	requests []*http.Request // all submitted request pointers
+	// responses is consumed in submission order; response supplies the remaining
+	// fallback when that queue is empty, so tests prepare bodies for both exchanges.
+	response  *http.Response   // fallback transport response
+	responses []*http.Response // queued transport responses
 }
 
-// grokPoolPolicyProviderRepo records provider-state writes from Grok pool error policy.
+// grokPoolPolicyProviderRepo records serial provider-policy writes beside
+// shared quota fixtures.
 type grokPoolPolicyProviderRepo struct {
-	*grokQuotaProviderRepo
-	setErrorCalls            int
-	overloadedCalls          int
-	modelRateLimitCalls      int
-	lastModelRateLimitScope  string
+	*grokQuotaProviderRepo // shared quota-write observations
+	// setErrorCalls, overloadedCalls and modelRateLimitCalls count the three
+	// policy writes separately; these serial fixtures inspect each count after execution.
+	setErrorCalls       int // permanent error write count
+	overloadedCalls     int // overload write count
+	modelRateLimitCalls int // model cooldown write count
+	// lastModelRateLimitScope and lastModelRateLimitReason retain the most recent
+	// model write. The optional reason can remain from an earlier call with a reason.
+	lastModelRateLimitScope string // last cooldown model scope
+	// lastModelRateLimitReason takes the first argument of the latest write with
+	// reasons; a call with no reason retains the previously captured string.
 	lastModelRateLimitReason string
 }
 
-// grokMediaFixture binds dependencies used by media execution tests.
+// grokMediaFixture binds selected-provider media execution to the supplied
+// scripted transport. It uses default request credentials, fixed response
+// reading limits and health/output adapters; callers provide a record with
+// usable API credentials.
 func grokMediaFixture(transport httpclient.UpstreamTransport) *GrokExecutor {
+	// Use the shared 128 MiB bounded-read cap for scripted media response bodies.
 	return &GrokExecutor{Credentials: gatewaytestkit.RequestCredentials(nil, nil, nil, nil), Transport: transport, Output: &OpenAIResponseOutput{Options: OpenAIResponseOptions{ReadLimit: 128 * 1024 * 1024}}, Health: &provideradapter.GrokHealth{}, Routes: gatewayprovider.GrokRoutes{Validate: (egress.OperatorURLPolicy{}).Validate}, Failure: &UpstreamTransportFailure{}}
 }
 
+// Do retains the submitted request pointer, then consumes the first queued
+// response. An empty queue returns the configured fallback response, including
+// nil; callers use this mutable fixture serially.
 func (s *grokMediaContentUpstreamStub) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
 	s.request = req
 	s.requests = append(s.requests, req)
+	// Queued responses model consecutive status and content exchanges. Once the
+	// queue is exhausted, the shared fallback can be reused with its body position retained.
 	if len(s.responses) > 0 {
 		resp := s.responses[0]
 		s.responses = s.responses[1:]
@@ -66,10 +95,16 @@ func (s *grokMediaContentUpstreamStub) Do(req *http.Request, _ string, _ int64, 
 	return s.response, nil
 }
 
+// DoWithTLS delegates scripted request capture and response selection to Do.
+// It ignores the TLS profile because these scenarios inspect request
+// construction and HTTP result handling rather than establish a connection.
 func (s *grokMediaContentUpstreamStub) DoWithTLS(req *http.Request, proxyURL string, providerID int64, providerConcurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
 	return s.Do(req, proxyURL, providerID, providerConcurrency)
 }
 
+// grokMediaContentTestProvider returns a fresh API Key Grok record for the
+// relay fixtures. Its mutable credential map contains the relay base and
+// bearer key, which individual tests can extend with overrides.
 func grokMediaContentTestProvider() *gatewayprovider.ExecutionProvider {
 	return &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -84,6 +119,9 @@ func grokMediaContentTestProvider() *gatewayprovider.ExecutionProvider {
 	}
 }
 
+// grokMediaContentTestContext creates a Gin request and response recorder
+// using the supplied method and target. Header strings are installed on that
+// new request; the returned recorder observes synchronous adapter output.
 func grokMediaContentTestContext(method, target string, headers map[string]string) (*gin.Context, *httptest.ResponseRecorder) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -94,6 +132,9 @@ func grokMediaContentTestContext(method, target string, headers map[string]strin
 	return c, recorder
 }
 
+// grokMediaContentStatusResponse wraps supplied task status JSON in a
+// successful response. Each call creates a new readable body that media
+// execution consumes and closes before the download exchange.
 func grokMediaContentStatusResponse(body string) *http.Response {
 	return &http.Response{
 		StatusCode: http.StatusOK,
@@ -102,6 +143,10 @@ func grokMediaContentStatusResponse(body string) *http.Response {
 	}
 }
 
+// TestForwardGrokMediaContentUsesUpstreamCredentialAndStreamsRange supplies
+// task status followed by partial video content. It checks authenticated relay
+// requests, Range propagation, safe content headers and committed client bytes
+// for the downloaded fixture.
 func TestForwardGrokMediaContentUsesUpstreamCredentialAndStreamsRange(t *testing.T) {
 	upstream := &grokMediaContentUpstreamStub{
 		responses: []*http.Response{grokMediaContentStatusResponse(`{"status":"completed"}`), {
@@ -147,6 +192,10 @@ func TestForwardGrokMediaContentUsesUpstreamCredentialAndStreamsRange(t *testing
 	require.True(t, IsResponseCommitted(c))
 }
 
+// TestForwardGrokMediaContentStreamsFullResponseWithSafeDefaults downloads
+// content with missing media headers and upstream secret headers. It checks
+// octet-stream output, unknown-length omission and exclusion of cookie/secret
+// fields while forwarding the complete body.
 func TestForwardGrokMediaContentStreamsFullResponseWithSafeDefaults(t *testing.T) {
 	upstream := &grokMediaContentUpstreamStub{
 		responses: []*http.Response{grokMediaContentStatusResponse(`{"status":"completed"}`), {
@@ -176,6 +225,9 @@ func TestForwardGrokMediaContentStreamsFullResponseWithSafeDefaults(t *testing.T
 	require.True(t, IsResponseCommitted(c))
 }
 
+// TestForwardGrokMediaContentPreservesRangeNotSatisfiable supplies a completed
+// task followed by an unsatisfiable Range response. It checks the original 416
+// status, range metadata and body remain committed to the downloading client.
 func TestForwardGrokMediaContentPreservesRangeNotSatisfiable(t *testing.T) {
 	upstream := &grokMediaContentUpstreamStub{
 		responses: []*http.Response{grokMediaContentStatusResponse(`{"status":"completed"}`), {
@@ -209,6 +261,10 @@ func TestForwardGrokMediaContentPreservesRangeNotSatisfiable(t *testing.T) {
 	require.True(t, IsResponseCommitted(c))
 }
 
+// TestForwardGrokMediaContentFetchesValidatedSignedURLWithoutCredentials
+// provides a signed vendor URL after authenticated task status. It checks the
+// content request carries Range while omitting provider credentials and
+// overrides, with redirects disabled on both exchanges.
 func TestForwardGrokMediaContentFetchesValidatedSignedURLWithoutCredentials(t *testing.T) {
 	upstream := &grokMediaContentUpstreamStub{
 		responses: []*http.Response{
@@ -252,6 +308,10 @@ func TestForwardGrokMediaContentFetchesValidatedSignedURLWithoutCredentials(t *t
 	require.True(t, upstreamcore.HTTPUpstreamRedirectsDisabled(upstream.requests[1].Context()))
 }
 
+// TestForwardGrokMediaContentFollowsAuthenticatedTokenRouterRelay returns
+// relative and absolute same-task relay content URLs from status. It checks
+// both resolve to the configured relay endpoint and retain its provider bearer
+// credential.
 func TestForwardGrokMediaContentFollowsAuthenticatedTokenRouterRelay(t *testing.T) {
 	for _, statusURL := range []string{
 		`/v1/videos/task-1/content`,
@@ -286,6 +346,10 @@ func TestForwardGrokMediaContentFollowsAuthenticatedTokenRouterRelay(t *testing.
 	}
 }
 
+// TestForwardGrokMediaContentRejectsUntrustedSignedURL returns a
+// metadata-service address from task status. It checks URL validation reports
+// an error and the transport receives only the status request, with no content
+// fetch.
 func TestForwardGrokMediaContentRejectsUntrustedSignedURL(t *testing.T) {
 	upstream := &grokMediaContentUpstreamStub{
 		responses: []*http.Response{
@@ -304,6 +368,9 @@ func TestForwardGrokMediaContentRejectsUntrustedSignedURL(t *testing.T) {
 	require.Len(t, upstream.requests, 1)
 }
 
+// TestGrokMediaSignedVideoContentURLRejectsDeceptiveOrigins varies vendor-like
+// suffixes, user-info, ports and an insecure scheme. It checks these deceptive
+// URL fixtures are rejected by signed-video content URL extraction.
 func TestGrokMediaSignedVideoContentURLRejectsDeceptiveOrigins(t *testing.T) {
 	for _, rawURL := range []string{
 		"https://vidgen.x.ai.attacker.invalid/video.mp4",
@@ -318,6 +385,9 @@ func TestGrokMediaSignedVideoContentURLRejectsDeceptiveOrigins(t *testing.T) {
 	}
 }
 
+// TestGrokMediaSignedVideoContentURLRejectsDifferentRelayTask supplies a relay
+// content URL naming another task. It checks extraction rejects that URL when
+// the caller requests a different task identity for the download.
 func TestGrokMediaSignedVideoContentURLRejectsDifferentRelayTask(t *testing.T) {
 	_, err := gatewayprovider.GrokMediaCodec().GrokMediaSignedVideoContentURL(
 		[]byte(`{"video":{"url":"/v1/videos/task-2/content"}}`),
@@ -327,6 +397,10 @@ func TestGrokMediaSignedVideoContentURLRejectsDifferentRelayTask(t *testing.T) {
 	require.ErrorContains(t, err, "unsupported video content URL")
 }
 
+// TestForwardGrokVideoStatusRewritesOnlyProtectedContentURL returns protected
+// relay URLs beside an unrelated video URL and large integer. It checks proxy
+// paths replace the protected values while numeric spelling and unrelated URL
+// remain intact.
 func TestForwardGrokVideoStatusRewritesOnlyProtectedContentURL(t *testing.T) {
 	statusBody := `{"id":"task-1","status":"completed","url":"https://relay.example/v1/videos/task-1/content","download_url":"/v1/videos/task-1/content","video_url":"https://vidgen.x.ai/task-1.mp4","counter":9007199254740993}`
 	upstream := &grokMediaContentUpstreamStub{
@@ -356,6 +430,9 @@ func TestForwardGrokVideoStatusRewritesOnlyProtectedContentURL(t *testing.T) {
 	require.NotContains(t, recorder.Body.String(), "malicious.invalid")
 }
 
+// TestRewriteGrokMediaVideoContentURLsPreservesOtherIDsAndHandlesNestedEscapedID
+// places two task URLs inside a nested array. It checks the escaped matching
+// task becomes a proxy path while the other task URL remains unchanged.
 func TestRewriteGrokMediaVideoContentURLsPreservesOtherIDsAndHandlesNestedEscapedID(t *testing.T) {
 	body := []byte(`{"nested":[{"url":"https://relay.example/v1/videos/task%2Fone/content"},{"url":"https://relay.example/v1/videos/task-two/content"}]}`)
 
@@ -365,6 +442,10 @@ func TestRewriteGrokMediaVideoContentURLsPreservesOtherIDsAndHandlesNestedEscape
 	require.Equal(t, "https://relay.example/v1/videos/task-two/content", gjson.GetBytes(rewritten, "nested.1.url").String())
 }
 
+// TestRewriteGrokMediaVideoContentURLsRewritesSignedVideoURL supplies a done
+// status containing a signed vendor content address. It checks the nested URL
+// becomes the requested proxy path while status and duration observations
+// remain available.
 func TestRewriteGrokMediaVideoContentURLsRewritesSignedVideoURL(t *testing.T) {
 	body := []byte(`{"status":"done","video":{"url":"https://vidgen.x.ai/signed-token/xai-video-request-1.mp4","duration":8}}`)
 
@@ -375,7 +456,10 @@ func TestRewriteGrokMediaVideoContentURLsRewritesSignedVideoURL(t *testing.T) {
 	require.Equal(t, "done", gjson.GetBytes(rewritten, "status").String())
 }
 
-// mediaErrorResponseFixture feeds a response through media execution using the fixture's health service.
+// mediaErrorResponseFixture substitutes one scripted response while sharing
+// the executor's health dependencies. It mutates the supplied provider
+// credentials and response request-ID header, so callers supply fixture-owned
+// objects for this serial call.
 func mediaErrorResponseFixture(executor *GrokExecutor, ctx context.Context, resp *http.Response, c *gin.Context, target *gatewayprovider.ExecutionProvider, requestID, model string) (*forwardcore.OpenAIResult, error) {
 	local := *executor
 	local.Transport = &auxiliaryHTTPRecorder{resp: resp}
@@ -389,6 +473,9 @@ func mediaErrorResponseFixture(executor *GrokExecutor, ctx context.Context, resp
 	return local.ForwardGrokMedia(ctx, c, target, grok.GrokMediaEndpointImagesGenerations, "", []byte(`{"model":"`+model+`","prompt":"fixture"}`), "application/json")
 }
 
+// TestApplyGrokImagineImageGeometryMapsOpenAISize supplies OpenAI-style image
+// dimensions to geometry conversion. It checks size is removed and the
+// corresponding 2k resolution and 3:4 ratio are emitted for the fixture.
 func TestApplyGrokImagineImageGeometryMapsOpenAISize(t *testing.T) {
 	t.Parallel()
 
@@ -399,6 +486,9 @@ func TestApplyGrokImagineImageGeometryMapsOpenAISize(t *testing.T) {
 	require.Equal(t, "3:4", gjson.GetBytes(out, "aspect_ratio").String())
 }
 
+// TestApplyGrokImagineImageGeometryKeepsClientGeometry combines size with
+// explicit resolution and aspect ratio. It checks normalized client geometry
+// wins while the legacy size field is removed from the resulting request.
 func TestApplyGrokImagineImageGeometryKeepsClientGeometry(t *testing.T) {
 	t.Parallel()
 
@@ -409,6 +499,9 @@ func TestApplyGrokImagineImageGeometryKeepsClientGeometry(t *testing.T) {
 	require.Equal(t, "16:9", gjson.GetBytes(out, "aspect_ratio").String())
 }
 
+// TestSanitizeGrokMediaForwardBodyConvertsImageSize passes a square
+// image-generation request to sanitization. It checks JSON content type, size
+// removal and the derived 1k resolution and square aspect ratio.
 func TestSanitizeGrokMediaForwardBodyConvertsImageSize(t *testing.T) {
 	t.Parallel()
 
@@ -424,6 +517,10 @@ func TestSanitizeGrokMediaForwardBodyConvertsImageSize(t *testing.T) {
 	require.Equal(t, "1:1", gjson.GetBytes(out, "aspect_ratio").String())
 }
 
+// TestParseGrokMediaRequestKeepsImageResolutionOutOfVideoNormalize parses a 2K
+// image request with aspect ratio. It checks image resolution is normalized
+// independently while the video-resolution field keeps its ordinary 480p
+// default.
 func TestParseGrokMediaRequestKeepsImageResolutionOutOfVideoNormalize(t *testing.T) {
 	t.Parallel()
 
@@ -433,6 +530,9 @@ func TestParseGrokMediaRequestKeepsImageResolutionOutOfVideoNormalize(t *testing
 	require.Equal(t, pricing.VideoBillingResolution480P, info.Resolution)
 }
 
+// TestGrokImagineAspectRatioFromSize supplies square, portrait, landscape and
+// widescreen dimension strings to geometry lookup. It checks the expected
+// aspect-ratio labels for the four explicit size fixtures.
 func TestGrokImagineAspectRatioFromSize(t *testing.T) {
 	t.Parallel()
 	require.Equal(t, "1:1", gatewayprovider.GrokMediaCodec().GrokImagineAspectRatioFromSize("1024x1024"))
@@ -441,10 +541,14 @@ func TestGrokImagineAspectRatioFromSize(t *testing.T) {
 	require.Equal(t, "16:9", gatewayprovider.GrokMediaCodec().GrokImagineAspectRatioFromSize("1792x1024"))
 }
 
+// TestGrokVideoE2EDurationFromCreatedAt compares a past creation stamp with
+// missing, malformed and future values. It checks a bounded positive elapsed
+// duration and zero for the invalid or future timestamp fixtures.
 func TestGrokVideoE2EDurationFromCreatedAt(t *testing.T) {
 	t.Parallel()
 	created := time.Now().UTC().Add(-45 * time.Second)
 	d := media.GrokVideoE2EDuration(created.Format(time.RFC3339Nano), time.Now().UTC())
+	// Allow elapsed test time around the forty-five-second creation fixture.
 	require.GreaterOrEqual(t, d, 44*time.Second)
 	require.LessOrEqual(t, d, 47*time.Second)
 
@@ -454,17 +558,25 @@ func TestGrokVideoE2EDurationFromCreatedAt(t *testing.T) {
 	require.Equal(t, time.Duration(0), media.GrokVideoE2EDuration(time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano), time.Now()))
 }
 
+// TestGrokVideoPendingCreatedAtStampOnStoreShape uses the creation-stamp
+// producer as input to elapsed-time parsing. It checks a nonempty stamp and
+// the expected duration near two seconds from the supplied observation time.
 func TestGrokVideoPendingCreatedAtStampOnStoreShape(t *testing.T) {
 	t.Parallel()
 	// GrokVideoE2EDuration must parse timestamps produced by GrokVideoPendingCreatedAtNow.
 	stamp := media.GrokVideoPendingCreatedAtNow()
 	require.NotEmpty(t, stamp)
 	d := media.GrokVideoE2EDuration(stamp, time.Now().UTC().Add(2*time.Second))
+	// Use one-second bounds around the simulated two-second observation to
+	// allow timestamp production and assertion timing.
 	require.GreaterOrEqual(t, d, time.Second)
 	require.LessOrEqual(t, d, 3*time.Second)
 }
 
-// TestGrokMediaUsageCarriesTerminalState checks that failed status results reach media completion processing.
+// TestGrokMediaUsageCarriesTerminalState parses failed, expired, cancelled,
+// done and pending status-only responses. It checks task state reaches
+// metadata while every fixture retains zero billable video count without URL
+// evidence.
 func TestGrokMediaUsageCarriesTerminalState(t *testing.T) {
 	for _, state := range []string{"failed", "expired", "cancelled", "done", "pending"} {
 		body, err := json.Marshal(map[string]string{"status": state})
@@ -476,6 +588,9 @@ func TestGrokMediaUsageCarriesTerminalState(t *testing.T) {
 	}
 }
 
+// TestIsGrokVideoStatusBillable compares done/video.url evidence with
+// incomplete or missing state and URL fixtures. It checks the accepted shape
+// and verifies completed is distinct from the billing helper's done status.
 func TestIsGrokVideoStatusBillable(t *testing.T) {
 	t.Parallel()
 	// Billing requires status=done and a nonempty video.url.
@@ -499,6 +614,10 @@ func TestIsGrokVideoStatusBillable(t *testing.T) {
 	require.False(t, media.IsGrokVideoStatusBillable([]byte(`{"status":"completed","video":{"url":"https://vidgen.x.ai/x.mp4"}}`)))
 }
 
+// TestExtractGrokVideoBillingFromStatusBodyPrefersUpstreamParams supplies
+// status model and duration beside saved creation metadata. It checks those
+// observed values determine result model/duration while the saved 720p
+// resolution remains the billing dimension.
 func TestExtractGrokVideoBillingFromStatusBodyPrefersUpstreamParams(t *testing.T) {
 	t.Parallel()
 	pending := &media.GrokVideoPendingBilling{
@@ -524,6 +643,10 @@ func TestExtractGrokVideoBillingFromStatusBodyPrefersUpstreamParams(t *testing.T
 	require.Equal(t, 12, result.VideoDurationSeconds)
 }
 
+// TestExtractGrokVideoBillingFromStatusBodyFallsBackToPending confirms video
+// completion with model and duration omitted. It checks saved billing/upstream
+// identities, 1080p resolution and duration fill the missing completed-video
+// observations.
 func TestExtractGrokVideoBillingFromStatusBodyFallsBackToPending(t *testing.T) {
 	t.Parallel()
 	pending := &media.GrokVideoPendingBilling{
@@ -543,6 +666,9 @@ func TestExtractGrokVideoBillingFromStatusBodyFallsBackToPending(t *testing.T) {
 	require.Equal(t, 10, result.VideoDurationSeconds)
 }
 
+// TestExtractGrokVideoBillingRejectsNonDoneStatus supplies pending and
+// completed states with URL/duration evidence. It checks both return no
+// billing result because neither uses the accepted done completion status.
 func TestExtractGrokVideoBillingRejectsNonDoneStatus(t *testing.T) {
 	t.Parallel()
 	pending := &media.GrokVideoPendingBilling{Model: "m", VideoDurationSeconds: 8, VideoResolution: "720p"}
@@ -556,6 +682,10 @@ func TestExtractGrokVideoBillingRejectsNonDoneStatus(t *testing.T) {
 	))
 }
 
+// TestGrokMediaUsageFromResponseVideoCreateDoesNotBill parses an accepted
+// video task with creation parameters. It checks task identity, requested
+// resolution and duration remain available while the completed-video count
+// stays zero.
 func TestGrokMediaUsageFromResponseVideoCreateDoesNotBill(t *testing.T) {
 	t.Parallel()
 	info := grok.GrokMediaRequestInfo{Model: "grok-imagine-video", Resolution: "720p", DurationSeconds: 10}
@@ -566,6 +696,10 @@ func TestGrokMediaUsageFromResponseVideoCreateDoesNotBill(t *testing.T) {
 	require.Equal(t, pricing.VideoBillingResolution720P, meta.VideoResolution)
 }
 
+// TestGrokMediaUsageFromResponseVideoStatusBillsOnOfficialDone compares done,
+// pending and completed status responses. It checks done supplies one video
+// unit and observed model/duration, while the other listed states keep zero
+// video count.
 func TestGrokMediaUsageFromResponseVideoStatusBillsOnOfficialDone(t *testing.T) {
 	t.Parallel()
 	meta := grokMediaUsageFromResponse(
@@ -594,6 +728,9 @@ func TestGrokMediaUsageFromResponseVideoStatusBillsOnOfficialDone(t *testing.T) 
 	require.Equal(t, 0, completed.VideoCount)
 }
 
+// TestExtractGrokMediaModelSupportsJSONAndMultipart supplies model identity in
+// JSON and multipart form data. It checks both input representations yield
+// their explicit model value through the shared media codec.
 func TestExtractGrokMediaModelSupportsJSONAndMultipart(t *testing.T) {
 	require.Equal(t, "grok-imagine", gatewayprovider.GrokMediaCodec().ExtractGrokMediaModel("application/json", []byte(`{"model":"grok-imagine"}`)))
 
@@ -606,6 +743,10 @@ func TestExtractGrokMediaModelSupportsJSONAndMultipart(t *testing.T) {
 	require.Equal(t, "grok-imagine-edit", gatewayprovider.GrokMediaCodec().ExtractGrokMediaModel(writer.FormDataContentType(), buf.Bytes()))
 }
 
+// TestForwardGrokMediaImagesGenerationNormalizesImagineAlias executes an image
+// request through a scripted API Key transport. It checks the supplied
+// grok-imagine identity remains in the request and result alongside one
+// returned image and billing size.
 func TestForwardGrokMediaImagesGenerationNormalizesImagineAlias(t *testing.T) {
 	t.Setenv(grok.EnvAllowUnsafeURLOverrides, "true")
 
@@ -656,6 +797,9 @@ func TestForwardGrokMediaImagesGenerationNormalizesImagineAlias(t *testing.T) {
 	require.Equal(t, pricing.ImageBillingSize2K, result.ImageSize)
 }
 
+// TestForwardGrokMediaImagesGenerationRejectsEmptySuccessfulResponse returns
+// HTTP 200 with an empty image array. It checks a 502 failover error retains
+// the response body and that client output is still empty.
 func TestForwardGrokMediaImagesGenerationRejectsEmptySuccessfulResponse(t *testing.T) {
 	t.Setenv(grok.EnvAllowUnsafeURLOverrides, "true")
 
@@ -694,20 +838,24 @@ func TestForwardGrokMediaImagesGenerationRejectsEmptySuccessfulResponse(t *testi
 	require.Empty(t, recorder.Body.String())
 }
 
+// TestForwardGrokMediaAppliesProviderModelMappingAfterEndpointNormalization
+// varies media endpoints and provider model mappings. It checks request JSON,
+// result model, billing model and upstream model after mapping composes with
+// image-reference and geometry preparation.
 func TestForwardGrokMediaAppliesProviderModelMappingAfterEndpointNormalization(t *testing.T) {
 	t.Setenv(grok.EnvAllowUnsafeURLOverrides, "true")
 
 	tests := []struct {
-		name             string
-		endpoint         grok.GrokMediaEndpoint
-		path             string
-		body             string
-		modelMapping     map[string]any
-		wantRequestModel string
-		wantBillingModel string
-		wantUpstream     string
-		wantBody         string
-		responseBody     string
+		name             string                 // scenario subtest label
+		endpoint         grok.GrokMediaEndpoint // selected media endpoint
+		path             string                 // client request path
+		body             string                 // input media JSON
+		modelMapping     map[string]any         // provider model mapping
+		wantRequestModel string                 // expected result request model
+		wantBillingModel string                 // expected result billing model
+		wantUpstream     string                 // expected outbound model identity
+		wantBody         string                 // expected upstream request JSON
+		responseBody     string                 // scripted response JSON
 	}{
 		{
 			name:             "image generation maps normalized image alias",
@@ -822,6 +970,10 @@ func TestForwardGrokMediaAppliesProviderModelMappingAfterEndpointNormalization(t
 	}
 }
 
+// TestForwardGrokMediaImagesGenerationStripsUnsupportedSize executes square
+// image input through a scripted provider. It checks upstream JSON uses
+// derived resolution/ratio while the result retains original dimensions and
+// its matching 1k billing tier.
 func TestForwardGrokMediaImagesGenerationStripsUnsupportedSize(t *testing.T) {
 	t.Setenv(grok.EnvAllowUnsafeURLOverrides, "true")
 
@@ -862,6 +1014,10 @@ func TestForwardGrokMediaImagesGenerationStripsUnsupportedSize(t *testing.T) {
 	require.Equal(t, "1024x1024", result.ImageInputSize)
 }
 
+// TestForwardGrokMediaImagesEditMultipartConvertsToJSON uploads a PNG fixture
+// through multipart image editing and provider mapping. It checks JSON
+// model/prompt output, a base64 data URL under url and the mapped
+// billing/upstream identities.
 func TestForwardGrokMediaImagesEditMultipartConvertsToJSON(t *testing.T) {
 	t.Setenv(grok.EnvAllowUnsafeURLOverrides, "true")
 
@@ -919,6 +1075,10 @@ func TestForwardGrokMediaImagesEditMultipartConvertsToJSON(t *testing.T) {
 	require.Equal(t, "vendor-image-edit", result.UpstreamModel)
 }
 
+// TestForwardGrokMediaVideoGenerationReturnsUsageAndResponseID returns a task
+// acceptance with token usage. It checks task identity and observed token
+// totals while video count remains zero and creation resolution/duration stay
+// available.
 func TestForwardGrokMediaVideoGenerationReturnsUsageAndResponseID(t *testing.T) {
 	t.Setenv(grok.EnvAllowUnsafeURLOverrides, "true")
 
@@ -967,6 +1127,10 @@ func TestForwardGrokMediaVideoGenerationReturnsUsageAndResponseID(t *testing.T) 
 	require.Equal(t, 10, result.VideoDurationSeconds)
 }
 
+// TestForwardGrokMediaVideoGenerationReturnsTaskIDAsResponseID returns task_id
+// from the video-creation transport fixture. It checks that this supported
+// identity shape becomes the result ResponseID after successful asynchronous
+// task acceptance.
 func TestForwardGrokMediaVideoGenerationReturnsTaskIDAsResponseID(t *testing.T) {
 	t.Setenv(grok.EnvAllowUnsafeURLOverrides, "true")
 
@@ -1001,6 +1165,10 @@ func TestForwardGrokMediaVideoGenerationReturnsTaskIDAsResponseID(t *testing.T) 
 	require.Equal(t, "video-task-123", result.ResponseID)
 }
 
+// TestForwardGrokMediaVideoGenerationPreservesImageToVideoModel uses a legacy
+// image_url in video generation with omitted duration. It checks canonical URL
+// input, retained video model/task identity and the normalized eight-second
+// creation duration.
 func TestForwardGrokMediaVideoGenerationPreservesImageToVideoModel(t *testing.T) {
 	t.Setenv(grok.EnvAllowUnsafeURLOverrides, "true")
 
@@ -1042,6 +1210,10 @@ func TestForwardGrokMediaVideoGenerationPreservesImageToVideoModel(t *testing.T)
 	require.Equal(t, pricing.VideoBillingDefaultDurationSeconds, result.VideoDurationSeconds)
 }
 
+// TestForwardGrokMediaOAuthImageToVideoUsesOfficialAPIForLargeBody supplies a
+// large inline image through an OAuth CLI-base provider. It checks the
+// official media API endpoint and canonical image URL while text CLI-specific
+// headers are absent.
 func TestForwardGrokMediaOAuthImageToVideoUsesOfficialAPIForLargeBody(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -1085,6 +1257,9 @@ func TestForwardGrokMediaOAuthImageToVideoUsesOfficialAPIForLargeBody(t *testing
 	require.False(t, gjson.GetBytes(upstream.lastBody, "image.image_url").Exists())
 }
 
+// TestForwardGrokMediaVideoStatusUsesGETWithoutBody queries a scripted video
+// status through API Key authentication. It checks GET, the task URL and empty
+// body/Content-Type alongside the upstream request identifier in the result.
 func TestForwardGrokMediaVideoStatusUsesGETWithoutBody(t *testing.T) {
 	t.Setenv(grok.EnvAllowUnsafeURLOverrides, "true")
 
@@ -1129,13 +1304,16 @@ func TestForwardGrokMediaVideoStatusUsesGETWithoutBody(t *testing.T) {
 	require.Equal(t, "xai-video-req", result.RequestID)
 }
 
+// TestForwardGrokMediaVideoMutationEndpoints executes edit and extension
+// requests with provider model mapping. It checks each mutation URL and JSON
+// body, retaining task identity/duration with zero completed-video count.
 func TestForwardGrokMediaVideoMutationEndpoints(t *testing.T) {
 	t.Setenv(grok.EnvAllowUnsafeURLOverrides, "true")
 
 	tests := []struct {
-		name     string
-		endpoint grok.GrokMediaEndpoint
-		path     string
+		name     string                 // scenario subtest label
+		endpoint grok.GrokMediaEndpoint // selected media endpoint
+		path     string                 // client request path
 	}{
 		{name: "edit", endpoint: grok.GrokMediaEndpointVideosEdits, path: "/videos/edits"},
 		{name: "extension", endpoint: grok.GrokMediaEndpointVideosExtensions, path: "/videos/extensions"},
@@ -1179,6 +1357,10 @@ func TestForwardGrokMediaVideoMutationEndpoints(t *testing.T) {
 	}
 }
 
+// TestForwardGrokMedia429ReconcilesRateLimitBeforeCustomErrorBypass returns
+// 429 while custom error codes exclude it. It checks generic client
+// presentation still follows recorded provider rate-limit handling and runtime
+// scheduling block.
 func TestForwardGrokMedia429ReconcilesRateLimitBeforeCustomErrorBypass(t *testing.T) {
 	t.Setenv(grok.EnvAllowUnsafeURLOverrides, "true")
 
@@ -1226,6 +1408,10 @@ func TestForwardGrokMedia429ReconcilesRateLimitBeforeCustomErrorBypass(t *testin
 	require.True(t, httpFixtureRuntimeBlocked(svc, provider))
 }
 
+// TestGrokMedia429FailoverPreservesRetryAfter classifies a retryable scripted
+// rate-limit response through media execution. It checks no result is returned
+// and the failover error retains upstream Retry-After guidance for
+// orchestration.
 func TestGrokMedia429FailoverPreservesRetryAfter(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -1257,16 +1443,22 @@ func TestGrokMedia429FailoverPreservesRetryAfter(t *testing.T) {
 	require.Equal(t, "45", http.Header(failoverErr.ResponseHeaders).Get("Retry-After"))
 }
 
+// SetError counts one captured permanent provider error write for assertions.
 func (r *grokPoolPolicyProviderRepo) SetError(_ context.Context, _ int64, _ string) error {
 	r.setErrorCalls++
 	return nil
 }
 
+// SetOverloaded counts one captured provider overload write for policy
+// assertions.
 func (r *grokPoolPolicyProviderRepo) SetOverloaded(_ context.Context, _ int64, _ time.Time) error {
 	r.overloadedCalls++
 	return nil
 }
 
+// SetModelRateLimit counts a model cooldown write and retains its scope. The
+// first optional reason replaces the captured reason; absent reason arguments
+// leave earlier text intact, and these counters are unsynchronized.
 func (r *grokPoolPolicyProviderRepo) SetModelRateLimit(_ context.Context, _ int64, scope string, _ time.Time, reason ...string) error {
 	r.modelRateLimitCalls++
 	r.lastModelRateLimitScope = scope
@@ -1276,7 +1468,10 @@ func (r *grokPoolPolicyProviderRepo) SetModelRateLimit(_ context.Context, _ int6
 	return nil
 }
 
-// newGrokPoolPolicyGateway creates a Grok fixture with shared error-policy handling.
+// newGrokPoolPolicyGateway constructs shared response and health fixtures for
+// one provider. Its callbacks reference the returned service after
+// construction, letting temporary policy and retry observations inspect the
+// same runtime scheduling state.
 func newGrokPoolPolicyGateway(provider *gatewayprovider.ExecutionProvider) (*OpenAIResponsesExecutor, *grokPoolPolicyProviderRepo) {
 	baseRepo := &grokFixtureProviders{
 		providersByID: map[int64]*gatewayprovider.ExecutionProvider{provider.Record.ID: provider},
@@ -1299,7 +1494,9 @@ func newGrokPoolPolicyGateway(provider *gatewayprovider.ExecutionProvider) (*Ope
 	return svc, repo
 }
 
-// newGrokPoolProvider returns a Grok API key provider configured in pool mode.
+// newGrokPoolProvider returns an active schedulable API Key record with pool
+// mode enabled. Tests add explicit retry/error policy and credential values to
+// this fresh map before executing their scenario.
 func newGrokPoolProvider(id int64) *gatewayprovider.ExecutionProvider {
 	return &gatewayprovider.ExecutionProvider{
 		Record: providercore.Record{
@@ -1313,6 +1510,10 @@ func newGrokPoolProvider(id int64) *gatewayprovider.ExecutionProvider {
 	}
 }
 
+// TestGrokMediaPoolModeRetryFlagFollowsExplicitPolicies compares default pool
+// rate limits with explicit auth and temporary-model policies. It checks retry
+// flags, provider-state writes and mapped-model cooldown scope from actual
+// media execution.
 func TestGrokMediaPoolModeRetryFlagFollowsExplicitPolicies(t *testing.T) {
 	t.Run("default 429 remains retryable without local cooldown", func(t *testing.T) {
 		provider := newGrokPoolProvider(630)

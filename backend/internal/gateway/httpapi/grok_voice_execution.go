@@ -22,10 +22,21 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/openai"
 )
 
-type grokUpstreamFrames struct{ conn openai.WSClientConn }
+// Grok Voice endpoints return audio or resource JSON with their own response
+// headers. HTTP execution passes those representations through shared provider
+// transport and health handling, while Realtime connection adapters preserve
+// frame bytes for the platform relay and its observed-audio billing decision.
 
-// ForwardGrokVoice forwards xAI TTS, STT, and custom Voice HTTP resources.
-// Pass responses through because TTS returns audio, STT returns JSON, and each can have format-specific headers.
+// grokUpstreamFrames adapts the shared JSON WebSocket connection to Realtime
+// frames.
+type grokUpstreamFrames struct {
+	conn openai.WSClientConn // active upstream WebSocket
+}
+
+// ForwardGrokVoice executes one selected Grok TTS, STT or custom-voice HTTP
+// resource. It validates platform and endpoint before credentials, uses the
+// inbound method when supplied or POST otherwise, and delegates body cleanup
+// and audio observation to GrokVoice.
 func (s *GrokExecutor) ForwardGrokVoice(ctx context.Context, c *gin.Context, provider *gatewayprovider.ExecutionProvider, endpoint string, body []byte, contentType string) (*forwardcore.OpenAIResult, error) {
 	if s == nil || provider == nil {
 		return nil, fmt.Errorf("grok voice service/provider is required")
@@ -47,6 +58,8 @@ func (s *GrokExecutor) ForwardGrokVoice(ctx context.Context, c *gin.Context, pro
 	if err != nil {
 		return nil, err
 	}
+	// Platform execution retains request values and server-abort state while
+	// detaching client cancellation; its result still reports observed audio usage.
 	upstreamCtx, release := gatewayprovider.DetachUpstreamContext(ctx)
 	defer release()
 	upstreamCtx = upstreamcore.WithHTTPUpstreamProfile(upstreamCtx, upstreamcore.HTTPUpstreamProfileGrok)
@@ -80,6 +93,7 @@ func (s *GrokExecutor) ForwardGrokVoice(ctx context.Context, c *gin.Context, pro
 			return s.Transport.Do(req, proxyURL, provider.Record.ID, provider.Record.Concurrency)
 		},
 		AfterExchange: func(elapsed time.Duration, err error) error {
+			// Ops stores whole milliseconds, discarding submillisecond exchange timing.
 			SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, elapsed.Milliseconds())
 			if err != nil {
 				return s.Failure.Handle(ctx, c, provider, err, false)
@@ -130,6 +144,9 @@ func (s *GrokExecutor) ForwardGrokVoice(ctx context.Context, c *gin.Context, pro
 	}, nil
 }
 
+// OpenGrokRealtime opens the selected Grok provider's Voice WebSocket using
+// supplied token and model. The returned session owns the connection and
+// activity release; callers close it after relay or preparation failure.
 func (s *GrokExecutor) OpenGrokRealtime(ctx context.Context, provider *gatewayprovider.ExecutionProvider, token, model string) (*grok.RealtimeSession, error) {
 	if s == nil || provider == nil || provider.Record.Platform != capability.PlatformGrok {
 		return nil, fmt.Errorf("grok realtime provider is required")
@@ -141,26 +158,40 @@ func (s *GrokExecutor) OpenGrokRealtime(ctx context.Context, provider *gatewaypr
 	return mediaprovider.DialRealtime(ctx, s.grokRealtimeOptions(provider, base, token, model))
 }
 
-// HandleGrokRealtimeUpstreamError applies Grok provider policy to a failed handshake before downstream WebSocket
-// upgrade.
+// HandleGrokRealtimeUpstreamError observes a failed Realtime handshake before
+// downstream upgrade. Nonpositive status becomes 502, and this hook records
+// provider health while leaving the caller to present the handshake failure.
 func (s *GrokExecutor) HandleGrokRealtimeUpstreamError(ctx context.Context, provider *gatewayprovider.ExecutionProvider, statusCode int, body []byte) {
 	if statusCode <= 0 {
 		statusCode = http.StatusBadGateway
 	}
+	// The caller already owns the failed handshake's response and retry decision.
+	// This observation hook discards the returned policy after recording provider health.
 	_ = gatewayprovider.ApplyGrokExecutionHealth(ctx, s.Health, provider, statusCode, nil, body, "")
 }
 
+// ReadFrame reads the shared connection's message bytes and labels them as
+// text. The interface supplies no incoming frame-kind distinction, and the
+// connection's error is returned for relay shutdown.
 func (c grokUpstreamFrames) ReadFrame(ctx context.Context) (upstreamcore.FrameKind, []byte, error) {
 	data, err := c.conn.ReadMessage(ctx)
 	return upstreamcore.FrameText, data, err
 }
 
+// WriteFrame sends the supplied bytes as raw JSON through the shared
+// connection. It ignores FrameKind, so relay callers supply JSON message data
+// that the connection can encode and deliver.
 func (c grokUpstreamFrames) WriteFrame(ctx context.Context, _ upstreamcore.FrameKind, data []byte) error {
 	return c.conn.WriteJSON(ctx, json.RawMessage(data))
 }
+
+// Close releases the adapted upstream connection through its own close method.
 func (c grokUpstreamFrames) Close() error { return c.conn.Close() }
 
-// grokRealtimeOptions binds the shared dialer with this provider's proxy and TLS settings.
+// grokRealtimeOptions binds provider route, proxy, TLS and headers to the
+// shared WebSocket dialer. OAuth additionally supplies CLI headers; the
+// resulting options preserve selected-provider execution for the platform's
+// Realtime session.
 func (s *GrokExecutor) grokRealtimeOptions(provider *gatewayprovider.ExecutionProvider, base, token, model string) mediaprovider.RealtimeOptions {
 	proxyURL := ""
 	if provider.Record.ProxyID != nil && provider.Record.Proxy != nil {
@@ -186,7 +217,9 @@ func (s *GrokExecutor) grokRealtimeOptions(provider *gatewayprovider.ExecutionPr
 	return options
 }
 
-// RelayGrokRealtimeFrames relays frames; media HTTP and core code own the inbound upgrade and concurrency slots.
+// RelayGrokRealtimeFrames delegates bidirectional relay and its audio-observed
+// result to Grok. Callers own inbound upgrade, concurrency slots and closing
+// the supplied frame connections after the relay returns.
 func (s *GrokExecutor) RelayGrokRealtimeFrames(ctx context.Context, client, server upstreamcore.FrameConn) (bool, error) {
 	return grok.RelayRealtime(ctx, client, server)
 }

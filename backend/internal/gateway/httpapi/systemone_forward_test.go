@@ -30,7 +30,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/jev"
 )
 
-// TestSystemOneErrorRepresentation checks headers for rewritten JSON and unchanged upstream bodies.
+// SystemOne error rules can replace upstream bytes with JSON, while served
+// decisions retain vendor model observations independently of client aliases.
+// These fixtures inspect error encoding, pool retry policy, zero-price
+// admission and requested/group/provider model selection through the real Jev
+// executor.
+
+// TestSystemOneErrorRepresentation varies upstream media types, gzip and
+// matched rewrite rules. It checks rewritten JSON removes encoding while
+// unmatched bodies retain their bytes, type, encoding and safe retry/request
+// headers.
 func TestSystemOneErrorRepresentation(t *testing.T) {
 	for _, contentType := range []string{"text/plain; charset=utf-8", "text/html; charset=utf-8", "application/problem+json", "application/json"} {
 		for _, encoded := range []bool{false, true} {
@@ -77,7 +86,9 @@ func TestSystemOneErrorRepresentation(t *testing.T) {
 	}
 }
 
-// TestSystemOneTerminalErrorRules checks that terminal errors match Jev or all-platform rules.
+// TestSystemOneTerminalErrorRules returns terminal 400 and 422 errors under
+// Jev, OpenAI and unrestricted rules. It checks only applicable platform rules
+// rewrite output and set monitoring suppression, with no failover error.
 func TestSystemOneTerminalErrorRules(t *testing.T) {
 	for _, sourceStatus := range []int{400, 422} {
 		for _, platform := range []string{"jev", "openai", ""} {
@@ -117,16 +128,21 @@ func TestSystemOneTerminalErrorRules(t *testing.T) {
 	}
 }
 
-// TestSystemOnePoolErrorPolicy checks pool retry eligibility, Retry-After, and custom error-code precedence.
+// TestSystemOnePoolErrorPolicy varies pool and custom error-code configuration
+// around scripted HTTP failures. It checks retry eligibility, same-provider
+// flags, unwritten responses and the Retry-After-based delay for eligible
+// cases.
 func TestSystemOnePoolErrorPolicy(t *testing.T) {
 	for _, tc := range []struct {
-		name            string
-		status          int
-		pool            bool
-		retryCodes      []int
-		customCodes     []int
-		wantRetry, same bool
-		wantStatus      int
+		name        string // scenario subtest label
+		status      int    // scripted HTTP status
+		pool        bool   // provider pool-mode setting
+		retryCodes  []int  // same-provider retry status codes
+		customCodes []int  // custom error status codes
+		// wantRetry and same distinguish provider replacement from a held-lease
+		// retry. wantStatus is inspected when classification instead presents the error.
+		wantRetry, same bool // wantRetry: expected retry failure; same: expected same-provider allowance
+		wantStatus      int  // expected delivered HTTP status
 	}{
 		{name: "pool retry", status: 503, pool: true, retryCodes: []int{503}, wantRetry: true, same: true},
 		{name: "pool code excluded", status: 503, pool: true, retryCodes: []int{429}, wantRetry: true},
@@ -160,6 +176,8 @@ func TestSystemOnePoolErrorPolicy(t *testing.T) {
 				require.ErrorAs(t, err, &retry)
 				require.Equal(t, tc.same, retry.RetryableOnSameProvider)
 				if tc.same {
+					// Allow classification time between calculating Retry-After and
+					// asserting its remaining three-second delay.
 					require.InDelta(t, float64(3*time.Second), float64(retry.SameProviderRetryDelay), float64(100*time.Millisecond))
 				}
 				require.False(t, c.Writer.Written())
@@ -171,10 +189,18 @@ func TestSystemOnePoolErrorPolicy(t *testing.T) {
 	}
 }
 
-// TestSystemOneForwardResponseModel checks aliases and composite prefixes in responses while observing upstream
-// model versions.
+// TestSystemOneForwardResponseModel varies direct, provider/group aliases, Key
+// redirects and composite model names. It checks client restoration while
+// outbound identity and raw vendor response version remain separately
+// observed.
 func TestSystemOneForwardResponseModel(t *testing.T) {
 	for _, tc := range []struct {
+		// requested supplies route-plan identity and groupMapped optionally replaces
+		// the transmitted model. composite restores the prefixed client label, while
+		// keyAlias supplies the earlier Key redirect identity used by response output.
+		// name: scenario subtest label; requested: client requested model;
+		// groupMapped: group mapping destination; composite: client composite label;
+		// keyAlias: client Key redirect alias; want: expected response model.
 		name, requested, groupMapped, composite, keyAlias, want string
 	}{
 		{name: "direct", requested: "jev-latest", want: "jev-1.13.0"},
@@ -219,7 +245,9 @@ func TestSystemOneForwardResponseModel(t *testing.T) {
 			require.True(t, result.HasUsage)
 			require.Equal(t, "jev-latest", result.UpstreamModel)
 			require.Equal(t, "jev-1.13.0", result.UpstreamResponseModel)
-			var sent, received struct{ Model string }
+			var sent, received struct {
+				Model string // decoded model identity
+			}
 			require.NoError(t, json.Unmarshal(transport.lastBody, &sent))
 			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &received))
 			require.Equal(t, "jev-latest", sent.Model)
@@ -228,8 +256,10 @@ func TestSystemOneForwardResponseModel(t *testing.T) {
 	}
 }
 
-// TestSystemOneForwardPricingAndMapping checks all billing model sources, zero-price admission, and upstream model
-// observation.
+// TestSystemOneForwardPricingAndMapping varies requested, group and upstream
+// billing-model sources with missing or zero prices. It checks rejection
+// before transport when unpriced, and mapped exchange/client restoration when
+// pricing is available.
 func TestSystemOneForwardPricingAndMapping(t *testing.T) {
 	for _, source := range []string{routing.BillingModelSourceRequested, routing.BillingModelSourceGroupMapped, routing.BillingModelSourceUpstream} {
 		for _, priced := range []bool{false, true} {
@@ -278,6 +308,10 @@ func TestSystemOneForwardPricingAndMapping(t *testing.T) {
 	}
 }
 
+// TestSystemOneForwardFailurePolicy returns authentication, validation,
+// rate-limit, overload and service errors from a scripted transport. It checks
+// 422 is directly delivered while the other listed statuses retain failover
+// and Retry-After evidence.
 func TestSystemOneForwardFailurePolicy(t *testing.T) {
 	for _, status := range []int{401, 422, 429, 529, 503} {
 		transport := &auxiliaryHTTPRecorder{resp: &http.Response{StatusCode: status, Header: http.Header{"Retry-After": []string{"17"}}, Body: io.NopCloser(strings.NewReader(`{"error":"upstream failure"}`))}}
@@ -303,7 +337,9 @@ func TestSystemOneForwardFailurePolicy(t *testing.T) {
 	}
 }
 
-// TestSystemOneRequiresPricing checks that missing pricing dependencies fail before forwarding.
+// TestSystemOneRequiresPricing removes the pricing resolver while retaining
+// scripted transport. It checks both missing-pricing fixtures return 503
+// before selecting a usable target or creating an upstream request.
 func TestSystemOneRequiresPricing(t *testing.T) {
 	transport := &auxiliaryHTTPRecorder{}
 	for _, pricing := range []*admission.ModelPricing{nil, {}} {
