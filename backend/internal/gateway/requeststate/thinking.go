@@ -1,6 +1,7 @@
 package requeststate
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/tidwall/gjson"
@@ -11,6 +12,8 @@ import (
 
 // ThinkingRequestOptions 固化原调用入口的协议族和模型资格，保留未指定模型时的兼容过滤。
 type ThinkingRequestOptions struct {
+	// Efforts is the resolved set of levels; nil uses the protocol defaults.
+	Efforts                                 []string
 	PreFilter, RetryFilters                 bool
 	PassbackRequired, NativeReasoningEffort bool
 	GLM, GLM53                              bool
@@ -88,6 +91,16 @@ func NormalizeGLMOpenAIReasoningEffort(body []byte, options ThinkingRequestOptio
 	if options.GLM53 && mapped == "high" && NormalizeEffortToken(raw) == "low" {
 		mapped = "low"
 	}
+	if options.Efforts != nil {
+		mapped = configuredGLMEffort(raw, mapped, options.Efforts)
+		if len(options.Efforts) == 0 {
+			modified, err := sjson.DeleteBytes(body, path)
+			if err != nil {
+				return body, false
+			}
+			return modified, true
+		}
+	}
 	if mapped == "" || mapped == raw {
 		return body, false
 	}
@@ -120,8 +133,8 @@ func NormalizeGLMEffortToken(raw string) string {
 	}
 }
 
-func NormalizeGLM53AnthropicThinking(body []byte, enabled bool) ([]byte, bool) {
-	if !enabled {
+func NormalizeGLM53AnthropicThinking(body []byte, options ThinkingRequestOptions) ([]byte, bool) {
+	if !options.GLM53 {
 		return body, false
 	}
 
@@ -141,16 +154,53 @@ func NormalizeGLM53AnthropicThinking(body []byte, enabled bool) ([]byte, bool) {
 	default:
 		return body, false
 	}
+	if options.Efforts != nil {
+		effort = configuredGLMEffort(raw, effort, options.Efforts)
+	}
 
 	modified, err := sjson.SetBytes(body, "thinking.type", "enabled")
 	if err != nil {
 		return body, false
 	}
-	modified, err = sjson.SetBytes(modified, "output_config.effort", effort)
+	if effort == "" {
+		modified, err = sjson.DeleteBytes(modified, "output_config.effort")
+	} else {
+		modified, err = sjson.SetBytes(modified, "output_config.effort", effort)
+	}
 	if err != nil {
 		return body, false
 	}
 	return modified, true
+}
+
+// configuredGLMEffort keeps supported values and bounds protocol aliases by the resolved set.
+func configuredGLMEffort(raw, fallback string, allowed []string) string {
+	value := NormalizeEffortToken(raw)
+	if slices.Contains(allowed, value) {
+		return value
+	}
+	if slices.Contains(allowed, fallback) {
+		return fallback
+	}
+	levels := []string{"none", "minimal", "low", "medium", "high", "xhigh", "max"}
+	rank := slices.Index(levels, fallback)
+	if rank < 0 {
+		return ""
+	}
+	selected := ""
+	for index, level := range levels {
+		if !slices.Contains(allowed, level) {
+			continue
+		}
+		selected = level
+		if index >= rank {
+			break
+		}
+	}
+	if selected == "" && slices.Contains(allowed, "default") {
+		return "default"
+	}
+	return selected
 }
 
 func NormalizeChineseLLMThinking(body []byte, minimaxAdaptive bool) ([]byte, bool) {

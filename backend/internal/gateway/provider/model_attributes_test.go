@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -87,5 +88,97 @@ func TestPrepareModelAttributeParametersImageToolOverrides(t *testing.T) {
 		require.Equal(t, "high", gjson.GetBytes(body, "tools.2.input_fidelity").String())
 		require.Equal(t, "high", gjson.GetBytes(original, "tools.0.input_fidelity").String())
 		require.Equal(t, 1, repo.reads)
+	}
+}
+
+func TestGeminiThinkingDistinguishesUnknownAndEmptyOptions(t *testing.T) {
+	yes, no := true, false
+	empty := []modelcatalog.ReasoningOption{}
+	for _, tc := range []struct {
+		name  string
+		attrs modelcatalog.Attributes
+		fail  bool
+	}{
+		{"unknown", modelcatalog.Attributes{}, false},
+		{"reasoning known options unknown", modelcatalog.Attributes{Reasoning: &yes}, false},
+		{"known empty", modelcatalog.Attributes{Reasoning: &yes, ReasoningOptions: &empty}, true},
+		{"reasoning disabled", modelcatalog.Attributes{Reasoning: &no}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result := testkit.OfflineView().Resolve(modelcatalog.Target{Platform: "gemini", Model: "private-model"}, tc.attrs)
+			for _, control := range []struct {
+				name, body, effort string
+				budget             int
+			}{
+				{"effort", `{"reasoning_effort":"high"}`, "high", 0},
+				{"budget", `{"thinking":{"type":"enabled","budget_tokens":4096}}`, "", 4096},
+			} {
+				t.Run(control.name, func(t *testing.T) {
+					thinking, err := GeminiThinking(result, []byte(control.body))
+					if tc.fail {
+						require.Error(t, err)
+						return
+					}
+					require.NoError(t, err)
+					require.Equal(t, control.effort, thinking.ThinkingLevel)
+					require.Equal(t, control.budget, thinking.ThinkingBudget)
+				})
+			}
+		})
+	}
+}
+
+func TestApplyModelAttributeParametersUsesGLMEffortOverrides(t *testing.T) {
+	for _, tc := range []struct {
+		name, model, protocol, body, path, want string
+		efforts                                 []string
+	}{
+		{"chat accepts configured low", "glm-5.2", "openai_chat_completions", `{"reasoning_effort":"low"}`, "reasoning_effort", "low", []string{"low", "high"}},
+		{"responses accepts configured medium", "glm-5.3", "openai_responses", `{"reasoning":{"effort":"medium"}}`, "reasoning.effort", "medium", []string{"medium", "high"}},
+		{"alias stays in allowed set", "glm-5.3", "openai_chat_completions", `{"reasoning_effort":"xhigh"}`, "reasoning_effort", "high", []string{"low", "high"}},
+		{"messages accepts configured medium", "glm-5.3", "anthropic_messages", `{"output_config":{"effort":"medium"}}`, "output_config.effort", "medium", []string{"medium", "high"}},
+		{"messages alias stays in allowed set", "glm-5.3", "anthropic_messages", `{"thinking":{"type":"disabled"}}`, "output_config.effort", "high", []string{"high", "max"}},
+		{"no selectable efforts", "glm-5.2", "openai_chat_completions", `{"reasoning_effort":"low"}`, "reasoning_effort", "", []string{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			values := make([]*string, 0, len(tc.efforts))
+			for _, effort := range tc.efforts {
+				values = append(values, &effort)
+			}
+			options := []modelcatalog.ReasoningOption{{Type: "effort", Values: values}}
+			result := testkit.OfflineView().Resolve(modelcatalog.Target{Platform: "zhipu", Model: tc.model, UpstreamProtocol: tc.protocol}, modelcatalog.Attributes{ReasoningOptions: &options})
+			body, err := ApplyModelAttributeParameters([]byte(tc.body), result)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, gjson.GetBytes(body, tc.path).String())
+			if tc.want != "" {
+				require.True(t, *result.Attributes.EffortSupport(tc.want))
+			}
+			if tc.protocol == "anthropic_messages" {
+				require.Equal(t, "enabled", gjson.GetBytes(body, "thinking.type").String())
+			}
+		})
+	}
+}
+
+func TestModelRequestStateGeminiFieldAliases(t *testing.T) {
+	for _, config := range []string{"generationConfig", "generation_config"} {
+		for _, thinking := range []string{"thinkingConfig", "thinking_config"} {
+			for _, tc := range []struct {
+				field, value string
+				enabled      bool
+			}{
+				{"thinkingLevel", `"high"`, true},
+				{"thinking_level", `"none"`, false},
+				{"thinkingBudget", "1024", true},
+				{"thinking_budget", "0", false},
+			} {
+				t.Run(config+"/"+thinking+"/"+tc.field, func(t *testing.T) {
+					body := []byte(fmt.Sprintf(`{%q:{%q:{%q:%s}}}`, config, thinking, tc.field, tc.value))
+					state := ModelRequestState(body)
+					require.NotNil(t, state.Thinking)
+					require.Equal(t, tc.enabled, *state.Thinking)
+				})
+			}
+		}
 	}
 }

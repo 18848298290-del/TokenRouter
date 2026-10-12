@@ -24,16 +24,15 @@ func applyGeminiModelParameters(body, controls []byte, resolution modelcatalog.R
 			return nil, err
 		}
 	}
-	for key, support := range map[string]*bool{"temperature": result.Attributes.Temperature, "topP": result.Attributes.TopP} {
-		if support == nil || *support {
-			continue
-		}
-		for _, config := range []string{"generationConfig", "generation_config"} {
-			if gjson.GetBytes(body, config+"."+key).Exists() {
-				body, err = sjson.DeleteBytes(body, config+"."+key)
-				if err != nil {
-					return nil, err
-				}
+	for _, configName := range []string{"generationConfig", "generation_config"} {
+		config := gjson.GetBytes(body, configName)
+		for key, support := range map[string]*bool{"temperature": result.Attributes.Temperature, "topP": result.Attributes.TopP, "top_p": result.Attributes.TopP} {
+			if support == nil || *support || !config.Get(key).Exists() {
+				continue
+			}
+			body, err = sjson.DeleteBytes(body, configName+"."+key)
+			if err != nil {
+				return nil, err
 			}
 		}
 	}

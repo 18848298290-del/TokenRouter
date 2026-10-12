@@ -43,8 +43,8 @@ func (p *openAINativeAnthropicAdapter) Error(status int, kind, message string) {
 	p.errorWriter()(p.c, status, kind, message)
 }
 
-func (p *openAINativeAnthropicAdapter) NormalizeThinking(body []byte, model string) ([]byte, bool) {
-	return gatewayprovider.NormalizeGLM53AnthropicThinking(body, model)
+func (p *openAINativeAnthropicAdapter) PrepareModel(ctx context.Context, body []byte, model string) ([]byte, error) {
+	return gatewayprovider.PrepareModelAttributeParameters(ctx, p.provider, model, body, p.s.modelAttributes(), "anthropic_messages")
 }
 
 func (p *openAINativeAnthropicAdapter) ThinkingFallback(effort *string, body []byte, model string) *string {

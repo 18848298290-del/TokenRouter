@@ -21,6 +21,7 @@ import (
 	gatewayhttp "github.com/TokenFlux/TokenRouter/internal/gateway/httpapi"
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/provider/googleforward"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog/testkit"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
@@ -618,4 +619,23 @@ func TestGeminiCompatibilityForwardsResolvedThinking(t *testing.T) {
 			require.Contains(t, recorder.Body.String(), "answer")
 		})
 	}
+}
+
+func TestGeminiCompatibilityForwardsReasoningWithUnknownOptions(t *testing.T) {
+	catalog, err := modelcatalog.Parse([]byte(`{"providers":{"google":{"models":{"private-model":{"reasoning":true}}}}}`))
+	require.NoError(t, err)
+	stub := &geminiCompatHTTPUpstreamStub{response: &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"candidates":[{"content":{"parts":[{"text":"answer"}]},"finishReason":"STOP"}]}`))}}
+	svc := newGeminiFixture(geminiDependencies{httpUpstream: stub, cfg: &googleforward.Options{}})
+	svc.Attributes = &routing.ModelAttributeService{Catalog: routing.ModelAttributeCatalog{View: catalog.View}}
+	provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{ID: 1, Platform: "gemini", Type: "apikey", Credentials: map[string]any{"api_key": "fixture"}}}
+	body := []byte(`{"model":"private-model","messages":[{"role":"user","content":"hi"}],"reasoning_effort":"high"}`)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	_, err = svc.ForwardAsChatCompletions(context.Background(), gatewayhttp.NewGoogleBoundary(c, svc.Options, false), provider, body)
+	require.NoError(t, err)
+	require.Equal(t, 1, stub.calls)
+	sent, err := io.ReadAll(stub.lastReq.Body)
+	require.NoError(t, err)
+	require.Equal(t, "high", gjson.GetBytes(sent, "generationConfig.thinkingConfig.thinkingLevel").String())
 }

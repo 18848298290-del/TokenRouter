@@ -17,7 +17,8 @@ type GeminiThinkingInput struct {
 
 // GeminiThinkingOptions 由目标能力解析器提供，转换器按可用字段选择 level 或 budget。
 type GeminiThinkingOptions struct {
-	Known                bool
+	// ControlsKnown distinguishes omitted options from an explicitly empty set.
+	ControlsKnown        bool
 	Reasoning            *bool
 	Toggle               bool
 	Efforts              []string
@@ -82,7 +83,7 @@ func ResolveGeminiThinking(input GeminiThinkingInput, options GeminiThinkingOpti
 		if options.Reasoning != nil && !*options.Reasoning {
 			return nil, nil
 		}
-		if options.Known && !options.Toggle {
+		if options.ControlsKnown && !options.Toggle {
 			return nil, fmt.Errorf("selected model does not support disabling thinking")
 		}
 		return &GeminiThinkingConfig{ThinkingBudget: 0, BudgetSet: true}, nil
@@ -90,11 +91,11 @@ func ResolveGeminiThinking(input GeminiThinkingInput, options GeminiThinkingOpti
 	if options.Reasoning != nil && !*options.Reasoning {
 		return nil, fmt.Errorf("selected model does not support thinking")
 	}
-	if options.Known && !options.ForceBudget && !options.Budget && len(options.Efforts) == 0 && !options.Toggle {
+	if options.ControlsKnown && !options.ForceBudget && !options.Budget && len(options.Efforts) == 0 && !options.Toggle {
 		return nil, fmt.Errorf("selected model does not expose adjustable thinking")
 	}
 	result := &GeminiThinkingConfig{IncludeThoughts: true}
-	useBudget := options.ForceBudget || options.Budget && (input.Budget != nil || len(options.Efforts) == 0) || !options.Known && input.Budget != nil
+	useBudget := options.ForceBudget || options.Budget && (input.Budget != nil || len(options.Efforts) == 0) || !options.ControlsKnown && input.Budget != nil
 	if useBudget {
 		budget := -1
 		switch {
@@ -150,7 +151,7 @@ func ResolveGeminiThinking(input GeminiThinkingInput, options GeminiThinkingOpti
 		}
 	}
 	if effort != "" && effort != "default" {
-		if !options.Known {
+		if !options.ControlsKnown {
 			result.ThinkingLevel = effort
 			return result, nil
 		}

@@ -45,8 +45,9 @@ func ForwardNativeMessages(ctx context.Context, body []byte, defaultMappedModel 
 		}
 		body = rewritten
 	}
-	if normalized, changed := p.NormalizeThinking(body, upstreamModel); changed {
-		body = normalized
+	body, err := p.PrepareModel(ctx, body, upstreamModel)
+	if err != nil {
+		return nil, err
 	}
 
 	// 记录客户端请求的推理强度：优先 Claude 协议的 output_config.effort；

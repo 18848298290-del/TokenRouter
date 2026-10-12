@@ -63,8 +63,8 @@ func GeminiThinking(result modelcatalog.Resolution, body []byte) (*bridge.Gemini
 	attrs := result.Attributes
 	minimum, maximum := attrs.ReasoningBudget()
 	options := bridge.GeminiThinkingOptions{
-		Known:     attrs.ReasoningOptions != nil || attrs.Reasoning != nil,
-		Reasoning: attrs.Reasoning, Toggle: attrs.HasReasoningOption("toggle"),
+		ControlsKnown: attrs.ReasoningOptions != nil,
+		Reasoning:     attrs.Reasoning, Toggle: attrs.HasReasoningOption("toggle"),
 		Efforts: attrs.Efforts(), Budget: attrs.HasReasoningOption("budget_tokens"),
 		BudgetMin: minimum, BudgetMax: maximum,
 		ForceBudget:    result.Target.Platform == "antigravity" && strings.HasPrefix(result.Target.Model, "claude-"),
@@ -116,11 +116,14 @@ func ApplyModelAttributeParameters(body []byte, result modelcatalog.Resolution) 
 			}
 		}
 	}
-	if strings.HasPrefix(strings.ToLower(result.Target.Model), "glm-") && result.Attributes.HasReasoningOption("effort") {
+	if strings.HasPrefix(strings.ToLower(result.Target.Model), "glm-") {
 		options := thinkingRequestOptions(result.Target.Model)
+		if result.Attributes.ReasoningOptions != nil {
+			options.Efforts = append([]string{}, result.Attributes.Efforts()...)
+		}
 		if result.Target.UpstreamProtocol == "anthropic_messages" && options.GLM53 {
-			body, _ = requeststate.NormalizeGLM53AnthropicThinking(body, true)
-		} else {
+			body, _ = requeststate.NormalizeGLM53AnthropicThinking(body, options)
+		} else if result.Attributes.HasReasoningOption("effort") {
 			body, _ = requeststate.NormalizeGLMOpenAIReasoningEffort(body, options)
 		}
 	}
@@ -141,7 +144,7 @@ func ApplyModelAttributeParameters(body []byte, result modelcatalog.Resolution) 
 	return body, err
 }
 
-// ModelRequestState 从实际准备发送的请求中读取已应用分组策略的推理状态。
+// ModelRequestState reads reasoning controls after group policies, including Gemini JSON field aliases.
 func ModelRequestState(body []byte) modelcatalog.RequestState {
 	state := modelcatalog.RequestState{}
 	for _, path := range []string{"reasoning.effort", "reasoning_effort", "output_config.effort"} {
@@ -164,20 +167,24 @@ func ModelRequestState(body []byte) modelcatalog.RequestState {
 			state.Thinking = &thinking
 		}
 	}
-	for _, prefix := range []string{"generationConfig.thinkingConfig.", "generation_config.thinking_config."} {
-		levelKey, budgetKey := "thinkingLevel", "thinkingBudget"
-		if strings.HasPrefix(prefix, "generation_config") {
-			levelKey, budgetKey = "thinking_level", "thinking_budget"
-		}
-		if level := gjson.GetBytes(body, prefix+levelKey); level.Type == gjson.String {
-			effort := strings.ToLower(level.String())
-			state.Effort = &effort
-			thinking := effort != "none"
-			state.Thinking = &thinking
-		}
-		if budget := gjson.GetBytes(body, prefix+budgetKey); budget.Type == gjson.Number {
-			thinking := budget.Int() != 0
-			state.Thinking = &thinking
+	for _, configName := range []string{"generationConfig", "generation_config"} {
+		config := gjson.GetBytes(body, configName)
+		for _, thinkingName := range []string{"thinkingConfig", "thinking_config"} {
+			thinkingConfig := config.Get(thinkingName)
+			for _, key := range []string{"thinkingLevel", "thinking_level"} {
+				if level := thinkingConfig.Get(key); level.Type == gjson.String {
+					effort := strings.ToLower(level.String())
+					state.Effort = &effort
+					thinking := effort != "none"
+					state.Thinking = &thinking
+				}
+			}
+			for _, key := range []string{"thinkingBudget", "thinking_budget"} {
+				if budget := thinkingConfig.Get(key); budget.Type == gjson.Number {
+					thinking := budget.Int() != 0
+					state.Thinking = &thinking
+				}
+			}
 		}
 	}
 	return state

@@ -41,7 +41,7 @@ GenerateContent、StreamGenerateContent 和 CountTokens 的 POST 动作，受分
 
 Responses 转换是正式支持的分支：非流式和 SSE 共用 Gemini 的上游执行、重试和响应适配，保留模型、reasoning、工具调用、usage、结束原因和首 Token 指标。上游失败时，只有在客户端收到第一个字节之前才能换提供商；流开始后，按 Responses SSE 的规则结束，不会改写成普通 JSON，也不会换提供商。
 
-Messages、Chat 和 Responses 转换先按最终服务与模型解析能力，再发送 thinking 控制。Gemini 2.5 的预算型条目使用 `thinkingBudget`，档位型条目使用 `thinkingLevel`；两个字段互斥。客户端的关闭、effort 和预算来自转换前的请求，明确的零预算会保留。原生 GenerateContent 入口保持其协议字段。参数集合与管理员覆盖见[统一模型属性](model_catalog_and_marketplace.md#model_attributes)。
+Messages、Chat 和 Responses 转换先按最终服务与模型解析能力，再发送 thinking 控制。Gemini 2.5 的预算型条目使用 `thinkingBudget`，档位型条目使用 `thinkingLevel`；两个字段互斥。客户端的关闭、effort 和预算来自转换前的请求，明确的零预算会保留。原生 GenerateContent 入口按同一采样规则处理 `generationConfig` 和 `generation_config`，以及 `topP` 和 `top_p`。`reasoning=true` 与可调选项分开判断：选项缺失时继续转发客户端控制，空集合表示没有可配置控制。参数集合与管理员覆盖见[统一模型属性](model_catalog_and_marketplace.md#model_attributes)。
 
 API Key、OAuth 和 Vertex Service Account 在认证头、base URL、project 和 location、错误结构上都不同，协议转换后这些传输差异仍然保留。每次 failover attempt 都重新选择提供商并重建 payload，流式输出开始后不再切换。
 

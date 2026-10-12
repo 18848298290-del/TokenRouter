@@ -60,7 +60,7 @@ func TestThinkingPolicyGLMVariants(t *testing.T) {
 			require.Equal(t, tc.value, gjson.GetBytes(out, "reasoning_effort").String())
 		})
 	}
-	out, changed := NormalizeGLM53AnthropicThinking([]byte(`{"output_config":{"effort":"ultra"}}`), true)
+	out, changed := NormalizeGLM53AnthropicThinking([]byte(`{"output_config":{"effort":"ultra"}}`), ThinkingRequestOptions{GLM53: true})
 	require.True(t, changed)
 	require.Equal(t, "enabled", gjson.GetBytes(out, "thinking.type").String())
 	require.Equal(t, "max", gjson.GetBytes(out, "output_config.effort").String())

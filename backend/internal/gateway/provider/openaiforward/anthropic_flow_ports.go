@@ -23,7 +23,7 @@ type NativeAnthropicPorts interface {
 	UpstreamModel(model string) string
 	Profile() MessagesProfile
 	Error(status int, kind, message string)
-	NormalizeThinking(body []byte, model string) ([]byte, bool)
+	PrepareModel(ctx context.Context, body []byte, model string) ([]byte, error)
 	ThinkingFallback(effort *string, body []byte, model string) *string
 	StripEmpty(body []byte) []byte
 	FilterSearch(body []byte, model string) []byte

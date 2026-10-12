@@ -25,6 +25,7 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/provider/googleforward"
 	gatewaytelemetry "github.com/TokenFlux/TokenRouter/internal/gateway/telemetry"
 	gatewaytestkit "github.com/TokenFlux/TokenRouter/internal/gateway/testkit"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog/testkit"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	"github.com/TokenFlux/TokenRouter/internal/routing"
@@ -1603,4 +1604,30 @@ func TestGeminiMessagesForwardsThinkingBudget(t *testing.T) {
 	require.NoError(t, err)
 	require.JSONEq(t, `{"includeThoughts":true,"thinkingBudget":4096}`, gjson.GetBytes(wire, "generationConfig.thinkingConfig").Raw)
 	require.Contains(t, recorder.Body.String(), "answer")
+}
+
+func TestGeminiForwardNativeSamplingFieldSpellings(t *testing.T) {
+	for _, config := range []string{"generationConfig", "generation_config"} {
+		for _, field := range []string{"topP", "top_p"} {
+			for _, enabled := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/%s/%t", config, field, enabled), func(t *testing.T) {
+					stub := &geminiCompatHTTPUpstreamStub{response: &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"candidates":[{"content":{"parts":[{"text":"answer"}]},"finishReason":"STOP"}]}`))}}
+					svc := newGeminiFixture(geminiDependencies{httpUpstream: stub, cfg: &googleforward.Options{}})
+					svc.Attributes = &routing.ModelAttributeService{Catalog: routing.ModelAttributeCatalog{Lookup: func(string) modelcatalog.Attributes { return modelcatalog.Attributes{TopP: &enabled} }}}
+					provider := &gatewayprovider.ExecutionProvider{Record: providercore.Record{ID: 1, Platform: "gemini", Type: "apikey", Credentials: map[string]any{"api_key": "fixture"}}}
+					body := []byte(fmt.Sprintf(`{"contents":[{"parts":[{"text":"hi"}]}],%q:{%q:0.8,"temperature":0.4}}`, config, field))
+					recorder := httptest.NewRecorder()
+					c, _ := gin.CreateTestContext(recorder)
+					c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/private:generateContent", bytes.NewReader(body))
+					_, err := svc.ForwardNative(context.Background(), gatewayhttp.NewGoogleBoundary(c, svc.Options, false), provider, "private", "generateContent", false, body)
+					require.NoError(t, err)
+					sent, err := io.ReadAll(stub.lastReq.Body)
+					require.NoError(t, err)
+					require.Equal(t, enabled, gjson.GetBytes(sent, config+"."+field).Exists())
+					require.Equal(t, 0.4, gjson.GetBytes(sent, config+".temperature").Float())
+					require.Equal(t, 0.8, gjson.GetBytes(body, config+"."+field).Float())
+				})
+			}
+		}
+	}
 }

@@ -24,9 +24,11 @@ import (
 	gatewayprovider "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 	"github.com/TokenFlux/TokenRouter/internal/gateway/session"
 	gatewaytestkit "github.com/TokenFlux/TokenRouter/internal/gateway/testkit"
+	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
+	"github.com/TokenFlux/TokenRouter/internal/routing"
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 	upstreamcore "github.com/TokenFlux/TokenRouter/internal/upstream"
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
@@ -3706,4 +3708,18 @@ func TestForwardGrokMessagesReasoningOptions(t *testing.T) {
 			require.Equal(t, tc.model, gjson.GetBytes(upstream.lastBody, "model").String())
 		})
 	}
+}
+
+func TestNativeAnthropicGLMUsesResolvedEffortBeforeConversion(t *testing.T) {
+	medium, high := "medium", "high"
+	options := []modelcatalog.ReasoningOption{{Type: "effort", Values: []*string{&medium, &high}}}
+	upstream := &auxiliaryHTTPRecorder{resp: nativeAnthropicBufferedResponse()}
+	svc := newResponsesFixture(responsesFixtureInputs{options: protocolHTTPOptions(), transport: upstream})
+	svc.Requests.Readers.Attributes = &routing.ModelAttributeService{Catalog: routing.ModelAttributeCatalog{Lookup: func(string) modelcatalog.Attributes { return modelcatalog.Attributes{ReasoningOptions: &options} }}}
+	body := []byte(`{"model":"glm-5.3","max_tokens":32,"output_config":{"effort":"medium"},"messages":[{"role":"user","content":"hi"}]}`)
+	result, err := svc.Text.Messages(context.Background(), adaptiveProtocolTestContext("/v1/messages", body), nativeAnthropicGLMTestProvider(), body, "", "")
+	require.NoError(t, err)
+	require.Equal(t, "medium", gjson.GetBytes(upstream.lastBody, "output_config.effort").String())
+	require.Equal(t, "enabled", gjson.GetBytes(upstream.lastBody, "thinking.type").String())
+	require.Equal(t, "medium", *result.ReasoningEffort)
 }

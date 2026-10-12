@@ -55,12 +55,6 @@ func isGLM53Model(model string) bool {
 	return strings.EqualFold(strings.TrimSpace(model), "glm-5.3")
 }
 
-// NormalizeGLM53AnthropicThinking 将客户端显式 thinking 强度映射到 GLM-5.3
-// Anthropic 兼容档位；未提供强度或 thinking 偏好时保持请求不变，交由上游默认处理。
-func NormalizeGLM53AnthropicThinking(body []byte, mappedModel string) ([]byte, bool) {
-	return requeststate.NormalizeGLM53AnthropicThinking(body, isGLM53Model(mappedModel))
-}
-
 // Thinking Budget Rectifier
 
 // NormalizeChineseLLMThinking 修正国产 Anthropic 兼容上游的 thinking.type 差异。

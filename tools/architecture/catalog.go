@@ -398,7 +398,7 @@ internal/upstream/zhipu/...`, Tests: ""},
 	// 窄权限属于指定文件，不能由相邻文件或目标子包继承。
 	filePermissions = []filePermission{
 		// 目录读取与测试数据构造按实际调用文件登记。
-		{Scope: "internal/gateway/provider", Imports: "internal/modelcatalog", Files: "model_display.go model_attributes.go model_catalogue.go creative_catalog.go execution_provider.go qoder_runtime.go responses_effort.go grok_codec_test.go model_attributes_test.go googleforward/antigravity_openai.go googleforward/model_attributes.go grokforward/contracts.go grokforward/responses.go openaiforward/transform_ports.go messageforward/bedrock.go modelidentity/thinking.go"},
+		{Scope: "internal/gateway/provider", Imports: "internal/modelcatalog", Files: "model_display.go model_attributes.go model_catalogue.go creative_catalog.go execution_provider.go qoder_runtime.go responses_effort.go grok_codec_test.go model_attributes_test.go googleforward/antigravity_openai.go googleforward/model_attributes.go googleforward/gemini_attempts_external_test.go googleforward/gemini_openai_external_test.go grokforward/contracts.go grokforward/responses.go openaiforward/transform_ports.go messageforward/bedrock.go modelidentity/thinking.go"},
 		{Scope: "internal/gateway/provider", Imports: "internal/modelcatalog/testkit", Files: "grok_codec_test.go model_attributes_test.go googleforward/gemini_openai_external_test.go googleforward/gemini_attempts_external_test.go"},
 		{Scope: "internal/provider/httpapi", Imports: "internal/modelcatalog/testkit", Files: "management_catalog_test.go"},
 		// 容器启动等待由共用测试入口提供，许可限定到接入该入口的文件。

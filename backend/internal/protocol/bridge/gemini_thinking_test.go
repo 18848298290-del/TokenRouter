@@ -10,9 +10,9 @@ import (
 func TestResolveGeminiThinkingWireControls(t *testing.T) {
 	zero, limit, output, padding := 0, 24576, 64000, 1000
 	yes := true
-	budgetOptions := GeminiThinkingOptions{Known: true, Reasoning: &yes, Toggle: true, Budget: true, BudgetMin: &zero, BudgetMax: &limit}
-	levelOptions := GeminiThinkingOptions{Known: true, Reasoning: &yes, Efforts: []string{"low", "medium", "high"}}
-	privateOptions := GeminiThinkingOptions{Known: true, Reasoning: &yes, ForceBudget: true, AdaptiveBudget: 24576, OutputLimit: &output, BudgetPadding: padding, Efforts: []string{"low", "medium", "high", "max"}}
+	budgetOptions := GeminiThinkingOptions{ControlsKnown: true, Reasoning: &yes, Toggle: true, Budget: true, BudgetMin: &zero, BudgetMax: &limit}
+	levelOptions := GeminiThinkingOptions{ControlsKnown: true, Reasoning: &yes, Efforts: []string{"low", "medium", "high"}}
+	privateOptions := GeminiThinkingOptions{ControlsKnown: true, Reasoning: &yes, ForceBudget: true, AdaptiveBudget: 24576, OutputLimit: &output, BudgetPadding: padding, Efforts: []string{"low", "medium", "high", "max"}}
 	cases := []struct {
 		name, body string
 		options    GeminiThinkingOptions
@@ -32,7 +32,7 @@ func TestResolveGeminiThinkingWireControls(t *testing.T) {
 		{"private adaptive", `{"thinking":{"type":"adaptive","budget_tokens":1024}}`, privateOptions, `{"includeThoughts":true,"thinkingBudget":24576}`, false},
 		{"private effort", `{"thinking":{"type":"adaptive"},"output_config":{"effort":"max"}}`, privateOptions, `{"includeThoughts":true,"thinkingBudget":32768}`, false},
 		{"unknown controls preserved", `{"reasoning_effort":"future-level"}`, GeminiThinkingOptions{}, `{"includeThoughts":true,"thinkingLevel":"future-level"}`, false},
-		{"known no controls", `{"reasoning_effort":"high"}`, GeminiThinkingOptions{Known: true, Reasoning: &yes}, ``, true},
+		{"known no controls", `{"reasoning_effort":"high"}`, GeminiThinkingOptions{ControlsKnown: true, Reasoning: &yes}, ``, true},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
@@ -51,7 +51,7 @@ func TestResolveGeminiThinkingWireControls(t *testing.T) {
 
 func TestGeminiThinkingBudgetAndOutputLimit(t *testing.T) {
 	minBudget, output := 1024, 9000
-	options := GeminiThinkingOptions{Known: true, ForceBudget: true, BudgetMin: &minBudget, OutputLimit: &output, BudgetPadding: 1000}
+	options := GeminiThinkingOptions{ControlsKnown: true, ForceBudget: true, BudgetMin: &minBudget, OutputLimit: &output, BudgetPadding: 1000}
 	result, err := ResolveGeminiThinking(GeminiThinkingInput{Effort: "max"}, options)
 	require.NoError(t, err)
 	require.Equal(t, 8000, result.ThinkingBudget)
