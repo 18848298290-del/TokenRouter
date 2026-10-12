@@ -2,8 +2,6 @@
 
 package postgres
 
-// This scenario covers activity writes in provider_states.go and list ordering in provider_queries.go.
-
 import (
 	"context"
 	"testing"
@@ -19,7 +17,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/postgrescontainer"
 )
 
-// TestProviderActivityListAndBatchUpdate checks batch activity updates and ascending and descending ordering.
+// Provider activity writes affect administrator list order as well as the
+// stored last-used timestamp. This PostgreSQL scenario covers
+// provider_states.go and provider_queries.go, checking two observed times
+// alongside a provider with no activity and confirming the database's
+// ascending and descending null placement.
+
+// TestProviderActivityListAndBatchUpdate stores two activity times and leaves
+// a third provider unobserved. Ascending order places the null last,
+// descending places it first, and a direct row read confirms the latest
+// supplied timestamp persisted.
 func TestProviderActivityListAndBatchUpdate(t *testing.T) {
 	db := postgrescontainer.New(t)
 	client := ent.NewClient(ent.Driver(sql.OpenDB(dialect.Postgres, db)))
@@ -31,12 +38,16 @@ func TestProviderActivityListAndBatchUpdate(t *testing.T) {
 		require.NoError(t, err)
 		ids[i] = p.ID
 	}
+	// Whole-second fixtures avoid comparing database precision with subsecond clock
+	// observations while keeping distinct activity times for the ordered results.
 	old := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
 	latest := old.Add(time.Minute)
 	require.NoError(t, store.BatchUpdateLastUsed(ctx, map[int64]time.Time{ids[0]: old, ids[1]: latest}))
 	for _, tc := range []struct {
-		order string
-		want  []int64
+		// order selects PostgreSQL ordering for last_used_at; want names the full
+		// ID sequence, including the null row, expected from that selected direction.
+		order string  // database activity sort direction
+		want  []int64 // expected ordered provider identifiers
 	}{
 		{"asc", []int64{ids[0], ids[1], ids[2]}},
 		{"desc", []int64{ids[2], ids[1], ids[0]}},

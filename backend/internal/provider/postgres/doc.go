@@ -1,15 +1,26 @@
-// Package postgres stores provider records, credentials, scheduling state, and usage observations in PostgreSQL.
+// Package postgres stores provider configuration, credentials, health state,
+// group links, and usage observations in PostgreSQL.
 //
 // Reading entry points:
-//   - provider_store.go constructs the store and supplies configuration and transaction context.
-//   - provider_data.go creates and loads providers and converts Ent records.
-//   - provider_queries.go implements filtering, pagination, and scheduler candidate queries.
+//   - provider_store.go binds Ent, SQL, conversion, event, and clock dependencies.
+//   - provider_mutations.go coordinates locked configuration merges and
+//     transaction-owned events.
+//   - provider_queries.go defines administrator filters and gateway scheduling reads.
 //
 // File groups:
-//   - provider_*.go, configuration_write.go manage provider records, group links, and configuration writes.
-//   - credential_refresh.go, grok_credentials.go, refresh_*.go handle credential refresh, errors, and cooldown cleanup.
-//   - usage_*.go, ollama_usage.go, cn_monitor_decision.go, managed_recovery.go handle observations, platform quota, and recovery.
-//   - events.go, ops_projection.go handle change events, snapshot propagation, and Ops load reads.
-//   - group_links.go, proxy_changes.go update group links and proxies.
-//   - scheduled_plans.go stores test schedules and results.
+//   - provider_data.go and provider_membership.go create and hydrate records
+//     and maintain links.
+//   - configuration_write.go, provider_mutations.go, and provider_patches.go
+//     merge declared configuration and JSONB patches.
+//   - credential_refresh.go, grok_credentials.go, and refresh_*.go compare
+//     refresh identities before writing credentials or health.
+//   - provider_states.go, managed_recovery.go, and usage_*.go maintain activity,
+//     windows, and conditional recovery.
+//   - ollama_usage.go and cn_monitor_decision.go persist platform observations
+//     and monitor decisions.
+//   - events.go and ops_projection.go connect storage changes to scheduling
+//     and Ops reads.
+//   - group_links.go and proxy_changes.go participate in routing and egress
+//     caller transactions.
+//   - scheduled_plans.go stores recurring test plans and retained results.
 package postgres

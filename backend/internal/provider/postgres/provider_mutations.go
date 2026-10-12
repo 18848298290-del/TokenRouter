@@ -10,10 +10,39 @@ import (
 	acctcore "github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// Configuration writes combine field intent with the latest locked provider
+// record so administrator edits can coexist with runtime observations. The
+// merged record retains dedicated activity and health columns, while managed
+// Ollama Extra values are read under the row lock and carried forward
+// according to API-key and proxy identity.
+//
+// A locally owned Ent transaction contains the record change and its
+// scheduling event, and snapshot synchronization follows its commit. An Ent
+// transaction carried in context leaves final publication to the outer
+// caller. Credential-only replacement uses SQL to remove observations whose
+// identity becomes stale, while preserving current managed state when the
+// relevant identity remains unchanged.
+
+// Update writes the supplied provider configuration through the shared
+// mutation transaction. Nil input succeeds immediately; callers supplying an
+// entire record account for locked managed Extra preservation and dedicated
+// runtime columns, and the record may be changed before an error returns.
 func (r *ProviderStore) Update(ctx context.Context, provider *acctcore.Record) error {
 	return r.updateProvider(ctx, provider, nil)
 }
 
+// updateProvider writes configuration and its scheduling event through the
+// selected Ent transaction client. A transaction in ctx is reused; otherwise
+// it opens one or reuses a transaction-bound store client, and nil provider
+// is an immediate success.
+//
+// The locked write can merge declared fields and replace the supplied record
+// before publication or commit. Outbox failure aborts a locally owned
+// transaction, while an outer transaction retains its caller's rollback
+// obligation. UpdatedAt is assigned after a local commit or participating
+// write. Immediate synchronization is skipped for a context transaction; a
+// transaction-bound store lacking that context still follows the callback
+// branch.
 func (r *ProviderStore) updateProvider(ctx context.Context, provider *acctcore.Record, change *acctcore.ConfigurationChange) error {
 	if provider == nil {
 		return nil
@@ -24,6 +53,8 @@ func (r *ProviderStore) updateProvider(ctx context.Context, provider *acctcore.R
 	client := r.client
 	var tx *dbent.Tx
 	if contextTx != nil {
+		// Use the context transaction for both the record save and event write;
+		// its outer owner controls rollback and later snapshot publication.
 		client = contextTx.Client()
 	} else {
 		var err error
@@ -32,6 +63,8 @@ func (r *ProviderStore) updateProvider(ctx context.Context, provider *acctcore.R
 			return err
 		}
 		if tx != nil {
+			// Roll back a locally owned configuration save when its event fails,
+			// keeping the locked row and its durable scheduling notification together.
 			defer func() { _ = tx.Rollback() }()
 			ctx = dbent.NewTxContext(ctx, tx)
 			client = tx.Client()
@@ -42,6 +75,8 @@ func (r *ProviderStore) updateProvider(ctx context.Context, provider *acctcore.R
 	if err != nil {
 		return translatePersistenceError(err, acctcore.ErrProviderNotFound, nil)
 	}
+	// Save the event on the same client after the locked configuration write;
+	// failure rejects a locally owned transaction before any snapshot callback can run.
 	if err := r.publish(ctx, client, provider.ID, provider.GroupIDs); err != nil {
 		return err
 	}
@@ -52,14 +87,26 @@ func (r *ProviderStore) updateProvider(ctx context.Context, provider *acctcore.R
 	}
 
 	provider.UpdatedAt = updated.UpdatedAt
-	// Refresh the provider snapshot after configuration edits, including credentials and model mappings,
-	// so gateway reads need not wait for a delayed or failing outbox worker.
+	// Context transaction owners publish after completion. The remaining branch also
+	// includes transaction-bound stores without that context, whose callers
+	// coordinate callback timing.
 	if contextTx == nil {
 		r.afterChange(baseCtx, provider.ID)
 	}
 	return nil
 }
 
+// updateLockedProvider merges declared fields against the current row before
+// saving configuration and managed Extra. A supplied change causes a locked
+// full read and ApplyConfigurationChange; nil change uses the supplied record
+// values while the managed-Extra merge still locks the row.
+//
+// The managed merge carries current Ollama values according to identity
+// rather than accepting stale caller observations. Error status writes
+// schedulable=false, while dedicated runtime columns keep their database
+// values because this builder omits them. The supplied record receives the
+// merged values before Save completes, and the caller owns the surrounding
+// transaction and event write.
 func (r *ProviderStore) updateLockedProvider(ctx context.Context, client *dbent.Client, provider *acctcore.Record, change *acctcore.ConfigurationChange) (*dbent.Provider, error) {
 	if change != nil {
 		current, err := r.lockConfigurationRecord(ctx, client, provider.ID)
@@ -80,7 +127,9 @@ func (r *ProviderStore) updateLockedProvider(ctx context.Context, client *dbent.
 
 	schedulable := provider.Schedulable
 	if provider.Status == acctcore.StatusError {
-		// Error status excludes the provider from scheduling.
+		// Persist error status and the disabled switch together so a subsequent
+		// state-only recovery still requires its own scheduling decision before
+		// eligibility returns.
 		schedulable = false
 	}
 
@@ -113,8 +162,8 @@ func (r *ProviderStore) updateLockedProvider(ctx context.Context, client *dbent.
 		builder.ClearProxyID()
 	}
 
-	// Activity, rate-limit, overload, and session-window fields have dedicated runtime writers.
-	// Configuration changes merge supplied fields into the locked current record before this update.
+	// The builder omits dedicated runtime columns so request observations are retained
+	// in SQL, including when configuration was assembled from an earlier caller read.
 	if provider.ExpiresAt != nil {
 		builder.SetExpiresAt(*provider.ExpiresAt)
 	} else {
@@ -131,6 +180,17 @@ func (r *ProviderStore) updateLockedProvider(ctx context.Context, client *dbent.
 	return builder.Save(ctx)
 }
 
+// LockAndMergeProviderManagedExtra locks the provider row and returns
+// configuration Extra combined with current managed Ollama state. Callers
+// hold the supplied transaction through their later configuration save; a
+// missing or deleted row returns ErrProviderNotFound.
+//
+// Supplied managed session, auto-refresh, and snapshot keys are removed from
+// a supported-container clone before database values are considered. A
+// matching Ollama API-key/base-URL identity retains the current session and
+// switch; retaining the usage snapshot also requires the proxy ID to match.
+// JSON decoding failures stop the update rather than publishing an incomplete
+// managed observation.
 func (r *ProviderStore) LockAndMergeProviderManagedExtra(ctx context.Context, client *dbent.Client, provider *acctcore.Record) (map[string]any, error) {
 	credentials, err := json.Marshal(normalizeJSONMap(provider.Credentials))
 	if err != nil {
@@ -191,6 +251,9 @@ func (r *ProviderStore) LockAndMergeProviderManagedExtra(ctx context.Context, cl
 		return nil, err
 	}
 
+	// Discard submitted managed observations before carrying forward locked values;
+	// configuration readers can be older than the latest browser-session
+	// or usage write.
 	extra := acctcore.CloneValues(normalizeJSONMap(provider.Extra))
 	acctcore.DiscardDeprecatedExtra(extra)
 	for _, key := range []string{
@@ -200,6 +263,8 @@ func (r *ProviderStore) LockAndMergeProviderManagedExtra(ctx context.Context, cl
 	} {
 		delete(extra, key)
 	}
+	// Session identity spans proxies, but a usage observation was fetched through
+	// one selected proxy; retain that snapshot only when this proxy ID also matches.
 	if r.options.OllamaIdentity(provider) && ollamaGroupIdentityUnchanged {
 		for key, raw := range map[string][]byte{
 			"ollama_cloud_usage_session":      currentOllamaSession,
@@ -222,6 +287,10 @@ func (r *ProviderStore) LockAndMergeProviderManagedExtra(ctx context.Context, cl
 	return extra, nil
 }
 
+// DecodeProviderExtraJSON decodes one stored Extra value and reports whether
+// it is present. Empty bytes and literal null are absent; other malformed
+// JSON returns an error, while valid arrays, objects, or scalars retain
+// standard encoding/json types.
 func DecodeProviderExtraJSON(raw []byte) (any, bool, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil, false, nil
@@ -233,6 +302,18 @@ func DecodeProviderExtraJSON(raw []byte) (any, bool, error) {
 	return value, true, nil
 }
 
+// UpdateCredentials replaces the complete credential object and couples it to
+// a provider-change event through the selected Ent transaction client. Nil
+// credentials become an empty object; no matching nondeleted row returns
+// ErrProviderNotFound.
+//
+// SQL compares existing identity before replacement: an Ollama API-key or
+// allowed-host change removes its managed session and observations, while CN
+// credential changes remove the monitor snapshot. Deprecated Extra keys are
+// removed on every write. A locally opened transaction commits before
+// immediate synchronization; a context transaction leaves commit and
+// publication to its caller, and a transaction-bound store without that
+// context still takes the immediate callback branch.
 func (r *ProviderStore) UpdateCredentials(ctx context.Context, id int64, credentials map[string]any) error {
 	payload, err := json.Marshal(normalizeJSONMap(credentials))
 	if err != nil {
@@ -251,11 +332,16 @@ func (r *ProviderStore) UpdateCredentials(ctx context.Context, id int64, credent
 			return txErr
 		}
 		if tx != nil {
+			// Restore the previous credentials and identity-derived observations when
+			// the later event fails before this locally owned replacement can commit.
 			defer func() { _ = tx.Rollback() }()
 			ctx = dbent.NewTxContext(ctx, tx)
 			client = tx.Client()
 		}
 	}
+	// Let the database compare the pre-update credential identity while replacing
+	// credentials, removing managed observations that would otherwise describe
+	// the prior identity.
 	result, err := client.ExecContext(ctx, `
 		UPDATE providers
 		SET
@@ -307,6 +393,8 @@ func (r *ProviderStore) UpdateCredentials(ctx context.Context, id int64, credent
 	if affected == 0 {
 		return acctcore.ErrProviderNotFound
 	}
+	// Enlist credential publication with the replacement so a locally owned rollback
+	// also restores any observations removed by the identity comparison in SQL.
 	if err := r.publish(ctx, client, id, nil); err != nil {
 		return err
 	}

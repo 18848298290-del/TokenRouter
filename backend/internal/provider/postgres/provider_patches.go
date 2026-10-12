@@ -14,12 +14,29 @@ import (
 	acctcore "github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// Extra patches merge JSONB keys into current database values so independent
+// observations can coexist. Scheduler-relevant keys join their outbox event
+// in an Ent transaction; neutral observation keys still trigger a fresh
+// provider snapshot outside a context transaction so cached credentials and
+// other concurrent fields are read together.
+//
+// Bulk patches combine common fields with per-provider protocol changes. SQL
+// evaluates existing credential and proxy values when deciding which Ollama
+// or CN observations become stale, and retains a valid stored Codex
+// fingerprint seed when identity creation is requested. The dedicated CN
+// snapshot path compares updated_at and inserts its scheduling event with the
+// matching update.
+
+// These seed constraints recognize the canonical nonzero UUID retained as an
+// OpenAI OAuth client fingerprint across concurrent configuration and Extra writes.
 const (
 	codexFingerprintSeedCanonicalPattern = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 	codexFingerprintNilSeed              = "00000000-0000-0000-0000-000000000000"
 )
 
 var (
+	// These prefixes classify related display observations together, allowing new
+	// window fields to skip bucket events while still refreshing provider snapshots.
 	schedulerNeutralExtraKeyPrefixes = []string{
 		"codex_primary_",
 		"codex_secondary_",
@@ -31,6 +48,8 @@ var (
 		"cn_usage_monitor",
 	}
 
+	// These exact keys identify remaining usage display observations whose values
+	// do not change candidate routing; dedicated monitor writes may publish separately.
 	schedulerNeutralExtraKeys = map[string]struct{}{
 		"codex_usage_updated_at":                {},
 		"grok_billing_snapshot":                 {},
@@ -41,11 +60,25 @@ var (
 	}
 )
 
+// UpdateExtra merges supplied Extra keys through the shared patch path.
+// Deprecated keys can be deleted from the caller's map before serialization;
+// empty effective patches succeed, while scheduler-relevant keys use the
+// transaction and event path.
 func (r *ProviderStore) UpdateExtra(ctx context.Context, id int64, updates map[string]any) error {
 	return r.updateExtra(ctx, id, updates, nil)
 }
 
-// updateExtra merges JSONB keys and writes scheduler-relevant outbox events in the same transaction; version adds observation predicates.
+// updateExtra merges effective Extra keys into the latest JSONB object and
+// optionally compares a usage identity. Deprecated keys are removed from the
+// supplied map and caller-provided Codex seeds are stripped; an empty result
+// returns success before checking row existence or version.
+//
+// Scheduler-relevant keys enlist a change event in the selected Ent
+// transaction, with local commit before snapshot synchronization. Neutral
+// keys skip that event but still reload the snapshot outside a context
+// transaction. SQL retains unrelated keys, clears CN snapshots on identity
+// configuration patches, and obtains any required Codex seed from current
+// stored state rather than the caller's patch.
 func (r *ProviderStore) updateExtra(ctx context.Context, id int64, updates map[string]any, version *acctcore.UsageObservationVersion) error {
 	acctcore.DiscardDeprecatedExtra(updates)
 	updates = stripCodexFingerprintSeedFromExtraUpdate(updates)
@@ -53,7 +86,8 @@ func (r *ProviderStore) updateExtra(ctx context.Context, id int64, updates map[s
 		return nil
 	}
 
-	// Merge keys in SQL so concurrent updates to other Extra fields survive.
+	// Serialize the effective patch after key filtering; JSONB merge later uses
+	// current stored values so independent observations on other keys remain available.
 	payload, err := json.Marshal(updates)
 	if err != nil {
 		return err
@@ -71,6 +105,8 @@ func (r *ProviderStore) updateExtra(ctx context.Context, id int64, updates map[s
 			return txErr
 		}
 		if tx != nil {
+			// Roll back this scheduler-relevant merge if its subsequent event fails;
+			// a neutral observation skips opening this local transaction and its event.
 			defer func() { _ = tx.Rollback() }()
 			ctx = dbent.NewTxContext(ctx, tx)
 			client = tx.Client()
@@ -121,9 +157,10 @@ func (r *ProviderStore) updateExtra(ctx context.Context, id int64, updates map[s
 			r.afterChange(baseCtx, id)
 		}
 	} else {
-		// Observation fields need a refreshed provider snapshot even when scheduler buckets need no rebuild.
-		// Reload the snapshot so sticky sessions and GetProvider see current observations;
-		// patching cached fields could overwrite concurrent provider changes.
+		// Reload neutral observations from the database after this write so sticky
+		// sessions see current fields together with concurrent credential
+		// or configuration changes.
+		// A context transaction waits for its owner to finish before publication.
 		if dbent.TxFromContext(ctx) == nil {
 			r.afterChange(ctx, id)
 		}
@@ -131,8 +168,17 @@ func (r *ProviderStore) updateExtra(ctx context.Context, id int64, updates map[s
 	return nil
 }
 
-// UpdateCNUsageMonitorSnapshotCAS writes when updated_at still matches the observed provider version.
-// The snapshot affects scheduling thresholds, so its update and outbox event share a transaction.
+// UpdateCNUsageMonitorSnapshotCAS stores a nonnil CN observation while
+// updated_at still equals the observed version. Nil snapshot or no matching
+// row returns false; clearExtraKey is trimmed and removes that key after the
+// snapshot merge when nonempty.
+//
+// The modifying CTE inserts its scheduler event from the same matching
+// update, so a statement failure rejects both effects. The selected Ent
+// transaction is committed when locally owned and remains caller-owned when
+// supplied through ctx. Immediate synchronization follows a local commit or
+// the noncontext path, and direct SQL event naming requires a configured
+// Events adapter.
 func (r *ProviderStore) UpdateCNUsageMonitorSnapshotCAS(
 	ctx context.Context,
 	providerID int64,
@@ -158,6 +204,9 @@ func (r *ProviderStore) UpdateCNUsageMonitorSnapshotCAS(
 			return false, err
 		}
 		if tx != nil {
+			// The CAS statement already couples snapshot and event; this local
+			// rollback also releases its transaction after a mismatch or
+			// failed statement.
 			defer func() { _ = tx.Rollback() }()
 			ctx = dbent.NewTxContext(ctx, tx)
 			client = tx.Client()
@@ -201,6 +250,22 @@ func (r *ProviderStore) UpdateCNUsageMonitorSnapshotCAS(
 	return true, nil
 }
 
+// BulkUpdate applies supplied common fields and per-provider protocol patches
+// to nondeleted selected IDs. Empty IDs or an effective update with no set
+// clauses returns zero; proxy zero clears the selection, and nonpositive load
+// factor clears its column.
+//
+// Credential and Extra keys merge against current JSONB values. Existing
+// API-key, base-URL, and proxy observations decide which Ollama or CN
+// snapshots become stale. Protocol patches remove retired credential keys.
+// A protocol-only patch leaves existing Extra route overrides untouched;
+// those overrides are removed when an Extra, identity, or seed update also
+// builds the Extra expression. Codex identity creation reuses a valid stored seed.
+//
+// The update and bulk event share a locally opened or context Ent transaction
+// when available. Immediate synchronization is reserved for disabling changes
+// outside a context transaction, while returned rows describe the database
+// update count.
 func (r *ProviderStore) BulkUpdate(ctx context.Context, ids []int64, updates acctcore.ProviderBulkUpdate) (int64, error) {
 	if len(ids) == 0 {
 		return 0, nil
@@ -219,7 +284,9 @@ func (r *ProviderStore) BulkUpdate(ctx context.Context, ids []int64, updates acc
 		idx++
 	}
 	if updates.ProxyID != nil {
-		// A proxy ID of zero is the frontend's request to clear the proxy.
+		// Zero requests direct selection and supplies a distinct identity predicate,
+		// allowing SQL to clear Ollama observations fetched through a
+		// previously assigned proxy.
 		if *updates.ProxyID == 0 {
 			setClauses = append(setClauses, "proxy_id = NULL")
 			ollamaProxyIdentityChanged = "proxy_id IS NOT NULL"
@@ -265,7 +332,8 @@ func (r *ProviderStore) BulkUpdate(ctx context.Context, ids []int64, updates acc
 		args = append(args, *updates.Schedulable)
 		idx++
 	}
-	// Merge credentials and Extra by JSONB key in SQL.
+	// Merge common credential keys before each provider's protocol patch, keeping
+	// unspecified current keys while retiring the legacy protocol fields in that path.
 	credentialPlaceholder := ""
 	if len(updates.Credentials) > 0 {
 		payload, err := json.Marshal(updates.Credentials)
@@ -309,6 +377,8 @@ func (r *ProviderStore) BulkUpdate(ctx context.Context, ids []int64, updates acc
 				" AND "+OllamaCloudBaseURLMatchesSQL(credentialPlaceholder+"::jsonb ->> 'base_url'")+")")
 	}
 
+	// CN observations depend on credentials, proxy and query/TLS settings; mentioning
+	// those fields invalidates the snapshot even when the supplied value is unchanged.
 	cnUsageIdentityChanged := len(updates.Credentials) > 0 || updates.ProxyID != nil || cnUsageMonitorIdentityExtraPatch(updates.Extra)
 	if len(updates.Extra) > 0 || len(ollamaGroupIdentityChanges) > 0 || ollamaProxyIdentityChanged != "" || cnUsageIdentityChanged || updates.EnsureCodexFingerprintSeed {
 		extraExpression := "COALESCE(extra, '{}'::jsonb) - 'upstream_billing_probe' - 'upstream_billing_probe_enabled' - 'openai_long_context_billing_enabled'"
@@ -382,6 +452,8 @@ func (r *ProviderStore) BulkUpdate(ctx context.Context, ids []int64, updates acc
 			return 0, txErr
 		}
 		if tx != nil {
+			// Keep all matching bulk rows and their one event together, rolling
+			// back the locally opened batch if event insertion fails after the update.
 			defer func() { _ = tx.Rollback() }()
 			ctx = dbent.NewTxContext(ctx, tx)
 			exec = tx.Client()
@@ -396,6 +468,8 @@ func (r *ProviderStore) BulkUpdate(ctx context.Context, ids []int64, updates acc
 	if err != nil {
 		return 0, err
 	}
+	// Only matching database rows create a bulk event, using the submitted ID list
+	// so the scheduler can reconcile all selected records after the update commits.
 	if rows > 0 {
 		payload := map[string]any{"provider_ids": ids}
 		if err := r.enqueue(ctx, exec, ProviderBulkChanged, nil, nil, payload); err != nil {
@@ -407,6 +481,8 @@ func (r *ProviderStore) BulkUpdate(ctx context.Context, ids []int64, updates acc
 			return 0, err
 		}
 	}
+	// Publish disabling changes promptly outside a context transaction, while other
+	// bulk edits rely on their outbox event and an outer owner publishes after commit.
 	if rows > 0 && contextTx == nil {
 		shouldSync := false
 		if updates.Status != nil && (*updates.Status == acctcore.StatusError || *updates.Status == acctcore.StatusDisabled) {
@@ -422,12 +498,23 @@ func (r *ProviderStore) BulkUpdate(ctx context.Context, ids []int64, updates acc
 	return rows, nil
 }
 
+// codexFingerprintSeedValidSQL returns the canonical nonzero UUID predicate
+// for a stored seed.
 func codexFingerprintSeedValidSQL(extraExpr string) string {
 	value := "(" + extraExpr + " ->> 'codex_fingerprint_seed')"
 	return "(" + value + " ~ '" + codexFingerprintSeedCanonicalPattern + "' AND " + value + " <> '" + codexFingerprintNilSeed + "')"
 }
 
-// ensureCodexFingerprintSeedSQL reuses a valid stored seed during updates so concurrent writes keep the same identity.
+// ensureCodexFingerprintSeedSQL builds the OpenAI OAuth Extra expression that
+// retains a valid stored seed or generates one. Other platform/type pairs use
+// extraExpr directly, and callers supply trusted SQL expressions inside a row
+// update.
+//
+// The validity test reads the current row's extra rather than the incoming
+// merged expression. A canonical nonzero UUID is retained even when a patch
+// strips its own seed key; missing or invalid stored values select
+// gen_random_uuid. That row-level decision lets concurrent updates keep the
+// durable client identity chosen by the earlier matching write.
 func ensureCodexFingerprintSeedSQL(extraExpr string) string {
 	return "CASE WHEN platform = 'openai' AND type = 'oauth' THEN " +
 		"jsonb_set(" + extraExpr + ", '{codex_fingerprint_seed}', " +
@@ -436,6 +523,10 @@ func ensureCodexFingerprintSeedSQL(extraExpr string) string {
 		"ELSE " + extraExpr + " END"
 }
 
+// stripCodexFingerprintSeedFromExtraUpdate removes a caller-supplied seed
+// from a new top-level map when present. Nil or seed-free input is returned
+// directly; retained values stay shared, so this helper does not establish
+// nested ownership.
 func stripCodexFingerprintSeedFromExtraUpdate(extra map[string]any) map[string]any {
 	if extra == nil {
 		return nil
@@ -452,6 +543,10 @@ func stripCodexFingerprintSeedFromExtraUpdate(extra map[string]any) map[string]a
 	return stripped
 }
 
+// ShouldEnqueueSchedulerOutboxForExtraUpdates reports whether any supplied
+// key affects scheduling configuration. Empty input or wholly neutral keys
+// return false; values are not inspected, so a null value still participates
+// through its key's classification.
 func ShouldEnqueueSchedulerOutboxForExtraUpdates(updates map[string]any) bool {
 	if len(updates) == 0 {
 		return false
@@ -465,6 +560,10 @@ func ShouldEnqueueSchedulerOutboxForExtraUpdates(updates map[string]any) bool {
 	return false
 }
 
+// IsSchedulerNeutralExtraKey recognizes display-observation keys after
+// trimming their surrounding whitespace. Empty names are relevant rather than
+// neutral; exact known keys and the configured observation prefixes are
+// neutral, and values do not affect this classification.
 func IsSchedulerNeutralExtraKey(key string) bool {
 	key = strings.TrimSpace(key)
 	if key == "" {
@@ -481,6 +580,10 @@ func IsSchedulerNeutralExtraKey(key string) bool {
 	return false
 }
 
+// cnUsageMonitorIdentityExtraPatch reports whether the patch mentions
+// usage-query or TLS identity settings. Presence triggers invalidation even
+// when the supplied value is nil or unchanged, because the snapshot belongs
+// to the earlier query identity.
 func cnUsageMonitorIdentityExtraPatch(updates map[string]any) bool {
 	for _, key := range []string{
 		acctcore.UpstreamUsageQueryExtraKey,
@@ -495,6 +598,9 @@ func cnUsageMonitorIdentityExtraPatch(updates map[string]any) bool {
 	return false
 }
 
+// ollamaCloudUsageSnapshotClearRequested reports a present snapshot key with
+// a nil value. BulkUpdate uses that explicit null as removal of the managed
+// snapshot; absence and nonnil values leave this request false.
 func ollamaCloudUsageSnapshotClearRequested(extra map[string]any) bool {
 	value, ok := extra[acctcore.OllamaCloudUsageSnapshotExtraKey]
 	return ok && value == nil

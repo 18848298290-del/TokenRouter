@@ -17,19 +17,32 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/rediscontainer"
 )
 
-// TestGrokSessionsRedisWireAndSingleConsumption checks shared session JSON, keys, TTL, and single consumption
-// across stores.
+// Grok OAuth sessions need a stable Redis representation across independently
+// constructed stores. This real Redis test covers grok_sessions.go's
+// namespace, JSON and lifetime binding, then contends on the shared
+// consumption marker and confirms remote deletion prevents the core from
+// returning a stale local session.
+
+// TestGrokSessionsRedisWireAndSingleConsumption constructs two Grok stores
+// over one real Redis client and reads a manually encoded session. It checks
+// key spelling, JSON and TTL, requires one successful concurrent claim, and
+// confirms remote deletion prevents a cached copy from returning.
 func TestGrokSessionsRedisWireAndSingleConsumption(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	container, err := rediscontainer.Run(ctx, "redis:8.4-alpine")
 	require.NoError(t, err)
+	// Register container teardown first so later store and client cleanups run
+	// before the server disappears; teardown uses a context independent
+	// of the test deadline.
 	t.Cleanup(func() { require.NoError(t, container.Terminate(context.Background())) })
 	uri, err := container.ConnectionString(ctx)
 	require.NoError(t, err)
 	options, err := redis.ParseURL(uri)
 	require.NoError(t, err)
 	client := redis.NewClient(options)
+	// The store cleanups registered below run before client closure, keeping the
+	// borrowed Redis connection usable for every remaining session-store operation.
 	t.Cleanup(func() { require.NoError(t, client.Close()) })
 	first := NewGrokSessionStore(client)
 	second := NewGrokSessionStore(client)
@@ -52,10 +65,14 @@ func TestGrokSessionsRedisWireAndSingleConsumption(t *testing.T) {
 	require.Equal(t, original.State, decoded.State)
 	ttl, err := client.TTL(ctx, "oauth:session:xai:new-wire").Result()
 	require.NoError(t, err)
+	// Allow setup elapsed time while checking the shared lifetime remains close
+	// to thirty minutes; Redis TTL observations arrive with whole-second resolution.
 	require.Greater(t, ttl, provider.GrokSessionTTL-time.Minute)
 	require.LessOrEqual(t, ttl, provider.GrokSessionTTL)
 	var claimed atomic.Int64
 	var workers sync.WaitGroup
+	// Alternate stores within one contention round so the single successful claim
+	// comes from the shared marker rather than an individual store's local mutex.
 	for i := range 32 {
 		workers.Go(func() {
 			store := first
@@ -67,6 +84,8 @@ func TestGrokSessionsRedisWireAndSingleConsumption(t *testing.T) {
 			}
 		})
 	}
+	// Observe the final count after every claim finishes, so the assertion includes
+	// slower Redis callers instead of sampling a partially completed contention round.
 	workers.Wait()
 	require.EqualValues(t, 1, claimed.Load())
 	marker, err := client.Get(ctx, "oauth:session:xai:used:new-wire").Result()

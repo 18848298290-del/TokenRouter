@@ -8,7 +8,17 @@ import (
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// ListSchedulableProviderLoads loads IDs, concurrency, and load factors for Ops queue-depth sampling.
+// Ops queue sampling uses eligible provider IDs and their effective capacity
+// denominator, selected from concurrency and the optional load factor. The
+// shared scheduling query applies persistent eligibility and current pause
+// windows; selected concurrency and
+// load-factor fields then use the provider's own capacity rule for the
+// returned observations.
+
+// ListSchedulableProviderLoads returns eligible provider IDs and the capacity
+// denominator used by Ops queue-depth sampling. The shared query evaluates
+// scheduling windows at the current wall clock; Record.EffectiveLoadFactor
+// chooses a positive load factor before concurrency.
 func (r *ProviderStore) ListSchedulableProviderLoads(ctx context.Context) ([]providercore.LoadObservation, error) {
 	providers, err := r.SchedulableProvidersQuery(time.Now()).
 		Select(

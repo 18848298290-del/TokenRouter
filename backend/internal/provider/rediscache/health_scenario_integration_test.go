@@ -2,8 +2,6 @@
 
 package rediscache
 
-// These tests cover shared Redis counters and suspension state from health_counter.go and temp_unsched_cache.go.
-
 import (
 	"context"
 	"fmt"
@@ -18,7 +16,17 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/rediscontainer"
 )
 
-// TestProviderHealthRedisCompatibility checks shared namespaces and Lua state across independent cache instances.
+// Independent provider cache instances share failure counters and temporary
+// suspension in Redis. These scenarios cover health_counter.go and
+// temp_unsched_cache.go, checking stable key names, first-count expiry,
+// concurrent count allocation, extend-only deadlines, malformed state errors,
+// and rolling-threshold cleanup against a real server.
+
+// TestProviderHealthRedisCompatibility uses independent adapters against one
+// real Redis client to check shared namespaces and Lua results. It protects
+// first-count expiry, unique concurrent counts, extend-only suspension,
+// malformed-state errors, and cleanup when the rolling failure threshold
+// trips.
 func TestProviderHealthRedisCompatibility(t *testing.T) {
 	client := rediscontainer.New(t)
 	ctx := context.Background()
@@ -31,8 +39,12 @@ func TestProviderHealthRedisCompatibility(t *testing.T) {
 		require.EqualValues(t, 1, count)
 		ttl, err := client.TTL(ctx, key).Result()
 		require.NoError(t, err)
+		// Leave a setup margin when checking the first-count expiry.
 		require.Greater(t, ttl, 23*time.Hour)
 		require.LessOrEqual(t, ttl, 24*time.Hour)
+		// Override the first INTERNAL 500 lifetime so a later shared increment
+		// exposes any accidental restart of the twenty-four-hour window through
+		// its TTL.
 		require.NoError(t, client.PExpire(ctx, key, 20*time.Second).Err())
 		count, err = second.IncrementInternal500Count(ctx, 905)
 		require.NoError(t, err)
@@ -54,7 +66,11 @@ func TestProviderHealthRedisCompatibility(t *testing.T) {
 		ttl, err := client.TTL(ctx, key).Result()
 		require.NoError(t, err)
 		require.LessOrEqual(t, ttl, time.Minute)
+		// Allow setup elapsed time inside the one-minute lower bound.
 		require.Greater(t, ttl, 50*time.Second)
+		// Sample a shortened 403 window before supplying a five-minute duration;
+		// the second adapter keeps the first expiry rather than installing
+		// that new window.
 		require.NoError(t, client.PExpire(ctx, key, 20*time.Second).Err())
 		n, err = current.IncrementOpenAI403Count(ctx, 901, 5)
 		require.NoError(t, err)
@@ -68,15 +84,22 @@ func TestProviderHealthRedisCompatibility(t *testing.T) {
 	})
 	t.Run("timeout_concurrent_shared_counter", func(t *testing.T) {
 		stores := []provider.TimeoutCounterCache{NewTimeoutCounterCache(client), NewTimeoutCounterCache(client)}
+		// result carries one concurrent increment's value and failure to the
+		// assertion loop.
 		type result struct {
-			count int64
-			err   error
+			count int64 // allocated shared failure count
+			err   error // Redis script invocation failure
 		}
+		// Buffer one result per worker so completion does not wait for the assertion
+		// reader, which starts only after the full shared-counter round has finished.
 		results := make(chan result, 40)
 		var wg sync.WaitGroup
 		for i := range 40 {
 			wg.Go(func() { n, err := stores[i%2].IncrementTimeoutCount(ctx, 902, 1); results <- result{n, err} })
 		}
+		// Wait for all sends before closing the channel; the following range then
+		// observes the complete counter allocation and terminates without
+		// an extra signal.
 		wg.Wait()
 		close(results)
 		values := make([]int, 0, 40)
@@ -88,6 +111,8 @@ func TestProviderHealthRedisCompatibility(t *testing.T) {
 		for i, v := range values {
 			require.Equal(t, i+1, v)
 		}
+		// Shorten timeout expiry before an eight-minute increment so the following
+		// TTL assertion detects whether that increment restarts the existing window.
 		require.NoError(t, client.PExpire(ctx, "timeout_count:provider:902", 20*time.Second).Err())
 		n, err := stores[0].IncrementTimeoutCount(ctx, 902, 8)
 		require.NoError(t, err)

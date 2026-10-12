@@ -12,19 +12,36 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// Temporary suspension keeps its longest deadline, while OpenAI API Key
+// failures count events within a sliding time window. These isolated Redis
+// cases cover temp_unsched_cache.go, including expired input, replacement
+// expiry, malformed JSON, repeated deletion, and threshold observations
+// before and after old failures age out.
+
+// newTempUnschedCacheTest returns a suspension adapter, client, and isolated
+// miniredis server for one test. The test owns those handles; cleanup closes
+// the client before RunT's registered server shutdown, and callers may
+// advance the server clock independently.
 func newTempUnschedCacheTest(t *testing.T) (provider.TempUnschedCache, *redis.Client, *miniredis.Miniredis) {
 	t.Helper()
 
-	// Each test gets an isolated Redis instance so provider keys and TTLs cannot interfere.
+	// Give each fixture its own Redis clock and keys so advancing suspension expiry
+	// or rolling-window time cannot alter another test's provider observations.
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	t.Cleanup(func() {
+		// The fixture owns this client and closes it before RunT tears down Redis;
+		// cleanup failure is ignored after the test's state assertions have completed.
 		_ = client.Close()
 	})
 
 	return NewTempUnschedCache(client), client, server
 }
 
+// TestTempUnschedCacheShorterStateDoesNotReplaceLongerState writes a longer
+// suspension followed by a shorter one carrying different error details.
+// Reading returns the entire longer observation, protecting metadata as well
+// as its deadline.
 func TestTempUnschedCacheShorterStateDoesNotReplaceLongerState(t *testing.T) {
 	cache, _, _ := newTempUnschedCacheTest(t)
 	ctx := context.Background()
@@ -54,6 +71,9 @@ func TestTempUnschedCacheShorterStateDoesNotReplaceLongerState(t *testing.T) {
 	require.Equal(t, longer, got)
 }
 
+// TestTempUnschedCacheLongerStateExtendsExpiry replaces a short suspension
+// with a longer observation and advances Redis beyond the former lifetime.
+// The replacement still reads back with its complete metadata.
 func TestTempUnschedCacheLongerStateExtendsExpiry(t *testing.T) {
 	cache, _, server := newTempUnschedCacheTest(t)
 	ctx := context.Background()
@@ -74,7 +94,8 @@ func TestTempUnschedCacheLongerStateExtendsExpiry(t *testing.T) {
 	require.NoError(t, cache.SetTempUnsched(ctx, 102, shorter))
 	require.NoError(t, cache.SetTempUnsched(ctx, 102, longer))
 
-	// Advance beyond the old deadline to check that the longer state also extends Redis expiry.
+	// Advance past the short key lifetime while remaining inside the longer one,
+	// checking that replacing state also makes its later deadline survive Redis expiry.
 	server.FastForward(150 * time.Second)
 
 	got, err := cache.GetTempUnsched(ctx, 102)
@@ -82,6 +103,9 @@ func TestTempUnschedCacheLongerStateExtendsExpiry(t *testing.T) {
 	require.Equal(t, longer, got)
 }
 
+// TestTempUnschedCacheExpiredStateIsNotStored supplies a suspension whose
+// deadline is already behind the application clock. The write succeeds as an
+// ignored observation and a subsequent read returns nil.
 func TestTempUnschedCacheExpiredStateIsNotStored(t *testing.T) {
 	cache, _, _ := newTempUnschedCacheTest(t)
 	ctx := context.Background()
@@ -99,6 +123,10 @@ func TestTempUnschedCacheExpiredStateIsNotStored(t *testing.T) {
 	require.Nil(t, got)
 }
 
+// TestTempUnschedCacheMalformedStateReturnsClearError inserts invalid JSON
+// under a provider's suspension key. Reading returns no state and identifies
+// decoding in its error, protecting callers from treating corrupt data as
+// absence.
 func TestTempUnschedCacheMalformedStateReturnsClearError(t *testing.T) {
 	cache, client, _ := newTempUnschedCacheTest(t)
 	ctx := context.Background()
@@ -110,6 +138,9 @@ func TestTempUnschedCacheMalformedStateReturnsClearError(t *testing.T) {
 	require.ErrorContains(t, err, "unmarshal state")
 }
 
+// TestTempUnschedCacheDeleteIsIdempotent saves a live suspension and deletes
+// the same key twice. Both deletions succeed, and the final read confirms the
+// state remains absent.
 func TestTempUnschedCacheDeleteIsIdempotent(t *testing.T) {
 	cache, _, _ := newTempUnschedCacheTest(t)
 	ctx := context.Background()
@@ -129,9 +160,14 @@ func TestTempUnschedCacheDeleteIsIdempotent(t *testing.T) {
 	require.Nil(t, got)
 }
 
+// TestOpenAIAPIKeyHealthCacheTripsWithinRollingWindow records three failures
+// inside a one-minute window with a threshold of three. Counts increase one
+// at a time and only the third call reports a trip.
 func TestOpenAIAPIKeyHealthCacheTripsWithinRollingWindow(t *testing.T) {
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	// Close the client after observing the threshold result, leaving RunT to
+	// remove this fixture's rolling-window and sequence keys with its isolated server.
 	t.Cleanup(func() { _ = client.Close() })
 	store, ok := NewTempUnschedCache(client).(provider.OpenAIAPIKeyHealthCache)
 	require.True(t, ok)
@@ -145,11 +181,16 @@ func TestOpenAIAPIKeyHealthCacheTripsWithinRollingWindow(t *testing.T) {
 	}
 }
 
+// TestOpenAIAPIKeyHealthCacheDropsFailuresOutsideRollingWindow advances
+// miniredis's server time beyond the first failure's one-minute window. The
+// next failure starts at count one and remains below the trip threshold.
 func TestOpenAIAPIKeyHealthCacheDropsFailuresOutsideRollingWindow(t *testing.T) {
 	server := miniredis.RunT(t)
 	now := time.Unix(1_700_000_000, 0)
 	server.SetTime(now)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	// Close the connection before RunT discards this fixture's controlled server
+	// clock, keeping its shifted rolling-window observation local to the test.
 	t.Cleanup(func() { _ = client.Close() })
 	store, ok := NewTempUnschedCache(client).(provider.OpenAIAPIKeyHealthCache)
 	require.True(t, ok)
@@ -160,6 +201,8 @@ func TestOpenAIAPIKeyHealthCacheDropsFailuresOutsideRollingWindow(t *testing.T) 
 	require.EqualValues(t, 1, count)
 	require.False(t, tripped)
 
+	// Move server time beyond the first failure's rolling window while its key
+	// remains live, making score eviction observable independently of key expiry.
 	server.SetTime(now.Add(61 * time.Second))
 	count, tripped, err = store.RecordOpenAIAPIKeyHealthFailure(ctx, 42, 1, 3)
 	require.NoError(t, err)
