@@ -6,7 +6,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestRequestPriceSeparatesLabelsAndContext checks that labels and context ranges select separate request tiers.
+// TestRequestPriceSeparatesLabelsAndContext combines a free size label with
+// paid context tiers. Known context selects its tier, the free label wins
+// independently, and an unknown unmatched label remains unavailable.
 func TestRequestPriceSeparatesLabelsAndContext(t *testing.T) {
 	zero, low, high := 0.0, 0.03, 0.1
 	maxTokens := 128000
@@ -28,7 +30,9 @@ func TestRequestPriceSeparatesLabelsAndContext(t *testing.T) {
 	require.False(t, ok)
 }
 
-// TestRequestMissingDefaultIsNotFree distinguishes zero prices and multipliers from an absent default price.
+// TestRequestMissingDefaultIsNotFree compares an absent default, a present zero
+// default, and a zero-scaled paid default. Only the latter two must return a
+// present free price.
 func TestRequestMissingDefaultIsNotFree(t *testing.T) {
 	count := 0
 	_, ok := ResolveRequestUnitPrice(&ResolvedPricing{Mode: BillingModePerRequest}, "", &count)
@@ -43,7 +47,9 @@ func TestRequestMissingDefaultIsNotFree(t *testing.T) {
 	require.Zero(t, price)
 }
 
-// TestConstantRequestIntervalsKeepExplicitFreeQuote checks that equal context prices permit a fixed quote, including zero.
+// TestConstantRequestIntervalsKeepExplicitFreeQuote scales different default
+// and context amounts by zero. The resulting equal free prices must permit a
+// fixed quote when context is unknown.
 func TestConstantRequestIntervalsKeepExplicitFreeQuote(t *testing.T) {
 	base, tier, multiplier := 0.2, 0.4, 0.0
 	resolved := ResolvePriceCards(&ModelPricingEntry{BillingMode: BillingModePerRequest, PerRequestPrice: &base, PriceMultiplier: &multiplier, Intervals: []PricingInterval{{MinTokens: 0, PerRequestPrice: &tier}}}, nil, PricingSourceUnpriced, true)

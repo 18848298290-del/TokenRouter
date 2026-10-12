@@ -7,9 +7,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestCatalogProviderCompatibility checks legacy input, provider precedence, and serialized field names.
+// TestCatalogProviderCompatibility supplies legacy provider names beside
+// absent, populated, empty, and null current fields. Decoding and serialization
+// must use provider, retain its precedence, and remove litellm_provider.
 func TestCatalogProviderCompatibility(t *testing.T) {
-	for _, tc := range []struct{ fields, want string }{
+	for _, tc := range []struct {
+		fields, // submitted provider JSON fields
+		want string // expected decoded provider label
+	}{
 		{`"litellm_provider":"openai"`, "openai"},
 		{`"litellm_provider":"old","provider":"new"`, "new"},
 		{`"litellm_provider":"old","provider":""`, ""},

@@ -8,13 +8,32 @@ import (
 	"time"
 )
 
+// Daily token-price periods use wall-clock seconds in a caller-supplied
+// location. The same instant can select a different period in a different zone;
+// repeated daylight-saving hours each match the period for their displayed
+// local clock time.
+//
+// Period parsing validates finite positive multipliers, two-decimal precision,
+// and nonoverlapping left-closed ranges before lookup. End-of-day midnight is
+// represented as 86400 seconds, while ordinary midnight starts at zero.
+// MultiplierAt returns one for disabled rules, invalid periods, a zero instant,
+// or a missing location, and applies weekday restrictions after converting the
+// instant. The configuration's zone name is validated and loaded by callers.
+
+// ParsedPricingTimePeriod contains a validated daily wall-clock range and
+// factor. start is inclusive and end is exclusive in seconds since midnight;
+// end can reach 86400 for the day's final range. multiplier has passed the
+// period amount and precision checks.
 type ParsedPricingTimePeriod struct {
-	start      int
-	end        int
-	multiplier float64
+	start      int     // inclusive seconds since midnight
+	end        int     // exclusive seconds since midnight
+	multiplier float64 // validated daily token-price factor
 }
 
-// ValidateTimePricingConfig validates periods; nil or empty periods disable time pricing.
+// ValidateTimePricingConfig checks the configuration's period values and
+// ordering. Nil configurations and empty periods succeed because they disable
+// the schedule. Timezone syntax and location loading are separate caller
+// checks.
 func ValidateTimePricingConfig(config *TimePricingConfig) error {
 	if config == nil || len(config.Periods) == 0 {
 		return nil
@@ -23,17 +42,28 @@ func ValidateTimePricingConfig(config *TimePricingConfig) error {
 	return err
 }
 
-// MultiplierAt returns the active multiplier, or 1 for missing/invalid rules, a zero time, or a nil location.
+// MultiplierAt returns the matching daily multiplier for at in location. Nil or
+// empty rules, a zero instant, invalid periods, and nil locations return one.
+// Periods use [start,end), and weekday restrictions use the converted local
+// date.
+//
+// The supplied location controls conversion; Timezone does not load a location
+// here. Repeated local hours can each match the same wall-clock period, while
+// time outside every configured period receives the unit multiplier.
 func (config *TimePricingConfig) MultiplierAt(at time.Time, location *time.Location) float64 {
 	if config == nil || len(config.Periods) == 0 || at.IsZero() {
 		return 1.0
 	}
+	// Invalid period data is treated as an inactive schedule, so a corrupt cached
+	// rule cannot select a surcharge.
 	if err := ValidateTimePricingConfig(config); err != nil {
 		return 1.0
 	}
 	if location == nil {
 		return 1.0
 	}
+	// Parsing errors retain the unit multiplier; lookup proceeds only with a
+	// complete validated set of local-clock periods.
 	periods, err := ParsePricingTimePeriods(config.Periods)
 	if err != nil {
 		return 1.0
@@ -43,6 +73,7 @@ func (config *TimePricingConfig) MultiplierAt(at time.Time, location *time.Locat
 	if config.WeekdaysOnly && (local.Weekday() == time.Saturday || local.Weekday() == time.Sunday) {
 		return 1.0
 	}
+	// Convert the supplied local clock into period comparison seconds.
 	second := local.Hour()*60*60 + local.Minute()*60 + local.Second()
 	for _, period := range periods {
 		if second >= period.start && second < period.end {
@@ -52,9 +83,12 @@ func (config *TimePricingConfig) MultiplierAt(at time.Time, location *time.Locat
 	return 1.0
 }
 
-// ParsePricingTime returns seconds since midnight; an end value of midnight means the end of the day.
+// ParsePricingTime parses an exact HH:mm or HH:mm:ss clock into seconds. End
+// values spelled 00:00 or 00:00:00 represent 86400; start midnight is zero.
+// Invalid or noncanonical clock text returns an error.
 func ParsePricingTime(value string, end bool) (int, error) {
 	if end && (value == "00:00" || value == "00:00:00") {
+		// End midnight closes the current day's final second range.
 		return 24 * 60 * 60, nil
 	}
 	layout := "15:04:05"
@@ -65,9 +99,19 @@ func ParsePricingTime(value string, end bool) (int, error) {
 	if err != nil || parsed.Format(layout) != value {
 		return 0, fmt.Errorf("time %q must use HH:mm or HH:mm:ss format", value)
 	}
+	// Convert clock components into the range comparison's second unit.
 	return parsed.Hour()*60*60 + parsed.Minute()*60 + parsed.Second(), nil
 }
 
+// ParsePricingTimePeriods returns newly allocated periods sorted by their start
+// seconds. Multipliers must be finite, positive, at least 0.01, and within the
+// scaled precision tolerance. Clocks use exact supported formats, identical
+// endpoint text is rejected, and ranges must advance within one day.
+//
+// The sorted result rejects overlapping ranges but accepts adjoining endpoints
+// because the end is exclusive. Validation leaves the supplied periods
+// unchanged and returns no partial parsed slice when any field or overlap check
+// fails.
 func ParsePricingTimePeriods(periods []TimePricingPeriod) ([]ParsedPricingTimePeriod, error) {
 	parsed := make([]ParsedPricingTimePeriod, 0, len(periods))
 	for _, period := range periods {
@@ -77,10 +121,12 @@ func ParsePricingTimePeriods(periods []TimePricingPeriod) ([]ParsedPricingTimePe
 		if period.Multiplier < 0.01 {
 			return nil, fmt.Errorf("multiplier must be at least 0.01")
 		}
+		// Scale by cents to check the configured decimal precision.
 		scaled := period.Multiplier * 100
 		if math.IsNaN(scaled) || math.IsInf(scaled, 0) {
 			return nil, fmt.Errorf("multiplier must remain finite when scaled")
 		}
+		// Allow a small binary rounding residue after hundredfold scaling.
 		if math.Abs(scaled-math.Round(scaled)) > 1e-9 {
 			return nil, fmt.Errorf("multiplier must have at most two decimal places")
 		}
@@ -108,7 +154,10 @@ func ParsePricingTimePeriods(periods []TimePricingPeriod) ([]ParsedPricingTimePe
 	return parsed, nil
 }
 
-// ValidateTimezoneName rejects empty names and the process-dependent Local timezone.
+// ValidateTimezoneName rejects whitespace-only names and the exact name Local.
+// Other strings pass this syntactic check as supplied, including surrounding
+// whitespace. Callers use time.LoadLocation separately to validate and load the
+// actual zone.
 func ValidateTimezoneName(name string) error {
 	if strings.TrimSpace(name) == "" {
 		return fmt.Errorf("timezone is required")
@@ -119,7 +168,9 @@ func ValidateTimezoneName(name string) error {
 	return nil
 }
 
-// ResolvedTimeMultiplier computes the token card's time multiplier using the supplied location.
+// ResolvedTimeMultiplier evaluates a resolved token card's daily schedule.
+// Other modes and absent cards return one; the card's MultiplierAt also handles
+// missing rules, invalid periods, zero instants, and nil locations.
 func ResolvedTimeMultiplier(resolved *ResolvedPricing, at time.Time, location *time.Location) float64 {
 	if resolved == nil || resolved.Mode != BillingModeToken || resolved.ConfigPricing == nil {
 		return 1

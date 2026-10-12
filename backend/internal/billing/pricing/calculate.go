@@ -11,26 +11,61 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
-// OpenAIFastTierPriority and OpenAIFastTierUltrafast use OpenAI protocol tier names.
+// Token amounts depend on the selected context range, service tier, cache
+// detail, and reported image subsets. A request can contain overlapping
+// representations, such as image input inside aggregate input or TTL details
+// inside cache creation, so adding every reported count independently would
+// charge those tokens twice.
+//
+// ComputeTokenBreakdown chooses the applicable price record and splits the
+// overlapping image counts before totaling USD component amounts. Catalog tiers
+// or eligible built-in multipliers price the whole usage, while configured
+// intervals suppress those built-in rules. Display construction uses the same
+// price selection inputs and preserves unpriced gaps rather than flattening
+// them into free ranges. Time and effort factors are applied to token costs
+// separately from request or media-unit charging.
+
+// These OpenAI wire labels identify Fast service tiers for billing consumers;
+// priority is used when querying the calculated Fast display view.
 const (
-	OpenAIFastTierPriority  = openai.ServiceTierPriority
-	OpenAIFastTierUltrafast = openai.ServiceTierUltrafast
+	OpenAIFastTierPriority  = openai.ServiceTierPriority  // priority service-tier wire label
+	OpenAIFastTierUltrafast = openai.ServiceTierUltrafast // ultrafast service-tier wire label
 )
 
-// ErrModelPricingUnavailable indicates that no pricing source supplies a price for the requested model.
+// ErrModelPricingUnavailable lets callers identify that the chosen model or
+// requested pricing bucket has no usable amount available.
 var ErrModelPricingUnavailable = errors.New("pricing not found")
 
-// ResolvedTokenPriceRange holds pricing for a positive context range; nil pricing means unpriced.
+// ResolvedTokenPriceRange contains one positive context range and its effective
+// token prices. Nil pricing retains a missing-price gap for uniformity checks,
+// while minTokens and maxTokens use the same excluded-lower, included-upper
+// ranges as interval selection.
 type ResolvedTokenPriceRange struct {
-	minTokens int
-	maxTokens *int
-	pricing   *ModelPricing
+	minTokens int // excluded lower context-token endpoint
+	// maxTokens is the included upper endpoint, with nil denoting an unbounded
+	// range. Range construction can retain a configured interval's endpoint
+	// storage.
+	maxTokens *int // included upper context-token endpoint
+	// pricing is nil for an unavailable range, including a gap lacking default
+	// prices. Uniform display checks keep that absence distinct from a free
+	// amount.
+	pricing *ModelPricing // effective token-price range record
 }
 
+// NormalizeBillingServiceTier trims surrounding whitespace and lowercases the
+// supplied tier.
 func NormalizeBillingServiceTier(serviceTier string) string {
 	return strings.ToLower(strings.TrimSpace(serviceTier))
 }
 
+// UsePriorityServiceTierPricing reports whether this request selects catalog
+// priority amounts. The normalized tier must be priority or fast, and either
+// Fast multiplier pointer disables this path, including a pointer to zero.
+//
+// At least one priority presence flag or positive legacy priority amount
+// enables selection. Presence flags retain explicit free buckets; an individual
+// bucket with neither presence nor a positive amount continues to use its
+// standard price during calculation.
 func UsePriorityServiceTierPricing(serviceTier string, pricing *ModelPricing) bool {
 	if pricing == nil {
 		return false
@@ -46,7 +81,10 @@ func UsePriorityServiceTierPricing(serviceTier string, pricing *ModelPricing) bo
 		pricing.CacheCreationPricePerTokenPriority > 0 || pricing.CacheReadPricePerTokenPriority > 0
 }
 
-// NormalizedFastModeMultiplier returns the configured Fast multiplier, clamping negative values to zero.
+// NormalizedFastModeMultiplier returns a Fast factor and whether it was
+// configured. FastModeMultiplier takes precedence over FastMultiplier. Nil
+// pricing or absent pointers yield one with false; a supplied negative value
+// yields zero with true. Callers validate finiteness.
 func NormalizedFastModeMultiplier(pricing *ModelPricing) (float64, bool) {
 	if pricing == nil {
 		return 1, false
@@ -58,13 +96,18 @@ func NormalizedFastModeMultiplier(pricing *ModelPricing) (float64, bool) {
 	if configured == nil {
 		return 1, false
 	}
+	// Keep the configured factor present after clamping so negative cached values
+	// cannot reactivate catalog priority amounts through an absent-factor path.
 	if *configured < 0 {
 		return 0, true
 	}
 	return *configured, true
 }
 
-// ConfiguredServiceTierMultiplier returns the configured tier multiplier, or 1 when absent.
+// ConfiguredServiceTierMultiplier returns the configured Fast or Flex factor
+// for serviceTier. Priority and fast use NormalizedFastModeMultiplier; flex
+// reads FlexMultiplier directly. Absent settings and other tiers return one,
+// and callers validate supplied factors.
 func ConfiguredServiceTierMultiplier(serviceTier string, pricing *ModelPricing) float64 {
 	if pricing != nil {
 		switch NormalizeBillingServiceTier(serviceTier) {
@@ -81,7 +124,10 @@ func ConfiguredServiceTierMultiplier(serviceTier string, pricing *ModelPricing) 
 	return 1
 }
 
-// ApplyConfigFastModeMultiplier copies the card's Fast multiplier into resolved pricing metadata.
+// ApplyConfigFastModeMultiplier copies the selected card Fast factor into
+// pricing. FastMultiplier takes precedence over the legacy FastModeMultiplier,
+// negative values become zero, and both resolved pointer fields share the newly
+// allocated factor. Nil inputs leave pricing unchanged.
 func ApplyConfigFastModeMultiplier(pricing *ModelPricing, configPricing *ModelPricingEntry) {
 	if pricing == nil || configPricing == nil {
 		return
@@ -94,6 +140,8 @@ func ApplyConfigFastModeMultiplier(pricing *ModelPricing, configPricing *ModelPr
 		return
 	}
 	multiplier := *multiplierPtr
+	// Store a zero factor for a negative card amount while keeping its presence,
+	// so later tier selection continues to use the configured Fast path.
 	if multiplier < 0 {
 		multiplier = 0
 	}
@@ -101,18 +149,26 @@ func ApplyConfigFastModeMultiplier(pricing *ModelPricing, configPricing *ModelPr
 	pricing.FastMultiplier = &multiplier
 }
 
+// ApplyConfigFlexMultiplier copies a supplied card Flex factor into pricing.
+// Nil inputs or an omitted factor leave pricing unchanged; a negative factor
+// becomes zero. The resolved field receives separate value storage.
 func ApplyConfigFlexMultiplier(pricing *ModelPricing, configPricing *ModelPricingEntry) {
 	if pricing == nil || configPricing == nil || configPricing.FlexMultiplier == nil {
 		return
 	}
 	multiplier := *configPricing.FlexMultiplier
+	// Keep the supplied Flex factor present while clamping so later flex
+	// calculation remains a configured free path.
 	if multiplier < 0 {
 		multiplier = 0
 	}
 	pricing.FlexMultiplier = &multiplier
 }
 
-// ApplyCostBreakdownMultiplier scales every token cost bucket and both totals.
+// ApplyCostBreakdownMultiplier scales all six component costs and both totals
+// in place. Nil breakdowns and a factor of one are unchanged. Callers validate
+// the factor; BillingMode and LongContextBillingApplied retain their existing
+// values.
 func ApplyCostBreakdownMultiplier(cost *CostBreakdown, multiplier float64) {
 	if cost == nil || multiplier == 1 {
 		return
@@ -127,7 +183,10 @@ func ApplyCostBreakdownMultiplier(cost *CostBreakdown, multiplier float64) {
 	cost.ActualCost *= multiplier
 }
 
-// MaxReasoningEffortBillingMultiplier returns the configured multiplier for max effort, or 1.
+// MaxReasoningEffortBillingMultiplier returns a positive configured factor for
+// normalized max effort. Other efforts, absent pricing, absent factors, and
+// nonpositive factors return one. The model argument does not participate in
+// selection, and callers validate finiteness.
 func MaxReasoningEffortBillingMultiplier(model, effort string, pricing *ModelPricing) float64 {
 	if protocol.NormalizeClaudeOutputEffort(effort) == nil || !strings.EqualFold(strings.TrimSpace(effort), "max") {
 		return 1
@@ -138,8 +197,14 @@ func MaxReasoningEffortBillingMultiplier(model, effort string, pricing *ModelPri
 	return 1
 }
 
-// ConfigTierOverridePrice scales the configured standard price by the catalog's tier-to-standard ratio.
-// It returns zero when either catalog price is nonpositive.
+// ConfigTierOverridePrice derives a priority amount from a replaced standard
+// amount. Both catalog amounts must be positive to supply a tier-to-standard
+// ratio. Otherwise the result is zero, including when the standard amount is
+// free or absent.
+//
+// The configured standard amount is multiplied by that ratio, so an explicit
+// free override also produces a free priority amount. Callers retain presence
+// information separately and supply finite validated amounts.
 func ConfigTierOverridePrice(baseStandard, baseTier, configStandard float64) float64 {
 	if baseStandard > 0 && baseTier > 0 {
 		return configStandard * (baseTier / baseStandard)
@@ -147,12 +212,24 @@ func ConfigTierOverridePrice(baseStandard, baseTier, configStandard float64) flo
 	return 0
 }
 
-// ApplyConfigTokenPriceOverrides applies text and image token overrides while retaining catalog tier ratios.
+// ApplyConfigTokenPriceOverrides replaces supplied text and cache defaults
+// throughout pricing. It allocates new context-tier records before recursion,
+// so scalar overrides do not mutate the supplied tier records. Callers supply
+// non-nil tier prices and validated card amounts; nil top-level inputs are
+// ignored.
+//
+// Omitted text and cache buckets retain their selected base values, while
+// replaced standard buckets derive priority amounts from the previous ratio. A
+// cache-write override covers both TTLs unless a separate hourly amount is
+// supplied. Card image rules apply to every resulting tier: absent or zero
+// image input uses text input, and absent image output becomes free.
 func ApplyConfigTokenPriceOverrides(pricing *ModelPricing, configPricing *ModelPricingEntry) {
 	if pricing == nil || configPricing == nil {
 		return
 	}
-	// Apply overrides to each context tier, retaining its independently priced buckets where omitted.
+	// Context tiers hold independent absolute amounts; copy each tier record
+	// before applying card defaults so omitted buckets retain that tier's own
+	// catalog values.
 	if len(pricing.ContextPrices) > 0 {
 		tiers := make([]ContextModelPrice, len(pricing.ContextPrices))
 		for i, tier := range pricing.ContextPrices {
@@ -180,7 +257,9 @@ func ApplyConfigTokenPriceOverrides(pricing *ModelPricing, configPricing *ModelP
 		pricing.CacheCreationPriceExplicit = true
 		pricing.CacheCreation5mPrice = *configPricing.CacheWritePrice
 		if configPricing.CacheWrite1hPrice == nil {
-			// When no separate 1h override is supplied, cache_write_price covers both TTLs.
+			// A short cache override replaces both TTL amounts when hourly is absent,
+			// keeping old single-price cards from inheriting an unrelated hourly catalog
+			// price.
 			pricing.CacheCreation1hPrice = *configPricing.CacheWritePrice
 		}
 	}
@@ -196,7 +275,16 @@ func ApplyConfigTokenPriceOverrides(pricing *ModelPricing, configPricing *ModelP
 	applyConfigImagePriceOverrides(pricing, configPricing)
 }
 
-// CalculateTokenCost charges token usage using the matching context interval.
+// CalculateTokenCost prices reported usage with the matching configured context
+// interval. Context counts input, cache creation, and cache reads; callers
+// supply a non-nil resolved record, valid counts whose sum fits int, and finite
+// amounts. Missing effective pricing returns ErrModelPricingUnavailable.
+//
+// Configured intervals suppress built-in long-context charging.
+// ComputeTokenBreakdown selects the service tier and applies the user rate;
+// catalog time rules then apply only for catalog-source resolution. Card time
+// rules use their separate instant and location, and final max effort scales
+// the resulting components and totals.
 func CalculateTokenCost(resolved *ResolvedPricing, input CostInput) (*CostBreakdown, error) {
 	totalContext := input.Tokens.InputTokens + input.Tokens.CacheCreationTokens + input.Tokens.CacheReadTokens
 
@@ -205,7 +293,9 @@ func CalculateTokenCost(resolved *ResolvedPricing, input CostInput) (*CostBreakd
 		return nil, fmt.Errorf("no pricing available for model: %s: %w", input.Model, ErrModelPricingUnavailable)
 	}
 
-	// Explicit intervals already price context ranges; built-in long-context pricing applies only without them.
+	// A nonempty configured interval list owns context pricing even for unmatched
+	// ranges, so built-in thresholds are suppressed while defaults handle those
+	// gaps.
 	applyLongCtx := len(resolved.Intervals) == 0 && resolved.LongContextPricingEnabled
 
 	breakdown := ComputeTokenBreakdown(pricing, input.Tokens, input.RateMultiplier, input.ServiceTier, applyLongCtx)
@@ -217,8 +307,22 @@ func CalculateTokenCost(resolved *ResolvedPricing, input CostInput) (*CostBreakd
 	return breakdown, nil
 }
 
-// ComputeTokenBreakdown calculates text, image, and cache token costs with tier and rate multipliers.
-// applyLongCtx enables built-in context pricing; callers using explicit intervals disable it.
+// ComputeTokenBreakdown returns token component costs and a rate-scaled total.
+// Callers supply non-nil prices, nonnegative counts whose context sums fit int,
+// and finite amounts. Context tiers are ordered by ascending threshold with
+// non-nil prices; the last exceeded tier prices the entire usage.
+//
+// A configured Fast factor scales standard buckets; otherwise available
+// priority buckets replace their standard counterparts. Built-in long-context
+// multipliers apply when enabled and eligible, with input-side scaling also
+// passed to cache creation. Absolute context tiers inherit the base
+// service-tier modifiers before recursive calculation.
+//
+// Image input is split from InputTokens and capped there; image output is
+// charged separately while text output is reduced to at least zero. TTL cache
+// details are normalized against their aggregate when supported. Negative user
+// rates become zero, and LongContextBillingApplied records an increase over the
+// corresponding base-rate charge.
 func ComputeTokenBreakdown(
 	pricing *ModelPricing, tokens UsageTokens,
 	rateMultiplier float64, serviceTier string,
@@ -232,6 +336,9 @@ func ComputeTokenBreakdown(
 				selected = tier.Pricing
 			}
 		}
+		// The absolute tier supplies bucket amounts, while the base keeps current
+		// Fast, Flex and effort choices. Copy that selected tier before recursive
+		// calculation and comparison with the base charge.
 		if selected != pricing {
 			value := *selected
 			value.FastModeMultiplier = pricing.FastModeMultiplier
@@ -243,7 +350,8 @@ func ComputeTokenBreakdown(
 			return cost
 		}
 	}
-	// Clamp invalid negative rates to zero rather than charging at the default rate.
+	// A negative user rate would reverse a positive token charge; normalize that
+	// rate to zero while retaining the calculated base component costs.
 	if rateMultiplier < 0 {
 		rateMultiplier = 0
 	}
@@ -258,7 +366,9 @@ func ComputeTokenBreakdown(
 	tier := NormalizeBillingServiceTier(serviceTier)
 	if tier == "priority" || tier == "fast" {
 		if fastMultiplier, configured := NormalizedFastModeMultiplier(pricing); configured {
-			// An explicit Fast multiplier scales standard prices, so catalog priority prices must not also apply.
+			// A configured Fast factor scales standard amounts as one selected path;
+			// applying catalog priority amounts too would charge two service-tier
+			// adjustments.
 			tierMultiplier = fastMultiplier
 		} else if UsePriorityServiceTierPricing(serviceTier, pricing) {
 			if pricing.InputPricePerTokenPriority > 0 || pricing.PriorityInputPresent {
@@ -284,26 +394,30 @@ func ComputeTokenBreakdown(
 	var baselineCost *CostBreakdown
 	if longContextPricingEligible {
 		baselineCost = ComputeTokenBreakdown(pricing, tokens, rateMultiplier, serviceTier, false)
-		// An omitted multiplier is 1 so a partial override does not make the other bucket free.
+		// A partial long-context rule can supply one side alone; using a unit factor
+		// for the other side retains its selected standard or priority amount.
 		longContextInputMultiplier := LongContextMultiplierOrOne(pricing.LongContextInputMultiplier)
 		inputPrice *= longContextInputMultiplier
 		outputPrice *= LongContextMultiplierOrOne(pricing.LongContextOutputMultiplier)
-		// Cache reads reuse input tokens and receive the input long-context multiplier.
-		// Omitting that multiplier undercharges cache-heavy requests (see #2293).
+		// Cache-read usage participates in the input-context threshold and receives
+		// the selected input factor, so cached input follows that same long-context
+		// amount rule.
 		cacheReadPrice *= longContextInputMultiplier
-		// Cache writes also receive the input multiplier. ComputeCacheCreationCost reads
-		// the standard, 5m, and 1h prices directly from pricing, so pass the multiplier
-		// separately to apply it to all three prices.
+		// ComputeCacheCreationCost selects aggregate or TTL rates from pricing
+		// directly; pass the input factor separately so whichever cache rate is
+		// chosen receives the long-context adjustment.
 		cacheCreationMultiplier = longContextInputMultiplier
 	}
 
 	bd := &CostBreakdown{}
-	// Image input tokens may have a separate rate, as in multimodal embeddings or image editing.
-	// Record text and image charges separately for reconciliation.
-	// When ImageInputTokens is zero, all input tokens use the text rate.
+	// Split reported image input from the aggregate input bucket before charging.
+	// Separate text and image components keep reconciliation able to identify
+	// their rates without adding the image subset twice.
 	if tokens.ImageInputTokens > 0 {
 		imageInputTokens := tokens.ImageInputTokens
 		textInputTokens := tokens.InputTokens - imageInputTokens
+		// Reported image input can exceed its aggregate; cap the image subset at that
+		// aggregate so splitting cannot create a negative text-input component.
 		if textInputTokens < 0 {
 			textInputTokens = 0
 			imageInputTokens = tokens.InputTokens
@@ -318,11 +432,13 @@ func ComputeTokenBreakdown(
 		bd.InputCost = float64(tokens.InputTokens) * inputPrice
 	}
 
-	// Exclude image output tokens from the text charge.
+	// Keep text and image output in distinct recorded buckets; remove the image
+	// count from aggregate output and cap the remaining text count at zero.
 	textOutputTokens := max(tokens.OutputTokens-tokens.ImageOutputTokens, 0)
 	bd.OutputCost = float64(textOutputTokens) * outputPrice
 
-	// Image output tokens use their own rate, with a text-rate default when unspecified.
+	// Image output has its own amount and presence marker; an omitted zero amount
+	// can inherit text pricing, while an explicitly present zero remains free.
 	if tokens.ImageOutputTokens > 0 {
 		imgPrice := pricing.ImageOutputPricePerToken
 		if imgPrice == 0 && !pricing.ImageOutputPriceExplicit {
@@ -331,11 +447,15 @@ func ComputeTokenBreakdown(
 		bd.ImageOutputCost = float64(tokens.ImageOutputTokens) * imgPrice
 	}
 
-	// An explicit priority cache-write price scales TTL prices regardless of the source label.
+	// When priority cache creation is present and standard pricing is positive,
+	// its ratio scales both TTL amounts so one selected priority rule covers both
+	// durations.
 	if UsePriorityServiceTierPricing(serviceTier, pricing) && pricing.SupportsCacheBreakdown && pricing.CacheCreationPricePerToken > 0 && pricing.PriorityCacheWritePresent {
 		cacheCreationMultiplier *= cacheCreationPrice / pricing.CacheCreationPricePerToken
 	}
-	// Charge cache writes after selecting tier and context multipliers.
+	// The cache selector now receives the selected aggregate amount and
+	// accumulated context or priority ratio, allowing its TTL choice to apply
+	// those adjustments once.
 	bd.CacheCreationCost = ComputeCacheCreationCost(pricing, tokens, cacheCreationPrice, cacheCreationMultiplier)
 
 	bd.CacheReadCost = float64(tokens.CacheReadTokens) * cacheReadPrice
@@ -357,27 +477,46 @@ func ComputeTokenBreakdown(
 	return bd
 }
 
-// ComputeCacheCreationCost charges cache writes using TTL details when supported, or the supplied aggregate price.
-// multiplier scales all cache-write prices; pass 1 when no scaling applies.
+// ComputeCacheCreationCost returns aggregate or TTL-specific cache creation
+// costs with multiplier applied to the selected rates. Callers supply non-nil
+// pricing and finite amounts and factors. TTL rates are eligible only when
+// breakdown support is enabled and at least one TTL rate is positive.
+//
+// Eligible TTL pricing uses normalized details, or charges positive aggregate
+// usage at the 5m rate when both details are absent. Otherwise the supplied
+// aggregate price parameter determines the charge. The same multiplier scales
+// either path, carrying the caller's selected context and priority adjustments.
 func ComputeCacheCreationCost(pricing *ModelPricing, tokens UsageTokens, price, multiplier float64) float64 {
 	if pricing.SupportsCacheBreakdown && (pricing.CacheCreation5mPrice > 0 || pricing.CacheCreation1hPrice > 0) {
 		cacheCreation5mTokens, cacheCreation1hTokens := NormalizeCacheCreationBreakdown(tokens)
 		if cacheCreation5mTokens == 0 && cacheCreation1hTokens == 0 && tokens.CacheCreationTokens > 0 {
-			// Missing ephemeral details charge all reported cache writes at the 5m price.
+			// Aggregate usage can arrive without TTL details; the short-TTL amount
+			// retains reported creation charges without inventing a count of hourly
+			// tokens.
 			return float64(tokens.CacheCreationTokens) * pricing.CacheCreation5mPrice * multiplier
 		}
 		return float64(cacheCreation5mTokens)*pricing.CacheCreation5mPrice*multiplier +
 			float64(cacheCreation1hTokens)*pricing.CacheCreation1hPrice*multiplier
 	}
+	// TTL pricing is unavailable under the support or rate condition; retain the
+	// caller's selected aggregate amount, including a free or priority price.
 	return float64(tokens.CacheCreationTokens) * price * multiplier
 }
 
-// NormalizeCacheCreationBreakdown caps inconsistent TTL details at a positive aggregate,
-// retaining the reported proportions as closely as integer token counts allow.
+// NormalizeCacheCreationBreakdown returns nonnegative 5m and 1h token details.
+// Negative detail counts become zero. A positive aggregate caps only an
+// overreported detail sum; a nonpositive aggregate leaves the remaining details
+// available because it supplies no positive cap.
+//
+// For overreported details, the 5m share is proportionally rounded and the 1h
+// count receives the aggregate remainder. Comparing the rounded value with the
+// aggregate before integer conversion keeps the returned counts within that cap
+// despite float64 rounding near large integer values.
 func NormalizeCacheCreationBreakdown(tokens UsageTokens) (int, int) {
 	cacheCreation5mTokens := tokens.CacheCreation5mTokens
 	cacheCreation1hTokens := tokens.CacheCreation1hTokens
 	aggregate := tokens.CacheCreationTokens
+	// Discard negative details before comparing their sum with the aggregate cap.
 	if cacheCreation5mTokens < 0 {
 		cacheCreation5mTokens = 0
 	}
@@ -388,8 +527,14 @@ func NormalizeCacheCreationBreakdown(tokens UsageTokens) (int, int) {
 		return cacheCreation5mTokens, cacheCreation1hTokens
 	}
 
+	// Use floating detail totals to avoid integer addition overflow while
+	// estimating proportional counts that will be returned as integers.
 	detailTotal := float64(cacheCreation5mTokens) + float64(cacheCreation1hTokens)
+	// Round the short-TTL share and give hourly usage the remainder.
 	normalized5mTokens := math.Round(float64(aggregate) * float64(cacheCreation5mTokens) / detailTotal)
+	// Near int limits, a rounded float may reach the aggregate's rounded
+	// representation; return the original integer cap before any potentially
+	// oversized conversion.
 	if normalized5mTokens >= float64(aggregate) {
 		cacheCreation5mTokens = aggregate
 	} else {
@@ -398,7 +543,17 @@ func NormalizeCacheCreationBreakdown(tokens UsageTokens) (int, int) {
 	return cacheCreation5mTokens, aggregate - cacheCreation5mTokens
 }
 
-// CalculatePerRequestCost charges the resolved unit price for requests, images, or video units.
+// CalculatePerRequestCost returns a unit-priced total for requests or media
+// usage. Positive UsageUnits takes precedence over RequestCount; otherwise a
+// nonpositive count becomes one. Callers provide non-nil resolution, finite
+// rates, and token counts whose context sum fits int.
+//
+// Label selection precedes unlabeled context intervals and the explicit
+// default. Context is supplied here, so request tiers can vary with actual
+// input and cache usage. An unavailable price returns
+// ErrModelPricingUnavailable; an explicit zero remains available. This helper
+// multiplies the rate as supplied, while CalculateCost performs negative-rate
+// normalization.
 func CalculatePerRequestCost(resolved *ResolvedPricing, input CostInput) (*CostBreakdown, error) {
 	units := input.UsageUnits
 	if units <= 0 {
@@ -424,7 +579,10 @@ func CalculatePerRequestCost(resolved *ResolvedPricing, input CostInput) (*CostB
 	}, nil
 }
 
-// LongContextMultiplierOrOne treats nonpositive long-context multipliers as 1.
+// LongContextMultiplierOrOne returns a positive multiplier or the unit factor.
+// Nonpositive values select one so an omitted long-context input or output
+// factor leaves its corresponding base prices chargeable. Callers validate
+// finiteness.
 func LongContextMultiplierOrOne(multiplier float64) float64 {
 	if multiplier <= 0 {
 		return 1
@@ -432,6 +590,15 @@ func LongContextMultiplierOrOne(multiplier float64) float64 {
 	return multiplier
 }
 
+// ShouldApplySessionLongContextPricing reports eligibility for a built-in
+// multiplier tier. Pricing needs a positive threshold and at least one input or
+// output factor above one. Callers supply nonnegative usage whose
+// input-plus-cache sum fits int.
+//
+// Eligibility counts InputTokens, CacheCreationTokens, and CacheReadTokens,
+// excluding output and duplicate image subsets. Inclusive thresholds admit the
+// threshold itself; other thresholds require a larger total. Absolute catalog
+// context tiers are selected separately by ComputeTokenBreakdown.
 func ShouldApplySessionLongContextPricing(tokens UsageTokens, pricing *ModelPricing) bool {
 	if pricing == nil || pricing.LongContextInputThreshold <= 0 {
 		return false
@@ -446,7 +613,16 @@ func ShouldApplySessionLongContextPricing(tokens UsageTokens, pricing *ModelPric
 	return totalInputTokens > pricing.LongContextInputThreshold
 }
 
-// DisplayPricingFromResolved converts resolved prices into marketplace display values.
+// DisplayPricingFromResolved returns a priced display snapshot and whether it
+// is usable. Token mode tries one complete uniform price first, then separate
+// priced intervals; disabled built-in context rules are removed from the
+// displayed base copy. Unpriced gaps are omitted, and configured effort and
+// valid time rules are attached separately.
+//
+// Image and per-request displays require configuration-source prices.
+// Per-request mode also needs the image-name display heuristic, then quotes
+// only fixed available 1K, 2K, and 4K amounts. Video and unsupported modes
+// return false. Callers supply a finite rate already normalized for display.
 func DisplayPricingFromResolved(model string, rateMultiplier float64, resolved *ResolvedPricing) (ModelDisplayPricing, bool) {
 	if resolved == nil {
 		return ModelDisplayPricing{}, false
@@ -489,8 +665,11 @@ func DisplayPricingFromResolved(model string, rateMultiplier float64, resolved *
 	}
 }
 
-// withTokenDisplayModifiers adds the effort multiplier and configured time periods used by settlement.
-// It omits unit effort multipliers and empty or invalid time rules.
+// withTokenDisplayModifiers adds the base effort factor and card schedules with
+// valid periods. It requires non-nil resolution, copies the positive non-unit
+// effort amount, and clones nonempty card time rules after period validation.
+// The billing facade loads the timezone; existing display collections keep
+// their references.
 func withTokenDisplayModifiers(display ModelDisplayPricing, resolved *ResolvedPricing) ModelDisplayPricing {
 	if resolved.BasePricing != nil {
 		multiplier := resolved.BasePricing.MaxReasoningEffortMultiplier
@@ -501,6 +680,9 @@ func withTokenDisplayModifiers(display ModelDisplayPricing, resolved *ResolvedPr
 	}
 	if resolved.ConfigPricing != nil {
 		config := resolved.ConfigPricing.TimePricing
+		// Omit an invalid or empty schedule from display metadata while keeping the
+		// available token amounts. Timezone loading remains separate from this
+		// period-validity check.
 		if config != nil && len(config.Periods) > 0 && ValidateTimePricingConfig(config) == nil {
 			display.TimePricing = resolved.ConfigPricing.Clone().TimePricing
 		}
@@ -508,7 +690,10 @@ func withTokenDisplayModifiers(display ModelDisplayPricing, resolved *ResolvedPr
 	return display
 }
 
-// WithoutLongContextDisplayPricing returns a copy with base prices and no built-in context tiers.
+// WithoutLongContextDisplayPricing returns a shallow price copy with built-in
+// context rules cleared. Nil input returns nil; amount fields retain their
+// values. Remaining multiplier and time pointers stay shared and require stable
+// source data.
 func WithoutLongContextDisplayPricing(pricing *ModelPricing) *ModelPricing {
 	if pricing == nil {
 		return nil
@@ -521,7 +706,17 @@ func WithoutLongContextDisplayPricing(pricing *ModelPricing) *ModelPricing {
 	return &cloned
 }
 
-// ResolvedTokenPriceRanges fills gaps around explicit intervals with default prices in a separate slice.
+// ResolvedTokenPriceRanges builds positive context ranges around configured
+// token intervals. Callers supply validated, nonoverlapping ranges. Nil
+// resolution or absent intervals returns nil. It sorts a copied interval
+// slice and fills gaps with available defaults, retaining nil
+// pricing where a default is unavailable.
+//
+// The final unbounded interval ends construction; otherwise an unbounded
+// default range follows the last endpoint. Each configured range uses the same
+// inherited price conversion as settlement. Endpoint pointers and default-price
+// references can remain shared with the resolved inputs, which callers keep
+// stable during display construction.
 func ResolvedTokenPriceRanges(resolved *ResolvedPricing) []ResolvedTokenPriceRange {
 	if resolved == nil || len(resolved.Intervals) == 0 {
 		return nil
@@ -532,6 +727,8 @@ func ResolvedTokenPriceRanges(resolved *ResolvedPricing) []ResolvedTokenPriceRan
 	cursor := 0
 	for i := range intervals {
 		interval := &intervals[i]
+		// A gap uses the available default with built-in tiers cleared; an absent
+		// default remains nil so the display can retain unpriced context coverage.
 		if interval.MinTokens > cursor {
 			maxTokens := interval.MinTokens
 			ranges = append(ranges, ResolvedTokenPriceRange{cursor, &maxTokens, WithoutLongContextDisplayPricing(resolved.tokenPricingForInterval(nil))})
@@ -542,9 +739,21 @@ func ResolvedTokenPriceRanges(resolved *ResolvedPricing) []ResolvedTokenPriceRan
 		}
 		cursor = *interval.MaxTokens
 	}
+	// The remaining unbounded context uses the same available default, retaining
+	// nil pricing when no default can cover usage beyond the last configured
+	// interval.
 	return append(ranges, ResolvedTokenPriceRange{cursor, nil, WithoutLongContextDisplayPricing(resolved.tokenPricingForInterval(nil))})
 }
 
+// ResolvedDisplayTokenPricing returns one token price when every positive range
+// is equally priced. Absent intervals use available base pricing directly. With
+// intervals, any unpriced gap or unequal standard or Fast display bucket
+// prevents a uniform result.
+//
+// Comparison uses unit-rate display intervals, so separate TTL cache prices
+// participate together with text and image buckets. The result is the first
+// range's price reference and may remain shared with resolution; callers treat
+// it as read-only or copy it before mutation.
 func ResolvedDisplayTokenPricing(resolved *ResolvedPricing) *ModelPricing {
 	if resolved == nil {
 		return nil
@@ -554,7 +763,9 @@ func ResolvedDisplayTokenPricing(resolved *ResolvedPricing) *ModelPricing {
 	}
 	ranges := ResolvedTokenPriceRanges(resolved)
 	pricing := ranges[0].pricing
-	// Missing or unequal prices cannot be displayed as a single price covering all contexts.
+	// A flat display promises one amount across every positive context; an
+	// unpriced gap or unequal standard/Fast bucket prevents that promise from
+	// covering all ranges.
 	for _, priceRange := range ranges {
 		if priceRange.pricing == nil || !SameDisplayTokenPricing(pricing, priceRange.pricing) {
 			return nil
@@ -563,7 +774,10 @@ func ResolvedDisplayTokenPricing(resolved *ResolvedPricing) *ModelPricing {
 	return pricing
 }
 
-// ResolvedDisplayPricingIntervals returns priced ranges, omitting unpriced ranges.
+// ResolvedDisplayPricingIntervals converts available positive context ranges
+// into display records. Unpriced ranges are omitted, retaining their absence
+// rather than inventing zero prices. Amounts include rateMultiplier, and
+// upper-endpoint pointers can remain shared with resolution.
 func ResolvedDisplayPricingIntervals(resolved *ResolvedPricing, rateMultiplier float64) []ModelDisplayPricingInterval {
 	var intervals []ModelDisplayPricingInterval
 	for _, priceRange := range ResolvedTokenPriceRanges(resolved) {
@@ -574,6 +788,8 @@ func ResolvedDisplayPricingIntervals(resolved *ResolvedPricing, rateMultiplier f
 	return intervals
 }
 
+// PricingIntervalHasEffectiveTokenPricing reports whether any token amount
+// pointer is supplied.
 func PricingIntervalHasEffectiveTokenPricing(interval PricingInterval) bool {
 	return interval.InputPrice != nil ||
 		interval.OutputPrice != nil ||
@@ -582,14 +798,24 @@ func PricingIntervalHasEffectiveTokenPricing(interval PricingInterval) bool {
 		interval.CacheReadPrice != nil
 }
 
+// SameDisplayTokenPricing compares all standard and Fast display amount fields.
+// Two nil inputs are equal and one nil input differs. It compares unit-rate
+// intervals, including displayed TTL cache rates, rather than their underlying
+// metadata or context rules.
 func SameDisplayTokenPricing(a *ModelPricing, b *ModelPricing) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
-	// Compare both standard and Fast prices so merging cannot hide service-tier differences.
+	// Uniform ranges must agree in both standard and Fast amounts, so equality
+	// includes their displayed TTL buckets and cannot hide a tier-specific
+	// difference.
 	return ModelPricingDisplayInterval(0, nil, a, 1) == ModelPricingDisplayInterval(0, nil, b, 1)
 }
 
+// BuildTokenDisplayPricing returns standard and Fast token amounts scaled by
+// rateMultiplier. Built-in absolute tiers or eligible long-context multipliers
+// produce interval display instead of flat amounts. Callers supply non-nil
+// prices, valid ordered tier records, and a finite normalized rate.
 func BuildTokenDisplayPricing(pricing *ModelPricing, rateMultiplier float64) ModelDisplayPricing {
 	if intervals := LongContextDisplayPricingIntervals(pricing, rateMultiplier); len(intervals) > 0 {
 		return BuildTokenIntervalDisplayPricing(intervals)
@@ -620,13 +846,23 @@ func BuildTokenDisplayPricing(pricing *ModelPricing, rateMultiplier float64) Mod
 	return displayPricing
 }
 
-// CacheCreationDisplayPrices returns the displayed 5m and 1h cache-write prices.
-// Without TTL breakdown support, it returns the aggregate price and a zero 1h price.
+// CacheCreationDisplayPrices returns the short and hourly cache amounts shown
+// in token price views. Nil pricing returns two zeros. The aggregate creation
+// amount is the initial short price; breakdown support replaces it only when
+// the stored 5m amount is positive.
+//
+// Breakdown support also controls whether the stored hourly amount is exposed;
+// otherwise hourly display is zero. A zero 5m field therefore keeps the
+// aggregate short amount, even when the hourly field is available. This helper
+// selects display units while cost calculation separately normalizes reported
+// usage details.
 func CacheCreationDisplayPrices(pricing *ModelPricing) (float64, float64) {
 	if pricing == nil {
 		return 0, 0
 	}
 	short := pricing.CacheCreationPricePerToken
+	// Keep aggregate short pricing when TTL support or a positive 5m rate is
+	// absent; the hourly field alone cannot select a different short amount.
 	if pricing.SupportsCacheBreakdown && pricing.CacheCreation5mPrice > 0 {
 		short = pricing.CacheCreation5mPrice
 	}
@@ -636,7 +872,16 @@ func CacheCreationDisplayPrices(pricing *ModelPricing) (float64, float64) {
 	return short, pricing.CacheCreation1hPrice
 }
 
-// LongContextDisplayPricingIntervals converts built-in context tiers or multipliers into display intervals.
+// LongContextDisplayPricingIntervals builds displayed ranges for built-in
+// catalog context pricing. Absolute tiers use their ordered thresholds and
+// complete price records, with the final range unbounded. Base service-tier
+// modifier pointers are applied to each selected tier's shallow copy.
+//
+// If no absolute tiers exist, an eligible positive threshold and increased
+// multiplier produce base and long-context ranges. This multiplier path uses
+// the stored threshold as the range endpoint; it does not shift inclusive
+// thresholds here. Callers provide non-nil tier records and a finite normalized
+// rate.
 func LongContextDisplayPricingIntervals(pricing *ModelPricing, rateMultiplier float64) []ModelDisplayPricingInterval {
 	if pricing != nil && len(pricing.ContextPrices) > 0 {
 		var intervals []ModelDisplayPricingInterval
@@ -658,6 +903,7 @@ func LongContextDisplayPricingIntervals(pricing *ModelPricing, rateMultiplier fl
 		return nil
 	}
 
+	// Use the stored multiplier threshold as this display endpoint.
 	maxTokens := pricing.LongContextInputThreshold
 	baseInterval := ModelPricingDisplayInterval(0, &maxTokens, pricing, rateMultiplier)
 
@@ -667,14 +913,18 @@ func LongContextDisplayPricingIntervals(pricing *ModelPricing, rateMultiplier fl
 	return []ModelDisplayPricingInterval{baseInterval, longContextInterval}
 }
 
-// ApplyLongContextDisplayMultipliers returns a pricing copy scaled by settlement's context rules.
-// Standard, priority, and TTL cache prices all use the input multiplier.
+// ApplyLongContextDisplayMultipliers returns a shallow copy with text and cache
+// amounts scaled. Nonpositive input or output factors become one. Standard,
+// priority, and both TTL cache-write amounts use the input factor; image amount
+// fields and shared metadata references retain their supplied values.
 func ApplyLongContextDisplayMultipliers(pricing *ModelPricing) *ModelPricing {
 	if pricing == nil {
 		return nil
 	}
 	adjusted := *pricing
-	// As in settlement, an omitted input or output multiplier is 1.
+	// Use the calculation's unit default for a missing input or output factor,
+	// keeping the corresponding displayed text and cache amounts at their selected
+	// base rate.
 	inputMultiplier := LongContextMultiplierOrOne(pricing.LongContextInputMultiplier)
 	outputMultiplier := LongContextMultiplierOrOne(pricing.LongContextOutputMultiplier)
 	adjusted.InputPricePerToken *= inputMultiplier
@@ -690,12 +940,20 @@ func ApplyLongContextDisplayMultipliers(pricing *ModelPricing) *ModelPricing {
 	return &adjusted
 }
 
+// HasLongContextDisplayPricing reports whether multiplier-based context tiers
+// can be displayed. It requires displayable prices, a positive context
+// threshold, and at least one input or output multiplier above one. Absolute
+// tiers are handled separately.
 func HasLongContextDisplayPricing(pricing *ModelPricing) bool {
 	return HasAnyDisplayTokenPricing(pricing) &&
 		pricing.LongContextInputThreshold > 0 &&
 		(pricing.LongContextInputMultiplier > 1 || pricing.LongContextOutputMultiplier > 1)
 }
 
+// ModelPricingDisplayInterval returns one displayed range with rate-scaled
+// standard and Fast prices. Pricing must be non-nil. The supplied maxTokens
+// pointer is retained, and nil marks an unbounded range; callers keep endpoint
+// storage stable.
 func ModelPricingDisplayInterval(minTokens int, maxTokens *int, pricing *ModelPricing, rateMultiplier float64) ModelDisplayPricingInterval {
 	cacheWritePrice, cacheWrite1hPrice := CacheCreationDisplayPrices(pricing)
 	interval := ModelDisplayPricingInterval{
@@ -722,6 +980,17 @@ func ModelPricingDisplayInterval(minTokens int, maxTokens *int, pricing *ModelPr
 	return interval
 }
 
+// FastModeDisplayPricing returns the Fast amount view and whether Fast prices
+// are displayable. Configured Fast factors scale a recursive price copy first,
+// including an explicit zero factor. Otherwise a shallow copy substitutes
+// present or positive legacy priority amounts into corresponding standard
+// buckets.
+//
+// A priority cache-write amount also scales both TTL prices by the ratio of
+// priority amount to standard amount when the standard price is positive.
+// Unavailable buckets retain their selected values, and copied metadata
+// pointers remain shared. The original scalar prices are left available for
+// standard display.
 func FastModeDisplayPricing(pricing *ModelPricing) (*ModelPricing, bool) {
 	if !HasFastModeDisplayPricing(pricing) {
 		return nil, false
@@ -743,6 +1012,8 @@ func FastModeDisplayPricing(pricing *ModelPricing) (*ModelPricing, bool) {
 		if pricing.CacheCreationPricePerTokenPriority > 0 || pricing.PriorityCacheWritePresent {
 			fastPricing.CacheCreationPricePerToken = pricing.CacheCreationPricePerTokenPriority
 			if pricing.SupportsCacheBreakdown && pricing.CacheCreationPricePerToken > 0 {
+				// Use the priority amount divided by the standard amount to scale both TTL
+				// display rates, retaining explicit free priority cache pricing.
 				ratio := pricing.CacheCreationPricePerTokenPriority / pricing.CacheCreationPricePerToken
 				fastPricing.CacheCreation5mPrice *= ratio
 				fastPricing.CacheCreation1hPrice *= ratio
@@ -764,7 +1035,10 @@ func FastModeDisplayPricing(pricing *ModelPricing) (*ModelPricing, bool) {
 	return &fastPricing, true
 }
 
-// ResolvedHasFastModeDisplayPricing checks default prices and intervals, including interval-only custom models.
+// ResolvedHasFastModeDisplayPricing reports Fast display availability across
+// effective token prices. It checks the available default and then each
+// configured interval, including interval-only cards. Nil resolution and other
+// billing modes return false.
 func ResolvedHasFastModeDisplayPricing(resolved *ResolvedPricing) bool {
 	if resolved == nil || resolved.Mode != BillingModeToken {
 		return false
@@ -781,6 +1055,10 @@ func ResolvedHasFastModeDisplayPricing(resolved *ResolvedPricing) bool {
 	return false
 }
 
+// HasFastModeDisplayPricing reports displayable token prices with any Fast
+// pricing indicator. A configured factor, presence flag, or positive legacy
+// priority amount qualifies. An explicit zero priority amount needs its
+// presence flag to remain visible.
 func HasFastModeDisplayPricing(pricing *ModelPricing) bool {
 	return HasAnyDisplayTokenPricing(pricing) &&
 		(pricing.FastModeMultiplier != nil ||
@@ -791,7 +1069,9 @@ func HasFastModeDisplayPricing(pricing *ModelPricing) bool {
 			pricing.CacheReadPricePerTokenPriority > 0)
 }
 
-// BuildTokenIntervalDisplayPricing marks prices for display by context interval.
+// BuildTokenIntervalDisplayPricing returns a token display result containing
+// the supplied interval slice. The slice and its endpoint pointers remain
+// shared, so callers keep them stable while the display result is consumed.
 func BuildTokenIntervalDisplayPricing(intervals []ModelDisplayPricingInterval) ModelDisplayPricing {
 	return ModelDisplayPricing{
 		PricingMode:      "token",
@@ -800,6 +1080,10 @@ func BuildTokenIntervalDisplayPricing(intervals []ModelDisplayPricingInterval) M
 	}
 }
 
+// BuildImageDisplayPricing returns a priced image display containing all three
+// size amounts. Every size is declared available, including a supplied zero.
+// Callers use ImagePriceSizes to restrict availability when constructing a
+// partial quote.
 func BuildImageDisplayPricing(price1K, price2K, price4K float64) ModelDisplayPricing {
 	return ModelDisplayPricing{
 		PricingMode:     "image",
@@ -811,6 +1095,8 @@ func BuildImageDisplayPricing(price1K, price2K, price4K float64) ModelDisplayPri
 	}
 }
 
+// UnknownDisplayPricing returns the display marker for an unresolved model
+// price.
 func UnknownDisplayPricing() ModelDisplayPricing {
 	return ModelDisplayPricing{
 		PricingMode: "unknown",
@@ -818,10 +1104,10 @@ func UnknownDisplayPricing() ModelDisplayPricing {
 	}
 }
 
-// CalculateWebSearchCost charges Codex alpha/search calls at the supplied per-call price.
-// callCount is the number of search calls.
-// groupPrice is the resolved per-call price; nil means unavailable and zero means free.
-// rateMultiplier scales the user's charge.
+// CalculateWebSearchCost charges a supplied USD-per-call amount for positive
+// callCount. Missing prices or nonpositive counts return an empty breakdown.
+// Zero is a known free price, negative rates become zero, and callers validate
+// nonnegative finite prices and finite rates.
 func CalculateWebSearchCost(callCount int, groupPrice *float64, rateMultiplier float64) *CostBreakdown {
 	if callCount <= 0 {
 		return &CostBreakdown{}
@@ -835,7 +1121,8 @@ func CalculateWebSearchCost(callCount int, groupPrice *float64, rateMultiplier f
 	}
 	totalCost := unitPrice * float64(callCount)
 
-	// Clamp invalid negative rates to zero.
+	// A negative user factor would reverse a positive search amount; use zero for
+	// the charge factor while retaining the base call cost.
 	if rateMultiplier < 0 {
 		rateMultiplier = 0
 	}
@@ -846,7 +1133,10 @@ func CalculateWebSearchCost(callCount int, groupPrice *float64, rateMultiplier f
 	}
 }
 
-// CalculateSearchCost charges calls using a caller-supplied price per thousand calls; explicit zero is free.
+// CalculateSearchCost charges numCalls using a supplied USD-per-thousand-call
+// amount. Absent, negative, or zero prices and nonpositive counts return an
+// empty breakdown. Positive amounts divide by one thousand; negative rates
+// become zero, and callers validate finiteness.
 func CalculateSearchCost(numCalls int, groupPricePer1k *float64, rateMultiplier float64) *CostBreakdown {
 	if numCalls <= 0 {
 		return &CostBreakdown{}
@@ -864,9 +1154,12 @@ func CalculateSearchCost(numCalls int, groupPricePer1k *float64, rateMultiplier 
 	if pricePer1k == 0 {
 		return &CostBreakdown{}
 	}
+	// Normalize a negative user factor before scaling positive search amounts,
+	// retaining the reported base cost with a zero user charge.
 	if rateMultiplier < 0 {
 		rateMultiplier = 0
 	}
+	// Convert a thousand-call quote into one-call charging units.
 	unit := pricePer1k / 1000.0
 	total := unit * float64(numCalls)
 	return &CostBreakdown{
@@ -876,8 +1169,15 @@ func CalculateSearchCost(numCalls int, groupPricePer1k *float64, rateMultiplier 
 	}
 }
 
-// CalculateAudioCost charges Realtime minutes, TTS millions of characters, or STT hours.
-// The caller resolves prices and supplies usage in those units; explicit zero is free.
+// CalculateAudioCost charges positive durationOrUnits using the selected audio
+// rate. Realtime units are minutes, TTS units are millions of characters, and
+// STT units are hours. Mode is case-insensitive but untrimmed; unknown modes or
+// nonpositive selected prices return an empty breakdown.
+//
+// Callers resolve and validate finite rates and usage units before calling.
+// Missing optional prices therefore produce zero results here, with
+// missing-price rejection owned by the billing facade. Negative user rates
+// become zero, and successful positive-priced results use per_request mode.
 func CalculateAudioCost(mode string, durationOrUnits float64, groupConfig *AudioPriceConfig, rateMultiplier float64) *CostBreakdown {
 	if durationOrUnits <= 0 {
 		return &CostBreakdown{}
@@ -902,6 +1202,8 @@ func CalculateAudioCost(mode string, durationOrUnits float64, groupConfig *Audio
 	if unitPrice <= 0 {
 		return &CostBreakdown{}
 	}
+	// Normalize a negative user factor before applying the selected audio units,
+	// retaining the base operation cost with a zero charge.
 	if rateMultiplier < 0 {
 		rateMultiplier = 0
 	}
@@ -913,13 +1215,25 @@ func CalculateAudioCost(mode string, durationOrUnits float64, groupConfig *Audio
 	}
 }
 
-// HasExplicitImageGenerationPricing requires per-image prices and the image_generation mode.
-// Chat models may carry output_cost_per_image metadata while retaining token billing.
+// HasExplicitImageGenerationPricing reports a known flat image amount with
+// image_generation mode. Mode comparison ignores case and surrounding
+// whitespace. A chat entry's per-image metadata alone does not select
+// image-generation classification.
 func HasExplicitImageGenerationPricing(pricing *CatalogModelPricing) bool {
 	return HasImageUnitPrice(pricing) &&
 		strings.EqualFold(strings.TrimSpace(pricing.Mode), "image_generation")
 }
 
+// HasAnyDisplayTokenPricing reports whether a price record can supply token
+// display amounts. Nil pricing returns false. A nonempty CatalogSource other
+// than unpriced establishes availability even when every checked amount is
+// zero, retaining free catalog models in display lookup.
+//
+// When that source condition is absent, at least one checked standard text,
+// image, cache, or hourly-cache amount must be positive. Priority amounts and
+// absolute context records are not inspected by this check. A positive checked
+// amount can qualify even with the unpriced label; callers validate amounts
+// and selected-source availability separately before using a display result.
 func HasAnyDisplayTokenPricing(pricing *ModelPricing) bool {
 	if pricing == nil {
 		return false
@@ -933,6 +1247,10 @@ func HasAnyDisplayTokenPricing(pricing *ModelPricing) bool {
 		pricing.ImageOutputPricePerToken > 0
 }
 
+// LooksLikeImageModel reports recognized image-name fragments used by display
+// classification. It trims and lowercases input and rejects empty names. This
+// heuristic does not select settlement mode or establish available image
+// prices.
 func LooksLikeImageModel(model string) bool {
 	model = strings.ToLower(strings.TrimSpace(model))
 	if model == "" {
@@ -947,9 +1265,14 @@ func LooksLikeImageModel(model string) bool {
 		strings.Contains(model, "dall-e")
 }
 
-// CalculateCost dispatches by billing mode, clamps negative rates to zero, and records the mode used.
+// CalculateCost dispatches usage according to the resolved billing mode.
+// Callers supply non-nil resolution and validated finite inputs. Negative user
+// rates become zero; successful results record the selected mode, with empty or
+// other dispatch values using token calculation.
 func CalculateCost(resolved *ResolvedPricing, input CostInput) (*CostBreakdown, error) {
-	// Treat negative rates from cached or migrated data as zero at billing time.
+	// Direct calculation also accepts cached records; normalize a negative user
+	// factor before dispatch so every selected billing mode receives the same zero
+	// charge factor.
 	if input.RateMultiplier < 0 {
 		input.RateMultiplier = 0
 	}

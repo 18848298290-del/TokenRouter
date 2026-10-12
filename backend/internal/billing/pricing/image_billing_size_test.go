@@ -6,12 +6,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestClassifyImageBillingTier supplies named tiers, pixel dimensions, and
+// unresolved size text. Recognized values must return the expected longest-edge
+// tier; empty, auto, and malformed values stay unresolved.
 func TestClassifyImageBillingTier(t *testing.T) {
 	tests := []struct {
-		name     string
-		size     string
-		wantTier string
-		wantOK   bool
+		name     string // subtest display case label
+		size     string // supplied image-size spelling
+		wantTier string // expected normalized billing tier
+		wantOK   bool   // expected size recognition flag
 	}{
 		{name: "explicit 2k square", size: "2048x2048", wantTier: "2K", wantOK: true},
 		{name: "explicit 2k landscape", size: "2048x1152", wantTier: "2K", wantOK: true},
@@ -35,15 +38,18 @@ func TestClassifyImageBillingTier(t *testing.T) {
 	}
 }
 
+// TestResolveImageBillingSize combines supplied sizes with output dimensions of
+// differing tiers. It checks output precedence, recognized counts, retained
+// display text, input selection, and the 2K default.
 func TestResolveImageBillingSize(t *testing.T) {
 	tests := []struct {
-		name          string
-		inputSize     string
-		outputSizes   []string
-		wantBilling   string
-		wantOutput    string
-		wantSource    string
-		wantBreakdown map[string]int
+		name          string         // subtest display case label
+		inputSize     string         // supplied input-size evidence
+		outputSizes   []string       // reported output-size evidence
+		wantBilling   string         // expected selected billing tier
+		wantOutput    string         // expected first output display
+		wantSource    string         // expected selection evidence label
+		wantBreakdown map[string]int // expected recognized output-tier counts
 	}{
 		{
 			name:          "output wins over input",

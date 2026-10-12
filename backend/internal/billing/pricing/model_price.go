@@ -5,9 +5,29 @@ import (
 	"strings"
 )
 
-// ResolveModelPricing converts a catalog entry into token billing prices.
+// A catalog media price does not by itself establish text-token pricing.
+// ResolveModelPricing rejects missing or marked-unpriced token records, then
+// carries the accepted entry's amount presence, service-tier rules, cache TTL
+// behavior, and context prices into calculation data.
+//
+// Catalog context tiers are recursively converted before use. xAI's inclusive
+// threshold is lowered by one in these absolute tiers so the calculation's
+// strict comparison and the displayed (min,max] ranges switch at the original
+// threshold. Time and multiplier rules are cloned from the source catalog
+// entry; failed nested conversions are skipped, while the valid base remains
+// available to its caller.
+
+// ResolveModelPricing returns calculation prices for the supplied catalog token
+// entry. Missing records, unpriced sources, and TokenPricingAbsent return
+// ErrModelPricingUnavailable. The model name is lowercased for diagnostics; the
+// supplied catalog identity already determines which prices are converted.
+//
+// Accepted context tiers are recursively copied, with xAI absolute thresholds
+// shifted for inclusive switching and failed tier conversions omitted. Presence
+// flags retain explicit zero priority and image-output prices. An explicitly
+// supplied hourly cache price enables TTL support even at zero; legacy entries
+// infer support from a positive hourly price above the short rate.
 func ResolveModelPricing(model string, catalogPrice *CatalogModelPricing) (*ModelPricing, error) {
-	// Normalize case for model names in diagnostics.
 	model = strings.ToLower(model)
 	if catalogPrice == nil || catalogPrice.Source == "unpriced" || catalogPrice.TokenPricingAbsent {
 		return nil, fmt.Errorf("%w for model: %s", ErrModelPricingUnavailable, model)
@@ -22,9 +42,13 @@ func ResolveModelPricing(model string, catalogPrice *CatalogModelPricing) (*Mode
 			continue
 		}
 		price, err := ResolveModelPricing(model, tier.Pricing)
+		// Nested conversion errors omit that tier; the valid base remains usable
+		// instead of borrowing an incomplete tier's buckets.
 		if err == nil {
 			threshold := tier.Threshold
-			// Internal tiers use (min, max]; xAI switches at the threshold, so convert it to the preceding tier's maximum.
+			// Absolute tiers are selected strictly above their internal threshold. Lower
+			// xAI's value by one so an integer count at the catalog threshold selects
+			// its higher tier.
 			if inclusiveThreshold && threshold > 0 {
 				threshold--
 			}
@@ -59,14 +83,13 @@ func ResolveModelPricing(model string, catalogPrice *CatalogModelPricing) (*Mode
 		CacheCreation1hPrice:               price1h,
 		SupportsCacheBreakdown:             enableBreakdown,
 		SupportsServiceTier:                catalogPricing.SupportsServiceTier,
-		// xAI enters the higher tier at the threshold; other providers require usage above it.
-		LongContextThresholdInclusive: inclusiveThreshold,
-		LongContextInputThreshold:     catalogPricing.LongContextInputTokenThreshold,
-		LongContextInputMultiplier:    catalogPricing.LongContextInputCostMultiplier,
-		LongContextOutputMultiplier:   catalogPricing.LongContextOutputCostMultiplier,
-		ImageInputPricePerToken:       catalogPricing.InputCostPerImageToken,
-		ImageOutputPricePerToken:      catalogPricing.OutputCostPerImageToken,
-		ImageOutputPriceExplicit:      catalogPricing.ImageOutputPricePresent,
-		MaxReasoningEffortMultiplier:  rules.MaxReasoningEffortMultiplier,
+		LongContextThresholdInclusive:      inclusiveThreshold,
+		LongContextInputThreshold:          catalogPricing.LongContextInputTokenThreshold,
+		LongContextInputMultiplier:         catalogPricing.LongContextInputCostMultiplier,
+		LongContextOutputMultiplier:        catalogPricing.LongContextOutputCostMultiplier,
+		ImageInputPricePerToken:            catalogPricing.InputCostPerImageToken,
+		ImageOutputPricePerToken:           catalogPricing.OutputCostPerImageToken,
+		ImageOutputPriceExplicit:           catalogPricing.ImageOutputPricePresent,
+		MaxReasoningEffortMultiplier:       rules.MaxReasoningEffortMultiplier,
 	}, nil
 }

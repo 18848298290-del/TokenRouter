@@ -6,7 +6,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestImageModeKeepsExplicitDefaultPrice checks that unlabeled context intervals do not replace an image card's default price.
+// TestImageModeKeepsExplicitDefaultPrice combines a flat image default with an
+// unlabeled context price. With context unknown, the fixed 2K lookup must
+// return the flat default.
 func TestImageModeKeepsExplicitDefaultPrice(t *testing.T) {
 	base, tier := 0.2, 0.1
 	resolved := ResolvePriceCards(&ModelPricingEntry{BillingMode: BillingModeImage, PerRequestPrice: &base, Intervals: []PricingInterval{{MinTokens: 100, PerRequestPrice: &tier}}}, nil, PricingSourceUnpriced, true)

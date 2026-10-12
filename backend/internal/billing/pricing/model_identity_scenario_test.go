@@ -1,14 +1,20 @@
 package pricing
 
-// These scenarios check full model identity across catalog lookup, model pricing, and card matching.
-
 import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
 
-// TestPricingUsesCompleteIdentity checks that price lookup and card matching retain full model names.
+// Complete model identity is checked across catalog_query.go, model_price.go,
+// and card.go. The scenario keeps punctuation, dates, effort suffixes, and
+// provider qualifications separate during catalog price lookup, while checking
+// same-model resource paths and explicitly configured wildcard cards.
+
+// TestPricingUsesCompleteIdentity queries changed punctuation, versions, effort
+// suffixes, and provider qualifications. Catalog lookup must keep those
+// identities separate, recognize the Google resource path, and allow an
+// explicitly configured wildcard or full-name price.
 func TestPricingUsesCompleteIdentity(t *testing.T) {
 	price := &CatalogModelPricing{InputCostPerToken: 5e-6}
 	query := &CatalogQuery{Entries: map[string]*CatalogModelPricing{
