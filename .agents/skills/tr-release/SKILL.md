@@ -1,13 +1,13 @@
 ---
 name: tr-release
-description: Release TokenRouter at a requested version, or the next patch tag when no version is specified, with structured English release notes. Use when the user invokes $tr-release or asks to publish a TokenRouter version, increment the latest vMAJOR.MINOR.PATCH tag, populate the GitHub Release changelog, or verify the release workflow.
+description: Release TokenRouter at a requested version, or the next patch tag when no version is specified, with English release notes and a collapsed Chinese translation. Use when the user invokes $tr-release or asks to publish a TokenRouter version, increment the latest vMAJOR.MINOR.PATCH tag, populate the GitHub Release changelog, or verify the release workflow.
 ---
 
 # TR Release
 
 ## Goal and scope
 
-Publish the requested TokenRouter version, or increment the patch version when none is specified. Write release notes in English and cover every external change from the previous release to the target commit accurately. The workflow passes the annotated tag body to GoReleaser to produce the Release description.
+Publish the requested TokenRouter version, or increment the patch version when none is specified. Write release notes in English and cover every external change from the previous release to the target commit accurately. The workflow passes the annotated tag body to GoReleaser to produce the Release description. Complete the GitHub Release body with English visible by default and a collapsed Simplified Chinese translation at the very bottom, after the installation and documentation sections.
 
 For requests to revise the skill or review notes, complete that edit or review. Publishing a new version and modifying an existing Release each require the corresponding user request.
 
@@ -56,6 +56,25 @@ GoReleaser supplies the Release title, product introduction, standard installati
 
 Perform the reference document's two-way review: every external change has an entry, and every description traces to evidence at the fixed target commit. Save the final notes as a UTF-8 file and publish from that same file to preserve the reviewed detail. Briefly show the version range and notes before publication. Continue directly when publication is already authorized.
 
+## Chinese translation and final layout
+
+Keep the annotated tag and `--notes-file` in English. After GoReleaser finishes, assemble the final Release body from the verified English description and one translation block. Translate any generated non-English prose into English first, including the Simple Release notice when present. Keep commands, identifiers, version numbers, URLs, and their targets intact.
+
+Translate the complete English description into Simplified Chinese, including the summary, upgrade notes, change categories, and generated installation and documentation sections. Match the order, meaning, conditions, and warnings in both languages. Translate link labels while preserving their targets, and copy executable code blocks verbatim.
+
+Append the translation after all English content using this wrapper:
+
+```html
+<details>
+<summary>中文翻译</summary>
+
+完整的简体中文译文，保持英文正文的章节和条目顺序。
+
+</details>
+```
+
+Leave a blank line before `<details>`, after `</summary>`, and before `</details>` so GitHub renders the Markdown inside. Omit the `open` attribute so the translation starts collapsed. The closing `</details>` is the last non-whitespace content in the Release description. GitHub's [collapsed-section documentation](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/organizing-information-with-collapsed-sections) describes this syntax.
+
 ## Publish and verify
 
 Pass the full SHA and previous tag recorded during preparation. If another release appears remotely or local HEAD changes, the script rejects the stale range and the notes need review again. Take the example variables from preparation output and point `notes_file` at the reviewed notes:
@@ -70,9 +89,10 @@ python3 .agents/skills/tr-release/scripts/tr_release.py \
 When the user specifies a version, add `--version VERSION` to the same command. Otherwise, retain automatic patch incrementing. Use `--notes-file -` to provide the full notes through standard input.
 
 1. Wait for the `Release` Actions run triggered by `new_tag` to succeed in the explicit target repository. Verify the tag and commit to distinguish this release from other runs on the same commit.
-2. Read the final body with `gh release view "$new_tag" --repo "$release_repo" --json body,url,tagName`. Compare the complete notes block, allowing only line-ending differences and whitespace at the block's edges. The summary, every category, and every list item must remain intact. A present title or nonempty body does not establish acceptance.
-3. If the workflow succeeds but the body is missing, truncated, or different, preserve the generated introduction and installation/documentation footer. Replace the change-notes block with the reviewed file using `gh release edit "$new_tag" --repo "$release_repo" --notes-file ...`, then reread it. If block boundaries are unclear, someone else has edited the body, or the correction still differs, report the specific problem and stop repeated overwrites. Keep the existing tag fixed.
-4. Complete the other checks required by the repository's release route. Report unrun and failed checks accurately. Return the previous tag, new tag, commit SHA, Actions result, Release link, and full-body comparison result.
+2. Read and save the generated body with `gh release view "$new_tag" --repo "$release_repo" --json body,url,tagName`. Compare the complete English notes block with the reviewed notes file, allowing only line-ending differences and whitespace at the block's edges. The summary, every category, and every list item must remain intact. If the block is missing, truncated, or different, restore it from the reviewed file while retaining the generated introduction and installation/documentation footer. If block boundaries are unclear, report the specific problem before editing.
+3. Follow "Chinese translation and final layout" to assemble and review the full body. On a retry, replace the existing Chinese translation block in place so the body contains exactly one. Save the complete result as a separate UTF-8 file, `release_body_file`. Reread the remote body before editing; if it differs from the saved snapshot, reconcile the intervening edits before continuing. Apply the reviewed body with `gh release edit "$new_tag" --repo "$release_repo" --notes-file "$release_body_file"`. This finalization is part of an authorized publication; keep the existing tag fixed.
+4. Reread the remote body and compare it with the complete reviewed file, allowing only line-ending differences and whitespace at the body's edges. Check that English is outside the translation block, the single Chinese block follows all English content, and its `<details>` tag has no `open` attribute. Review translation parity using the reference document. When a browser is available, also check that the translation starts collapsed and expands with rendered headings, lists, links, and code blocks. Report visual rendering as unverified if that check cannot run. If the saved body still differs, report the discrepancy and stop repeated overwrites.
+5. Complete the other checks required by the repository's release route. Report unrun and failed checks accurately. Return the previous tag, new tag, commit SHA, Actions result, Release link, and full-body comparison and translation-layout results.
 
 ## Script constraints
 

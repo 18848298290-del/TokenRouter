@@ -1,6 +1,6 @@
 # Change coverage and fact checking
 
-Use this workflow whenever writing or revising a Release description. Write the published notes in English. Save the coverage manifest and complete command output in a temporary directory outside the release commit. Use them for review and keep them separate from the Release body.
+Use this workflow whenever writing or revising a Release description. Write the main description in English and append a collapsed Simplified Chinese translation using the layout in [SKILL.md](../SKILL.md#chinese-translation-and-final-layout). Save the coverage manifest and complete command output in a temporary directory outside the release commit. Use them for review and keep them separate from the Release body.
 
 ## Collect the complete range
 
@@ -52,3 +52,9 @@ First compare the manifest to the body: every external change has an identifiabl
 Scan module boundaries once more using the final file manifest. Look for small fixes obscured by large refactors, features lost in combined entries, and upgrade impacts from removed configuration or APIs. Record total commits, reviewed commits, change items, published items, and exclusion reasons. These counts help expose gaps; they supplement review of meaning.
 
 Proceed to publication after the full commit set and final file manifest have been checked, no changes remain unresolved, every statement has evidence, and every external change is recognizable in the notes. Continue investigating when scope is unclear or output remains unread. Publish from the completed, reviewed notes.
+
+## Translation review
+
+After the English description includes GoReleaser's generated sections, compare its Chinese translation section by section and item by item. Cover the summary, upgrade instructions, changes, installation text, and documentation links. Preserve qualifications, defaults, affected platforms, billing units, migration requirements, and rollback limits. Keep version numbers, identifiers, URLs, and executable code blocks identical. Each Chinese claim needs a matching English claim; correct omissions or differences before saving the final body.
+
+Check that the Release description ends with exactly one `中文翻译` block, collapsed by default. Repeat the full-body comparison after uploading it so acceptance covers both languages and the generated sections.

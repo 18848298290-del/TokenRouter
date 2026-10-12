@@ -33,7 +33,7 @@ Use the repository's [project-doc](.agents/skills/project-doc/SKILL.md) skill fi
 - Run `make hooks` once for each local checkout. On push, the hook runs the same quick checks as `make check` in the current working tree, selecting checks from changes relative to the remote.
 - Before committing, inspect the task's changes for contradictions and safe cleanup opportunities, and address issues related to the change.
 - Before every commit, run `make fmt` from the repository root, inspect the diff, and manually stage the changes belonging to that commit. Review partially staged files hunk by hunk. Then run `make fmt-check` and confirm that declaration-order and formatting differences are resolved. See [Go formatting](docs/operations/development_workflow.md#go-格式化) for tool behavior, generated-file detection, and checks of committed code.
-- Follow Conventional Commits for commit messages.
+- Write commit message subjects and bodies in English and follow Conventional Commits.
 - After pushing, check CI results. CI runs full lint, unit, integration, frontend, build, and script checks. CI also checks integration tests and downstream users of changed packages.
 - For full local acceptance, run `make verify`. It runs the same checks as CI and requires Docker. Run `make security` for security scans.
 - If a test fails or a check is interrupted, fix the cause and rerun verification. Explain skipped tests and mark their scope as unverified.
