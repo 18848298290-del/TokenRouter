@@ -6,6 +6,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestRequestOptionsAreIndependentOfModelName supplies an opaque model with
+// temperature and max effort, then varies conversion options. Both request
+// converters must follow sampling/max flags while the original temperature
+// value remains unchanged after conversion.
 func TestRequestOptionsAreIndependentOfModelName(t *testing.T) {
 	temperature := 0.4
 	request := &AnthropicRequest{

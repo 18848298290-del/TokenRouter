@@ -10,6 +10,9 @@ import (
 	protocolanthropic "github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
 )
 
+// TestApplyAnthropicCompatFullReplayGuard_TrimsOldMessages supplies fifteen
+// ordinary messages to the twelve-message tail guard. Trimming must retain the
+// asserted first and last fixture messages with the expected tail length.
 func TestApplyAnthropicCompatFullReplayGuard_TrimsOldMessages(t *testing.T) {
 	t.Parallel()
 
@@ -29,6 +32,9 @@ func TestApplyAnthropicCompatFullReplayGuard_TrimsOldMessages(t *testing.T) {
 	require.JSONEq(t, `"message-14"`, string(req.Messages[len(req.Messages)-1].Content))
 }
 
+// TestApplyAnthropicCompatFullReplayGuard_KeepsToolBoundaryIntact places a
+// retained result after a call before the nominal tail. Expansion must keep the
+// asserted call/result markers and assistant role while retaining fourteen messages.
 func TestApplyAnthropicCompatFullReplayGuard_KeepsToolBoundaryIntact(t *testing.T) {
 	t.Parallel()
 

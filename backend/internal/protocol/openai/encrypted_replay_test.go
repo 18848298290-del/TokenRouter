@@ -7,7 +7,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestTrimOpenAIEncryptedReasoningItems_ContentNull checks that cleanup retains the reasoning summary.
+// Replay cleanup keeps a reasoning summary when encrypted_content and content
+// are nil. The fixtures also cover removal of empty reasoning items and the
+// encrypted versus unencrypted compaction distinction through change flags and
+// retained input items.
+
+// TestTrimOpenAIEncryptedReasoningItems_ContentNull surrounds a reasoning summary
+// with user and assistant messages. Cleanup retains all three entries while
+// removing both nil content and encrypted_content from the reasoning map.
 func TestTrimOpenAIEncryptedReasoningItems_ContentNull(t *testing.T) {
 	reqBody := map[string]any{
 		"model": "grok-4.5",
@@ -40,6 +47,9 @@ func TestTrimOpenAIEncryptedReasoningItems_ContentNull(t *testing.T) {
 	assert.False(t, hasEncrypted, "encrypted_content should be stripped")
 }
 
+// TestTrimOpenAIEncryptedReasoningItems_ContentNullOnly supplies a summary with
+// nil content and no encrypted_content field. Cleanup reports a change, retains
+// the one input item, and removes its content key.
 func TestTrimOpenAIEncryptedReasoningItems_ContentNullOnly(t *testing.T) {
 	reqBody := map[string]any{
 		"model": "grok-4.5",
@@ -65,6 +75,9 @@ func TestTrimOpenAIEncryptedReasoningItems_ContentNullOnly(t *testing.T) {
 	assert.False(t, hasContent, "content: null should be stripped even without encrypted_content")
 }
 
+// TestTrimOpenAIEncryptedReasoningItems_ContentNonNull supplies plaintext
+// reasoning content without encrypted_content. Cleanup reports no change and
+// retains the exact content string available through the input map.
 func TestTrimOpenAIEncryptedReasoningItems_ContentNonNull(t *testing.T) {
 	reqBody := map[string]any{
 		"model": "grok-4.5",
@@ -87,6 +100,9 @@ func TestTrimOpenAIEncryptedReasoningItems_ContentNonNull(t *testing.T) {
 	assert.Equal(t, "some actual content", reasoning["content"])
 }
 
+// TestTrimOpenAIEncryptedReasoningItems_NoReasoningItems supplies one ordinary
+// user message. The cleanup change flag stays false for this request, which has
+// no reasoning or encrypted compaction item.
 func TestTrimOpenAIEncryptedReasoningItems_NoReasoningItems(t *testing.T) {
 	reqBody := map[string]any{
 		"model": "grok-4.5",
@@ -99,12 +115,16 @@ func TestTrimOpenAIEncryptedReasoningItems_NoReasoningItems(t *testing.T) {
 	assert.False(t, changed)
 }
 
+// TestTrimOpenAIEncryptedReasoningItems_Compaction compares both encrypted
+// compaction labels with an unencrypted compaction object. Encrypted items are
+// removed ahead of the remaining message; the unencrypted item and two-item
+// input retain their type and length.
 func TestTrimOpenAIEncryptedReasoningItems_Compaction(t *testing.T) {
 	tests := []struct {
-		name      string
-		itemType  string
-		encrypted bool
-		changed   bool
+		name      string // subtest display name
+		itemType  string // supplied compaction label
+		encrypted bool   // include ciphertext field
+		changed   bool   // expected cleanup flag
 	}{
 		{name: "compaction", itemType: "compaction", encrypted: true, changed: true},
 		{name: "compaction summary", itemType: "compaction_summary", encrypted: true, changed: true},
@@ -140,6 +160,9 @@ func TestTrimOpenAIEncryptedReasoningItems_Compaction(t *testing.T) {
 	}
 }
 
+// TestTrimOpenAIEncryptedReasoningItems_ContentNullDropsBareSkeleton starts with
+// a reasoning item containing only type and nil content. Cleanup reports a
+// change and removes the input key after dropping the emptied item.
 func TestTrimOpenAIEncryptedReasoningItems_ContentNullDropsBareSkeleton(t *testing.T) {
 	reqBody := map[string]any{
 		"input": []any{

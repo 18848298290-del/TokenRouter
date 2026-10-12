@@ -1,4 +1,14 @@
-// Package bridge converts Anthropic, OpenAI, and Gemini requests, responses, and stream events.
+// Package bridge adapts conversation formats whose tool calls, reasoning,
+// usage, and completion markers occupy different request and event shapes.
+// Conversions retain the relationships their target format can represent while
+// applying caller-selected sampling, thinking, tool, and schema options.
+//
+// Request adapters prepare one attempt's payload, and stream adapters retain
+// per-conversion state as text and tool arguments arrive separately. Callers
+// supply timing or identity sources where generated metadata is needed and own
+// transport, authentication, delivery, and retry decisions. Raw JSON helpers
+// and typed reserialization have different preservation and validity limits;
+// declaration comments identify those limits before the gateway chooses a path.
 //
 // Reading entry points:
 //   - anthropic_to_responses.go converts Messages requests to Responses requests.

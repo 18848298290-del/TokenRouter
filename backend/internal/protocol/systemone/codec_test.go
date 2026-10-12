@@ -9,11 +9,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestModerationBodyDecodesDescriptions checks moderation uses the same decoded strings as the upstream.
+// TestModerationBodyDecodesDescriptions supplies strings, nested descriptions,
+// escaped keys, large numbers, and literal backslashes. Moderation output must
+// contain each asserted decoded token, while the literal-escape fixture must
+// exclude the independently decoded word blocked.
 func TestModerationBodyDecodesDescriptions(t *testing.T) {
 	for _, tc := range []struct {
-		name, state, questions string
-		want                   []string
+		// name labels the fixture; state and questions supply their respective
+		// raw JSON descriptions for the request constructed by this subtest.
+		name, state, questions string   // named test fixture, raw state JSON, and raw question JSON
+		want                   []string // expected decoded text
 	}{
 		{name: "string", state: `"\u0062locked"`, want: []string{"blocked"}},
 		{name: "object", state: `{"\u006bey":{"text":"\u0062locked","number":9007199254740993,"flag":true}}`, want: []string{"key", "blocked", "9007199254740993", "true"}},
@@ -36,7 +41,9 @@ func TestModerationBodyDecodesDescriptions(t *testing.T) {
 			request, err := ParseRequest([]byte(fmt.Sprintf(`{"model":"jev-latest","state":%s,"questions":%s}`, state, questions)))
 			require.NoError(t, err)
 			var body struct {
-				Messages []struct{ Content string } `json:"messages"`
+				Messages []struct {
+					Content string /* decoded moderation text */
+				} `json:"messages"` // generated user messages
 			}
 			require.NoError(t, json.Unmarshal(request.ModerationBody(), &body))
 			require.Len(t, body.Messages, 1)
@@ -50,7 +57,10 @@ func TestModerationBodyDecodesDescriptions(t *testing.T) {
 	}
 }
 
-// TestCodecPreservesMixedQuestions checks model patching retains structured questions and extension fields.
+// TestCodecPreservesMixedQuestions parses noul, choice, and score questions,
+// patches their model, and reads a valid mixed response. Assertions protect
+// the question count, large numeric/extension bytes, a moderation key, and
+// accepted usage with the supplied input count.
 func TestCodecPreservesMixedQuestions(t *testing.T) {
 	body := []byte(`{"model":"alias","state":{"message":"hello","number":9007199254740993},"extension":{"keep":true},"questions":{"a":{"type":"noul","instructions":["yes?"]},"b":{"type":"choice","instructions":{"ask":"pick"},"criteria":{"one":null,"two":{"hint":"second"}}},"c":{"type":"score","instructions":"rank","criteria":["low",["high"]]}}}`)
 	r, err := ParseRequest(body)
@@ -68,7 +78,9 @@ func TestCodecPreservesMixedQuestions(t *testing.T) {
 	require.Equal(t, 10, decoded.Usage.InputTokens)
 }
 
-// TestResponseUsageValidity distinguishes missing, invalid, and valid zero usage while accepting valid answers.
+// TestResponseUsageValidity supplies valid answers beside missing, malformed,
+// negative, out-of-range, or explicit zero usage. Only the valid zero fixture
+// establishes HasUsage, while invalid model/answer fixtures must return an error.
 func TestResponseUsageValidity(t *testing.T) {
 	questions := map[string]Question{"a": {Type: "noul"}}
 	for _, usage := range []string{`null`, `{}`, `{"input_tokens":-1,"output_tokens":0}`, `{"input_tokens":"10","output_tokens":0}`, `{"input_tokens":1.5,"output_tokens":0}`, `{"input_tokens":9223372036854775808,"output_tokens":0}`, `{"input_tokens":0,"output_tokens":0}`} {
@@ -85,6 +97,9 @@ func TestResponseUsageValidity(t *testing.T) {
 	}
 }
 
+// TestParseRequestRejectsUnsupportedShapes replaces selected fields of a valid
+// availability probe with unsupported state, stream, model, or question values.
+// Each altered fixture must be rejected by request validation.
 func TestParseRequestRejectsUnsupportedShapes(t *testing.T) {
 	for _, field := range []map[string]any{{"state": true}, {"state": nil}, {"stream": true}, {"model": ""}, {"questions": map[string]any{}}, {"questions": map[string]any{"a": map[string]any{"type": "chat", "instructions": "test"}}}} {
 		var request map[string]any

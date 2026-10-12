@@ -8,8 +8,18 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/anthropic"
 )
 
-// CompatOutputMeaning returns content-present and terminal flags for a complete frame emitted here.
-// Text, reasoning, and tool calls count as content.
+// Converted outputs use Messages, Responses, or Chat event shapes even when
+// they originate from the same Gemini execution path. Output observation reads
+// their recognized fields and labels before the caller decides how content and
+// terminal evidence affects delivery or completion.
+
+// CompatOutputMeaning reads content and terminal evidence from data lines in
+// a converted frame. DONE and recognized terminal labels return terminal;
+// recognized delta/block/call forms can return content. The first recognized
+// decision wins rather than combining every line's evidence.
+// JSON validity and field types are not checked here: gjson String forms can
+// make nonstring values count as nonempty. Callers apply this to their emitted
+// compatibility frames and retain separate validation where needed.
 func CompatOutputMeaning(frame []byte) (bool, bool) {
 	for line := range bytes.SplitSeq(frame, []byte("\n")) {
 		if !bytes.HasPrefix(line, []byte("data:")) {
@@ -45,7 +55,11 @@ func CompatOutputMeaning(frame []byte) (bool, bool) {
 	return false, false
 }
 
-// CompatJSONHasContent checks completed JSON for text, reasoning, refusal, or tool calls.
+// CompatJSONHasContent checks recognized Messages, Chat, and Responses fields
+// for content evidence, including reasoning, refusals, and tool-call types.
+// Missing recognized content returns false; some tool types count without
+// populated IDs or arguments. Complete JSON and field-type validity are left
+// separate from these gjson path and String-form observations.
 func CompatJSONHasContent(data []byte) bool {
 	if anthropic.ObserveMessage(string(data)).Semantic {
 		return true

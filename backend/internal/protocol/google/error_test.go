@@ -4,6 +4,9 @@ import (
 	"testing"
 )
 
+// TestParseError decodes a permission-denied envelope containing an API-disabled
+// message. Its numeric code, symbolic status, and exact diagnostic text must
+// match the supplied fixture after successful parsing.
 func TestParseError(t *testing.T) {
 	errorBody := `{
 		"error": {
