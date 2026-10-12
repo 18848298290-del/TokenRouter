@@ -8,6 +8,14 @@ import (
 	providercore "github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// CN Qoder credentials can contain machine fields carried over from a Global
+// or legacy import. This case exercises qoder_machine.go and checks that
+// preparation retains the supplied CN machine_id while removing machine_token
+// and machine_type from the stored credential map.
+
+// TestEnsureQoderCNMachineCredentialsRemovesLegacyFields prepares direct-token CN
+// credentials that include legacy machine fields. It checks that machine_id is
+// retained and both unsupported additional machine fields are removed.
 func TestEnsureQoderCNMachineCredentialsRemovesLegacyFields(t *testing.T) {
 	provider := &providercore.Record{Credentials: map[string]any{
 		"site":                 "cn",

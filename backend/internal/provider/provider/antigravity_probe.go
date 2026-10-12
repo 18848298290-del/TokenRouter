@@ -13,13 +13,33 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
-// AntigravityProbe runs a selected-provider probe through platform retries and the application attempt gate.
+// Antigravity connection tests address one selected OAuth provider through the
+// same platform retries used by forwarding. Credentials, project and final
+// model permission are resolved before a minimal request is built; the platform
+// probe reads the bounded response and releases the application attempt gate.
+
+// AntigravityProbe runs a selected-provider probe through platform retries and
+// the application attempt gate.
 type AntigravityProbe struct {
+	// Tokens supplies OAuth access credentials. A nil source returns a
+	// configuration
+	// error before project resolution or any platform request is attempted.
 	Tokens *provider.AntigravityTokenSource
-	Retry  *AntigravityRetry
-	Enter  func() (func(), error)
+	// Retry is required after credential preparation and supplies health callbacks
+	// together with the response-body limit used by the platform probe.
+	Retry *AntigravityRetry
+	// Enter optionally registers an application attempt. The platform probe invokes
+	// its returned release after response reading and closing, including error
+	// paths.
+	Enter func() (func(), error)
 }
 
+// Execute probes one provider after resolving OAuth credentials, project and
+// model admission.
+// A nonnil record and configured retry service are required once credentials
+// are available. Blank prompts become a period; automatic probes pass their
+// supplied UserAgent. The platform probe closes its final response and releases
+// an optional application attempt registration.
 func (s *AntigravityProbe) Execute(ctx context.Context, value *provider.Record, request provider.PreparedTestRequest) (*antigravity.TestConnectionResult, error) {
 	if s.Tokens == nil {
 		return nil, errors.New("antigravity token provider not configured")
@@ -41,6 +61,9 @@ func (s *AntigravityProbe) Execute(ctx context.Context, value *provider.Record, 
 		prompt = strings.TrimSpace(request.Prompt)
 	}
 	var body []byte
+	// The requested model family chooses the test encoder, while the admitted
+	// mapped target is placed into either encoder so custom routing retains
+	// its identity.
 	if strings.HasPrefix(request.Model, "gemini-") {
 		body, err = antigravity.BuildGeminiTestRequest(project, model, prompt)
 	} else {
@@ -57,6 +80,10 @@ func (s *AntigravityProbe) Execute(ctx context.Context, value *provider.Record, 
 	input := AntigravityRetryRequest{
 		Context: ctx, Provider: value, ModelStore: s.Retry.Health.Store, Prefix: prefix, ProxyURL: proxy, AccessToken: token, Action: "streamGenerateContent", Body: body, RequestedModel: request.Model,
 		HandleError: func(status int, _ http.Header, body []byte) {
+			// Probe failures are diagnostic observations; keep their body
+			// bounded and redacted
+			// while leaving provider health decisions to the shared retry
+			// callbacks.
 			logging.LegacyPrintf("service.antigravity_gateway", "%s test_handle_error status=%d model=%s provider=%d body=%s", prefix, status, request.Model, value.ID, logredact.TruncateLine(body, 200))
 		},
 	}

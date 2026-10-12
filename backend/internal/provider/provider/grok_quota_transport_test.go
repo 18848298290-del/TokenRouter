@@ -19,6 +19,14 @@ import (
 	xai "github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// Grok billing retries apply to GET queries, while active Responses quota POSTs
+// are handled separately. These cases exercise grok_quota_transport.go with
+// official and custom endpoint policies, model-list identity headers, retryable
+// transport/status failures and a bounded billing retry count.
+
+// TestBuildGrokBillingURLUsesCLIForOfficialAPIHosts supplies public and regional
+// official OAuth bases. It checks weekly billing resolution returns the CLI
+// billing endpoint for both selected official text addresses.
 func TestBuildGrokBillingURLUsesCLIForOfficialAPIHosts(t *testing.T) {
 	for _, baseURL := range []string{xai.DefaultBaseURL, "https://us-west-2.api.x.ai/v1"} {
 		value := &providercore.Record{Platform: capability.PlatformGrok, Type: capability.ProviderTypeOAuth, Credentials: map[string]any{"base_url": baseURL}}
@@ -29,6 +37,9 @@ func TestBuildGrokBillingURLUsesCLIForOfficialAPIHosts(t *testing.T) {
 	}
 }
 
+// TestBuildGrokBillingURLKeepsCustomRelay supplies a custom OAuth prefix.
+// It checks monthly billing appends its endpoint beneath that configured prefix
+// after provider-specific URL validation succeeds.
 func TestBuildGrokBillingURLKeepsCustomRelay(t *testing.T) {
 	value := &providercore.Record{Platform: capability.PlatformGrok, Type: capability.ProviderTypeOAuth, Credentials: map[string]any{
 		"base_url": "https://relay.example.test/xai/v1",
@@ -39,6 +50,9 @@ func TestBuildGrokBillingURLKeepsCustomRelay(t *testing.T) {
 	require.Equal(t, "https://relay.example.test/xai/v1"+xai.BillingMonthlyPath, monthly)
 }
 
+// TestGrokBillingURLFollowsProviderBaseURL compares OAuth defaults, custom
+// billing routing and a rejecting operator allowlist. It checks weekly/monthly
+// paths and rejection before an address outside policy can carry credentials.
 func TestGrokBillingURLFollowsProviderBaseURL(t *testing.T) {
 	t.Run("oauth default stays on CLI gateway", func(t *testing.T) {
 		value := &providercore.Record{
@@ -71,7 +85,9 @@ func TestGrokBillingURLFollowsProviderBaseURL(t *testing.T) {
 	})
 
 	t.Run("billing probe honors the operator allowlist like forwarding", func(t *testing.T) {
-		// Reject hosts outside the operator allowlist before sending an OAuth token.
+		// A selected custom relay still passes the operator host allowlist before
+		// billing request construction, so rejection is observable without
+		// transmitting the OAuth token.
 		value := &providercore.Record{
 			Platform: capability.PlatformGrok,
 			Type:     capability.ProviderTypeOAuth,
@@ -86,6 +102,9 @@ func TestGrokBillingURLFollowsProviderBaseURL(t *testing.T) {
 	})
 }
 
+// TestSyncGrokObservedModelsRejectsOAuthCustomURLOutsideOperatorPolicy supplies
+// an OAuth relay outside the allowed host set. It checks the policy error and
+// that the transport never receives a model-list request.
 func TestSyncGrokObservedModelsRejectsOAuthCustomURLOutsideOperatorPolicy(t *testing.T) {
 	provider := &providercore.Record{
 		ID:       901,
@@ -108,6 +127,9 @@ func TestSyncGrokObservedModelsRejectsOAuthCustomURLOutsideOperatorPolicy(t *tes
 	require.Nil(t, upstream.lastReq)
 }
 
+// TestSyncGrokObservedModelsUsesCLIIdentityAndProviderHeaders synchronizes models
+// with stored OAuth user/email hints. It checks CLI identity headers, the models
+// URL and persistence of the observed model metadata.
 func TestSyncGrokObservedModelsUsesCLIIdentityAndProviderHeaders(t *testing.T) {
 	provider := &providercore.Record{
 		ID:       902,
@@ -139,14 +161,17 @@ func TestSyncGrokObservedModelsUsesCLIIdentityAndProviderHeaders(t *testing.T) {
 	require.Contains(t, repo.updates[provider.ID], providercore.GrokObservedModelsExtraKey)
 }
 
+// TestPreferBillingObservationStatus compares weekly and monthly failure statuses.
+// It checks forbidden precedence across either window, then weekly status
+// preference and monthly selection when the weekly status is absent.
 func TestPreferBillingObservationStatus(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name          string
-		weeklyStatus  int
-		monthlyStatus int
-		want          int
+		name          string // subtest display label
+		weeklyStatus  int    // observed weekly HTTP status
+		monthlyStatus int    // observed monthly HTTP status
+		want          int    // expected selected HTTP status
 	}{
 		{name: "weekly forbidden wins", weeklyStatus: http.StatusForbidden, monthlyStatus: http.StatusBadGateway, want: http.StatusForbidden},
 		{name: "monthly forbidden wins", weeklyStatus: http.StatusBadGateway, monthlyStatus: http.StatusForbidden, want: http.StatusForbidden},
@@ -161,6 +186,9 @@ func TestPreferBillingObservationStatus(t *testing.T) {
 	}
 }
 
+// TestGrokQuotaServiceFetchBillingRetries502ThenSucceeds returns one 502 before
+// a successful weekly billing payload. It checks parsed utilization and exactly
+// two GET requests to the weekly billing URL.
 func TestGrokQuotaServiceFetchBillingRetries502ThenSucceeds(t *testing.T) {
 	provider := healthyGrokQuotaOAuthProvider(401)
 	upstream := &grokQuotaSequenceUpstream{steps: []grokQuotaUpstreamStep{
@@ -183,6 +211,9 @@ func TestGrokQuotaServiceFetchBillingRetries502ThenSucceeds(t *testing.T) {
 	require.Equal(t, "format=credits", requests[0].URL.RawQuery)
 }
 
+// TestGrokQuotaServiceFetchBillingRetriesTransportErrorThenSucceeds injects an
+// initial transport failure before billing success. It checks the final summary
+// and status, with exactly two recorded query attempts.
 func TestGrokQuotaServiceFetchBillingRetriesTransportErrorThenSucceeds(t *testing.T) {
 	provider := healthyGrokQuotaOAuthProvider(402)
 	upstream := &grokQuotaSequenceUpstream{steps: []grokQuotaUpstreamStep{
@@ -199,6 +230,9 @@ func TestGrokQuotaServiceFetchBillingRetriesTransportErrorThenSucceeds(t *testin
 	require.Len(t, upstream.snapshotRequests(), 2)
 }
 
+// TestGrokQuotaServiceFetchBillingStopsAfterSingleTransientRetry supplies two
+// 502 responses followed by unused success. It checks the stable error reason,
+// status diagnostic and two-request limit after transient retry exhaustion.
 func TestGrokQuotaServiceFetchBillingStopsAfterSingleTransientRetry(t *testing.T) {
 	provider := healthyGrokQuotaOAuthProvider(403)
 	upstream := &grokQuotaSequenceUpstream{steps: []grokQuotaUpstreamStep{
@@ -218,11 +252,14 @@ func TestGrokQuotaServiceFetchBillingStopsAfterSingleTransientRetry(t *testing.T
 	require.Len(t, upstream.snapshotRequests(), 2)
 }
 
+// TestGrokQuotaServiceFetchBillingDoesNotRetryNonTransientStatuses supplies 401,
+// 403 and 429 billing outcomes. It checks one request for each, errors for
+// authentication/access rejection, and a status-only 429 result.
 func TestGrokQuotaServiceFetchBillingDoesNotRetryNonTransientStatuses(t *testing.T) {
 	tests := []struct {
-		name    string
-		status  int
-		wantErr bool
+		name    string // subtest display label
+		status  int    // returned upstream HTTP status
+		wantErr bool   // expected billing error presence
 	}{
 		{name: "unauthorized", status: http.StatusUnauthorized, wantErr: true},
 		{name: "forbidden", status: http.StatusForbidden, wantErr: true},
@@ -252,7 +289,10 @@ func TestGrokQuotaServiceFetchBillingDoesNotRetryNonTransientStatuses(t *testing
 	}
 }
 
-// billingURLForTest combines provider URL validation with billing endpoint resolution.
+// billingURLForTest combines provider validation with weekly or monthly
+// endpoint resolution.
+// It returns validator errors before building the endpoint. The helper uses
+// platform defaults rather than the dynamic text setting for its billing base.
 func billingURLForTest(value *providercore.Record, operator xai.BaseURLValidator, weekly bool) (string, error) {
 	validator, err := GrokBaseURLValidator(value, operator)
 	if err != nil {

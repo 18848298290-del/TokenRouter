@@ -42,7 +42,11 @@ type RefreshPageProcessor struct {
 	// Concurrency needs to be positive for queued providers to reach a worker.
 	// Nonpositive values create no workers and return zero outcome counts.
 	Concurrency int
-	Info, Warn  func(string, ...any) // optional per-provider outcome loggers
+	// Info reports each successful provider refresh. Warn reports each failed
+	// provider outcome with its redacted error. ProcessProvider replaces either
+	// nil callback with a no-op for a usable nonempty group before classifying
+	// results, while skipped outcomes emit neither level.
+	Info, Warn func(string, ...any)
 }
 
 // ProcessPage checks eligibility and expiry, runs each platform group, and

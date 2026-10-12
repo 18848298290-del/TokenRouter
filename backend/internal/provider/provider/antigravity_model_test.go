@@ -9,7 +9,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestAntigravityFinalModelChecksWhitelistAfterThinking checks the final thinking suffix after one mapping.
+// Antigravity aliases and thinking variants can have different final permissions.
+// These cases exercise antigravity_model.go with explicit and wildcard mappings,
+// unrestricted model scopes, and separate final whitelists to check the identity
+// returned to forwarding after one mapping step.
+
+// TestAntigravityFinalModelChecksWhitelistAfterThinking separates base and thinking
+// permissions for one public alias. It checks that the transformed name is
+// whitelisted once and is never passed through a second target mapping.
 func TestAntigravityFinalModelChecksWhitelistAfterThinking(t *testing.T) {
 	enabled := true
 	disabled := false
@@ -25,6 +32,9 @@ func TestAntigravityFinalModelChecksWhitelistAfterThinking(t *testing.T) {
 	require.Equal(t, "claude-sonnet-4-5", MapAntigravityModel(value, "public"))
 }
 
+// TestAntigravityMappedTargetCannotBypassExplicitWhitelist maps an alias to an
+// unlisted custom target. It checks rejection until an explicit wildcard admits
+// that target, keeping mapping and permission as separate decisions.
 func TestAntigravityMappedTargetCannotBypassExplicitWhitelist(t *testing.T) {
 	value := &providercore.Record{Platform: providercore.PlatformAntigravity, Credentials: map[string]any{
 		"model_mapping":   map[string]any{"public": "custom-upstream"},
@@ -35,12 +45,15 @@ func TestAntigravityMappedTargetCannotBypassExplicitWhitelist(t *testing.T) {
 	require.Equal(t, "custom-upstream", MapAntigravityModel(value, "public"))
 }
 
+// TestAntigravityGatewayService_GetMappedModel covers configured aliases alongside
+// known and unknown unmapped names. It checks that saved targets win and that an
+// unrestricted provider returns every unmapped spelling as supplied.
 func TestAntigravityGatewayService_GetMappedModel(t *testing.T) {
 	tests := []struct {
-		name            string
-		requestedModel  string
-		providerMapping map[string]string
-		expected        string
+		name            string            // subtest display label
+		requestedModel  string            // incoming model spelling
+		providerMapping map[string]string // configured alias targets
+		expected        string            // admitted upstream spelling
 	}{
 		// Configured mappings determine the upstream model.
 		{
@@ -206,7 +219,10 @@ func TestAntigravityGatewayService_GetMappedModel(t *testing.T) {
 				Platform: capability.PlatformAntigravity,
 			}
 			if tt.providerMapping != nil {
-				// Model mapping credentials use map[string]any, as decoded from JSON.
+				// Encode the table mapping in the JSON-shaped container read
+				// by ResolveModelMapping;
+				// a map with a different concrete value type would exercise
+				// its default path.
 				mappingAny := make(map[string]any)
 				for k, v := range tt.providerMapping {
 					mappingAny[k] = v
@@ -222,11 +238,14 @@ func TestAntigravityGatewayService_GetMappedModel(t *testing.T) {
 	}
 }
 
+// TestAntigravityGatewayService_GetMappedModel_EdgeCases supplies an empty name and
+// names from other model families. It checks that empty input is rejected while
+// unrestricted nonempty names pass through unchanged.
 func TestAntigravityGatewayService_GetMappedModel_EdgeCases(t *testing.T) {
 	tests := []struct {
-		name           string
-		requestedModel string
-		expected       string
+		name           string // subtest display label
+		requestedModel string // incoming model spelling
+		expected       string // admitted upstream spelling
 	}{
 		{"空字符串", "", ""},
 		{"非claude/gemini前缀 - gpt", "gpt-4", "gpt-4"},
@@ -242,14 +261,16 @@ func TestAntigravityGatewayService_GetMappedModel_EdgeCases(t *testing.T) {
 	}
 }
 
-// TestMapAntigravityModel_WildcardTargetEqualsRequest accepts a wildcard whose target equals the
-// requested model.
+// TestMapAntigravityModel_WildcardTargetEqualsRequest compares wildcard and exact
+// identity targets with unmatched requests. It checks that matching the same
+// spelling still returns that target and that an unmatched customtools name
+// does not acquire another alias's mapping.
 func TestMapAntigravityModel_WildcardTargetEqualsRequest(t *testing.T) {
 	tests := []struct {
-		name           string
-		modelMapping   map[string]any
-		requestedModel string
-		expected       string
+		name           string         // subtest display label
+		modelMapping   map[string]any // decoded alias configuration
+		requestedModel string         // incoming model spelling
+		expected       string         // admitted upstream spelling
 	}{
 		{
 			name:           "wildcard target equals request model",

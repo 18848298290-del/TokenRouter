@@ -16,8 +16,9 @@ import (
 // cache lifetimes, and tool search flags; unknown identities return empty rules.
 func TestBedrockExecutionRules(t *testing.T) {
 	for _, tc := range []struct {
-		model, mode string // model ID and expected thinking mode
-		toolSearch  bool   // expected tool search support
+		// model: complete Bedrock request ID; mode: expected thinking protocol family.
+		model, mode string
+		toolSearch  bool // expected tool search support
 	}{
 		{"us.anthropic.claude-sonnet-4-5-20250929-v1:0", "budget", true},
 		{"eu.anthropic.claude-opus-4-6-v1", "adaptive_or_budget", true},

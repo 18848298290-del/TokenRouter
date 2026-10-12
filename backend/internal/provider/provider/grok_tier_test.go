@@ -11,6 +11,15 @@ import (
 	xai "github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// Grok media eligibility requires usable paid evidence for OAuth providers,
+// while API-key providers and administrator overrides follow separate rules.
+// These cases exercise grok_tier.go's bound parsers through the core eligibility
+// function and check both the admission result and its diagnostic reason.
+
+// TestGrokMediaGenerationEligibility compares provider kinds, billing observations
+// and administrator overrides. It checks admission and reason for paid, free,
+// forbidden, partial, malformed and missing billing evidence as well as explicit
+// enable and disable choices.
 func TestGrokMediaGenerationEligibility(t *testing.T) {
 	weeklyUsagePercent := 12.5
 	forbiddenBilling := &xai.BillingSummary{
@@ -50,10 +59,10 @@ func TestGrokMediaGenerationEligibility(t *testing.T) {
 	}
 
 	tests := []struct {
-		name       string
-		provider   *providercore.Record
-		want       bool
-		wantReason string
+		name       string               // subtest display label
+		provider   *providercore.Record // input provider fixture
+		want       bool                 // expected media admission
+		wantReason string               // expected eligibility reason
 	}{
 		{name: "nil provider", provider: nil, want: false, wantReason: "not_grok"},
 		{name: "non grok provider", provider: &providercore.Record{Platform: capability.PlatformOpenAI}, want: false, wantReason: "not_grok"},

@@ -19,20 +19,54 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
+// Qoder usage queries use the provider's site session while distinguishing
+// active quota from cached failure display. These cases exercise
+// qoder_usage.go through the core usage service, checking Global/CN signing,
+// legacy CN Bearer input, PAT priority and rebuild, force/identity cache
+// bypass and normalized credit buckets.
+//
+// Health assertions use recorded snapshot and deadline channels to distinguish
+// quota exhaustion from available add-on or organization credit, overload and
+// unrelated cooldowns. Another fixture replaces authentication just before a
+// response returns, making stale observation writes fail their identity check.
+// The HTTP substitute uses an atomic call index for configured status/body
+// sequences but retains request pointers without a mutex; those recorded
+// fields still require serial fixture use rather than a blanket thread-safety
+// assumption.
+
+// qoderUsageHTTPUpstreamStub supplies indexed fixture responses and retains
+// the last request pointer.
 type qoderUsageHTTPUpstreamStub struct {
-	req         *http.Request
-	statusCode  int
-	statusCodes []int
-	body        string
-	bodies      []string
-	calls       int32
+	// req retains the latest caller pointer without synchronization. The call
+	// index is atomic, but callers keep request capture and configured sequences
+	// serial when reading this field for assertions.
+	req *http.Request
+	// statusCode and statusCodes supply default and per-call HTTP results. The
+	// one-based call counter selects index call-1 when present; after that sequence
+	// is exhausted, the default resumes and a selected zero becomes HTTP 200.
+	statusCode  int   // default fixture HTTP status
+	statusCodes []int // indexed fixture HTTP statuses
+	// body and bodies supply default and per-call response text for that same
+	// call index. An in-range empty item remains authoritative; calls beyond the
+	// configured sequence use body rather than repeating its final item.
+	body   string   // default fixture response text
+	bodies []string // indexed fixture response texts
+	calls  int32    // atomic request sequence counter
 }
 
+// qoderObservationIdentityUpstream injects an administrator change after
+// response construction and before return.
 type qoderObservationIdentityUpstream struct {
-	qoderUsageHTTPUpstreamStub
+	qoderUsageHTTPUpstreamStub // delegated serial response fixture
+	// beforeReturn is required and runs after the base result is constructed.
+	// The identity test uses it to replace credentials before caller parsing/persistence.
 	beforeReturn func()
 }
 
+// TestProviderUsageService_QoderUsageFetchesQuotaAndPersistsSnapshot returns a
+// signed Global quota response with fractional percentages. It checks
+// normalized display values, COSY authorization and a recorded quota snapshot
+// update after the query.
 func TestProviderUsageService_QoderUsageFetchesQuotaAndPersistsSnapshot(t *testing.T) {
 	t.Parallel()
 
@@ -81,6 +115,9 @@ func TestProviderUsageService_QoderUsageFetchesQuotaAndPersistsSnapshot(t *testi
 	if got := upstream.req.Header.Get("Authorization"); !strings.HasPrefix(got, "Bearer COSY.") {
 		t.Fatalf("Authorization = %q, want signed COSY bearer", got)
 	}
+	// Wait for the recorded snapshot callback after usage conversion rather
+	// than inferring storage from display data; the bounded channel
+	// observation exposes the actual write attempt.
 	select {
 	case updates := <-repo.updateExtraCh:
 		if updates[providercore.QoderUsageQuotaSnapshotExtraKey] == nil {
@@ -91,6 +128,10 @@ func TestProviderUsageService_QoderUsageFetchesQuotaAndPersistsSnapshot(t *testi
 	}
 }
 
+// TestProviderUsageService_QoderCNQuotaUsesSignedGatewayQueryAndParsesExtensions
+// uses CN20 credentials and organization identity. It checks the signed
+// gateway path/query, client version and decoded user, prorating, credit URL
+// and organization extensions.
 func TestProviderUsageService_QoderCNQuotaUsesSignedGatewayQueryAndParsesExtensions(t *testing.T) {
 	upstream := &qoderUsageHTTPUpstreamStub{body: `{
 		"userId":"user-cn",
@@ -142,6 +183,10 @@ func TestProviderUsageService_QoderCNQuotaUsesSignedGatewayQueryAndParsesExtensi
 	}
 }
 
+// TestProviderUsageService_QoderCNLegacyQuotaUsesBearerToken supplies legacy
+// CN direct credentials. It checks Bearer authentication, absent signing
+// headers, organization query identity and the decoded remaining quota
+// returned for that route.
 func TestProviderUsageService_QoderCNLegacyQuotaUsesBearerToken(t *testing.T) {
 	upstream := &qoderUsageHTTPUpstreamStub{body: `{
 		"userType":"teams",
@@ -183,6 +228,10 @@ func TestProviderUsageService_QoderCNLegacyQuotaUsesBearerToken(t *testing.T) {
 	}
 }
 
+// TestProviderUsageService_QoderUsagePrefersPATBootstrapOverStoredSecurityToken
+// provides PAT beside stale direct access data. It checks a PAT exchange
+// precedes quota, two total requests and a signed query using the resulting
+// session identity.
 func TestProviderUsageService_QoderUsagePrefersPATBootstrapOverStoredSecurityToken(t *testing.T) {
 	t.Parallel()
 
@@ -229,6 +278,10 @@ func TestProviderUsageService_QoderUsagePrefersPATBootstrapOverStoredSecurityTok
 	}
 }
 
+// TestProviderUsageService_QoderUsageDoesNotReuseStoredTokenWhenPATBootstrapFails
+// fails the PAT exchange despite stored access data. It checks degraded
+// display, redacted diagnostics and one request, leaving the unused quota
+// response unconsumed.
 func TestProviderUsageService_QoderUsageDoesNotReuseStoredTokenWhenPATBootstrapFails(t *testing.T) {
 	t.Parallel()
 
@@ -278,6 +331,10 @@ func TestProviderUsageService_QoderUsageDoesNotReuseStoredTokenWhenPATBootstrapF
 	}
 }
 
+// TestProviderUsageService_QoderCNPATRebuildsSessionAfterAuthenticationFailure
+// returns 401 then successful quota for a CN PAT source. It checks two session
+// exchanges, two quota queries and the recovered quota result after
+// cached-session eviction.
 func TestProviderUsageService_QoderCNPATRebuildsSessionAfterAuthenticationFailure(t *testing.T) {
 	upstream := &qoderUsageHTTPUpstreamStub{
 		statusCodes: []int{http.StatusUnauthorized, http.StatusOK},
@@ -341,6 +398,9 @@ func TestProviderUsageService_QoderCNPATRebuildsSessionAfterAuthenticationFailur
 	}
 }
 
+// TestProviderUsageService_QoderUsageForceBypassesCache serves changing quota
+// across two query results. It checks ordinary lookup reuses the first value
+// while explicit force performs the second query and returns its later usage.
 func TestProviderUsageService_QoderUsageForceBypassesCache(t *testing.T) {
 	t.Parallel()
 
@@ -403,6 +463,10 @@ func TestProviderUsageService_QoderUsageForceBypassesCache(t *testing.T) {
 	}
 }
 
+// TestProviderUsageService_QoderQuotaExceededSetsRateLimited returns exhausted
+// credit with a future millisecond expiry. It checks exceeded display and a
+// recorded provider reset whose milliseconds equal the response quota
+// deadline.
 func TestProviderUsageService_QoderQuotaExceededSetsRateLimited(t *testing.T) {
 	t.Parallel()
 
@@ -434,6 +498,9 @@ func TestProviderUsageService_QoderQuotaExceededSetsRateLimited(t *testing.T) {
 	if usage.QoderQuota == nil || !usage.QoderQuota.IsQuotaExceeded {
 		t.Fatalf("expected exceeded qoder quota: %#v", usage.QoderQuota)
 	}
+	// Observe the actual limit callback and compare its absolute milliseconds
+	// with the response expiry, separating displayed exhaustion from the
+	// selected scheduling deadline write.
 	select {
 	case resetAt := <-repo.rateLimitCh:
 		if resetAt.UnixMilli() != expiresAt {
@@ -444,9 +511,14 @@ func TestProviderUsageService_QoderQuotaExceededSetsRateLimited(t *testing.T) {
 	}
 }
 
+// TestProviderUsageService_QoderAddOnQuotaRemainingPreventsUserQuotaRateLimit
+// combines exhausted base credit with positive add-on balance. It checks that
+// balance, no new limit event and cleanup of the matching stale quota window.
 func TestProviderUsageService_QoderAddOnQuotaRemainingPreventsUserQuotaRateLimit(t *testing.T) {
 	t.Parallel()
 
+	// Keep the stale window on the payload millisecond instant for recovery
+	// matching.
 	expiresAt := time.Now().Add(time.Hour).Truncate(time.Millisecond)
 	upstream := &qoderUsageHTTPUpstreamStub{body: fmt.Sprintf(`{
 		"userType":"teams",
@@ -477,6 +549,9 @@ func TestProviderUsageService_QoderAddOnQuotaRemainingPreventsUserQuotaRateLimit
 	if usage.QoderQuota == nil || usage.QoderQuota.AddOnQuota == nil || usage.QoderQuota.AddOnQuota.Remaining != 40 {
 		t.Fatalf("expected add-on quota remaining in qoder usage, got %#v", usage.QoderQuota)
 	}
+	// Check the queued limit observation after completed usage handling before
+	// awaiting cleanup; positive add-on credit must not install another
+	// quota-exhaustion window in this fixture.
 	select {
 	case resetAt := <-repo.rateLimitCh:
 		t.Fatalf("unexpected SetRateLimited call while add-on quota remains: %v", resetAt)
@@ -492,9 +567,15 @@ func TestProviderUsageService_QoderAddOnQuotaRemainingPreventsUserQuotaRateLimit
 	}
 }
 
+// TestProviderUsageService_QoderQuotaLockedProviderBypassesCachedUsage stores
+// exhausted usage before installing its matching provider reset. It checks
+// another query returns available credit and clears that observed quota lock
+// instead of using cache.
 func TestProviderUsageService_QoderQuotaLockedProviderBypassesCachedUsage(t *testing.T) {
 	t.Parallel()
 
+	// Use one millisecond fixture instant for initial quota lock and
+	// revalidation.
 	expiresAt := time.Now().Add(time.Hour).Truncate(time.Millisecond)
 	upstream := &qoderUsageHTTPUpstreamStub{bodies: []string{
 		fmt.Sprintf(`{
@@ -533,11 +614,17 @@ func TestProviderUsageService_QoderQuotaLockedProviderBypassesCachedUsage(t *tes
 	if first.QoderQuota == nil || !first.QoderQuota.IsQuotaExceeded {
 		t.Fatalf("expected cached exceeded quota: %#v", first.QoderQuota)
 	}
+	// Observe initial exhaustion before changing the fixture provider reset,
+	// then query again with that matching window so cache bypass and later
+	// recovery follow the intended order.
 	select {
 	case <-repo.rateLimitCh:
 	case <-time.After(time.Second):
 		t.Fatal("expected SetRateLimited call")
 	}
+	// Install the response-matching limit only after its write was observed;
+	// this turns the next ordinary lookup into quota-lock revalidation rather
+	// than normal cache reuse.
 	repo.providers[0].RateLimitResetAt = &expiresAt
 
 	second, err := svc.GetUsage(context.Background(), 9)
@@ -560,9 +647,13 @@ func TestProviderUsageService_QoderQuotaLockedProviderBypassesCachedUsage(t *tes
 	}
 }
 
+// TestProviderUsageService_QoderQuotaAvailableClearsMatchingQuotaRateLimit
+// returns available credit for an existing matching reset. It checks the clear
+// event for that provider and no newly installed quota-limit event.
 func TestProviderUsageService_QoderQuotaAvailableClearsMatchingQuotaRateLimit(t *testing.T) {
 	t.Parallel()
 
+	// Align the fixture reset with the decoded millisecond quota expiry.
 	expiresAt := time.Now().Add(time.Hour).Truncate(time.Millisecond)
 	upstream := &qoderUsageHTTPUpstreamStub{body: fmt.Sprintf(`{
 		"userType":"teams",
@@ -592,6 +683,9 @@ func TestProviderUsageService_QoderQuotaAvailableClearsMatchingQuotaRateLimit(t 
 	if usage.QoderQuota == nil || usage.QoderQuota.IsQuotaExceeded {
 		t.Fatalf("expected available qoder quota: %#v", usage.QoderQuota)
 	}
+	// Await the actual clear callback before checking no new limit was queued,
+	// so available display data alone cannot satisfy the intended
+	// health-recovery assertion.
 	select {
 	case id := <-repo.clearLimitCh:
 		if id != 7 {
@@ -607,9 +701,13 @@ func TestProviderUsageService_QoderQuotaAvailableClearsMatchingQuotaRateLimit(t 
 	}
 }
 
+// TestProviderUsageService_QoderQuotaLockedProviderKeepsDegradedCache seeds
+// cached failure display for the same identity alongside a quota lock. It checks
+// the error cache is reused with zero queries and no health recovery event.
 func TestProviderUsageService_QoderQuotaLockedProviderKeepsDegradedCache(t *testing.T) {
 	t.Parallel()
 
+	// Share millisecond expiry between selected reset and cached quota data.
 	expiresAt := time.Now().Add(time.Hour).Truncate(time.Millisecond)
 	upstream := &qoderUsageHTTPUpstreamStub{body: fmt.Sprintf(`{
 		"userType":"teams",
@@ -630,6 +728,9 @@ func TestProviderUsageService_QoderQuotaLockedProviderKeepsDegradedCache(t *test
 		clearLimitCh: make(chan int64, 1),
 	}
 	cache := providercore.NewOAuthUsageCache()
+	// Seed failure display with the same identity and a live cache timestamp;
+	// the following query must exercise degraded-cache reuse instead of an
+	// identity miss or expired entry.
 	cache.StoreQoder(int64(11), &providercore.OAuthQoderUsageCache{
 		Identity: providercore.UsageCacheIdentity(&repo.providers[0]),
 		UsageInfo: &providercore.UsageInfo{
@@ -663,9 +764,15 @@ func TestProviderUsageService_QoderQuotaLockedProviderKeepsDegradedCache(t *test
 	}
 }
 
+// TestProviderUsageService_QoderQuotaAvailableDoesNotClearActiveOverload
+// returns available credit while overload remains active. It checks quota
+// display remains usable but no quota-limit cleanup event is issued for that
+// selected state.
 func TestProviderUsageService_QoderQuotaAvailableDoesNotClearActiveOverload(t *testing.T) {
 	t.Parallel()
 
+	// Match quota timing at millisecond precision while overload keeps its
+	// separate deadline.
 	expiresAt := time.Now().Add(time.Hour).Truncate(time.Millisecond)
 	overloadUntil := time.Now().Add(5 * time.Minute)
 	upstream := &qoderUsageHTTPUpstreamStub{body: fmt.Sprintf(`{
@@ -703,6 +810,10 @@ func TestProviderUsageService_QoderQuotaAvailableDoesNotClearActiveOverload(t *t
 	}
 }
 
+// TestProviderUsageService_QoderQuotaAvailableDoesNotClearUnrelatedRateLimit
+// returns available credit with expiry different from the short provider
+// reset. It checks display success and no clear event for that unrelated
+// cooldown.
 func TestProviderUsageService_QoderQuotaAvailableDoesNotClearUnrelatedRateLimit(t *testing.T) {
 	t.Parallel()
 
@@ -742,6 +853,10 @@ func TestProviderUsageService_QoderQuotaAvailableDoesNotClearUnrelatedRateLimit(
 	}
 }
 
+// TestProviderUsageService_QoderPersonalZeroQuotaDoesNotSetRateLimited
+// supplies personal zero quota with an exceeded flag and far-future expiry. It
+// checks the flag remains display data while no provider quota-limit event is
+// recorded.
 func TestProviderUsageService_QoderPersonalZeroQuotaDoesNotSetRateLimited(t *testing.T) {
 	t.Parallel()
 
@@ -778,6 +893,10 @@ func TestProviderUsageService_QoderPersonalZeroQuotaDoesNotSetRateLimited(t *tes
 	}
 }
 
+// TestProviderUsageService_QoderUsageDegradedUsesLastKnownSnapshot returns 429
+// beside a stored quota snapshot. It checks the rate-limited error category
+// and the last known credit values marked as originating from provider
+// snapshot data.
 func TestProviderUsageService_QoderUsageDegradedUsesLastKnownSnapshot(t *testing.T) {
 	t.Parallel()
 
@@ -827,6 +946,10 @@ func TestProviderUsageService_QoderUsageDegradedUsesLastKnownSnapshot(t *testing
 	}
 }
 
+// TestProviderUsageService_QoderUsageDegradedDoesNotClearProviderError returns
+// 401 for a provider already in error state. It checks unauthenticated
+// degraded display and no clear-error event rather than recovery from that
+// failed observation.
 func TestProviderUsageService_QoderUsageDegradedDoesNotClearProviderError(t *testing.T) {
 	t.Parallel()
 
@@ -862,8 +985,10 @@ func TestProviderUsageService_QoderUsageDegradedDoesNotClearProviderError(t *tes
 	}
 }
 
-// TestQoderUsageCacheDoesNotCrossCredentialIdentity checks that credential changes trigger a query with the new
-// identity.
+// TestQoderUsageCacheDoesNotCrossCredentialIdentity changes authentication
+// under the same provider ID after initial lookup. It checks the second usage
+// value and two supplier queries, preventing reuse of the old identity's
+// cached result.
 func TestQoderUsageCacheDoesNotCrossCredentialIdentity(t *testing.T) {
 	repo := &providerUsageCodexProbeRepo{usageRecordFixture: usageRecordFixture{providers: []providercore.Record{{ID: 919, Platform: capability.PlatformQoder, Type: capability.ProviderTypeCosy, Credentials: qoderUsageCredentials("first")}}}}
 	upstream := &qoderUsageHTTPUpstreamStub{bodies: []string{`{"userType":"teams","userQuota":{"total":100,"used":1,"remaining":99}}`, `{"userType":"teams","userQuota":{"total":100,"used":2,"remaining":98}}`}}
@@ -871,6 +996,9 @@ func TestQoderUsageCacheDoesNotCrossCredentialIdentity(t *testing.T) {
 	first, err := svc.GetUsage(context.Background(), 919)
 	require.NoError(t, err)
 	require.Equal(t, float64(1), first.QoderQuota.UserQuota.Used)
+	// Change authentication after the first result is cached under the same
+	// provider ID, so the next lookup distinguishes identity invalidation from
+	// a simple new-ID cache miss.
 	repo.providers[0].Credentials = qoderUsageCredentials("second")
 	second, err := svc.GetUsage(context.Background(), 919)
 	require.NoError(t, err)
@@ -878,14 +1006,24 @@ func TestQoderUsageCacheDoesNotCrossCredentialIdentity(t *testing.T) {
 	require.Equal(t, int32(2), upstream.calls)
 }
 
+// TestQoderObservationCannotWriteNewAdministratorIdentity replaces
+// authentication just before an exhausted quota response returns. It checks
+// zero snapshot/health writes from the old observation after the fixture
+// identity comparison fails.
 func TestQoderObservationCannotWriteNewAdministratorIdentity(t *testing.T) {
 	repo := &qoderObservationIdentityRepo{current: &providercore.Record{ID: 917, Platform: capability.PlatformQoder, Type: capability.ProviderTypeCosy, Status: providercore.StatusActive, Credentials: qoderUsageCredentials("observed")}}
 	u := &qoderObservationIdentityUpstream{qoderUsageHTTPUpstreamStub: qoderUsageHTTPUpstreamStub{body: fmt.Sprintf(`{"userType":"teams","usageType":"credits","isQuotaExceeded":true,"expiresAt":%d,"userQuota":{"total":100,"used":100,"remaining":0}}`, time.Now().Add(time.Hour).UnixMilli())}, beforeReturn: func() { repo.current.Credentials = qoderUsageCredentials("administrator") }}
 	svc := newOAuthUsageFixture(oauthUsageFixtureOptions{providerRepo: repo, cache: providercore.NewOAuthUsageCache(), httpUpstream: u})
+	// Discard the display/error result and inspect write count instead; the
+	// before-return administrator mutation targets persistence eligibility,
+	// not the returned quota presentation.
 	_, _ = svc.GetUsage(context.Background(), 917)
 	require.Zero(t, repo.writes, "旧观测不能给新凭据写入额度快照或停调")
 }
 
+// TestIsQoderAuthenticationError supplies wrapped 401/403 API errors and a 500
+// error. It checks only the authentication statuses select PAT-session
+// rebuild, leaving the server failure outside that typed retry classification.
 func TestIsQoderAuthenticationError(t *testing.T) {
 	for _, statusCode := range []int{http.StatusUnauthorized, http.StatusForbidden} {
 		err := fmt.Errorf("wrapped: %w", &qoder.APIError{StatusCode: statusCode})
@@ -898,6 +1036,10 @@ func TestIsQoderAuthenticationError(t *testing.T) {
 	}
 }
 
+// TestQoderQuotaInfoFromResponseInfersAddOnQuotaRemainingFromCap supplies
+// add-on cap and used credit with no remaining field. It checks inferred
+// total/balance and that positive add-on capacity prevents an otherwise
+// exceeded quota limit.
 func TestQoderQuotaInfoFromResponseInfersAddOnQuotaRemainingFromCap(t *testing.T) {
 	t.Parallel()
 
@@ -928,6 +1070,10 @@ func TestQoderQuotaInfoFromResponseInfersAddOnQuotaRemainingFromCap(t *testing.T
 	}
 }
 
+// TestQoderQuotaInfoFromResponseInfersOrgResourcePackageTotalFromUsedRemaining
+// supplies organization used/remaining values without total. It checks
+// inferred organization capacity, combined quota totals/balance and no
+// provider limit while credit remains.
 func TestQoderQuotaInfoFromResponseInfersOrgResourcePackageTotalFromUsedRemaining(t *testing.T) {
 	t.Parallel()
 
@@ -961,6 +1107,10 @@ func TestQoderQuotaInfoFromResponseInfersOrgResourcePackageTotalFromUsedRemainin
 	}
 }
 
+// TestQoderQuotaProgressFromJSONInfersOnlyMissingRemaining compares explicit
+// zero remaining/percentage with omitted fields. It checks zero observations
+// stay zero and limit eligibility remains exhausted, while missing values
+// derive remaining balance/utilization.
 func TestQoderQuotaProgressFromJSONInfersOnlyMissingRemaining(t *testing.T) {
 	t.Parallel()
 
@@ -1008,6 +1158,10 @@ func TestQoderQuotaProgressFromJSONInfersOnlyMissingRemaining(t *testing.T) {
 	}
 }
 
+// qoderUsageCredentials creates direct-session credentials with the supplied
+// security token. Fixed machine, user and organization fields keep these quota
+// cases from requiring extra identity discovery. Each call returns a new outer
+// map for independent fixture setup.
 func qoderUsageCredentials(token string) map[string]any {
 	return map[string]any{
 		"security_oauth_token": token,
@@ -1019,10 +1173,19 @@ func qoderUsageCredentials(token string) map[string]any {
 	}
 }
 
+// Do delegates fixture response selection through DoWithTLS with a nil
+// profile. Proxy and provider routing inputs are accepted but unused by the
+// underlying substitute. The returned body is owned by the quota reader for
+// consumption/closing.
 func (s *qoderUsageHTTPUpstreamStub) Do(req *http.Request, proxyURL string, providerID int64, providerConcurrency int) (*http.Response, error) {
 	return s.DoWithTLS(req, proxyURL, providerID, providerConcurrency, nil)
 }
 
+// DoWithTLS retains the request and selects configured response by atomic call
+// index. Status/body arrays override their respective defaults independently
+// when in range; zero status becomes HTTP 200. Arguments besides request are
+// unused, and only the call counter is atomic. The caller consumes/closes the
+// newly allocated body.
 func (s *qoderUsageHTTPUpstreamStub) DoWithTLS(req *http.Request, _ string, _ int64, _ int, _ *tlsfingerprint.Profile) (*http.Response, error) {
 	s.req = req
 	call := atomic.AddInt32(&s.calls, 1)
@@ -1043,12 +1206,22 @@ func (s *qoderUsageHTTPUpstreamStub) DoWithTLS(req *http.Request, _ string, _ in
 	}, nil
 }
 
+// DoWithTLS constructs the base response then invokes the required
+// beforeReturn hook. The hook changes fixture state before caller response
+// handling, exposing stale identity writes. Base response/error are returned
+// unchanged after that hook; its mutation remains the test owner's
+// responsibility.
 func (u *qoderObservationIdentityUpstream) DoWithTLS(req *http.Request, proxy string, id int64, n int, p *tlsfingerprint.Profile) (*http.Response, error) {
 	resp, err := u.qoderUsageHTTPUpstreamStub.DoWithTLS(req, proxy, id, n, p)
+	// Change identity after response construction and before quota-body parsing. Later
+	// conditional writes compare their pre-request identity with this administrator replacement.
 	u.beforeReturn()
 	return resp, err
 }
 
+// Do delegates to the identity-interleaving TLS-aware path with no profile. It
+// retains the base result while ensuring beforeReturn runs before the quota
+// caller can parse the returned body or apply its observed identity.
 func (u *qoderObservationIdentityUpstream) Do(req *http.Request, proxy string, id int64, n int) (*http.Response, error) {
 	return u.DoWithTLS(req, proxy, id, n, nil)
 }

@@ -15,13 +15,37 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
-// QoderUsage binds sessions and transport; the provider core owns usage caching and conditional health writes.
+// Qoder quota display combines site-specific authentication with legacy quota
+// field aliases. Global, CN PAT and QoderCN20 requests use COSY signing, while
+// legacy CN direct sessions use Bearer authentication. CN requests carry an
+// available organization ID as orgId, and a PAT authentication failure rebuilds
+// its session once before another query.
+//
+// Active responses are converted to provider display values with normalized
+// progress and second-or-millisecond expiry handling. Failure display can decode
+// the provider's last snapshot while retaining the current error classification
+// and reauthorization hint. The JSON snapshot round trip allocates display data
+// for this result, allowing its snapshot marker and missing timestamp repair
+// without mutating the stored snapshot representation.
+
+// QoderUsage binds sessions and transport; the provider core owns usage
+// caching and conditional health writes.
 type QoderUsage struct {
-	Sessions  *QoderTokenProvider
-	Transport QoderTransport
-	Profiles  *egressprovider.TLSProfiles
+	// Sessions supplies provider sessions for quota queries. Nil creates a local
+	// default source and installs Transport and Profiles for this fetch.
+	Sessions *QoderTokenProvider
+	// Transport and Profiles are combined by QoderRequestDoer for site requests.
+	// The same selection also configures a locally created session source when
+	// Sessions
+	// is absent, so its PAT exchange uses these request dependencies.
+	Transport QoderTransport              // shared quota request transport
+	Profiles  *egressprovider.TLSProfiles // optional TLS profile resolver
 }
 
+// Options binds active fetch conversion and degraded snapshot display for the core.
+// Fetch queries through this adapter, then timestamps the converted response
+// using the supplied clock callback. The core retains responsibility for shared
+// usage caching and conditional provider writes.
 func (s *QoderUsage) Options() providercore.QoderUsageOptions {
 	return providercore.QoderUsageOptions{
 		Fetch: func(ctx context.Context, value *providercore.Record, now func() time.Time) (*providercore.UsageInfo, error) {
@@ -35,7 +59,11 @@ func (s *QoderUsage) Options() providercore.QoderUsageOptions {
 	}
 }
 
-// qoderQuotaProgressFromRaw converts site quota progress into provider display data.
+// qoderQuotaProgressFromRaw converts normalized site progress into a new
+// display value.
+// Nil raw progress returns nil. The upstream normalizer handles cap-based totals,
+// explicit-zero fields, percentages and legacy detail URLs before this adapter
+// copies the resulting quota fields.
 func qoderQuotaProgressFromRaw(raw *qoder.QuotaProgress, useCapAsTotal bool) *providercore.QoderQuotaProgress {
 	value := qoder.NormalizeQuotaProgress(raw, useCapAsTotal)
 	if value == nil {
@@ -54,6 +82,11 @@ func qoderQuotaProgressFromRaw(raw *qoder.QuotaProgress, useCapAsTotal bool) *pr
 	}
 }
 
+// fetchQoderQuotaUsage queries the provider quota with its configured session
+// source.
+// Nil providers return an error; missing Sessions creates a local source with
+// the provider transport. Only PAT input with a typed 401 or 403 invalidates
+// that session and retries once; other results return immediately.
 func (s *QoderUsage) fetchQoderQuotaUsage(ctx context.Context, provider *providercore.Record) (*qoder.QuotaUsageResponse, error) {
 	if provider == nil {
 		return nil, fmt.Errorf("qoder: provider is nil")
@@ -68,11 +101,19 @@ func (s *QoderUsage) fetchQoderQuotaUsage(ctx context.Context, provider *provide
 		return usage, err
 	}
 
-	// On PAT authentication failure, discard the cached session and retry once after exchanging it again.
+	// A typed authentication rejection can leave a previously built PAT
+	// session stale.
+	// Evict it before the one retry so acquisition exchanges the PAT again.
 	sessionSource.Invalidate(provider.ID)
 	return s.fetchQoderQuotaUsageWithProvider(ctx, provider, sessionSource)
 }
 
+// fetchQoderQuotaUsageWithProvider prepares a site quota query from an
+// acquired session.
+// The supplied session source must be configured and successful acquisition must
+// provide identity metadata. CN adds nonblank organization identity to orgId;
+// authentication follows the provider's site and refresh mode. Query errors are
+// wrapped for the core usage service.
 func (s *QoderUsage) fetchQoderQuotaUsageWithProvider(ctx context.Context, provider *providercore.Record, sessionSource *QoderTokenProvider,
 ) (*qoder.QuotaUsageResponse, error) {
 	session, err := sessionSource.GetSession(ctx, provider)
@@ -88,6 +129,9 @@ func (s *QoderUsage) fetchQoderQuotaUsageWithProvider(ctx context.Context, provi
 		return nil, err
 	}
 	logicalPath := qoder.QuotaUsagePath
+	// CN quota queries use cached organization identity as orgId; Global queries
+	// retain the plain quota path, so site-specific routing does not leak that
+	// query field.
 	if profile.Site == qoder.SiteCN {
 		query := url.Values{}
 		if organizationID := strings.TrimSpace(session.Identity.OrganizationID); organizationID != "" {
@@ -101,6 +145,8 @@ func (s *QoderUsage) fetchQoderQuotaUsageWithProvider(ctx context.Context, provi
 	var usage qoder.QuotaUsageResponse
 	client := qoder.NewClientForProfile(profile)
 	request := client.BearerJSONRequestContextWithDoer
+	// Imported legacy CN sessions use their bearer token, while supported PAT and
+	// CN20 identities take the signed method used by the Global quota route.
 	if qoderQuotaUsesSignedAuth(provider, profile.Site) {
 		request = client.JSONRequestContextWithDoer
 	}
@@ -110,8 +156,10 @@ func (s *QoderUsage) fetchQoderQuotaUsageWithProvider(ctx context.Context, provi
 	return &usage, nil
 }
 
-// qoderQuotaUsesSignedAuth selects COSY signing for Global, CN PAT, and QoderCN20; legacy CN sessions use Bearer
-// auth.
+// qoderQuotaUsesSignedAuth selects signing for the provider's quota query route.
+// Global uses signing, as do CN PAT and QoderCN20 records. Remaining CN records
+// use Bearer authentication, retaining compatibility with imported legacy direct
+// COSY sessions.
 func qoderQuotaUsesSignedAuth(provider *providercore.Record, site qoder.Site) bool {
 	if site != qoder.SiteCN {
 		return true
@@ -122,12 +170,20 @@ func qoderQuotaUsesSignedAuth(provider *providercore.Record, site qoder.Site) bo
 	return strings.EqualFold(strings.TrimSpace(provider.GetCredential("refresh_mode")), qoder.RefreshModeQoderCN20)
 }
 
-// isQoderAuthenticationError accepts only 401 and 403 as reasons to rebuild a PAT session.
+// isQoderAuthenticationError recognizes typed API errors eligible for
+// PAT-session rebuild.
+// It follows wrapped errors and accepts HTTP 401 or 403. Text-only status
+// messages and other statuses return false, keeping query retry tied to a
+// typed authentication response.
 func isQoderAuthenticationError(err error) bool {
 	var apiErr *qoder.APIError
 	return errors.As(err, &apiErr) && (apiErr.StatusCode == http.StatusUnauthorized || apiErr.StatusCode == http.StatusForbidden)
 }
 
+// buildQoderUsageInfoAt creates active display usage timestamped with the
+// supplied instant.
+// Quota conversion uses that same time for its last-update field. A nil response
+// still produces an active UsageInfo whose QoderQuota is nil.
 func buildQoderUsageInfoAt(resp *qoder.QuotaUsageResponse, now time.Time) *providercore.UsageInfo {
 	return &providercore.UsageInfo{
 		Source:     "active",
@@ -136,6 +192,17 @@ func buildQoderUsageInfoAt(resp *qoder.QuotaUsageResponse, now time.Time) *provi
 	}
 }
 
+// qoderQuotaInfoFromResponse converts a site response to a timestamped quota
+// display.
+// Nil responses return nil. Positive expiry values at least one trillion are
+// interpreted as milliseconds; smaller positive values are seconds, and nonpositive
+// expiry leaves the deadline absent.
+//
+// Progress aliases select the first nonnil value, preserving explicit zero-valued
+// objects over later alternatives. Add-on and organization buckets each normalize
+// with cap-based totals, while the supplied fromSnapshot flag marks the display
+// source independently of response status. New display fields keep update time
+// and normalized expiry together for downstream countdown calculations.
 func qoderQuotaInfoFromResponse(resp *qoder.QuotaUsageResponse, updatedAt time.Time, fromSnapshot bool) *providercore.QoderQuotaInfo {
 	if resp == nil {
 		return nil
@@ -144,6 +211,10 @@ func qoderQuotaInfoFromResponse(resp *qoder.QuotaUsageResponse, updatedAt time.T
 	if resp.ExpiresAt > 0 {
 		rawExpiresAt := int64(resp.ExpiresAt)
 		var t time.Time
+		// Stored quota responses can carry second or millisecond epochs. This
+		// magnitude
+		// split keeps both accepted forms usable for the display expiry and
+		// countdown.
 		if rawExpiresAt >= 1_000_000_000_000 {
 			t = time.UnixMilli(rawExpiresAt)
 		} else {
@@ -165,6 +236,9 @@ func qoderQuotaInfoFromResponse(resp *qoder.QuotaUsageResponse, updatedAt time.T
 		SnapshotFromProvider: fromSnapshot,
 	}
 	quota.UserQuota = qoderQuotaProgressFromRaw(resp.UserQuota, true)
+	// A present zero-valued bucket is authoritative. Prefer each canonical object
+	// before legacy aliases so a later bucket cannot overwrite that explicit
+	// observation.
 	quota.AddOnQuota = qoderQuotaProgressFromRaw(firstNonNilQoderQuotaProgress(resp.AddOnQuota, resp.AddOnQuotaSnake), true)
 	quota.OrgResourcePackage = qoderQuotaProgressFromRaw(firstNonNilQoderQuotaProgress(
 		resp.OrgResourcePackage,
@@ -175,6 +249,10 @@ func qoderQuotaInfoFromResponse(resp *qoder.QuotaUsageResponse, updatedAt time.T
 	return quota
 }
 
+// firstNonNilQoderQuotaProgress returns the first supplied progress object
+// that is present.
+// A zero-valued object still wins over later aliases. All-nil input returns nil,
+// allowing the display converter to leave that quota bucket absent.
 func firstNonNilQoderQuotaProgress(values ...*qoder.QuotaProgress) *qoder.QuotaProgress {
 	for _, value := range values {
 		if value != nil {
@@ -184,11 +262,24 @@ func firstNonNilQoderQuotaProgress(values ...*qoder.QuotaProgress) *qoder.QuotaP
 	return nil
 }
 
+// buildQoderDegradedUsageAt combines a query failure with any last known quota
+// snapshot.
+// It timestamps the failure and formats its error even when err is nil.
+// Typed API statuses map 401/403 to reauthorization and 429 to rate limiting;
+// other typed statuses map to the network category.
+//
+// Remaining errors use the existing diagnostic string hints for those same
+// categories. A decodable provider snapshot is attached with its source marker,
+// so the caller can show stale quota alongside the current failure. Snapshot
+// decode failures leave only the failure display and do not alter stored Extra.
 func buildQoderDegradedUsageAt(err error, provider *providercore.Record, now time.Time) *providercore.UsageInfo {
 	info := &providercore.UsageInfo{
 		UpdatedAt: &now,
 		Error:     fmt.Sprintf("usage API error: %v", err),
 	}
+	// Prefer typed status information over string hints so wrapped authentication
+	// and rate-limit failures retain their category beside a stale snapshot
+	// display.
 	if err != nil {
 		if apiErr, ok := errors.AsType[*qoder.APIError](err); ok {
 			switch apiErr.StatusCode {
@@ -226,6 +317,15 @@ func buildQoderDegradedUsageAt(err error, provider *providercore.Record, now tim
 	return info
 }
 
+// qoderQuotaSnapshotFromExtra decodes the stored snapshot into a new display
+// object.
+// Absent provider data, missing snapshot or JSON encoding/decoding errors return
+// nil. A missing last-update field can be filled from the separate RFC3339
+// timestamp key; invalid legacy timing remains absent. The returned snapshot can
+// be marked or enriched without editing its stored JSON-shaped source.
+//
+// Present values that encode as JSON null or an empty object yield a zero-valued
+// snapshot. A separate valid timestamp can still populate that display object.
 func qoderQuotaSnapshotFromExtra(provider *providercore.Record) *providercore.QoderQuotaInfo {
 	if provider == nil || provider.Extra == nil {
 		return nil
@@ -234,6 +334,9 @@ func qoderQuotaSnapshotFromExtra(provider *providercore.Record) *providercore.Qo
 	if !ok || raw == nil {
 		return nil
 	}
+	// Round-trip the accepted stored representation into a private display object.
+	// Unsupported JSON values or incompatible shapes discard this snapshot
+	// while preserving the query error.
 	data, err := json.Marshal(raw)
 	if err != nil {
 		return nil
@@ -242,6 +345,9 @@ func qoderQuotaSnapshotFromExtra(provider *providercore.Record) *providercore.Qo
 	if err := json.Unmarshal(data, &quota); err != nil {
 		return nil
 	}
+	// Older snapshots can keep timing in the separate Extra key. Repair only
+	// a missing display timestamp so the snapshot's own observed time keeps
+	// precedence.
 	if quota.LastUpdatedAt == nil {
 		if updatedRaw, ok := provider.Extra[providercore.QoderUsageQuotaUpdatedAtExtraKey].(string); ok {
 			if parsed, err := time.Parse(time.RFC3339, updatedRaw); err == nil {

@@ -7,7 +7,22 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
-// resolveAntigravityModel applies one mapping; callers check the whitelist after thinking normalization.
+// Antigravity model admission uses the identity that reaches the upstream request.
+// A configured alias is resolved once before the optional Sonnet thinking suffix
+// is applied, and the final whitelist is checked against that resulting name.
+// An alias chain therefore cannot grant access through an intermediate target,
+// and enabling thinking can change whether an otherwise allowed name is admitted.
+//
+// The record and prepared-rules entry points follow the same order. Request
+// normalization removes a leading models/ prefix before trimming whitespace;
+// missing records, blank names, and denied final targets return an empty string.
+// Callers use that empty result to reject the attempted route before forwarding.
+
+// resolveAntigravityModel resolves one provider mapping after normalizing the
+// request.
+// Nil records and empty normalized names return an empty string. The returned
+// target still needs thinking selection and final whitelist admission by its
+// caller.
 func resolveAntigravityModel(value *provider.Record, requested string) string {
 	if value == nil {
 		return ""
@@ -21,12 +36,22 @@ func resolveAntigravityModel(value *provider.Record, requested string) string {
 	return mapped
 }
 
-// MapAntigravityModel resolves an allowed model without changing its thinking suffix.
+// MapAntigravityModel returns the admitted target with its mapped suffix unchanged.
+// It delegates to FinalAntigravityModel with no thinking override. An empty result
+// means the request is blank, has no record, or fails final-model admission.
 func MapAntigravityModel(value *provider.Record, requested string) string {
 	return FinalAntigravityModel(value, requested, nil)
 }
 
-// FinalAntigravityModel checks the whitelist after one mapping and thinking normalization.
+// FinalAntigravityModel resolves the upstream identity used for whitelist
+// admission.
+// It applies one provider mapping, then the supplied thinking choice, and checks
+// the resulting name against the effective final whitelist. Nil thinking keeps
+// the mapped spelling, and nil records or denied targets return an empty string.
+//
+// The whitelist sees the transformed target rather than the public alias. A
+// mapping for the thinking target is not applied again, so an alias chain cannot
+// redirect the identity after the admission check.
 func FinalAntigravityModel(value *provider.Record, requested string, thinking *bool) string {
 	mapped := resolveAntigravityModel(value, requested)
 	if mapped == "" {
@@ -37,7 +62,16 @@ func FinalAntigravityModel(value *provider.Record, requested string, thinking *b
 	})
 }
 
-// FinalAntigravityModelWithRules resolves thinking variants using prepared mappings and a whitelist.
+// FinalAntigravityModelWithRules admits a target using an already captured
+// rule set.
+// It removes a leading models/ prefix, trims the request, resolves one mapping,
+// and applies the supplied thinking choice before checking final membership.
+// Blank requests return an empty string before consulting rules; other requests
+// require a nonnil snapshot.
+//
+// Using the same snapshot for mapping and membership keeps one admission decision
+// on one set of captured rules. A mapped target is checked directly and is not
+// fed back into the mapping as another request name.
 func FinalAntigravityModelWithRules(rules *provider.ModelRulesSnapshot, requested string, thinking *bool) string {
 	requested = strings.TrimSpace(strings.TrimPrefix(requested, "models/"))
 	if requested == "" {
@@ -47,10 +81,22 @@ func FinalAntigravityModelWithRules(rules *provider.ModelRulesSnapshot, requeste
 	return finalAntigravityModel(mapped, thinking, rules.FinalModelWhitelisted)
 }
 
+// finalAntigravityModel applies a thinking choice and tests the resulting target.
+// A blank mapped name returns an empty string before consulting allows; a denied
+// target also returns empty. For nonblank input, callers supply a membership
+// callback that accepts the final upstream spelling.
+//
+// Thinking selection precedes that callback because Sonnet's enabled variant
+// can have different whitelist membership from its base name. Nil thinking
+// retains the mapped spelling, and the selected name is returned exactly as
+// checked so the caller forwards the admitted identity.
 func finalAntigravityModel(mapped string, thinking *bool, allows func(string) bool) string {
 	if mapped == "" {
 		return ""
 	}
+	// Select the Sonnet variant before admission so a base-name permission cannot
+	// accidentally authorize a separately restricted thinking target at the
+	// upstream.
 	if thinking != nil {
 		mapped = antigravity.ApplyThinkingModelSuffix(mapped, *thinking)
 	}

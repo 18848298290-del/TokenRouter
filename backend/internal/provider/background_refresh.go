@@ -66,7 +66,12 @@ type BackgroundRefreshOptions struct {
 	// its Pager and Execution callbacks to use this service's registered
 	// platforms.
 	Reconciliation GrokReconciliationOptions
-	// optional maintenance outcome loggers
+	// Debug reports quiet scan totals. Info reports service lifecycle, provider
+	// success and active/failed cycle totals. Warn reports canceled scans, failed
+	// providers and incomplete shutdown. Error reports paging and configuration faults.
+	// NewBackgroundRefreshService replaces each nil callback with a no-op before
+	// passing the callbacks to scan and page consumers, allowing shared optional
+	// logging configuration for those entry points.
 	Debug, Info, Warn, Error func(string, ...any)
 }
 
@@ -280,6 +285,8 @@ func (s *BackgroundRefreshService) ScanCycle(parent context.Context) {
 	if s.isStopping() {
 		return
 	}
+	// Register the complete scan before paging so shutdown can cancel repository
+	// work and join exchanges that outlive cancellation until their actual return.
 	parent, finish, err := s.activity.begin(parent, ErrRefreshStopped)
 	if err != nil {
 		return

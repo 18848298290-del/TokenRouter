@@ -13,6 +13,14 @@ import (
 	xai "github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// Grok quota display can combine billing state, active probe headers and stored
+// credential tier hints. These cases exercise grok_quota_view.go's configured
+// core view, checking JWT precedence, model-qualified Heavy evidence, observation
+// time ordering, unknown/no-header state and authentication/access diagnostics.
+
+// TestProviderUsageServiceGrokRefreshUsesBillingOnly refreshes the usage view
+// through the billing probe callback. It checks two billing GETs, local 24-hour
+// token statistics and the absence of a known billing utilization percentage.
 func TestProviderUsageServiceGrokRefreshUsesBillingOnly(t *testing.T) {
 	t.Parallel()
 
@@ -45,6 +53,7 @@ func TestProviderUsageServiceGrokRefreshUsesBillingOnly(t *testing.T) {
 	require.EqualValues(t, 750_000, usage.GrokLocalUsage24h.Tokens)
 	require.Equal(t, 1, usageRepo.calls)
 	require.Len(t, usageRepo.startTimes, 1)
+	// Allow one second for the query and assertion clocks to observe the window.
 	require.WithinDuration(t, time.Now().UTC().Add(-24*time.Hour), usageRepo.startTimes[0], time.Second)
 
 	requests, _ := upstream.snapshot()
@@ -55,6 +64,9 @@ func TestProviderUsageServiceGrokRefreshUsesBillingOnly(t *testing.T) {
 	}
 }
 
+// TestGrokQuotaFetcherBuildUsageInfoUnknownUntilFirstSnapshot supplies an OAuth
+// record without observations. It checks passive source, free-token allowance
+// and an explicit unknown-quota diagnostic before any billing or header data.
 func TestGrokQuotaFetcherBuildUsageInfoUnknownUntilFirstSnapshot(t *testing.T) {
 	t.Parallel()
 
@@ -65,10 +77,15 @@ func TestGrokQuotaFetcherBuildUsageInfoUnknownUntilFirstSnapshot(t *testing.T) {
 	require.Contains(t, usage.Error, "unknown until billing is probed")
 }
 
+// TestGrokQuotaFetcherDoesNotTreatGrok45ResponsesWindowAsHeavy supplies ambiguous
+// Pro credentials and Heavy-sized windows without a model. It checks display
+// remains SuperGrok because the required model-qualified evidence is absent.
 func TestGrokQuotaFetcherDoesNotTreatGrok45ResponsesWindowAsHeavy(t *testing.T) {
 	t.Parallel()
 
-	// The 8300-request and 53M-token windows identify a plan only when observed for grok-4.5 Responses.
+	// These window limits match the Heavy evidence values used by the parser,
+	// but this fixture omits its model qualification so the ambiguous Pro label
+	// must remain on the ordinary SuperGrok display path.
 	reqLimit, tokLimit := int64(8300), int64(53_000_000)
 	fresh := time.Now().UTC().Format(time.RFC3339)
 	provider := &providercore.Record{
@@ -92,6 +109,9 @@ func TestGrokQuotaFetcherDoesNotTreatGrok45ResponsesWindowAsHeavy(t *testing.T) 
 	require.Equal(t, "supergrok", usage.SubscriptionTier)
 }
 
+// TestGrokQuotaFetcherUsesGrok45ResponsesWindowAsHeavy supplies fresh Heavy-sized
+// request/token windows for grok-4.5 with ambiguous Pro credentials.
+// It checks display resolves that qualified observation to the Heavy tier.
 func TestGrokQuotaFetcherUsesGrok45ResponsesWindowAsHeavy(t *testing.T) {
 	t.Parallel()
 
@@ -119,6 +139,9 @@ func TestGrokQuotaFetcherUsesGrok45ResponsesWindowAsHeavy(t *testing.T) {
 	require.Equal(t, "supergrok_heavy", usage.SubscriptionTier)
 }
 
+// TestGrokQuotaFetcherJWTBeatsAmbiguousSuperGrokProQuota supplies a JWT tier beside
+// an ambiguous Pro label and request limit. It checks the live JWT result wins
+// over the incomplete quota-plan evidence.
 func TestGrokQuotaFetcherJWTBeatsAmbiguousSuperGrokProQuota(t *testing.T) {
 	t.Parallel()
 
@@ -145,6 +168,9 @@ func TestGrokQuotaFetcherJWTBeatsAmbiguousSuperGrokProQuota(t *testing.T) {
 	require.Equal(t, "supergrok", usage.SubscriptionTier)
 }
 
+// TestGrokQuotaFetcherPrefersLiveJWTTierOverStaleBillingPlan supplies a Free JWT
+// alongside stored Heavy hints and billing. It checks both resolved and raw tier
+// labels come from the JWT claim.
 func TestGrokQuotaFetcherPrefersLiveJWTTierOverStaleBillingPlan(t *testing.T) {
 	t.Parallel()
 
@@ -169,6 +195,9 @@ func TestGrokQuotaFetcherPrefersLiveJWTTierOverStaleBillingPlan(t *testing.T) {
 	require.Equal(t, "free", usage.SubscriptionTierRaw)
 }
 
+// TestGrokQuotaFetcherUsesCredentialTierWhenBillingHasNoPlan supplies trimmed
+// credential tier/entitlement hints and planless billing. It checks normalized
+// tier, retained raw label and trimmed entitlement while billing remains attached.
 func TestGrokQuotaFetcherUsesCredentialTierWhenBillingHasNoPlan(t *testing.T) {
 	t.Parallel()
 
@@ -196,6 +225,9 @@ func TestGrokQuotaFetcherUsesCredentialTierWhenBillingHasNoPlan(t *testing.T) {
 	require.Equal(t, "active", usage.GrokEntitlementStatus)
 }
 
+// TestGrokQuotaFetcherBuildUsageInfoFromSnapshot supplies request/token windows
+// and a 429 observation with timestamps. It checks request-window values, retry timing,
+// tier/entitlement display, recorded status and the parsed update instant.
 func TestGrokQuotaFetcherBuildUsageInfoFromSnapshot(t *testing.T) {
 	t.Parallel()
 
@@ -241,6 +273,9 @@ func TestGrokQuotaFetcherBuildUsageInfoFromSnapshot(t *testing.T) {
 	require.True(t, usage.UpdatedAt.Equal(time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)))
 }
 
+// TestGrokQuotaFetcherSnapshotErrorOverridesSuccessfulBillingStatus combines
+// successful billing with a rate-limited quota snapshot. It checks the display
+// reports the snapshot failure category and HTTP status for that observation.
 func TestGrokQuotaFetcherSnapshotErrorOverridesSuccessfulBillingStatus(t *testing.T) {
 	t.Parallel()
 
@@ -267,6 +302,9 @@ func TestGrokQuotaFetcherSnapshotErrorOverridesSuccessfulBillingStatus(t *testin
 	require.Equal(t, http.StatusTooManyRequests, usage.GrokLastStatusCode)
 }
 
+// TestGrokQuotaFetcherNewerSuccessfulActiveProbeClearsBillingForbidden combines
+// a later successful active probe with forbidden billing. It checks cleared
+// access/error hints and the newer probe status and timestamp in display.
 func TestGrokQuotaFetcherNewerSuccessfulActiveProbeClearsBillingForbidden(t *testing.T) {
 	t.Parallel()
 
@@ -304,6 +342,9 @@ func TestGrokQuotaFetcherNewerSuccessfulActiveProbeClearsBillingForbidden(t *tes
 	require.True(t, usage.UpdatedAt.Equal(time.Date(2030, 1, 1, 0, 5, 0, 0, time.UTC)))
 }
 
+// TestGrokQuotaFetcherSameSecondSuccessfulActiveProbeClearsBillingForbidden uses
+// equal billing and successful active-probe timestamps. It checks that second
+// precision permits recovery and the display retains the probe's successful status.
 func TestGrokQuotaFetcherSameSecondSuccessfulActiveProbeClearsBillingForbidden(t *testing.T) {
 	t.Parallel()
 
@@ -333,12 +374,16 @@ func TestGrokQuotaFetcherSameSecondSuccessfulActiveProbeClearsBillingForbidden(t
 	require.Equal(t, http.StatusOK, usage.GrokLastStatusCode)
 }
 
+// TestGrokQuotaFetcherDoesNotClearBillingForbiddenWithoutNewerSuccessfulActiveProbe
+// supplies older active, newer passive and newer failed probes.
+// It checks all three leave billing access rejection and its forbidden display
+// category in place.
 func TestGrokQuotaFetcherDoesNotClearBillingForbiddenWithoutNewerSuccessfulActiveProbe(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		snapshot xai.QuotaSnapshot
+		name     string            // subtest display label
+		snapshot xai.QuotaSnapshot // candidate quota observation data
 	}{
 		{
 			name: "older active probe",
@@ -392,6 +437,10 @@ func TestGrokQuotaFetcherDoesNotClearBillingForbiddenWithoutNewerSuccessfulActiv
 	}
 }
 
+// TestGrokQuotaFetcherBuildUsageInfoFromNoHeadersProbe supplies a successful active
+// observation with no quota headers. It checks the no_headers state, retained
+// probe timestamp/status and absent request/token windows rather than inferred
+// quota.
 func TestGrokQuotaFetcherBuildUsageInfoFromNoHeadersProbe(t *testing.T) {
 	t.Parallel()
 
@@ -421,16 +470,19 @@ func TestGrokQuotaFetcherBuildUsageInfoFromNoHeadersProbe(t *testing.T) {
 	require.Nil(t, usage.GrokTokenQuota)
 }
 
+// TestGrokQuotaFetcherClassifiesForbiddenAndReauth supplies observed 401 and 403
+// snapshots. It checks the distinct reauthorization/access flags, stable error
+// categories and forbidden entitlement hint returned to the provider display.
 func TestGrokQuotaFetcherClassifiesForbiddenAndReauth(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name        string
-		statusCode  int
-		wantReauth  bool
-		wantForbid  bool
-		wantCode    string
-		wantEntitle string
+		name        string // subtest display label
+		statusCode  int    // observed upstream HTTP status
+		wantReauth  bool   // expected reauthorization display flag
+		wantForbid  bool   // expected access-rejection display flag
+		wantCode    string // expected usage error category
+		wantEntitle string // expected entitlement display hint
 	}{
 		{name: "reauth", statusCode: http.StatusUnauthorized, wantReauth: true, wantCode: "unauthenticated"},
 		{name: "forbidden", statusCode: http.StatusForbidden, wantForbid: true, wantCode: "forbidden", wantEntitle: "forbidden"},
@@ -459,6 +511,10 @@ func TestGrokQuotaFetcherClassifiesForbiddenAndReauth(t *testing.T) {
 	}
 }
 
+// grokInt64PtrForTest returns a pointer holding the supplied 64-bit integer
+// fixture value.
 func grokInt64PtrForTest(v int64) *int64 { return &v }
 
+// grokIntPtrForTest returns a pointer holding the supplied integer quota
+// fixture value.
 func grokIntPtrForTest(v int) *int { return &v }

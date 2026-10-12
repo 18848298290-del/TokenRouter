@@ -17,23 +17,50 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
+// A failed Qoder request can observe newer authentication during coordinated
+// refresh or encounter another worker's refresh lock. These cases exercise
+// qoder_request_refresh.go with expired credentials, non-authentication mapping
+// drift and a later rotated row, checking which result is returned and whether
+// a cached session is invalidated.
+//
+// The serial repository fixture counts attempted writes, copies nested
+// map[string]any values and returns shared row pointers for lookup. Its comparison
+// and replacement are separate calls without a database transaction or mutex,
+// so tests protect the adapter's logical identity decisions rather than atomic
+// storage behavior. A competing-lock cache always refuses ownership; a short
+// caller deadline verifies that unchanged credentials stay unreturned and cached
+// until a real hash change is observed.
+
+// qoderRefreshProviderRepoStub records serial credential writes over its shared provider fixture rows.
 type qoderRefreshProviderRepoStub struct {
-	qoderRequestProvidersFixture
+	qoderRequestProvidersFixture // shared serial provider-row fixture
+	// updatedCredentials stores copied map[string]any containers from the latest
+	// attempted write. Slices, pointers and other nested mutable values remain shared.
 	updatedCredentials map[string]any
-	updateCalls        int
+	updateCalls        int // attempted credential-write count
 }
 
+// qoderRefreshRaceRepoStub substitutes a rotated provider after the first identity lookup.
 type qoderRefreshRaceRepoStub struct {
-	qoderRefreshProviderRepoStub
+	qoderRefreshProviderRepoStub // embedded credential-write recorder
+	// raceProvider is returned directly after the first GetByID call when nonnil.
+	// Its pointer remains shared so the fixture can represent a competing rotation.
 	raceProvider *providercore.Record
-	getByIDCalls int
+	getByIDCalls int // serial provider-read count
 }
 
+// qoderRefreshLockCacheStub forces contention by refusing every refresh lock acquisition.
 type qoderRefreshLockCacheStub struct{}
 
-// qoderRequestProvidersFixture supplies provider records for refresh reads.
-type qoderRequestProvidersFixture struct{ providers []providercore.Record }
+// qoderRequestProvidersFixture returns pointers to matching provider rows in its borrowed slice.
+type qoderRequestProvidersFixture struct {
+	providers []providercore.Record /* shared fixture provider rows */
+}
 
+// cloneQoderRequestCredentials copies the map and nested map[string]any containers.
+// Nil input remains nil. Other values, including slices and pointers, are
+// assigned directly and remain shared, so callers cannot assume arbitrary nested
+// mutable credential values were isolated.
 func cloneQoderRequestCredentials(src map[string]any) map[string]any {
 	if src == nil {
 		return nil
@@ -49,6 +76,9 @@ func cloneQoderRequestCredentials(src map[string]any) map[string]any {
 	return dst
 }
 
+// UpdateCredentials counts the attempt and copies supported maps into fixture state.
+// It updates the matching row when found and records the latest credential map.
+// A missing ID still returns nil after counting the attempted write.
 func (r *qoderRefreshProviderRepoStub) UpdateCredentials(_ context.Context, id int64, credentials map[string]any) error {
 	r.updateCalls++
 	r.updatedCredentials = cloneQoderRequestCredentials(credentials)
@@ -61,6 +91,9 @@ func (r *qoderRefreshProviderRepoStub) UpdateCredentials(_ context.Context, id i
 	return nil
 }
 
+// GetByID returns the initial fixture row before substituting a configured rotation.
+// Every call increments its serial counter; after the first, a nonnil raceProvider
+// is returned directly. Otherwise lookup delegates to the shared row fixture.
 func (r *qoderRefreshRaceRepoStub) GetByID(ctx context.Context, id int64) (*providercore.Record, error) {
 	r.getByIDCalls++
 	if r.getByIDCalls > 1 && r.raceProvider != nil {
@@ -69,26 +102,39 @@ func (r *qoderRefreshRaceRepoStub) GetByID(ctx context.Context, id int64) (*prov
 	return r.qoderRequestProvidersFixture.GetByID(ctx, id)
 }
 
+// GetAccessToken reports an empty cache miss with no error for every key.
+// The contention tests use this result to force provider rereading rather than
+// letting a cached token satisfy refresh coordination.
 func (qoderRefreshLockCacheStub) GetAccessToken(context.Context, string) (string, error) {
 	return "", nil
 }
 
+// SetAccessToken accepts the fixture write without retaining any cached access-token value.
 func (qoderRefreshLockCacheStub) SetAccessToken(context.Context, string, string, time.Duration) error {
 	return nil
 }
 
+// DeleteAccessToken accepts the fixture deletion without storing or changing token state.
 func (qoderRefreshLockCacheStub) DeleteAccessToken(context.Context, string) error {
 	return nil
 }
 
+// AcquireRefreshLock reports that another worker owns the key, with no cache error.
+// It creates no local ownership. The request refresh path therefore enters its
+// stored-credential wait instead of beginning another site exchange.
 func (qoderRefreshLockCacheStub) AcquireRefreshLock(context.Context, string, time.Duration) (bool, error) {
 	return false, nil
 }
 
+// ReleaseRefreshLock accepts fixture cleanup without changing the fixed contention behavior.
 func (qoderRefreshLockCacheStub) ReleaseRefreshLock(context.Context, string) error {
 	return nil
 }
 
+// TestQoderGatewayRefreshProviderSessionPersistsCredentialsAndInvalidatesCache
+// refreshes an expired identity with an existing cached session.
+// It checks one versioned credential write with rotated tokens and removal of the
+// provider's old cached session.
 func TestQoderGatewayRefreshProviderSessionPersistsCredentialsAndInvalidatesCache(t *testing.T) {
 	now := time.Now()
 	expiredAt := now.Add(-1 * time.Hour)
@@ -155,6 +201,9 @@ func TestQoderGatewayRefreshProviderSessionPersistsCredentialsAndInvalidatesCach
 	require.False(t, cached)
 }
 
+// TestQoderGatewayRefreshProviderSessionRequiresInjectedRefreshAPI supplies storage
+// and a refresher factory but no coordinator. It checks the configuration error
+// and absence of a returned refreshed provider record.
 func TestQoderGatewayRefreshProviderSessionRequiresInjectedRefreshAPI(t *testing.T) {
 	svc := &QoderRequestRefresh{
 		Store: &qoderRefreshProviderRepoStub{},
@@ -169,6 +218,9 @@ func TestQoderGatewayRefreshProviderSessionRequiresInjectedRefreshAPI(t *testing
 	require.EqualError(t, err, "qoder refresh API is not configured")
 }
 
+// TestQoderGatewayRefreshProviderSessionIgnoresNonAuthCredentialDrift changes model
+// mapping while failed authentication remains identical. It checks one refresh
+// write rotates tokens and retains the reread mapping in merged credentials.
 func TestQoderGatewayRefreshProviderSessionIgnoresNonAuthCredentialDrift(t *testing.T) {
 	now := time.Now()
 	failedProvider := providercore.Record{
@@ -222,6 +274,9 @@ func TestQoderGatewayRefreshProviderSessionIgnoresNonAuthCredentialDrift(t *test
 	require.Equal(t, map[string]any{"qwen3.7-plus": "qmodel"}, repo.updatedCredentials["model_mapping"])
 }
 
+// TestQoderGatewayRefreshProviderSessionRecoversRotatedRefreshTokenRace returns a
+// rotated row after the first read and an invalid_grant exchange failure.
+// It checks recovery returns the newer token with no credential overwrite.
 func TestQoderGatewayRefreshProviderSessionRecoversRotatedRefreshTokenRace(t *testing.T) {
 	now := time.Now()
 	expiredAt := now.Add(-1 * time.Hour)
@@ -276,6 +331,9 @@ func TestQoderGatewayRefreshProviderSessionRecoversRotatedRefreshTokenRace(t *te
 	require.GreaterOrEqual(t, repo.getByIDCalls, 2)
 }
 
+// TestQoderGatewayRefreshProviderSessionWaitsForLockHolderRotation forces a held
+// refresh lock then supplies changed authentication on reread. It checks the
+// rotated tokens are returned and the old session cache is invalidated.
 func TestQoderGatewayRefreshProviderSessionWaitsForLockHolderRotation(t *testing.T) {
 	now := time.Now()
 	provider := providercore.Record{
@@ -332,6 +390,10 @@ func TestQoderGatewayRefreshProviderSessionWaitsForLockHolderRotation(t *testing
 	require.False(t, cached)
 }
 
+// TestQoderGatewayRefreshProviderSessionLockHeldReturnsRefreshInProgressWithoutStaleProvider
+// forces lock contention with unchanged stored credentials and a short deadline.
+// It checks ErrQoderRefreshInProgress, no returned provider, and retention of both
+// the old cached session and stored token.
 func TestQoderGatewayRefreshProviderSessionLockHeldReturnsRefreshInProgressWithoutStaleProvider(t *testing.T) {
 	now := time.Now()
 	provider := providercore.Record{
@@ -363,6 +425,8 @@ func TestQoderGatewayRefreshProviderSessionLockHeldReturnsRefreshInProgressWitho
 		},
 		Coordinator: newQoderRequestCoordinator(repo, qoderRefreshLockCacheStub{}),
 	}
+	// End the caller budget before the next polling interval so an unchanged
+	// lock-holder identity produces in-progress rather than being returned as refreshed.
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
 
@@ -375,12 +439,18 @@ func TestQoderGatewayRefreshProviderSessionLockHeldReturnsRefreshInProgressWitho
 	require.Equal(t, "old-token", repo.providers[0].GetCredential("security_oauth_token"))
 }
 
-// UpdateOAuthCredentialsIfUnchanged models a credential write guarded by the observed identity.
+// UpdateOAuthCredentialsIfUnchanged compares fixture identity before a replacement write.
+// It checks platform, kind, status, normalized credential-map shape and proxy.
+// A mismatch returns false; a match calls UpdateCredentials and reports its
+// result. These serial calls provide no atomic database or concurrent-write guarantee.
 func (r *qoderRefreshProviderRepoStub) UpdateOAuthCredentialsIfUnchanged(ctx context.Context, version providercore.CredentialVersion, credentials map[string]any) (bool, error) {
 	current, err := r.GetByID(ctx, version.ID)
 	if err != nil {
 		return false, err
 	}
+	// Check the observed authentication before invoking the separate fixture write;
+	// comparison failure leaves its counter and rows untouched, but these calls are
+	// not protected against an interleaving writer by this serial test substitute.
 	if current.Platform != version.Platform || current.Type != version.Type || current.Status != version.Status || !reflect.DeepEqual(querycache.ShallowMap(current.Credentials), version.Credentials) || !reflect.DeepEqual(current.ProxyID, version.ProxyID) {
 		return false, nil
 	}
@@ -388,6 +458,9 @@ func (r *qoderRefreshProviderRepoStub) UpdateOAuthCredentialsIfUnchanged(ctx con
 	return err == nil, err
 }
 
+// GetByID returns a pointer to the matching row in the fixture slice.
+// Missing IDs return a provider-not-found error. Returned rows and their mutable
+// credential contents remain shared with the fixture instead of being cloned.
 func (r qoderRequestProvidersFixture) GetByID(_ context.Context, id int64) (*providercore.Record, error) {
 	for i := range r.providers {
 		if r.providers[i].ID == id {
@@ -397,7 +470,10 @@ func (r qoderRequestProvidersFixture) GetByID(_ context.Context, id int64) (*pro
 	return nil, errors.New("provider not found")
 }
 
-// newQoderRequestCoordinator supplies the clock and platform policy for refresh tests.
+// newQoderRequestCoordinator binds fixture storage, cache and production platform policy.
+// It supplies the real clock and application logging callbacks. The returned
+// coordinator owns refresh locks and rereads while the repository fixture owns
+// its simplified comparison and replacement behavior.
 func newQoderRequestCoordinator(repo providercore.RefreshRepository, cache providercore.AccessTokenCache) *providercore.OAuthRefreshAPI {
 	return providercore.NewOAuthRefreshAPI(repo, cache, providercore.RefreshOptions{Now: time.Now, Warn: slog.Warn, Info: slog.Info, Error: slog.Error, Platform: providercore.ProviderRefreshPlatformPolicy()})
 }

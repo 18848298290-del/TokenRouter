@@ -17,33 +17,73 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
+// Qoder device authorization retains machine and PKCE identity in a stored
+// site flow. These cases exercise qoder_authorization.go with Global and CN
+// completion, checking session proof, creation-time proxy choice,
+// user/organization precedence, pending reuse, completed-result replay and
+// sanitized optional metadata failures.
+//
+// The concurrent case holds the first device poll while an ExchangeCode caller
+// is launched for the same session proof. Buffered channels collect each caller's
+// result and error after the upstream gate is released, and an atomic poll
+// count checks that both callers reuse one supplier operation. Serial fixtures
+// retain supplied result pointers while recording nonce, verifier and CN
+// machine inputs, so the tests can distinguish browser-flow identity from
+// later OpenAPI or COSY metadata.
+
+// fakeQoderOAuthClient returns configured device and metadata results while
+// recording serial calls.
 type fakeQoderOAuthClient struct {
-	token             *qoder.DeviceTokenResponse
-	ready             bool
-	pollErr           error
-	pollCalls         int
-	userInfo          *qoder.UserInfo
-	userErr           error
-	orgTags           *qoder.OrganizationTags
-	orgErr            error
-	orgCalls          int
-	gotOrgUID         string
-	gotNonce          string
-	gotVerifier       string
-	completedIdentity *qoder.AuthIdentity
-	completedExpiry   time.Time
-	completionErr     error
-	completionCalls   int
-	completedMachine  *qoder.MachineIdentity
+	// token, ready and pollErr are returned together from each device poll. The
+	// token pointer is borrowed, and tests adjust readiness between serial calls
+	// to model authorization becoming available without replacing the stored flow.
+	token     *qoder.DeviceTokenResponse // configured device token result
+	ready     bool                       // configured device readiness flag
+	pollErr   error                      // configured device poll error
+	pollCalls int                        // serial device poll count
+	// userInfo and userErr describe the metadata query. A nonnil userErr returns
+	// no user result; otherwise the configured userInfo pointer is returned
+	// directly
+	// for the site completion logic to interpret.
+	userInfo *qoder.UserInfo // configured user metadata result
+	userErr  error           // configured user query failure
+	// orgTags and orgErr describe organization lookup after its user argument and
+	// call count are recorded. A nonnil orgErr suppresses the result; otherwise
+	// callers receive the configured orgTags pointer without copying.
+	orgTags     *qoder.OrganizationTags // configured organization tag result
+	orgErr      error                   // configured organization query failure
+	orgCalls    int                     // serial organization query count
+	gotOrgUID   string                  // last organization lookup user
+	gotNonce    string                  // last polled authorization nonce
+	gotVerifier string                  // last polled PKCE verifier
+	// completedIdentity, completedExpiry and completionErr supply the CN20 status
+	// completion result. The identity pointer remains shared; expiry and error
+	// are returned by value after the method records its machine input.
+	completedIdentity *qoder.AuthIdentity // configured CN status identity
+	completedExpiry   time.Time           // configured CN token expiry
+	completionErr     error               // configured CN completion failure
+	completionCalls   int                 // serial CN completion count
+	// completedMachine captures a new scalar-field copy of the latest nonnil
+	// CN machine argument. A nil argument leaves any previous capture unchanged.
+	completedMachine *qoder.MachineIdentity
 }
 
+// blockingQoderOAuthClient holds device completion until a test release or
+// request cancellation.
 type blockingQoderOAuthClient struct {
-	started   chan struct{}
-	release   chan struct{}
-	startOnce sync.Once
-	pollCalls atomic.Int32
+	// started announces the first poll entry and startOnce closes it once. The
+	// test closes release to permit completion; until then each poll waits on
+	// release or its own context, with pollCalls counting every entered invocation.
+	started   chan struct{} // first device-poll entry signal
+	release   chan struct{} // test-owned completion release gate
+	startOnce sync.Once     // first-entry signal close ownership
+	pollCalls atomic.Int32  // concurrent device poll count
 }
 
+// TestQoderOAuthServiceGenerateAuthURLCreatesSession generates a Global device
+// URL. It checks stored state, nonce and verifier challenge, public
+// expiry/poll interval, and identical machine_id in the browser URL and stored
+// flow.
 func TestQoderOAuthServiceGenerateAuthURLCreatesSession(t *testing.T) {
 	svc := NewQoderAuthorization(func(context.Context, *int64) (string, error) { return "", nil }, nil)
 	svc.Core.Start()
@@ -69,6 +109,10 @@ func TestQoderOAuthServiceGenerateAuthURLCreatesSession(t *testing.T) {
 	require.Equal(t, session.Flow.Machine.MachineID, authURL.Query().Get("machine_id"))
 }
 
+// TestQoderOAuthServiceCNFreezesSiteAndIgnoresPollProxyOverride completes a
+// stored CN flow while passing another proxy ID to Poll. It checks retained
+// profile/proxy, CN machine shape, status-organization precedence and returned
+// CN20 token expiry.
 func TestQoderOAuthServiceCNFreezesSiteAndIgnoresPollProxyOverride(t *testing.T) {
 	svc := NewQoderAuthorization(func(context.Context, *int64) (string, error) { return "", nil }, nil)
 	svc.Core.Start()
@@ -149,6 +193,10 @@ func TestQoderOAuthServiceCNFreezesSiteAndIgnoresPollProxyOverride(t *testing.T)
 	require.NotContains(t, credentials, "machine_type")
 }
 
+// TestQoderOAuthServiceCNUsesOrganizationTagsAsStatusFallback omits
+// organization from CN status identity. It checks completion fills
+// organization from tags once using the OpenAPI user identity recorded by the
+// fixture.
 func TestQoderOAuthServiceCNUsesOrganizationTagsAsStatusFallback(t *testing.T) {
 	svc := NewQoderAuthorization(func(context.Context, *int64) (string, error) { return "", nil }, nil)
 	svc.Core.Start()
@@ -188,6 +236,10 @@ func TestQoderOAuthServiceCNUsesOrganizationTagsAsStatusFallback(t *testing.T) {
 	require.Equal(t, "user-1", client.gotOrgUID)
 }
 
+// TestQoderOAuthServiceExchangeRejectsInvalidSessionState supplies a missing
+// session then wrong state for an existing session. It checks distinct lookup
+// and state-validation errors before authorization completion can return
+// credentials.
 func TestQoderOAuthServiceExchangeRejectsInvalidSessionState(t *testing.T) {
 	svc := NewQoderAuthorization(func(context.Context, *int64) (string, error) { return "", nil }, nil)
 	svc.Core.Start()
@@ -208,6 +260,9 @@ func TestQoderOAuthServiceExchangeRejectsInvalidSessionState(t *testing.T) {
 	require.ErrorContains(t, err, "state is invalid")
 }
 
+// TestQoderOAuthServiceExchangePendingKeepsSession returns an unready device
+// poll for a valid session. It checks the pending exchange error, retained
+// session, and nonce/verifier taken from that stored authorization flow.
 func TestQoderOAuthServiceExchangePendingKeepsSession(t *testing.T) {
 	svc := NewQoderAuthorization(func(context.Context, *int64) (string, error) { return "", nil }, nil)
 	svc.Core.Start()
@@ -233,6 +288,10 @@ func TestQoderOAuthServiceExchangePendingKeepsSession(t *testing.T) {
 	require.Equal(t, session.Flow.CodeVerifier, client.gotVerifier)
 }
 
+// TestQoderOAuthServiceExchangeParsesCallbackURLAndBuildsUsableCredentials
+// completes a Global flow using callback state. It checks enriched
+// user/organization fields, browser machine identity, returned credentials and
+// successful runtime session construction.
 func TestQoderOAuthServiceExchangeParsesCallbackURLAndBuildsUsableCredentials(t *testing.T) {
 	svc := NewQoderAuthorization(func(context.Context, *int64) (string, error) { return "", nil }, nil)
 	svc.Core.Start()
@@ -304,7 +363,10 @@ func TestQoderOAuthServiceExchangeParsesCallbackURLAndBuildsUsableCredentials(t 
 		Type:        capability.ProviderTypeCosy,
 		Credentials: credentials,
 	}, func(ctx context.Context, value *provider.Record) (*qoder.SessionContext, time.Time, error) {
-		// Validate exchanged credentials through the runtime session cache and builder.
+		// Reconstruct the runtime input from exchanged credential fields,
+		// exercising
+		// the session builder with the same machine and organization identity
+		// returned by authorization.
 		return (&qoder.SessionBuilder{}).BuildSession(ctx, &qoder.CredentialInput{
 			Name:               value.Name,
 			Site:               value.GetCredential("site"),
@@ -330,6 +392,10 @@ func TestQoderOAuthServiceExchangeParsesCallbackURLAndBuildsUsableCredentials(t 
 	require.Equal(t, tokenInfo.MachineToken, session.Machine.MachineToken)
 }
 
+// TestQoderOAuthServicePollReturnsPendingAndCompleted changes the fixture from
+// pending to ready with metadata failures. It checks both poll states,
+// token/user fallback, machine identity and stable user-info/organization
+// warning objects.
 func TestQoderOAuthServicePollReturnsPendingAndCompleted(t *testing.T) {
 	svc := NewQoderAuthorization(func(context.Context, *int64) (string, error) { return "", nil }, nil)
 	svc.Core.Start()
@@ -368,6 +434,9 @@ func TestQoderOAuthServicePollReturnsPendingAndCompleted(t *testing.T) {
 	}, completed.TokenInfo.Extra["organization_warning"])
 }
 
+// TestQoderOAuthServiceCompletedSessionIsIdempotent polls to completion before
+// an ExchangeCode call on the same proof. It checks the cached access result
+// and one device poll rather than another supplier completion.
 func TestQoderOAuthServiceCompletedSessionIsIdempotent(t *testing.T) {
 	svc := NewQoderAuthorization(func(context.Context, *int64) (string, error) { return "", nil }, nil)
 	svc.Core.Start()
@@ -402,6 +471,10 @@ func TestQoderOAuthServiceCompletedSessionIsIdempotent(t *testing.T) {
 	require.Equal(t, 1, client.pollCalls, "completed session should return cached token info")
 }
 
+// TestQoderOAuthServiceConcurrentCompletionReusesSingleResult holds one device
+// poll while another caller exchanges the same session. It checks no second
+// result during the observation interval, then successful results and one
+// supplier poll after release.
 func TestQoderOAuthServiceConcurrentCompletionReusesSingleResult(t *testing.T) {
 	svc := NewQoderAuthorization(func(context.Context, *int64) (string, error) { return "", nil }, nil)
 	svc.Core.Start()
@@ -419,6 +492,9 @@ func TestQoderOAuthServiceConcurrentCompletionReusesSingleResult(t *testing.T) {
 
 	pollDone := make(chan *provider.QoderPollResult, 1)
 	pollErr := make(chan error, 1)
+	// Start the first completion and wait for actual supplier poll entry before
+	// introducing the second caller, keeping the core claim active at that
+	// interleaving.
 	go func() {
 		pollResult, pollErrValue := svc.Poll(context.Background(), result.SessionID, result.State, nil)
 		pollDone <- pollResult
@@ -428,6 +504,9 @@ func TestQoderOAuthServiceConcurrentCompletionReusesSingleResult(t *testing.T) {
 
 	exchangeDone := make(chan *provider.QoderTokenInfo, 1)
 	exchangeErr := make(chan error, 1)
+	// Exchange the same proof while polling owns completion. Separate buffered
+	// result/error channels let both callers finish after release before
+	// assertions join them.
 	go func() {
 		tokenInfo, exchangeErrValue := svc.ExchangeCode(context.Background(), &provider.QoderExchangeCodeInput{
 			SessionID: result.SessionID,
@@ -438,12 +517,18 @@ func TestQoderOAuthServiceConcurrentCompletionReusesSingleResult(t *testing.T) {
 		exchangeErr <- exchangeErrValue
 	}()
 
+	// A short observation interval exposes premature second-caller completion while
+	// the supplier is held; the interval itself does not prove the waiter
+	// registered.
 	select {
 	case <-exchangeDone:
 		t.Fatal("exchange should wait for the in-flight completion")
 	case <-time.After(20 * time.Millisecond):
 	}
 
+	// Let the owned supplier completion finish, then collect both caller results
+	// before reading the atomic count so result reuse is checked after actual
+	// exits.
 	close(client.release)
 	pollResult := <-pollDone
 	require.NoError(t, <-pollErr)
@@ -455,6 +540,10 @@ func TestQoderOAuthServiceConcurrentCompletionReusesSingleResult(t *testing.T) {
 	require.Equal(t, int32(1), client.pollCalls.Load())
 }
 
+// TestQoderOAuthServiceWarningsDoNotPersistRawUpstreamErrors encodes optional
+// metadata warnings from errors containing secret identity text. It checks
+// stable warning codes are retained while token, email and upstream provider
+// ID are absent.
 func TestQoderOAuthServiceWarningsDoNotPersistRawUpstreamErrors(t *testing.T) {
 	rawErr := errors.New(`upstream 500 {"access_token":"secret-token","email":"user@example.com","provider_id":"aid-123"}`)
 
@@ -472,6 +561,10 @@ func TestQoderOAuthServiceWarningsDoNotPersistRawUpstreamErrors(t *testing.T) {
 	require.Contains(t, string(body), "organization_unavailable")
 }
 
+// TestQoderParseCallbackSupportsQueryFragmentAndPlainCode supplies query,
+// fragment and bare-code inputs to callback parsing. It checks extracted
+// state/code pairs and the empty state associated with a plain authorization
+// code.
 func TestQoderParseCallbackSupportsQueryFragmentAndPlainCode(t *testing.T) {
 	state, code := provider.ParseQoderCallback("http://localhost/callback?code=query-code&state=query-state")
 	require.Equal(t, "query-state", state)
@@ -486,6 +579,10 @@ func TestQoderParseCallbackSupportsQueryFragmentAndPlainCode(t *testing.T) {
 	require.Equal(t, "plain-code", code)
 }
 
+// PollDeviceToken records nonce/verifier and returns configured token,
+// readiness and error. It increments a serial counter and borrows the
+// configured token pointer. Context is unused by this fixture; the blocking
+// fixture models cancellation separately.
 func (f *fakeQoderOAuthClient) PollDeviceToken(ctx context.Context, nonce, verifier string) (*qoder.DeviceTokenResponse, bool, error) {
 	f.pollCalls++
 	f.gotNonce = nonce
@@ -493,6 +590,10 @@ func (f *fakeQoderOAuthClient) PollDeviceToken(ctx context.Context, nonce, verif
 	return f.token, f.ready, f.pollErr
 }
 
+// GetUserInfo returns the configured metadata pointer or the configured query
+// error. A nonnil userErr suppresses userInfo. Context and token are unused,
+// and returned metadata remains borrowed from the serial fixture for
+// completion assertions.
 func (f *fakeQoderOAuthClient) GetUserInfo(ctx context.Context, token string) (*qoder.UserInfo, error) {
 	if f.userErr != nil {
 		return nil, f.userErr
@@ -500,6 +601,10 @@ func (f *fakeQoderOAuthClient) GetUserInfo(ctx context.Context, token string) (*
 	return f.userInfo, nil
 }
 
+// GetOrganizationTags records lookup UID and returns configured organization
+// metadata. Call count and UID are updated even when orgErr is supplied. A
+// successful result borrows orgTags, while context/token inputs are unused by
+// this serial fixture.
 func (f *fakeQoderOAuthClient) GetOrganizationTags(ctx context.Context, token, uid string) (*qoder.OrganizationTags, error) {
 	f.orgCalls++
 	f.gotOrgUID = uid
@@ -509,6 +614,10 @@ func (f *fakeQoderOAuthClient) GetOrganizationTags(ctx context.Context, token, u
 	return f.orgTags, nil
 }
 
+// CompleteQoderCN20Identity records CN completion and copies a nonnil machine
+// argument. It returns the configured identity pointer, expiry and error after
+// that capture. Nil machine leaves the prior capture intact; configured
+// identity remains borrowed rather than cloned for the caller.
 func (f *fakeQoderOAuthClient) CompleteQoderCN20Identity(
 	_ context.Context,
 	_ *qoder.DeviceTokenResponse,
@@ -526,8 +635,20 @@ func (f *fakeQoderOAuthClient) CompleteQoderCN20Identity(
 	return f.completedIdentity, f.completedExpiry, f.completionErr
 }
 
+// PollDeviceToken counts entry and waits for the test gate or caller
+// cancellation. The first entry closes started through startOnce, allowing
+// assertions to begin only after a supplier poll was reached. Release returns
+// a fresh ready token; cancellation returns ctx.Err with no token.
+//
+// When release and cancellation are simultaneously ready, select can choose
+// either branch. The atomic counter records all entered polls, while startOnce
+// prevents repeated signal closure, allowing the completion-sharing case to
+// check supplier call count independently from each caller result.
 func (f *blockingQoderOAuthClient) PollDeviceToken(ctx context.Context, nonce, verifier string) (*qoder.DeviceTokenResponse, bool, error) {
 	f.pollCalls.Add(1)
+	// Several callers can reach this fixture. Close its entry signal once while
+	// counting every invocation, so a duplicate completion becomes an
+	// assertion rather than a panic.
 	f.startOnce.Do(func() { close(f.started) })
 	select {
 	case <-ctx.Done():
@@ -541,10 +662,16 @@ func (f *blockingQoderOAuthClient) PollDeviceToken(ctx context.Context, nonce, v
 	}
 }
 
+// GetUserInfo returns a fresh fixed user identity for the completed blocking
+// poll.
 func (f *blockingQoderOAuthClient) GetUserInfo(ctx context.Context, token string) (*qoder.UserInfo, error) {
 	return &qoder.UserInfo{ID: "user-1", Name: "Qoder User"}, nil
 }
 
+// GetOrganizationTags returns no optional organization metadata and no query
+// error. This keeps the concurrency fixture focused on its completion gate
+// while the platform completion logic retains the token's usable user
+// identity.
 func (f *blockingQoderOAuthClient) GetOrganizationTags(ctx context.Context, token, uid string) (*qoder.OrganizationTags, error) {
 	return nil, nil
 }

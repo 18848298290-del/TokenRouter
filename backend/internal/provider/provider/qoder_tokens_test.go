@@ -23,23 +23,53 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
+// Qoder session cache entries follow credential identity and generation, so an
+// invalidated or older build cannot replace the newest observed provider
+// state. These cases exercise qoder_tokens.go through the core cache and site
+// builder, checking direct/PAT identity, organization hints, CN expiry,
+// transport selection and cache invalidation for one provider ID.
+//
+// Gated exchanges hold specific generations while callers cancel, mutate
+// source credentials or introduce newer versions. Result channels and worker
+// joins expose accepted versus discarded builds after those gates open. Cached
+// session pointers are compared directly, and version precedence is checked
+// separately from UpdatedAt. The cooperative timeout fixture returns after ctx
+// cancellation; it does not establish forced termination of an exchanger that
+// ignores ctx. The broad concurrency case also counts expected invalidation
+// errors among its accepted outcomes rather than requiring every request to
+// return a session.
+
+// qoderCenterHTTPUpstreamStub records serial provider request routing and
+// returns configurable response data.
 type qoderCenterHTTPUpstreamStub struct {
-	proxyURL            string
-	providerID          int64
-	providerConcurrency int
-	statusCode          int
-	body                string
-	profileSet          bool
-	requests            []*http.Request
+	proxyURL            string // last selected proxy URL
+	providerID          int64  // last selected provider ID
+	providerConcurrency int    // last selected transport concurrency
+	// statusCode supplies the fixture response status. Zero becomes HTTP 200
+	// for exchange and organization queries sent through this same transport substitute.
+	statusCode int
+	// body supplies response text for every endpoint. Empty input selects fixed
+	// identity JSON, allowing exchange cases to omit explicit response construction.
+	body       string
+	profileSet bool // last fingerprint profile presence
+	// requests retains the caller request pointers in serial arrival order. Later
+	// assertions inspect their endpoint paths; this fixture performs no request cloning.
+	requests []*http.Request
 }
 
-// qoderInvalidationCache records cache deletions for assertions.
+// qoderInvalidationCache records external key deletion while unused cache
+// methods remain unconfigured.
 type qoderInvalidationCache struct {
-	providercore.AccessTokenCache
-	deletedKeys []string
+	// AccessTokenCache leaves unconfigured operations on a nil interface. These
+	// invalidator cases use DeleteAccessToken below; reaching another method panics.
+	providercore.AccessTokenCache          // unused token-cache method substitute
+	deletedKeys                   []string // serial attempted deletion keys
 }
 
-// TestQoderTokenProviderConcurrent exercises caching during concurrent reads and invalidations.
+// TestQoderTokenProviderConcurrent runs fifty workers over repeated cache
+// reads and periodic invalidation. It checks nonnil successful sessions and at
+// least 80 percent accepted outcomes, including recognized
+// generation-invalidation errors.
 func TestQoderTokenProviderConcurrent(t *testing.T) {
 	tokenSource := &QoderTokenProvider{Core: &qoderSessionState{Sessions: make(map[int64]qoderSessionCacheEntry)}}
 
@@ -54,6 +84,9 @@ func TestQoderTokenProviderConcurrent(t *testing.T) {
 		},
 	}
 
+	// Fifty workers each issue twenty reads to overlap cache acquisition with
+	// periodic generation invalidation. The fixture measures accepted outcomes
+	// after all workers finish.
 	const numGoroutines = 50
 	const numRequestsPerGoroutine = 20
 
@@ -63,13 +96,20 @@ func TestQoderTokenProviderConcurrent(t *testing.T) {
 	ctx := context.Background()
 	successCount := sync.Map{}
 
+	// Join the full workload before counting outcomes so invalidation and
+	// session errors remain tied to completed worker/request pairs rather than
+	// still-running calls.
 	for i := range numGoroutines {
 		go func(workerID int) {
 			defer wg.Done()
+			// A thousand-key stride exceeds the per-worker request count,
+			// keeping each worker/request outcome distinct in successCount
+			// even when invalidation is an accepted result.
 			for j := range numRequestsPerGoroutine {
 				session, err := tokenSource.GetSession(ctx, provider)
 				if err != nil {
-					// Invalidation or credential updates discard builds from an earlier generation.
+					// Generation invalidation is an expected discarded-build outcome in this workload.
+					// Count it as accepted so the ratio distinguishes generation protection from unrelated acquisition failures.
 					if errors.Is(err, errQoderSessionBuildInvalidated) {
 						successCount.Store(workerID*1000+j, true)
 						continue
@@ -83,7 +123,8 @@ func TestQoderTokenProviderConcurrent(t *testing.T) {
 				}
 				successCount.Store(workerID*1000+j, true)
 
-				// Invalidate while other workers are reading sessions.
+				// Periodic worker/request pairs evict the shared provider generation while
+				// other workers continue reading, exposing publication of builds that lost ownership.
 				if workerID%3 == 0 && j%5 == 0 {
 					tokenSource.Invalidate(provider.ID)
 				}
@@ -103,12 +144,18 @@ func TestQoderTokenProviderConcurrent(t *testing.T) {
 	successRate := float64(count) / float64(expectedTotal)
 	t.Logf("Success rate: %d/%d (%.2f%%)", count, expectedTotal, successRate*100)
 
+	// Require eighty percent accepted outcomes, counting valid sessions and
+	// expected invalidation errors together; other failures remain outside
+	// this fixture acceptance threshold.
 	if successRate < 0.8 {
 		t.Errorf("success rate too low: %.2f%%, expected >= 80%%", successRate*100)
 	}
 }
 
-// TestQoderTokenProviderInvalidateRace exercises concurrent GetSession and Invalidate calls.
+// TestQoderTokenProviderInvalidateRace runs repeated reads and invalidations
+// in two goroutines. It joins both loops and checks completion without a
+// panic; read errors are discarded, so the case does not assert per-call
+// session success.
 func TestQoderTokenProviderInvalidateRace(t *testing.T) {
 	tokenSource := &QoderTokenProvider{Core: &qoderSessionState{Sessions: make(map[int64]qoderSessionCacheEntry)}}
 
@@ -130,6 +177,9 @@ func TestQoderTokenProviderInvalidateRace(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 
+	// Discard individual acquisition errors in this stress loop; its
+	// observable assertion is joined completion, while the companion goroutine
+	// repeatedly evicts the same provider generation.
 	go func() {
 		defer wg.Done()
 		for range numIterations {
@@ -137,6 +187,9 @@ func TestQoderTokenProviderInvalidateRace(t *testing.T) {
 		}
 	}()
 
+	// Evict the same provider repeatedly while the companion loop acquires
+	// sessions, then let the shared join distinguish completed invalidation
+	// work from an unfinished reader.
 	go func() {
 		defer wg.Done()
 		for range numIterations {
@@ -150,6 +203,10 @@ func TestQoderTokenProviderInvalidateRace(t *testing.T) {
 	t.Log("GetSession/Invalidate race test completed without panic")
 }
 
+// TestQoderTokenProviderBuildsAndCachesDirectSession builds direct-token
+// identity with stored organization metadata. It checks user/machine values
+// and pointer reuse, then an organization credential change forces a distinct
+// cached session.
 func TestQoderTokenProviderBuildsAndCachesDirectSession(t *testing.T) {
 	tokenSource := NewQoderTokenProvider(qoder.SessionBuilder{})
 	provider := &providercore.Record{
@@ -186,6 +243,10 @@ func TestQoderTokenProviderBuildsAndCachesDirectSession(t *testing.T) {
 	require.Equal(t, "org-2", session3.Identity.OrganizationID)
 }
 
+// TestQoderTokenProviderRejectsUnsupportedCredentialShape supplies a security
+// token without machine identity. It checks the machine_id diagnostic from the
+// site builder rather than accepting a partially specified direct session
+// input.
 func TestQoderTokenProviderRejectsUnsupportedCredentialShape(t *testing.T) {
 	tokenSource := NewQoderTokenProvider(qoder.SessionBuilder{})
 	provider := &providercore.Record{
@@ -199,6 +260,9 @@ func TestQoderTokenProviderRejectsUnsupportedCredentialShape(t *testing.T) {
 	require.ErrorContains(t, err, "machine_id")
 }
 
+// TestQoderTokenProviderRejectsDirectTokenWithoutIdentity supplies direct
+// token and machine_id without user identity. It checks the uid-or-aid
+// diagnostic, protecting the user metadata needed by the session builder.
 func TestQoderTokenProviderRejectsDirectTokenWithoutIdentity(t *testing.T) {
 	tokenSource := NewQoderTokenProvider(qoder.SessionBuilder{})
 	provider := &providercore.Record{
@@ -215,6 +279,9 @@ func TestQoderTokenProviderRejectsDirectTokenWithoutIdentity(t *testing.T) {
 	require.ErrorContains(t, err, "uid or aid")
 }
 
+// TestQoderTokenProviderRejectsCN20RefreshModeOnGlobalSite combines Global
+// site with the CN20 mode and otherwise usable identity fields. It checks the
+// site/mode diagnostic before that incompatible session form can be returned.
 func TestQoderTokenProviderRejectsCN20RefreshModeOnGlobalSite(t *testing.T) {
 	tokenSource := NewQoderTokenProvider(qoder.SessionBuilder{})
 	provider := &providercore.Record{
@@ -234,6 +301,10 @@ func TestQoderTokenProviderRejectsCN20RefreshModeOnGlobalSite(t *testing.T) {
 	require.ErrorContains(t, err, "require cn site")
 }
 
+// TestQoderTokenProviderRejectsMachineIDOnlyWithoutReadingLocalAuth supplies
+// machine_id with no authentication input. It checks the missing
+// PAT/security-token diagnostic rather than a constructed session from that
+// isolated machine identity.
 func TestQoderTokenProviderRejectsMachineIDOnlyWithoutReadingLocalAuth(t *testing.T) {
 	tokenSource := NewQoderTokenProvider(qoder.SessionBuilder{})
 	provider := &providercore.Record{
@@ -249,6 +320,10 @@ func TestQoderTokenProviderRejectsMachineIDOnlyWithoutReadingLocalAuth(t *testin
 	require.ErrorContains(t, err, "pat or security_oauth_token")
 }
 
+// TestQoderTokenProviderRejectsExplicitAuthDirWithoutReadingLocalAuth adds an
+// auth_dir hint beside machine_id but no token. It checks the same explicit
+// authentication diagnostic, keeping local credential hints outside runtime
+// session construction.
 func TestQoderTokenProviderRejectsExplicitAuthDirWithoutReadingLocalAuth(t *testing.T) {
 	tokenSource := NewQoderTokenProvider(qoder.SessionBuilder{})
 	provider := &providercore.Record{
@@ -265,6 +340,9 @@ func TestQoderTokenProviderRejectsExplicitAuthDirWithoutReadingLocalAuth(t *test
 	require.ErrorContains(t, err, "pat or security_oauth_token")
 }
 
+// TestQoderTokenProviderSupportsInjectedPATExchange supplies a configured PAT
+// exchange and stored organization metadata. It checks one cached exchange, no
+// organization query and a distinct session when PAT input later changes.
 func TestQoderTokenProviderSupportsInjectedPATExchange(t *testing.T) {
 	calls := 0
 	orgCalls := 0
@@ -318,6 +396,10 @@ func TestQoderTokenProviderSupportsInjectedPATExchange(t *testing.T) {
 	require.Equal(t, []string{"pat-123", "pat-456"}, exchangedPATs)
 }
 
+// TestQoderRefreshCredentialsHashTracksAuthenticationContext varies PAT, site,
+// mode and organization beside a model mapping. It checks those authentication
+// inputs change the hash while a mapping-only change retains the
+// failed-identity comparison key.
 func TestQoderRefreshCredentialsHashTracksAuthenticationContext(t *testing.T) {
 	base := map[string]any{
 		"pat":             "pat-123",
@@ -342,6 +424,10 @@ func TestQoderRefreshCredentialsHashTracksAuthenticationContext(t *testing.T) {
 	require.Equal(t, baseHash, providercore.QoderRefreshCredentialsHash(unrelated))
 }
 
+// TestQoderTokenProviderPATExchangePopulatesOrganizationFromAPI exchanges a
+// PAT without stored organization fields. It checks the exchanged token/user
+// passed to tag lookup and the organization metadata added to the resulting
+// session.
 func TestQoderTokenProviderPATExchangePopulatesOrganizationFromAPI(t *testing.T) {
 	tokenSource := NewQoderTokenProvider(qoder.SessionBuilder{})
 	tokenSource.exchangePAT = func(_ context.Context, _ string, _ *qoder.MachineIdentity) (*qoder.AuthIdentity, error) {
@@ -377,6 +463,9 @@ func TestQoderTokenProviderPATExchangePopulatesOrganizationFromAPI(t *testing.T)
 	require.Equal(t, "Org From API", session.Identity.OrganizationName)
 }
 
+// TestQoderTokenProviderRoutesCNPATAndBuildsCNSession uses CN PAT and legacy
+// machine fields with an injected site exchange. It checks CN site/version,
+// returned security token and omission of the extra machine-token/type fields.
 func TestQoderTokenProviderRoutesCNPATAndBuildsCNSession(t *testing.T) {
 	tokenSource := NewQoderTokenProvider(qoder.SessionBuilder{})
 	tokenSource.exchangeCNPAT = func(_ context.Context, pat string, machine *qoder.MachineIdentity) (*qoder.AuthIdentity, time.Time, error) {
@@ -414,6 +503,9 @@ func TestQoderTokenProviderRoutesCNPATAndBuildsCNSession(t *testing.T) {
 	require.Empty(t, session.Machine.MachineType)
 }
 
+// TestQoderTokenProviderRebuildsExpiredCNPATSession manually expires a cached
+// CN entry with unchanged credentials. It checks a second exchange produces a
+// distinct session while the first build's expiry was recorded as returned.
 func TestQoderTokenProviderRebuildsExpiredCNPATSession(t *testing.T) {
 	tokenSource := NewQoderTokenProvider(qoder.SessionBuilder{})
 	expiresAt := time.Now().Add(time.Hour)
@@ -443,6 +535,9 @@ func TestQoderTokenProviderRebuildsExpiredCNPATSession(t *testing.T) {
 	require.Equal(t, expiresAt, tokenSource.qoderState().Sessions[provider.ID].ExpiresAt)
 
 	// Expire the cached OpenAPI token so the next read must exchange the PAT again.
+	// Change expiry between serial reads so the next acquisition cannot reuse
+	// the warm entry solely because the same credential hash remains
+	// configured.
 	entry := tokenSource.qoderState().Sessions[provider.ID]
 	entry.ExpiresAt = time.Now().Add(-time.Second)
 	tokenSource.qoderState().Sessions[provider.ID] = entry
@@ -454,6 +549,10 @@ func TestQoderTokenProviderRebuildsExpiredCNPATSession(t *testing.T) {
 	require.Equal(t, 2, exchangeCalls)
 }
 
+// TestQoderTokenProviderSingleflightsConcurrentExpiredCNPATSession gates an
+// expired CN rebuild while thirty-two workers acquire that identity. It checks
+// all workers return the same pointer and only initial build plus one rebuild
+// invoke the exchanger.
 func TestQoderTokenProviderSingleflightsConcurrentExpiredCNPATSession(t *testing.T) {
 	tokenSource := NewQoderTokenProvider(qoder.SessionBuilder{})
 	var exchangeCalls atomic.Int32
@@ -462,6 +561,9 @@ func TestQoderTokenProviderSingleflightsConcurrentExpiredCNPATSession(t *testing
 	releaseRebuild := make(chan struct{})
 	tokenSource.exchangeCNPAT = func(_ context.Context, _ string, _ *qoder.MachineIdentity) (*qoder.AuthIdentity, time.Time, error) {
 		call := exchangeCalls.Add(1)
+		// Once expiry is injected, hold the rebuilding exchange and signal
+		// only its second overall invocation. A duplicate exchanger changes
+		// the count while sharing the release gate.
 		if blockRebuild.Load() {
 			if call == 2 {
 				close(rebuildStarted)
@@ -487,6 +589,9 @@ func TestQoderTokenProviderSingleflightsConcurrentExpiredCNPATSession(t *testing
 
 	_, err := tokenSource.GetSession(context.Background(), provider)
 	require.NoError(t, err)
+	// Expire the warm entry under core synchronization before releasing
+	// concurrent readers; the next shared build therefore tests expiry
+	// recovery rather than a normal cache hit.
 	tokenSource.qoderState().Mu.Lock()
 	entry := tokenSource.qoderState().Sessions[provider.ID]
 	entry.ExpiresAt = time.Now().Add(-time.Second)
@@ -502,6 +607,9 @@ func TestQoderTokenProviderSingleflightsConcurrentExpiredCNPATSession(t *testing
 	var done sync.WaitGroup
 	ready.Add(workers)
 	done.Add(workers)
+	// Release workers from one start gate and buffer every result/error so
+	// they can finish before the main goroutine closes and drains those
+	// channels.
 	for range workers {
 		go func() {
 			defer done.Done()
@@ -515,9 +623,13 @@ func TestQoderTokenProviderSingleflightsConcurrentExpiredCNPATSession(t *testing
 	ready.Wait()
 	close(start)
 	<-rebuildStarted
-	// Hold the first exchange so other callers can join its singleflight.
+	// Keep the first rebuild held briefly so released workers have a scheduling
+	// opportunity to join its flight; elapsed sleep does not prove every worker registered.
 	time.Sleep(20 * time.Millisecond)
 	require.Equal(t, int32(2), exchangeCalls.Load())
+	// Release the held rebuild before joining its callers; close result
+	// channels only after all senders have exited so pointer comparison
+	// observes completed acquisition outcomes.
 	close(releaseRebuild)
 	done.Wait()
 	close(results)
@@ -537,6 +649,10 @@ func TestQoderTokenProviderSingleflightsConcurrentExpiredCNPATSession(t *testing
 	require.Equal(t, int32(2), exchangeCalls.Load(), "初次构建加一次过期重建应只交换两次")
 }
 
+// TestQoderTokenProviderSingleflightSeparatesWaiterCancellation cancels the
+// first caller after shared exchange begins, then permits another acquisition.
+// It checks first cancellation, a usable later session and one supplier
+// exchange.
 func TestQoderTokenProviderSingleflightSeparatesWaiterCancellation(t *testing.T) {
 	tokenSource := NewQoderTokenProvider(qoder.SessionBuilder{})
 	var exchangeCalls atomic.Int32
@@ -544,6 +660,9 @@ func TestQoderTokenProviderSingleflightSeparatesWaiterCancellation(t *testing.T)
 	releaseBuild := make(chan struct{})
 	tokenSource.exchangeCNPAT = func(ctx context.Context, _ string, _ *qoder.MachineIdentity) (*qoder.AuthIdentity, time.Time, error) {
 		exchangeCalls.Add(1)
+		// Signal entry using the shared build context, then hold completion on
+		// release or that context so cancelling an individual waiter cannot
+		// silently finish the supplier operation.
 		close(buildStarted)
 		select {
 		case <-ctx.Done():
@@ -569,6 +688,9 @@ func TestQoderTokenProviderSingleflightSeparatesWaiterCancellation(t *testing.T)
 
 	firstCtx, cancelFirst := context.WithCancel(context.Background())
 	firstResult := make(chan error, 1)
+	// Cancel a registered caller only after supplier entry is signaled,
+	// exposing whether that caller cancellation incorrectly stops the
+	// independently budgeted shared exchange.
 	go func() {
 		_, getErr := tokenSource.GetSession(firstCtx, provider)
 		firstResult <- getErr
@@ -577,20 +699,26 @@ func TestQoderTokenProviderSingleflightSeparatesWaiterCancellation(t *testing.T)
 	cancelFirst()
 	require.ErrorIs(t, <-firstResult, context.Canceled)
 
+	// Start a later acquisition with a buffered paired result while the
+	// independent build remains held. Reading this result after release checks
+	// availability without assuming prior waiter registration.
 	secondResult := make(chan struct {
-		session *qoder.SessionContext
-		err     error
+		session *qoder.SessionContext // acquired session result pointer
+		err     error                 // associated caller result error
 	}, 1)
 	go func() {
 		session, getErr := tokenSource.GetSession(context.Background(), provider)
 		secondResult <- struct {
-			session *qoder.SessionContext
-			err     error
+			session *qoder.SessionContext // acquired session result pointer
+			err     error                 // associated caller result error
 		}{session: session, err: getErr}
 	}()
 	require.Eventually(t, func() bool {
 		return exchangeCalls.Load() == 1
 	}, time.Second, 10*time.Millisecond)
+	// Permit the shared exchange to finish for the later reader. The
+	// call-count check establishes one supplier operation, not that the later
+	// reader already registered as a waiter.
 	close(releaseBuild)
 
 	second := <-secondResult
@@ -600,10 +728,17 @@ func TestQoderTokenProviderSingleflightSeparatesWaiterCancellation(t *testing.T)
 	require.Equal(t, int32(1), exchangeCalls.Load())
 }
 
+// TestQoderTokenProviderDetachedBuildHasHardTimeout supplies a cooperative
+// exchanger that waits for its short shared-build deadline. It checks
+// DeadlineExceeded and a bounded elapsed observation for that
+// cancellation-responsive callback.
 func TestQoderTokenProviderDetachedBuildHasHardTimeout(t *testing.T) {
 	tokenSource := NewQoderTokenProvider(qoder.SessionBuilder{})
 	tokenSource.qoderState().SessionBuildTimeout = 20 * time.Millisecond
 	tokenSource.exchangeCNPAT = func(ctx context.Context, _ string, _ *qoder.MachineIdentity) (*qoder.AuthIdentity, time.Time, error) {
+		// Respond cooperatively to the build context deadline so the timing
+		// assertion measures a callback that releases itself rather than
+		// forced interruption of arbitrary supplier work.
 		<-ctx.Done()
 		return nil, time.Time{}, ctx.Err()
 	}
@@ -617,11 +752,18 @@ func TestQoderTokenProviderDetachedBuildHasHardTimeout(t *testing.T) {
 	require.Less(t, time.Since(startedAt), time.Second)
 }
 
+// TestQoderTokenProviderBuildUsesProviderSnapshot holds a PAT build before
+// changing the caller's organization credential. It checks the resulting
+// identity uses the captured original value rather than the later source-map
+// mutation.
 func TestQoderTokenProviderBuildUsesProviderSnapshot(t *testing.T) {
 	tokenSource := NewQoderTokenProvider(qoder.SessionBuilder{})
 	buildStarted := make(chan struct{})
 	releaseBuild := make(chan struct{})
 	tokenSource.exchangePAT = func(_ context.Context, _ string, _ *qoder.MachineIdentity) (*qoder.AuthIdentity, error) {
+		// Announce exchange after the builder captured input, then hold its
+		// result so the main goroutine can change the original organization
+		// before this captured identity is returned.
 		close(buildStarted)
 		<-releaseBuild
 		return &qoder.AuthIdentity{
@@ -634,16 +776,23 @@ func TestQoderTokenProviderBuildUsesProviderSnapshot(t *testing.T) {
 		"site": "global", "pat": "global-pat", "machine_id": "machine-global", "organization_id": "org-original",
 	}}
 
+	// sessionResult carries one asynchronous acquisition pointer and its paired caller error.
 	type sessionResult struct {
-		session *qoder.SessionContext
-		err     error
+		session *qoder.SessionContext // acquired session result pointer
+		err     error                 // associated caller result error
 	}
 	resultCh := make(chan sessionResult, 1)
+	// Hold exchange after the core has captured provider input, then mutate
+	// the caller map before release so the identity result can expose snapshot
+	// sharing.
 	go func() {
 		session, getErr := tokenSource.GetSession(context.Background(), provider)
 		resultCh <- sessionResult{session: session, err: getErr}
 	}()
 	<-buildStarted
+	// Supplier entry follows snapshot capture. Mutate the original
+	// organization now so a builder reading the caller map late would produce
+	// the wrong identity value.
 	provider.Credentials["organization_id"] = "org-mutated"
 	close(releaseBuild)
 
@@ -652,6 +801,10 @@ func TestQoderTokenProviderBuildUsesProviderSnapshot(t *testing.T) {
 	require.Equal(t, "org-original", result.session.Identity.OrganizationID)
 }
 
+// TestQoderTokenProviderInvalidateDoesNotReturnOrCacheInflightSession holds
+// the first CN generation before invalidating and rebuilding. It checks the
+// old caller gets invalidation with no session and the new pointer remains
+// cached after release.
 func TestQoderTokenProviderInvalidateDoesNotReturnOrCacheInflightSession(t *testing.T) {
 	tokenSource := NewQoderTokenProvider(qoder.SessionBuilder{})
 	var exchangeCalls atomic.Int32
@@ -659,6 +812,9 @@ func TestQoderTokenProviderInvalidateDoesNotReturnOrCacheInflightSession(t *test
 	releaseFirst := make(chan struct{})
 	tokenSource.exchangeCNPAT = func(_ context.Context, _ string, _ *qoder.MachineIdentity) (*qoder.AuthIdentity, time.Time, error) {
 		call := exchangeCalls.Add(1)
+		// Hold the first supplier result before generation invalidation; later
+		// exchanges remain unblocked so the test can publish a replacement
+		// before this old result returns.
 		if call == 1 {
 			close(firstStarted)
 			<-releaseFirst
@@ -680,16 +836,23 @@ func TestQoderTokenProviderInvalidateDoesNotReturnOrCacheInflightSession(t *test
 		},
 	}
 
+	// sessionResult carries one asynchronous acquisition pointer and its paired caller error.
 	type sessionResult struct {
-		session *qoder.SessionContext
-		err     error
+		session *qoder.SessionContext // acquired session result pointer
+		err     error                 // associated caller result error
 	}
+	// Capture the held first-generation caller result in a buffered channel,
+	// allowing its late invalidation error to be joined after a new generation
+	// has completed.
 	firstResult := make(chan sessionResult, 1)
 	go func() {
 		session, getErr := tokenSource.GetSession(context.Background(), provider)
 		firstResult <- sessionResult{session: session, err: getErr}
 	}()
 	<-firstStarted
+	// Advance the generation while the first exchange is held, then build the
+	// replacement before release so late publication must reject that older
+	// in-flight result.
 	tokenSource.Invalidate(provider.ID)
 
 	second, err := tokenSource.GetSession(context.Background(), provider)
@@ -707,6 +870,10 @@ func TestQoderTokenProviderInvalidateDoesNotReturnOrCacheInflightSession(t *test
 	require.Equal(t, int32(2), exchangeCalls.Load())
 }
 
+// TestQoderTokenProviderDoesNotMergeDifferentCredentialHashes holds an older
+// PAT build while newer credentials arrive for the same ID. It checks separate
+// exchange, rejection of the old result and the latest hash/session retained
+// in cache.
 func TestQoderTokenProviderDoesNotMergeDifferentCredentialHashes(t *testing.T) {
 	tokenSource := NewQoderTokenProvider(qoder.SessionBuilder{})
 	var exchangeCalls atomic.Int32
@@ -714,6 +881,9 @@ func TestQoderTokenProviderDoesNotMergeDifferentCredentialHashes(t *testing.T) {
 	releaseOld := make(chan struct{})
 	tokenSource.exchangeCNPAT = func(_ context.Context, pat string, _ *qoder.MachineIdentity) (*qoder.AuthIdentity, time.Time, error) {
 		exchangeCalls.Add(1)
+		// Gate only the old PAT exchange so a new credential hash can proceed
+		// independently. The old result is released after the new identity has
+		// been accepted.
 		if pat == "old-pat" {
 			close(oldStarted)
 			<-releaseOld
@@ -731,12 +901,18 @@ func TestQoderTokenProviderDoesNotMergeDifferentCredentialHashes(t *testing.T) {
 		"site": "cn", "pat": "new-pat", "machine_id": "machine-cn", "_token_version": int64(2),
 	}}
 
+	// Run the old identity acquisition behind its supplier gate and retain its
+	// eventual error separately, so the newer hash can be tested before
+	// joining the rejected old flight.
 	oldResult := make(chan error, 1)
 	go func() {
 		_, getErr := tokenSource.GetSession(context.Background(), oldProvider)
 		oldResult <- getErr
 	}()
 	<-oldStarted
+	// Acquire a higher-version PAT while the old identity exchange remains
+	// held; returning the new token proves these different credential hashes
+	// do not share that old flight.
 	newSession, err := tokenSource.GetSession(context.Background(), newProvider)
 	require.NoError(t, err)
 	require.Equal(t, "cosy-new-pat", newSession.Identity.SecurityOauthToken)
@@ -751,6 +927,10 @@ func TestQoderTokenProviderDoesNotMergeDifferentCredentialHashes(t *testing.T) {
 	require.Equal(t, int32(2), exchangeCalls.Load())
 }
 
+// TestQoderTokenProviderDoesNotRegressToOlderCredentialVersion builds version
+// two before reading a version-one snapshot. It checks pointer reuse, one
+// exchange and retention of the newer credential hash/version in provider
+// state.
 func TestQoderTokenProviderDoesNotRegressToOlderCredentialVersion(t *testing.T) {
 	tokenSource := NewQoderTokenProvider(qoder.SessionBuilder{})
 	var exchangeCalls atomic.Int32
@@ -787,6 +967,10 @@ func TestQoderTokenProviderDoesNotRegressToOlderCredentialVersion(t *testing.T) 
 	require.Same(t, latest, cached.Session)
 }
 
+// TestQoderTokenProviderAuthoritativeInvalidationBlocksUnobservedStaleVersion
+// supplies a refreshed version through identity-aware invalidation before a
+// stale read. It checks the stale caller builds with the new PAT and retains
+// version-two state.
 func TestQoderTokenProviderAuthoritativeInvalidationBlocksUnobservedStaleVersion(t *testing.T) {
 	tokenSource := NewQoderTokenProvider(qoder.SessionBuilder{})
 	var exchangeCalls atomic.Int32
@@ -808,6 +992,9 @@ func TestQoderTokenProviderAuthoritativeInvalidationBlocksUnobservedStaleVersion
 	oldSession, err := tokenSource.GetSession(context.Background(), staleProvider)
 	require.NoError(t, err)
 	require.Equal(t, "cosy-old-pat", oldSession.Identity.SecurityOauthToken)
+	// Publish the newer identity through invalidation before any read observes
+	// it, making the following stale snapshot rely on recorded authoritative
+	// version state.
 	tokenSource.InvalidateProvider(refreshedProvider)
 
 	fromStaleSnapshot, err := tokenSource.GetSession(context.Background(), staleProvider)
@@ -822,6 +1009,10 @@ func TestQoderTokenProviderAuthoritativeInvalidationBlocksUnobservedStaleVersion
 	require.Equal(t, providercore.QoderCredentialsHash(refreshedProvider.Credentials), currentState.CredentialsHash)
 }
 
+// TestQoderTokenProviderAuthoritativeInvalidationRejectsOlderSnapshot
+// invalidates version three before an older version-two notice. It checks the
+// newer cached pointer/hash survive and an older read causes no additional
+// exchange.
 func TestQoderTokenProviderAuthoritativeInvalidationRejectsOlderSnapshot(t *testing.T) {
 	tokenSource := NewQoderTokenProvider(qoder.SessionBuilder{})
 	var exchangeCalls atomic.Int32
@@ -844,6 +1035,9 @@ func TestQoderTokenProviderAuthoritativeInvalidationRejectsOlderSnapshot(t *test
 	tokenSource.InvalidateProvider(latestProvider)
 	latestSession, err := tokenSource.GetSession(context.Background(), latestProvider)
 	require.NoError(t, err)
+	// Attempt older invalidation after a newer session is cached; this
+	// ordering exposes whether the stale notice evicts or regresses the
+	// current credential generation.
 	tokenSource.InvalidateProvider(olderProvider)
 
 	tokenSource.qoderState().Mu.Lock()
@@ -860,6 +1054,9 @@ func TestQoderTokenProviderAuthoritativeInvalidationRejectsOlderSnapshot(t *test
 	require.Equal(t, int32(1), exchangeCalls.Load())
 }
 
+// TestQoderTokenProviderNewerVersionOverridesOlderUpdatedAt provides a newer
+// token version whose UpdatedAt is earlier. It checks a new session is built
+// from that higher version despite the timestamp ordering.
 func TestQoderTokenProviderNewerVersionOverridesOlderUpdatedAt(t *testing.T) {
 	tokenSource := NewQoderTokenProvider(qoder.SessionBuilder{})
 	var exchangeCalls atomic.Int32
@@ -888,6 +1085,10 @@ func TestQoderTokenProviderNewerVersionOverridesOlderUpdatedAt(t *testing.T) {
 	require.Equal(t, int32(2), exchangeCalls.Load())
 }
 
+// TestQoderTokenProviderAuthoritativeNewerVersionOverridesOlderUpdatedAt
+// publishes a higher version through invalidation with an earlier UpdatedAt.
+// It checks a stale caller receives that higher-version PAT and provider-state
+// hash.
 func TestQoderTokenProviderAuthoritativeNewerVersionOverridesOlderUpdatedAt(t *testing.T) {
 	tokenSource := NewQoderTokenProvider(qoder.SessionBuilder{})
 	var exchangeCalls atomic.Int32
@@ -909,6 +1110,9 @@ func TestQoderTokenProviderAuthoritativeNewerVersionOverridesOlderUpdatedAt(t *t
 
 	_, err := tokenSource.GetSession(context.Background(), currentProvider)
 	require.NoError(t, err)
+	// Introduce the higher token version through invalidation despite its
+	// earlier update timestamp; the following old snapshot must use that
+	// authoritative authentication order.
 	tokenSource.InvalidateProvider(refreshedProvider)
 	fromStaleSnapshot, err := tokenSource.GetSession(context.Background(), currentProvider)
 	require.NoError(t, err)
@@ -922,6 +1126,10 @@ func TestQoderTokenProviderAuthoritativeNewerVersionOverridesOlderUpdatedAt(t *t
 	require.Equal(t, providercore.QoderCredentialsHash(refreshedProvider.Credentials), currentState.CredentialsHash)
 }
 
+// TestQoderTokenProviderOlderCredentialVersionJoinsNewerInflightBuild holds a
+// version-two exchange before a version-one acquisition. It checks the old
+// caller does not return early, both results share the new session and one
+// exchange ran.
 func TestQoderTokenProviderOlderCredentialVersionJoinsNewerInflightBuild(t *testing.T) {
 	tokenSource := NewQoderTokenProvider(qoder.SessionBuilder{})
 	var exchangeCalls atomic.Int32
@@ -929,6 +1137,9 @@ func TestQoderTokenProviderOlderCredentialVersionJoinsNewerInflightBuild(t *test
 	releaseNewBuild := make(chan struct{})
 	tokenSource.exchangeCNPAT = func(_ context.Context, pat string, _ *qoder.MachineIdentity) (*qoder.AuthIdentity, time.Time, error) {
 		exchangeCalls.Add(1)
+		// Hold the latest identity supplier result while older snapshots
+		// attempt acquisition. The old PAT branch is unblocked, making an
+		// accidental separate exchange observable before release.
 		if pat == "new-pat" {
 			close(newBuildStarted)
 			<-releaseNewBuild
@@ -946,29 +1157,41 @@ func TestQoderTokenProviderOlderCredentialVersionJoinsNewerInflightBuild(t *test
 		"site": "cn", "pat": "old-pat", "machine_id": "machine-cn", "_token_version": int64(1),
 	}}
 
+	// sessionResult carries one asynchronous acquisition pointer and its paired caller error.
 	type sessionResult struct {
-		session *qoder.SessionContext
-		err     error
+		session *qoder.SessionContext // acquired session result pointer
+		err     error                 // associated caller result error
 	}
 	newResult := make(chan sessionResult, 1)
+	// Hold the newer-version exchange before starting the stale caller so the
+	// later result can distinguish joining that current build from exchanging
+	// the old PAT.
 	go func() {
 		session, getErr := tokenSource.GetSession(context.Background(), newProvider)
 		newResult <- sessionResult{session: session, err: getErr}
 	}()
 	<-newBuildStarted
 
+	// Acquire the stale snapshot only after the current supplier entered its
+	// gate. Buffer its result for the early-return observation and the later
+	// joined pointer comparison.
 	staleResult := make(chan sessionResult, 1)
 	go func() {
 		session, getErr := tokenSource.GetSession(context.Background(), staleProvider)
 		staleResult <- sessionResult{session: session, err: getErr}
 	}()
-	// The old-credential caller must wait for the new version's exchange; a separate exchange would return immediately.
+	// Check for a result while the newer exchange is held; a separate old-PAT
+	// exchange can finish during this interval, exposing unintended use of
+	// the stale credentials.
 	select {
 	case result := <-staleResult:
 		close(releaseNewBuild)
 		require.FailNowf(t, "stale build returned early", "session=%v err=%v", result.session, result.err)
 	case <-time.After(30 * time.Millisecond):
 	}
+	// Release the current exchange and collect both completed results before
+	// comparing pointer identity and supplier count, preserving the intended
+	// newer-version interleaving.
 	close(releaseNewBuild)
 
 	latest := <-newResult
@@ -980,6 +1203,10 @@ func TestQoderTokenProviderOlderCredentialVersionJoinsNewerInflightBuild(t *test
 	require.Equal(t, int32(1), exchangeCalls.Load())
 }
 
+// TestQoderTokenProviderUpdatesSnapshotForSameCredentials changes the proxy
+// object while authentication remains identical. It checks the cached session
+// pointer is reused and the retained provider snapshot contains the later
+// proxy field.
 func TestQoderTokenProviderUpdatesSnapshotForSameCredentials(t *testing.T) {
 	tokenSource := NewQoderTokenProvider(qoder.SessionBuilder{})
 	tokenSource.exchangeCNPAT = func(_ context.Context, _ string, _ *qoder.MachineIdentity) (*qoder.AuthIdentity, time.Time, error) {
@@ -1006,6 +1233,10 @@ func TestQoderTokenProviderUpdatesSnapshotForSameCredentials(t *testing.T) {
 	require.Equal(t, "new-proxy.example", storedSnapshot.Proxy.Host)
 }
 
+// TestQoderTokenProviderDirectTokenPopulatesOrganizationFromAPI builds direct
+// identity without organization metadata. It checks tag lookup receives the
+// stored token/user and the returned organization values enrich the session
+// identity.
 func TestQoderTokenProviderDirectTokenPopulatesOrganizationFromAPI(t *testing.T) {
 	tokenSource := NewQoderTokenProvider(qoder.SessionBuilder{})
 	tokenSource.getOrgTags = func(_ context.Context, token, uid string) (*qoder.OrganizationTags, error) {
@@ -1034,6 +1265,9 @@ func TestQoderTokenProviderDirectTokenPopulatesOrganizationFromAPI(t *testing.T)
 	require.Equal(t, "Org From API", session.Identity.OrganizationName)
 }
 
+// TestQoderTokenProviderPATExchangeUsesProviderDoer binds shared transport and
+// a loaded proxy for PAT exchange. It checks the returned token and the proxy,
+// provider ID and concurrency routed through that doer.
 func TestQoderTokenProviderPATExchangeUsesProviderDoer(t *testing.T) {
 	upstream := &qoderCenterHTTPUpstreamStub{}
 	tokenSource := NewQoderTokenProvider(qoder.SessionBuilder{})
@@ -1057,6 +1291,10 @@ func TestQoderTokenProviderPATExchangeUsesProviderDoer(t *testing.T) {
 	require.Equal(t, 3, upstream.providerConcurrency)
 }
 
+// TestQoderTokenProviderPATOrganizationTagsUsesProviderDoer uses injected PAT
+// identity and shared transport for organization lookup. It checks one tag
+// request, organization metadata and provider proxy/ID/concurrency/fingerprint
+// parameters.
 func TestQoderTokenProviderPATOrganizationTagsUsesProviderDoer(t *testing.T) {
 	upstream := &qoderCenterHTTPUpstreamStub{
 		body: `{"organization_id":"org-via-upstream","organization_name":"Org Via Upstream"}`,
@@ -1096,6 +1334,10 @@ func TestQoderTokenProviderPATOrganizationTagsUsesProviderDoer(t *testing.T) {
 	require.True(t, upstream.profileSet)
 }
 
+// TestQoderTokenProviderOrganizationTagsErrorRedactsSensitiveBody returns a
+// 500 tag response containing credential and identity text. It checks status
+// diagnostics, redaction markers and omission of each injected sensitive value
+// from the error.
 func TestQoderTokenProviderOrganizationTagsErrorRedactsSensitiveBody(t *testing.T) {
 	upstream := &qoderCenterHTTPUpstreamStub{
 		statusCode: http.StatusInternalServerError,
@@ -1126,6 +1368,9 @@ func TestQoderTokenProviderOrganizationTagsErrorRedactsSensitiveBody(t *testing.
 	require.Contains(t, errText, "***")
 }
 
+// TestCompositeTokenCacheInvalidator_QoderCosy starts with a cached Qoder
+// entry and an external deletion recorder. It checks the provider key is sent
+// to external deletion and the local session entry is evicted.
 func TestCompositeTokenCacheInvalidator_QoderCosy(t *testing.T) {
 	cache := &qoderInvalidationCache{}
 	tokenSource := NewQoderTokenProvider(qoder.SessionBuilder{})
@@ -1147,6 +1392,9 @@ func TestCompositeTokenCacheInvalidator_QoderCosy(t *testing.T) {
 	require.False(t, cached, "qoder provider session cache should be invalidated too")
 }
 
+// TestCompositeTokenCacheInvalidator_QoderCosyInvalidatesProviderWithoutExternalCache
+// omits the external cache while retaining local Qoder state. It checks
+// invalidation still succeeds and removes the local provider session entry.
 func TestCompositeTokenCacheInvalidator_QoderCosyInvalidatesProviderWithoutExternalCache(t *testing.T) {
 	tokenSource := NewQoderTokenProvider(qoder.SessionBuilder{})
 	tokenSource.Core.Sessions[43] = providercore.QoderSessionCacheEntry[*qoder.SessionContext]{CredentialsHash: "old"}
@@ -1166,10 +1414,18 @@ func TestCompositeTokenCacheInvalidator_QoderCosyInvalidatesProviderWithoutExter
 	require.False(t, cached)
 }
 
+// Do delegates response construction to DoWithTLS with a nil fingerprint
+// profile. It records the same serial routing arguments and returns the
+// configured caller-owned body for the site exchange or organization reader to
+// consume.
 func (s *qoderCenterHTTPUpstreamStub) Do(req *http.Request, proxyURL string, providerID int64, providerConcurrency int) (*http.Response, error) {
 	return s.DoWithTLS(req, proxyURL, providerID, providerConcurrency, nil)
 }
 
+// DoWithTLS records serial routing and retains the request pointer for
+// assertions. It returns configured body/status, defaulting empty body to
+// identity JSON and zero status to HTTP 200. The caller owns the newly
+// allocated response body.
 func (s *qoderCenterHTTPUpstreamStub) DoWithTLS(req *http.Request, proxyURL string, providerID int64, providerConcurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
 	s.proxyURL = proxyURL
 	s.providerID = providerID
@@ -1198,10 +1454,14 @@ func (s *qoderCenterHTTPUpstreamStub) DoWithTLS(req *http.Request, proxyURL stri
 	}, nil
 }
 
+// ptrInt64ForQoderTest returns a pointer holding the supplied provider or
+// proxy ID.
 func ptrInt64ForQoderTest(v int64) *int64 {
 	return &v
 }
 
+// DeleteAccessToken appends the key to the serial invalidation log and returns
+// nil.
 func (c *qoderInvalidationCache) DeleteAccessToken(_ context.Context, key string) error {
 	c.deletedKeys = append(c.deletedKeys, key)
 	return nil

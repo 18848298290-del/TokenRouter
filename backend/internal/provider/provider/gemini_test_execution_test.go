@@ -10,21 +10,29 @@ import (
 	testassert "github.com/TokenFlux/TokenRouter/internal/testutil/assertion"
 )
 
+// Gemini image probes request output modalities through generationConfig, while
+// text probes use a different payload shape. These cases exercise
+// gemini_test_execution.go and check the prompt, square image setting and
+// explicit test-type precedence over image markers in model names.
+
+// TestCreateGeminiTestPayload_ImageModel builds a probe from an image-marked model.
+// It checks the single prompt part, TEXT and IMAGE modalities, and square aspect
+// ratio in the encoded generation configuration.
 func TestCreateGeminiTestPayload_ImageModel(t *testing.T) {
 	t.Parallel()
 
 	payload := geminiTestPayload("gemini-2.5-flash-image", "draw a tiny robot")
 
 	var parsed struct {
-		Contents []struct {
-			Parts []struct {
-				Text string `json:"text"`
+		Contents []struct { // probe conversation messages
+			Parts []struct { // message content part list
+				Text string `json:"text"` // encoded user prompt
 			} `json:"parts"`
 		} `json:"contents"`
-		GenerationConfig struct {
-			ResponseModalities []string `json:"responseModalities"`
-			ImageConfig        struct {
-				AspectRatio string `json:"aspectRatio"`
+		GenerationConfig struct { // image generation option fields
+			ResponseModalities []string `json:"responseModalities"` // requested output modality names
+			ImageConfig        struct { // requested image format options
+				AspectRatio string `json:"aspectRatio"` // requested image aspect ratio
 			} `json:"imageConfig"`
 		} `json:"generationConfig"`
 	}
@@ -37,6 +45,9 @@ func TestCreateGeminiTestPayload_ImageModel(t *testing.T) {
 	require.Equal(t, "1:1", parsed.GenerationConfig.ImageConfig.AspectRatio)
 }
 
+// TestCreateGeminiTestPayload_ExplicitTypeOverridesModelName selects text for an
+// image-marked name and image for a plain name. It checks the text prompt and
+// payload shape, and that image modalities follow the explicit image selection.
 func TestCreateGeminiTestPayload_ExplicitTypeOverridesModelName(t *testing.T) {
 	t.Parallel()
 

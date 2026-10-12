@@ -27,21 +27,28 @@ import (
 type RefreshPostActions struct {
 	// active cooldown observation clock
 	Now func() time.Time
-	// reached outcome logging callbacks
+	// Info reports matched health clears and request-flag outcomes. Warn reports
+	// health writes, token invalidation and snapshot publication failures. Debug
+	// reports successful token invalidation and scheduler publication. Reached
+	// paths invoke these callbacks directly, so callers provide each level used
+	// by their configured cleanup operations.
 	Info, Warn, Debug func(string, ...any)
 	// optional post-refresh privacy service
 	Privacy *PrivacyService
 	// conditional Antigravity flag writer
 	RequestClearer RefreshRequestClearer
-	// ClearError and ClearCooldown compare the observed identity and their health
-	// state before writing. A false result suppresses subsequent stale-record
-	// publication; each callback is required when its cleanup branch is reached.
-	// conditional health clear operations
+	// ClearError compares identity and the observed missing-project error before
+	// clearing that error. ClearCooldown compares identity and the observed temporary
+	// pause before clearing its window. Both return whether the matched state was
+	// cleared; a false result suppresses stale-record publication while retaining
+	// token invalidation. Each callback is required when its own cleanup branch
+	// is reached, and persistence errors are handled separately from comparison misses.
 	ClearError, ClearCooldown func(context.Context, *Record) (bool, error)
-	// Invalidate and SyncProvider are optional and run in that order. Run can
-	// disable SyncProvider on a health comparison conflict while retaining
-	// Invalidate.
-	// token invalidation and scheduler publication
+	// Invalidate evicts cached rotating tokens for eligible credential kinds.
+	// SyncProvider publishes the selected record to scheduling snapshots afterward.
+	// Both are optional, and an invalidation error still permits publication. Run
+	// disables SyncProvider on a health comparison conflict while retaining Invalidate,
+	// so an observed stale record cannot overwrite a newer scheduling snapshot.
 	Invalidate, SyncProvider func(context.Context, *Record) error
 	// optional runtime pause deletion
 	DeleteCooldown func(context.Context, int64) error
@@ -145,6 +152,8 @@ func (s *RefreshPostActions) Run(ctx context.Context, provider *Record) {
 // its socket timeouts when ContextTimeoutEnabled is false, so this deadline
 // alone does not bound the call's wall-clock duration.
 func (s *RefreshPostActions) SyncWithCleanup(parent context.Context, provider *Record) {
+	// Detach cancellation after persistence so a canceled request can still
+	// invalidate tokens and publish its provider record within a separate budget.
 	cleanupParent := context.Background()
 	if parent != nil {
 		cleanupParent = context.WithoutCancel(parent)

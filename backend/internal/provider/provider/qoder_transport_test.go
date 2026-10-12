@@ -17,17 +17,33 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
+// Qoder's request doer carries loaded proxy and fingerprint choices to the
+// shared transport. These fixtures exercise qoder_transport.go and record
+// serial request parameters, while endpoint-specific user-info responses also
+// support probe cases that reuse the same transport recorder.
+
+// qoderHTTPUpstreamRecorder retains serial request arguments and
+// endpoint-specific response settings.
 type qoderHTTPUpstreamRecorder struct {
-	body                string
-	userInfoBody        string
+	body string // ordinary response fixture text
+	// userInfoBody is used for GET user-info requests; an empty value supplies
+	// a default identity JSON response for probe fixtures.
+	userInfoBody string
+	// userInfoStatusCode overrides HTTP 200 only for GET user-info requests when
+	// nonzero. Other requests keep the successful response fixture status.
 	userInfoStatusCode  int
-	proxyURL            string
-	providerID          int64
-	providerConcurrency int
-	profileSet          bool
-	requests            []*http.Request
+	proxyURL            string // last request proxy URL
+	providerID          int64  // last request provider ID
+	providerConcurrency int    // last request concurrency allowance
+	profileSet          bool   // last request profile presence
+	// requests retains caller request pointers for subsequent fixture inspection.
+	// Their bodies can be consumed by a test after transport returns.
+	requests []*http.Request
 }
 
+// TestQoderGatewayRequestDoerUsesHTTPUpstreamProxyAndTLS binds a provider with a
+// loaded proxy and enabled TLS fingerprinting. It checks the returned response,
+// proxy URL, provider ID and selected profile reported to the shared transport.
 func TestQoderGatewayRequestDoerUsesHTTPUpstreamProxyAndTLS(t *testing.T) {
 	proxyID := int64(11)
 	provider := &providercore.Record{
@@ -62,10 +78,17 @@ func TestQoderGatewayRequestDoerUsesHTTPUpstreamProxyAndTLS(t *testing.T) {
 	require.True(t, upstream.profileSet)
 }
 
+// Do records a request through the fixture's TLS-aware response path.
+// It passes a nil fingerprint profile and returns the same caller-owned body,
+// allowing tests to use this recorder through either transport interface.
 func (u *qoderHTTPUpstreamRecorder) Do(req *http.Request, proxyURL string, providerID int64, providerConcurrency int) (*http.Response, error) {
 	return u.DoWithTLS(req, proxyURL, providerID, providerConcurrency, nil)
 }
 
+// DoWithTLS retains request arguments and returns the endpoint's fixture response.
+// GET user-info requests receive configured user-info text or a default identity;
+// their nonzero status override replaces HTTP 200. The caller owns the response
+// body, and recorder fields support serial test use.
 func (u *qoderHTTPUpstreamRecorder) DoWithTLS(req *http.Request, proxyURL string, providerID int64, providerConcurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
 	u.proxyURL = proxyURL
 	u.providerID = providerID

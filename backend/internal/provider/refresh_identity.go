@@ -28,8 +28,9 @@ type RefreshFailureNotice struct {
 	// ProviderID, Platform, Type and Identity identify the attempted credentials.
 	// RuntimeBlockState accepts notices for its captured provider ID and supported
 	// platforms, and an empty Identity cannot install a credential-scoped block.
-	ProviderID     int64  // attempted provider row
-	Platform, Type string // attempted platform and credential kind
+	ProviderID int64 // attempted provider row
+	// Platform: attempted service identity; Type: attempted provider credential kind.
+	Platform, Type string
 	Identity       string `json:"-"` // attempted authentication identity digest
 	// Until is the proposed block deadline; RuntimeBlockState supplies its
 	// fallback duration when this value is zero or already expired.
@@ -100,7 +101,8 @@ func RefreshCredentialIdentity(value *Record) string {
 		credentials = map[string]any{}
 	}
 	data, err := json.Marshal(struct {
-		Platform, Type string // authentication platform and credential kind
+		// Platform: authentication service identity; Type: stored provider credential kind.
+		Platform, Type string
 		// Credentials and ProxyID borrow the observed record through marshaling.
 		// Their owners hold these values stable until JSON has captured both
 		// pieces of the authentication identity.

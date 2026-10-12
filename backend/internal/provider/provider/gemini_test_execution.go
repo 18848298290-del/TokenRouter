@@ -20,16 +20,39 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/vertex"
 )
 
-// GeminiProviderTest probes Gemini using provider credentials and a shared transport.
+// Gemini provider tests share a streaming event reader but prepare different
+// credential routes. API keys use the AI Studio model action, OAuth uses Code
+// Assist when a project is stored and AI Studio otherwise, and service accounts
+// use a Vertex project/location URL with their access token.
+
+// GeminiProviderTest probes Gemini using provider credentials and a shared
+// transport.
 type GeminiProviderTest struct {
-	Tokens      *providercore.GeminiTokenSource
-	Transport   QoderTransport
-	Profiles    *egressprovider.TLSProfiles
+	// Tokens is required for OAuth and service-account probes. API-key probes
+	// read their stored key directly and do not consult this source.
+	Tokens *providercore.GeminiTokenSource
+	// Transport sends the prepared streaming request with provider proxy and TLS
+	// selection. Configure it before executing any successfully prepared
+	// credential route.
+	Transport QoderTransport
+	// Profiles optionally resolves provider fingerprint settings. A nil value
+	// passes no profile to Transport, leaving transport defaults to that
+	// dependency.
+	Profiles *egressprovider.TLSProfiles
+	// ValidateURL normalizes and validates API-key and OAuth base URLs before
+	// request construction. Service-account requests build their dedicated
+	// Vertex URL directly.
 	ValidateURL func(string) (string, error)
-	UserAgent   string
+	// UserAgent overrides route defaults when nonblank after trimming. Automatic
+	// target executions set it on a local executor copy for that probe.
+	UserAgent string
 }
 
-// Execute builds a credential-specific Gemini probe and emits its events synchronously.
+// Execute prepares and streams a Gemini text or image probe for one provider.
+// A blank model uses the platform test default. API-key and service-account
+// models apply exact saved mappings; OAuth keeps the supplied name. Transport
+// responses are closed on return, and non-200 bodies become test errors before
+// the shared Gemini event reader is invoked.
 func (s *GeminiProviderTest) Execute(c *TestRun, value *providercore.Record, modelID string, prompt string, testTypes ...string) error {
 	ctx := c.Context
 
@@ -38,7 +61,9 @@ func (s *GeminiProviderTest) Execute(c *TestRun, value *providercore.Record, mod
 		testModelID = geminicli.DefaultTestModel
 	}
 
-	// API key and service-account probes apply exact model mappings.
+	// These direct credential routes use exact saved aliases in the probe. OAuth
+	// route construction retains the requested name, so it does not take this
+	// mapping path.
 	if value.Type == capability.ProviderTypeAPIKey || value.Type == capability.ProviderTypeServiceAccount {
 		mapping := providercore.ResolveModelMapping(value, ModelDefaults())
 		if len(mapping) > 0 {
@@ -81,9 +106,15 @@ func (s *GeminiProviderTest) Execute(c *TestRun, value *providercore.Record, mod
 	if err != nil {
 		return (TestStreamOutput{}).Error(c, fmt.Sprintf("Request failed: %s", err.Error()))
 	}
+	// The shared event reader consumes the successful body; retain closing here so
+	// non-200 responses and reader failures release the same transport
+	// response as success.
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
+		// Return any diagnostic bytes read before failure; the probe still
+		// reports the
+		// HTTP status instead of replacing it with a secondary response-read error.
 		body, _ := io.ReadAll(resp.Body)
 		return (TestStreamOutput{}).Error(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
 	}
@@ -91,7 +122,10 @@ func (s *GeminiProviderTest) Execute(c *TestRun, value *providercore.Record, mod
 	return (TestStreamOutput{}).Gemini(c, resp.Body)
 }
 
-// buildGeminiAPIKeyRequest builds an authenticated streaming AI Studio request.
+// buildGeminiAPIKeyRequest prepares a streaming model request with the stored
+// API key.
+// Blank keys return an error. Missing base_url uses AI Studio, the selected base
+// passes ValidateURL, and a nonblank executor UserAgent overrides request defaults.
 func (s *GeminiProviderTest) buildGeminiAPIKeyRequest(ctx context.Context, value *providercore.Record, modelID string, payload []byte) (*http.Request, error) {
 	apiKey := value.GetCredential("api_key")
 	if strings.TrimSpace(apiKey) == "" {
@@ -124,7 +158,11 @@ func (s *GeminiProviderTest) buildGeminiAPIKeyRequest(ctx context.Context, value
 	return req, nil
 }
 
-// buildGeminiOAuthRequest selects Code Assist when project_id is present and AI Studio otherwise.
+// buildGeminiOAuthRequest prepares OAuth streaming through Code Assist or AI
+// Studio.
+// Tokens is required and its acquisition errors are returned. A nonblank stored
+// project selects the Code Assist envelope; otherwise the configured or default
+// AI Studio base is validated and receives the unwrapped payload.
 func (s *GeminiProviderTest) buildGeminiOAuthRequest(ctx context.Context, value *providercore.Record, modelID string, payload []byte) (*http.Request, error) {
 	if s.Tokens == nil {
 		return nil, fmt.Errorf("gemini token provider not configured")
@@ -163,6 +201,11 @@ func (s *GeminiProviderTest) buildGeminiOAuthRequest(ctx context.Context, value 
 	return s.buildCodeAssistRequest(ctx, accessToken, projectID, modelID, payload)
 }
 
+// buildGeminiServiceAccountRequest prepares an authenticated streaming Vertex
+// model action.
+// Tokens is required; acquisition and URL-building errors are returned. The
+// record supplies project and model-dependent location selection, and the returned
+// request carries the token as Bearer authorization.
 func (s *GeminiProviderTest) buildGeminiServiceAccountRequest(ctx context.Context, value *providercore.Record, modelID string, payload []byte) (*http.Request, error) {
 	if s.Tokens == nil {
 		return nil, fmt.Errorf("gemini token provider not configured")
@@ -185,7 +228,11 @@ func (s *GeminiProviderTest) buildGeminiServiceAccountRequest(ctx context.Contex
 	return req, nil
 }
 
-// buildCodeAssistRequest wraps the payload with the model and project and adds Code Assist headers.
+// buildCodeAssistRequest wraps valid JSON payload fields with project and
+// model identity.
+// The payload must decode as an object or null before construction. The fixed
+// Code Assist base passes ValidateURL, and an executor UserAgent can override
+// the platform CLI header on the returned streaming request.
 func (s *GeminiProviderTest) buildCodeAssistRequest(ctx context.Context, accessToken, projectID, modelID string, payload []byte) (*http.Request, error) {
 	var inner map[string]any
 	if err := json.Unmarshal(payload, &inner); err != nil {
@@ -197,6 +244,9 @@ func (s *GeminiProviderTest) buildCodeAssistRequest(ctx context.Context, accessT
 		"project": projectID,
 		"request": inner,
 	}
+	// Decoding supplied only JSON-compatible values, and the wrapper adds strings.
+	// Re-encoding that shape cannot introduce unsupported values or cycles
+	// from caller objects.
 	wrappedBytes, _ := json.Marshal(wrapped)
 
 	normalizedBaseURL, err := s.ValidateURL(geminicli.GeminiCliBaseURL)
@@ -218,12 +268,20 @@ func (s *GeminiProviderTest) buildCodeAssistRequest(ctx context.Context, accessT
 	return req, nil
 }
 
-// geminiTestPayload builds a text or image probe.
-// An explicit test type takes precedence over model-name detection.
+// geminiTestPayload builds JSON for a selected text or image probe.
+// An explicit test type wins over model-name image detection. Blank prompts use
+// route-specific defaults; image payloads request text and image modalities with
+// a square aspect ratio, while text payloads include the helper system instruction.
 func geminiTestPayload(modelID string, prompt string, testTypes ...string) []byte {
+	// Both payload variants contain fixed JSON-compatible containers and
+	// scalar values.
+	// Their ignored marshal errors are limited to these constructed test shapes.
 	testType, explicitTestType := providercore.ProviderTestTypeFromArgs(testTypes...)
 	useImageTest := (explicitTestType && testType == providercore.ProviderTestTypeImage) ||
 		(!explicitTestType && antigravity.IsImageGenerationModel(modelID))
+	// Explicit type selection can exercise image endpoints with a text model
+	// spelling;
+	// name detection supports older callers that supplied no separate test type.
 	if useImageTest {
 		imagePrompt := strings.TrimSpace(prompt)
 		if imagePrompt == "" {
@@ -274,12 +332,19 @@ func geminiTestPayload(modelID string, prompt string, testTypes ...string) []byt
 	return bytes
 }
 
+// applyUserAgent sets a trimmed executor override when one is supplied.
+// A blank override retains the route's existing header. Callers pass a nonnil
+// request after constructing its route defaults and authentication headers.
 func (s *GeminiProviderTest) applyUserAgent(req *http.Request) {
 	if userAgent := strings.TrimSpace(s.UserAgent); userAgent != "" {
 		req.Header.Set("User-Agent", userAgent)
 	}
 }
 
+// resolveTLSProfile resolves the provider's fingerprint selection through Profiles.
+// A nil Profiles service returns nil, allowing the transport's own default
+// behavior. With a service configured, the caller supplies a nonnil provider
+// record.
 func (s *GeminiProviderTest) resolveTLSProfile(value *providercore.Record) *tlsfingerprint.Profile {
 	if s.Profiles == nil {
 		return nil

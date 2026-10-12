@@ -25,8 +25,9 @@ import (
 type RefreshLoop struct {
 	// mu protects started and stopped so a concurrent stop or repeated start
 	// cannot launch another loop. Both flags remain set once their event occurs.
-	mu               sync.Mutex // start and stop synchronization
-	started, stopped bool       // loop launch and shutdown flags
+	mu sync.Mutex // start and stop synchronization
+	// started: accepted first startup; stopped: permanently closed loop admission.
+	started, stopped bool
 	// sequential maintenance cycle callback
 	cycle    func(context.Context)
 	activity operationActivity // registered loop cancellation and join

@@ -32,7 +32,9 @@ type AttributeQuery struct {
 	// Provider uses an exact service identity, and Capability requires a known
 	// true flag from Supports. Empty strings leave their corresponding filters
 	// unrestricted; supplied filters are combined for each catalog row.
-	Search, Provider, Capability string // text, provider, and capability filters
+	// Search: model/display-name substring; Provider: exact service identity;
+	// Capability: required true capability name.
+	Search, Provider, Capability string
 	// Offset and Limit select a page after filtering. Negative offsets act as
 	// zero, and nonpositive limits include every match from the selected offset.
 	Offset, Limit int // zero based offset and maximum item count

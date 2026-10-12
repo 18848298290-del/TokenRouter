@@ -10,12 +10,25 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/qoder"
 )
 
-// QoderTransport sends upstream requests; the provider core owns caches and authorization state.
+// Qoder token exchange and inference requests use the provider's loaded proxy
+// and selected TLS profile. The request doer resolves those choices once when
+// bound, then forwards each request through the shared transport with the
+// provider's current ID and concurrency value.
+
+// QoderTransport sends a request using the supplied proxy and TLS fingerprint
+// profile.
 type QoderTransport interface {
+	// DoWithTLS sends the prepared request through the selected provider transport.
+	// The caller supplies proxy and profile choices and consumes or closes the
+	// returned response body; transport failures return an error.
 	DoWithTLS(*http.Request, string, int64, int, *tlsfingerprint.Profile) (*http.Response, error)
 }
 
-// QoderRequestDoer binds proxy and TLS selection to a request using the shared client pool.
+// QoderRequestDoer captures proxy and TLS selection for a provider's upstream
+// requests.
+// Nil transport or record returns nil, allowing upstream clients to use their
+// own default doer. Proxy and profile are captured at binding; provider ID and
+// concurrency are read from the borrowed record when the callback runs.
 func QoderRequestDoer(value *provider.Record, transport QoderTransport, profiles *egressprovider.TLSProfiles) qoder.RequestDoer {
 	if transport == nil || value == nil {
 		return nil

@@ -32,10 +32,11 @@ type importRefreshStore struct {
 	// mu protects current, reads, writes and failure during store calls; fixture
 	// callbacks take the same lock when replacing authentication state during
 	// exchange.
-	mu            sync.Mutex // fixture provider synchronization
-	current       *Record    // current fixture provider row
-	reads, writes int        // observed reads and applied writes
-	failure       error      // injected conditional write failure
+	mu      sync.Mutex // fixture provider synchronization
+	current *Record    // current fixture provider row
+	// reads: attempted fixture row lookups; writes: matched credential replacements.
+	reads, writes int
+	failure       error // injected conditional write failure
 }
 
 // GetByID counts a read and returns a snapshot of the current fixture row under

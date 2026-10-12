@@ -13,9 +13,8 @@ import (
 // exhaust retries, or commit credentials before cleanup reaches a deadline.
 // Those outcomes need different health and accounting decisions: a reported
 // successful rotation stays successful when only its inner deadline expires,
-// individual credential rejection does not
-// establish a shared platform fault, and uncertain platform state stops the
-// cycle.
+// individual credential rejection does not establish a shared platform fault,
+// and uncertain platform state stops the cycle.
 //
 // Capacity admission precedes the attempt context, while rate admission happens
 // at the actual exchange after coordinated locking and rereading. The attempted
@@ -76,9 +75,16 @@ type RefreshAttempts struct {
 	AttemptTimeout time.Duration
 	// direct version and cooldown clock
 	Now func() time.Time
-	// reached attempt outcome loggers
+	// Info reports identity-conflict skips and accepted cooldown writes. Warn reports
+	// retry attempts, exhaustion and cache/deadline-write failures. Error reports
+	// permanent health-write failures. Run invokes the reached callbacks directly;
+	// callers supply each callback needed by their selected result path.
 	Info, Warn, Error func(string, ...any)
-	// reached failure classification callbacks
+	// NonRetryable identifies an individual credential rejection that enters permanent
+	// health handling. SharedProviderError identifies shared platform configuration
+	// failure that returns ProviderConfigurationRefreshError before individual health writes.
+	// Run requires both on reached ordinary error paths and checks SharedProviderError
+	// before NonRetryable so shared configuration cannot be attributed to one provider.
 	NonRetryable, SharedProviderError func(error) bool
 	// reached Grok entitlement classifier
 	AmbiguousEntitlement func(*Record, error) bool

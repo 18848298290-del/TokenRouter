@@ -36,8 +36,13 @@ type RefreshScanOptions struct {
 	PageSize int           // repository candidate page limit
 	// Platforms is borrowed through repository paging; callers keep its entries
 	// stable for the scan so every page uses the same registered candidates.
-	Platforms                []string
-	Debug, Info, Warn, Error func(string, ...any) // optional scan outcome loggers
+	Platforms []string
+	// Debug reports a cycle with no needed refresh or failure. Info reports other
+	// cycle totals. Warn reports cancellation before another page, and Error reports
+	// missing configuration, repository reads and invalid page data. Run replaces
+	// each nil callback with a no-op before scanning, allowing these independent
+	// observation levels to be omitted together or separately.
+	Debug, Info, Warn, Error func(string, ...any)
 }
 
 // RefreshCandidateScan retains the last completed cursor position between

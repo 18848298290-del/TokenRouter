@@ -16,7 +16,8 @@ import (
 // flags must match each model, while unregistered suffixes return nil.
 func TestMediaForModelRegisteredParameters(t *testing.T) {
 	for _, tc := range []struct {
-		platform, model string   // platform and exact model identity
+		// platform: lookup service identity; model: complete registered media model ID.
+		platform, model string
 		sizes           []string // expected supported image sizes
 		references      int      // expected reference image limit
 	}{

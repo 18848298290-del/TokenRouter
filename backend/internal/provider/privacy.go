@@ -65,10 +65,12 @@ type PrivacyOptions struct {
 	// AdminObserve receives formatted administrative write failures. The constructor
 	// substitutes a no-op when omitted; OpenAI ensure does not report writes here.
 	AdminObserve func(string, ...any)
-	// Warn and Info observe background refresh failures and successes, while Warn
-	// also reports unavailable proxy lookups. The constructor fills each missing
-	// callback with a no-op so those maintenance paths can invoke them directly.
-	Warn, Info func(string, ...any) // maintenance event logging callbacks
+	// Warn reports background write failures and unavailable selected proxy lookups.
+	// Info reports accepted background privacy writes with their observed mode.
+	// Warn and Info share the constructor default: each nil callback becomes a
+	// no-op before maintenance uses either callback, so missing logging does not
+	// prevent the selected privacy operation from proceeding.
+	Warn, Info func(string, ...any)
 }
 
 // PrivacyService coordinates identity-checked privacy writes and cancellation

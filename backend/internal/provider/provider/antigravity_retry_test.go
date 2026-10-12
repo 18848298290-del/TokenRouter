@@ -20,84 +20,148 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/antigravity"
 )
 
-// epFixedUpstream returns a fixed response for every request.
+// Antigravity model windows, credit exhaustion and provider error policies can
+// send the same HTTP failure down different retry paths. These cases bind the
+// provider adapter to the upstream loop and inspect selected request bodies,
+// model keys and sticky callbacks. Single-provider mode and shared capacity
+// have separate recovery rules. Endpoint overrides require serial tests and
+// restoration of both global URL selectors.
+//
+// The response transport pairs configured responses with errors by index and
+// captures request bodies before replaying fresh response readers. Its shallow
+// copies retain shared headers, while health fixtures record only the methods
+// each case asserts. Empty exchanges in several network-named cases contain
+// neither a response nor an error; successful adapter-level cases and fixed
+// wait constants do not establish full network timing guarantees.
+
+// epFixedUpstream counts serial exchanges and returns a fixed response.
 type epFixedUpstream struct {
-	statusCode int
-	body       string
-	calls      int
+	statusCode int    // Status for every exchange.
+	body       string // Response bytes for every exchange.
+	calls      int    // Serial transport invocation count.
 }
 
-// epProviderRepo records SetTempUnschedulable / SetError calls.
+// epProviderRepo separates provider-wide health counts from accepted model writes.
 type epProviderRepo struct {
+	// HealthStore supplies unconfigured methods through a nil embedded interface;
+	// tests must call only the concrete methods implemented by this fixture.
 	acct.HealthStore
-	tempCalls   int
-	setErrCalls int
+	tempCalls   int // Provider-wide temporary write count.
+	setErrCalls int // Generic provider error count.
 }
 
+// epTrackingRepo records generic health writes and their latest provider identities.
 type epTrackingRepo struct {
+	// HealthStore is nil for unsupported operations, which must not be invoked
+	// by these policy cases; concrete fixture methods record the relevant writes.
 	acct.HealthStore
-	rateLimitedCalls int
-	rateLimitedID    int64
-	setErrCalls      int
-	setErrID         int64
-	tempCalls        int
+	rateLimitedCalls int   // Generic rate-limit write count.
+	rateLimitedID    int64 // Latest rate-limited provider identity.
+	setErrCalls      int   // Generic error write count.
+	setErrID         int64 // Latest errored provider identity.
+	tempCalls        int   // Provider-wide temporary write count.
 }
 
-// antigravityFamilyStoreFixture records exact-model and family-window writes.
+// antigravityFamilyStoreFixture records ordered exact-model and family-scope health keys.
 type antigravityFamilyStoreFixture struct {
+	// AntigravityHealthStore leaves unconfigured methods nil; callers must use
+	// the concrete model-window method supplied here rather than other writes.
 	acct.AntigravityHealthStore
-	modelRateLimitCalls []struct{ modelKey string }
-}
-
-// antigravityPolicyStoreFixture records health writes from production policy and error classification.
-type antigravityPolicyStoreFixture struct {
-	acct.HealthStore
-	tempCalls           int
-	modelRateLimitCalls []struct{ scope, modelKey string }
-}
-
-// stubAntigravityUpstream records the endpoint used for each retry.
-type stubAntigravityUpstream struct {
-	firstBase, secondBase string
-	calls                 []string
-}
-
-// recordingOKUpstream counts requests that pass prechecks and returns a fixed success.
-type recordingOKUpstream struct{ calls int }
-
-// stubSmartRetryCache records sticky-session deletions during retries.
-type stubSmartRetryCache struct {
-	session.GatewayCache // Unimplemented methods panic.
-	deleteCalls          []deleteSessionCall
-}
-
-type deleteSessionCall struct {
-	groupID     int64
-	sessionHash string
-}
-
-// mockSmartRetryUpstream replays responses and records retry requests.
-type mockSmartRetryUpstream struct {
-	responses      []*http.Response
-	responseBodies [][]byte // Cached bytes used to rebuild replayed bodies.
-	errors         []error
-	callIdx        int
-	calls          []string
-	userAgents     []string
-	requestBodies  [][]byte
-	repeatLast     bool // Replay the last response after exhausting the list.
-}
-
-type antigravityRetryStoreFixture struct {
-	extraUpdateCalls []map[string]any
-	acct.AntigravityHealthStore
+	// modelRateLimitCalls retains each requested key in invocation order;
+	// provider identities and reset times are deliberately not recorded here.
 	modelRateLimitCalls []struct {
-		providerID int64
-		modelKey   string
-		resetAt    time.Time
+		modelKey string /* Requested model or family key. */
 	}
 }
 
+// antigravityPolicyStoreFixture records policy model scopes and provider temporary writes.
+type antigravityPolicyStoreFixture struct {
+	// HealthStore supplies no default operations through this nil interface;
+	// only the concrete fixture methods may be called during policy evaluation.
+	acct.HealthStore
+	tempCalls int // Provider-wide temporary write count.
+	// modelRateLimitCalls records the key twice so separate scope and model
+	// assertions can observe the same ordered production request.
+	modelRateLimitCalls []struct { /* scope is the recorded health scope key;
+		modelKey is the key inspected by model assertions. Both receive the same
+		argument on each write, with neither value normalized by the fixture. */
+		scope, modelKey string
+	}
+}
+
+// stubAntigravityUpstream records URL selection and distinguishes the first endpoint.
+type stubAntigravityUpstream struct {
+	// firstBase is the URL prefix whose requests receive generic HTTP 429.
+	// secondBase holds the owning test's configured alternative endpoint, but
+	// transport response selection does not read it. All URLs outside firstBase
+	// succeed, so this fixture does not enforce membership in the configured list.
+	firstBase, secondBase string
+	calls                 []string // Request URLs in call order.
+}
+
+// recordingOKUpstream counts serial requests that pass prechecks and returns success.
+type recordingOKUpstream struct {
+	calls int /* Serial transport invocation count. */
+}
+
+// stubSmartRetryCache records only the sticky deletions performed by bound callbacks.
+type stubSmartRetryCache struct {
+	// GatewayCache is nil for all unconfigured cache methods, so callers must
+	// restrict this fixture to its concrete session-provider deletion method.
+	session.GatewayCache
+	deleteCalls []deleteSessionCall // Deletions in callback invocation order.
+}
+
+// deleteSessionCall retains both parts of one sticky-session cache identity.
+type deleteSessionCall struct {
+	groupID     int64  // Group owning the sticky session.
+	sessionHash string // Hash identifying the sticky session.
+}
+
+// mockSmartRetryUpstream captures serial request observations and replays response bodies.
+// A selected response and error occupy matching indexes, including nil responses;
+// replaying a body does not copy headers or other referenced response values.
+type mockSmartRetryUpstream struct {
+	// responses selects each exchange by call index; repeatLast may reuse the
+	// final entry, and a nil entry produces no response for its paired error.
+	responses []*http.Response
+	// responseBodies caches consumed bytes by response index and supplies fresh
+	// readers on later exchanges. Original response readers are closed after capture.
+	responseBodies [][]byte
+	// errors must contain every selected response index, including a repeated
+	// final entry; the transport performs no separate bounds check for this slice.
+	errors     []error
+	callIdx    int      // Next serial exchange index.
+	calls      []string // Request URLs in exchange order.
+	userAgents []string // User agents in exchange order.
+	// requestBodies captures read bytes for every exchange, including partial
+	// reads; a request without a body appends nil instead of skipping its slot.
+	requestBodies [][]byte
+	// repeatLast reuses the final response/error pair after sequence exhaustion;
+	// an empty response list still returns a nil response and nil error.
+	repeatLast bool
+}
+
+// antigravityRetryStoreFixture records ordered model windows and borrowed extra-data maps.
+type antigravityRetryStoreFixture struct {
+	// extraUpdateCalls retains the supplied map references rather than copies;
+	// any later entry mutation is therefore visible to this fixture's assertions.
+	extraUpdateCalls []map[string]any
+	// AntigravityHealthStore leaves unconfigured operations nil; callers must
+	// use only the concrete model-window and extra-data methods implemented here.
+	acct.AntigravityHealthStore
+	// modelRateLimitCalls retains each provider, scope and reset time in the
+	// order supplied; writes succeed without applying windows to a provider row.
+	modelRateLimitCalls []struct {
+		providerID int64     // Provider receiving the model window.
+		modelKey   string    // Requested model or family key.
+		resetAt    time.Time // Reset time supplied by the writer.
+	}
+}
+
+// TestIsCreditsExhausted_UsesAICreditsKey distinguishes missing, active and
+// expired credit-exhaustion markers in provider extra data. Binding exposes
+// availability independently of the ordinary model rate-limit key.
 func TestIsCreditsExhausted_UsesAICreditsKey(t *testing.T) {
 	t.Run("无 AICredits key 则积分可用", func(t *testing.T) {
 		provider := &acct.Record{
@@ -148,6 +212,10 @@ func TestIsCreditsExhausted_UsesAICreditsKey(t *testing.T) {
 	})
 }
 
+// TestHandleSmartRetry_QuotaExhausted_UsesCreditsAndStoresIndependentState
+// retries an overage-enabled quota failure with AI credits. It checks enabled
+// credit types, retained user agent and no ordinary model-limit writes on the
+// returned response path.
 func TestHandleSmartRetry_QuotaExhausted_UsesCreditsAndStoresIndependentState(t *testing.T) {
 	successResp := &http.Response{
 		StatusCode: http.StatusOK,
@@ -211,6 +279,10 @@ func TestHandleSmartRetry_QuotaExhausted_UsesCreditsAndStoresIndependentState(t 
 	require.Empty(t, repo.modelRateLimitCalls, "overages 成功后不应写入普通 model_rate_limits")
 }
 
+// TestHandleSmartRetry_RateLimited_DoesNotUseCredits retries a short
+// RATE_LIMIT_EXCEEDED response through the ordinary request path. The
+// successful request contains no credit selection and produces no health
+// persistence calls.
 func TestHandleSmartRetry_RateLimited_DoesNotUseCredits(t *testing.T) {
 	successResp := &http.Response{
 		StatusCode: http.StatusOK,
@@ -274,9 +346,18 @@ func TestHandleSmartRetry_RateLimited_DoesNotUseCredits(t *testing.T) {
 	require.Empty(t, repo.modelRateLimitCalls)
 }
 
+// TestAntigravityRetryLoop_ModelRateLimited_InjectsCredits starts with an
+// active model window and available overage credits. The outer loop sends one
+// successful request whose body enables AI credits.
 func TestAntigravityRetryLoop_ModelRateLimited_InjectsCredits(t *testing.T) {
+	// Copy the global endpoint slice before replacing it and retain the
+	// current availability tracker; these fixtures share process-wide retry
+	// inputs and run serially.
 	oldBaseURLs := append([]string(nil), antigravity.BaseURLs...)
 	oldAvailability := antigravity.DefaultURLAvailability
+	// Restore both process-wide inputs when this case returns, including the
+	// previous tracker so later tests retain their original availability
+	// state.
 	defer func() {
 		antigravity.BaseURLs = oldBaseURLs
 		antigravity.DefaultURLAvailability = oldAvailability
@@ -337,9 +418,18 @@ func TestAntigravityRetryLoop_ModelRateLimited_InjectsCredits(t *testing.T) {
 	require.Contains(t, string(upstream.requestBodies[0]), "enabledCreditTypes")
 }
 
+// TestAntigravityRetryLoop_CreditsExhausted_DoesNotInject combines an active
+// model window with an active credit-exhaustion marker. The loop returns a
+// provider-switch error instead of bypassing the model window.
 func TestAntigravityRetryLoop_CreditsExhausted_DoesNotInject(t *testing.T) {
+	// Copy the global endpoint slice before replacing it and retain the
+	// current availability tracker; these fixtures share process-wide retry
+	// inputs and run serially.
 	oldBaseURLs := append([]string(nil), antigravity.BaseURLs...)
 	oldAvailability := antigravity.DefaultURLAvailability
+	// Restore both process-wide inputs when this case returns, including the
+	// previous tracker so later tests retain their original availability
+	// state.
 	defer func() {
 		antigravity.BaseURLs = oldBaseURLs
 		antigravity.DefaultURLAvailability = oldAvailability
@@ -390,9 +480,19 @@ func TestAntigravityRetryLoop_CreditsExhausted_DoesNotInject(t *testing.T) {
 	require.ErrorAs(t, err, &switchErr)
 }
 
+// TestAntigravityRetryLoop_CreditErrorMarksExhausted receives a
+// credit-specific HTTP 403 after injecting apparently available credits. It
+// checks a returned retry result and one stored credit-exhaustion key after
+// that configured rejection.
 func TestAntigravityRetryLoop_CreditErrorMarksExhausted(t *testing.T) {
+	// Copy the global endpoint slice before replacing it and retain the
+	// current availability tracker; these fixtures share process-wide retry
+	// inputs and run serially.
 	oldBaseURLs := append([]string(nil), antigravity.BaseURLs...)
 	oldAvailability := antigravity.DefaultURLAvailability
+	// Restore both process-wide inputs when this case returns, including the
+	// previous tracker so later tests retain their original availability
+	// state.
 	defer func() {
 		antigravity.BaseURLs = oldBaseURLs
 		antigravity.DefaultURLAvailability = oldAvailability
@@ -456,15 +556,18 @@ func TestAntigravityRetryLoop_CreditErrorMarksExhausted(t *testing.T) {
 	require.Equal(t, acct.CreditsExhaustedKey, repo.modelRateLimitCalls[0].modelKey)
 }
 
+// TestRetryLoop_ErrorPolicy_CustomErrorCodes compares configured matches and
+// skips for upstream HTTP 429 and 500 responses. Each case checks callback
+// count, upstream attempts and the final response status.
 func TestRetryLoop_ErrorPolicy_CustomErrorCodes(t *testing.T) {
 	tests := []struct {
-		name              string
-		upstreamStatus    int
-		upstreamBody      string
-		customCodes       []any
-		expectHandleError int
-		expectUpstream    int
-		expectStatusCode  int
+		name              string // Subtest case description.
+		upstreamStatus    int    // Configured upstream response status.
+		upstreamBody      string // Configured upstream response bytes.
+		customCodes       []any  // Allowed custom error statuses.
+		expectHandleError int    // Expected error callback count.
+		expectUpstream    int    // Expected transport invocation count.
+		expectStatusCode  int    // Expected returned response status.
 	}{
 		{
 			name:              "429_in_custom_codes_matched",
@@ -539,6 +642,9 @@ func TestRetryLoop_ErrorPolicy_CustomErrorCodes(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, result)
 			require.NotNil(t, result.Resp)
+			// The loop returns a caller-owned response reader; close it after
+			// assertions and discard close errors because this fixture
+			// observes status and callbacks.
 			defer func() { _ = result.Resp.Body.Close() }()
 
 			require.Equal(t, tt.expectStatusCode, result.Resp.StatusCode)
@@ -548,6 +654,10 @@ func TestRetryLoop_ErrorPolicy_CustomErrorCodes(t *testing.T) {
 	}
 }
 
+// TestRetryLoop_ErrorPolicy_TempUnschedulable distinguishes matching
+// overload/rate keywords from an unmatched temporary-unschedulable rule.
+// Matching responses switch providers, while a short context deadline
+// interrupts the default backoff.
 func TestRetryLoop_ErrorPolicy_TempUnschedulable(t *testing.T) {
 	tempRulesProvider := func(rules []any) *acct.Record {
 		return &acct.Record{
@@ -635,7 +745,9 @@ func TestRetryLoop_ErrorPolicy_TempUnschedulable(t *testing.T) {
 
 		provider := tempRulesProvider([]any{overloadedRule})
 
-		// Cancel during backoff to check that the default retry path is entered.
+		// The unmatched temporary rule leaves generic retry backoff active; a
+		// short deadline terminates that path without waiting for the full
+		// outer retry budget.
 		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 		defer cancel()
 
@@ -652,6 +764,9 @@ func TestRetryLoop_ErrorPolicy_TempUnschedulable(t *testing.T) {
 	})
 }
 
+// TestRetryLoop_ErrorPolicy_NilRateLimitService leaves the policy service
+// unset while repeatedly receiving generic HTTP 429 responses. The default
+// backoff remains usable and exits with the context deadline.
 func TestRetryLoop_ErrorPolicy_NilRateLimitService(t *testing.T) {
 	saveAndSetBaseURLs(t)
 
@@ -667,6 +782,8 @@ func TestRetryLoop_ErrorPolicy_NilRateLimitService(t *testing.T) {
 		Concurrency: 1,
 	}
 
+	// Bound the generic backoff with a short deadline so the nil-policy case
+	// observes context termination instead of waiting for all default retries.
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
@@ -674,7 +791,9 @@ func TestRetryLoop_ErrorPolicy_NilRateLimitService(t *testing.T) {
 	})
 	p.Context = ctx
 
-	// Should not panic; enters the default retry path (eventually times out)
+	// The unset policy service leaves the default retry path intact;
+	// cancellation returns its deadline error after at least one upstream
+	// exchange.
 	adapter, input := svc.Bind(p)
 	result, err := adapter.AntigravityRetryLoop(input)
 
@@ -683,6 +802,10 @@ func TestRetryLoop_ErrorPolicy_NilRateLimitService(t *testing.T) {
 	require.GreaterOrEqual(t, upstream.calls, 1)
 }
 
+// TestRetryLoop_ErrorPolicy_NoPolicy_OriginalBehavior supplies a health
+// service without custom error or temporary-unschedulable rules. Generic HTTP
+// 429 exhausts the outer attempt budget before one error callback handles the
+// returned response.
 func TestRetryLoop_ErrorPolicy_NoPolicy_OriginalBehavior(t *testing.T) {
 	saveAndSetBaseURLs(t)
 
@@ -692,7 +815,9 @@ func TestRetryLoop_ErrorPolicy_NoPolicy_OriginalBehavior(t *testing.T) {
 	svc := newAntigravityRetryFixture()
 	svc.Policy = rlSvc
 
-	// Plain OAuth provider with no error policy configured
+	// This active OAuth fixture configures no policy rules; generic HTTP 429
+	// therefore follows the outer retry budget before the final error
+	// callback.
 	provider := &acct.Record{
 		ID:          400,
 		Type:        capability.ProviderTypeOAuth,
@@ -713,6 +838,9 @@ func TestRetryLoop_ErrorPolicy_NoPolicy_OriginalBehavior(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.NotNil(t, result.Resp)
+	// The loop returns a caller-owned response reader; close it after
+	// assertions and discard close errors because this fixture observes status
+	// and callbacks.
 	defer func() { _ = result.Resp.Body.Close() }()
 
 	require.Equal(t, http.StatusTooManyRequests, result.Resp.StatusCode)
@@ -720,6 +848,9 @@ func TestRetryLoop_ErrorPolicy_NoPolicy_OriginalBehavior(t *testing.T) {
 	require.Equal(t, 1, handleErrorCount, "handleError should be called once after retries exhausted")
 }
 
+// TestCustomErrorCode599_SkippedErrors_Return500_NoRateLimit configures only
+// HTTP 599 and submits several other upstream errors. Every skip becomes HTTP
+// 500 after one request, with no generic rate-limit or error writes.
 func TestCustomErrorCode599_SkippedErrors_Return500_NoRateLimit(t *testing.T) {
 	errorCodes := []int{429, 500, 503, 401, 403}
 
@@ -760,6 +891,9 @@ func TestCustomErrorCode599_SkippedErrors_Return500_NoRateLimit(t *testing.T) {
 			require.NoError(t, err, "should not return error")
 			require.NotNil(t, result, "result should not be nil")
 			require.NotNil(t, result.Resp, "response should not be nil")
+			// The loop returns a caller-owned response reader; close it after
+			// assertions and discard close errors because this fixture
+			// observes status and callbacks.
 			defer func() { _ = result.Resp.Body.Close() }()
 
 			// Skipped custom errors are returned as HTTP 500.
@@ -781,6 +915,9 @@ func TestCustomErrorCode599_SkippedErrors_Return500_NoRateLimit(t *testing.T) {
 	}
 }
 
+// TestSetAntigravityModelRateLimits_GeminiWritesFamilyScope applies a reset
+// window to a Gemini model through the health helper. It records the exact
+// model key before the shared Antigravity Gemini-family key.
 func TestSetAntigravityModelRateLimits_GeminiWritesFamilyScope(t *testing.T) {
 	repo := &antigravityFamilyStoreFixture{}
 	svc := &acct.AntigravityHealth{ModelKeys: AntigravityModelLimitKeys, Logf: func(string, ...any) {}}
@@ -804,6 +941,9 @@ func TestSetAntigravityModelRateLimits_GeminiWritesFamilyScope(t *testing.T) {
 	require.Equal(t, "antigravity:gemini", repo.modelRateLimitCalls[1].modelKey)
 }
 
+// TestSetAntigravityModelRateLimits_ClaudeDoesNotWriteGeminiScope applies a
+// reset window to a Claude model through the same health helper. Only the
+// exact Claude key is recorded.
 func TestSetAntigravityModelRateLimits_ClaudeDoesNotWriteGeminiScope(t *testing.T) {
 	repo := &antigravityFamilyStoreFixture{}
 	svc := &acct.AntigravityHealth{ModelKeys: AntigravityModelLimitKeys, Logf: func(string, ...any) {}}
@@ -826,16 +966,19 @@ func TestSetAntigravityModelRateLimits_ClaudeDoesNotWriteGeminiScope(t *testing.
 	require.Equal(t, "claude-sonnet-4-5", repo.modelRateLimitCalls[0].modelKey)
 }
 
+// TestApplyErrorPolicy compares absent rules, custom-code matches/skips and an
+// overload rule mapped to a Claude model. The overload case writes a model
+// scope and switches without a provider-wide temporary write.
 func TestApplyErrorPolicy(t *testing.T) {
 	tests := []struct {
-		name              string
-		provider          *acct.Record
-		statusCode        int
-		body              []byte
-		expectedHandled   bool
-		expectedStatus    int  // expected outStatus
-		expectedSwitchErr bool // expect *AntigravityProviderSwitchError
-		handleErrorCalls  int
+		name              string       // Subtest case description.
+		provider          *acct.Record // Provider carrying policy credentials.
+		statusCode        int          // Upstream status under classification.
+		body              []byte       // Upstream body under classification.
+		expectedHandled   bool         // Expected policy handling decision.
+		expectedStatus    int          // Expected classified output status.
+		expectedSwitchErr bool         // Expected provider-switch error presence.
+		handleErrorCalls  int          // Expected fallback callback count.
 	}{
 		{
 			name: "none_not_handled",
@@ -951,11 +1094,14 @@ func TestApplyErrorPolicy(t *testing.T) {
 	}
 }
 
+// TestApplyErrorPolicy_GeminiRateLimitBypassesCustomSkip submits a Gemini rate
+// limit excluded by the configured custom codes. Model handling still records
+// both scopes and clears the bound sticky session before fallback.
 func TestApplyErrorPolicy_GeminiRateLimitBypassesCustomSkip(t *testing.T) {
 	repo := &antigravityPolicyStoreFixture{}
 	var cleared []struct {
-		groupID     int64
-		sessionHash string
+		groupID     int64  // Group owning the cleared session.
+		sessionHash string // Hash identifying the cleared session.
 	}
 	rlSvc := acct.NewHealthService(repo, nil, acct.HealthOptions{})
 	svc := newAntigravityPolicyFixture(repo, rlSvc)
@@ -983,10 +1129,13 @@ func TestApplyErrorPolicy_GeminiRateLimitBypassesCustomSkip(t *testing.T) {
 		Prefix:     "[test]",
 		Provider:   provider,
 		ModelStore: repo,
+		// Record the bound group and session hash when model handling clears
+		// affinity, so policy ordering is observed independently of any
+		// external cache implementation.
 		ClearSticky: func() {
 			cleared = append(cleared, struct {
-				groupID     int64
-				sessionHash string
+				groupID     int64  // Group owning the cleared session.
+				sessionHash string // Hash identifying the cleared session.
 			}{42, "gemini:sticky"})
 		},
 		HandleError: func(int, http.Header, []byte) {
@@ -1007,11 +1156,24 @@ func TestApplyErrorPolicy_GeminiRateLimitBypassesCustomSkip(t *testing.T) {
 	require.Equal(t, "gemini:sticky", cleared[0].sessionHash)
 }
 
+// TestAntigravityRetryLoop_NoURLFallback_UsesConfiguredBaseURL makes the first
+// configured endpoint fail while other URLs would succeed. Every outer attempt
+// stays on the configured endpoint, and its availability ordering remains
+// unchanged.
 func TestAntigravityRetryLoop_NoURLFallback_UsesConfiguredBaseURL(t *testing.T) {
+	// Clear the forwarding override so endpoint resolution uses this case's
+	// configured base list; testing restores the previous environment value
+	// after the case completes.
 	t.Setenv("GATEWAY_ANTIGRAVITY_FORWARD_BASE_URL", "")
 
+	// Copy the global endpoint slice before replacing it and retain the
+	// current availability tracker; these fixtures share process-wide retry
+	// inputs and run serially.
 	oldBaseURLs := append([]string(nil), antigravity.BaseURLs...)
 	oldAvailability := antigravity.DefaultURLAvailability
+	// Restore both process-wide inputs when this case returns, including the
+	// previous tracker so later tests retain their original availability
+	// state.
 	defer func() {
 		antigravity.BaseURLs = oldBaseURLs
 		antigravity.DefaultURLAvailability = oldAvailability
@@ -1055,6 +1217,9 @@ func TestAntigravityRetryLoop_NoURLFallback_UsesConfiguredBaseURL(t *testing.T) 
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.NotNil(t, result.Resp)
+	// The loop returns a caller-owned response reader; close it after
+	// assertions and discard close errors because this fixture observes status
+	// and callbacks.
 	defer func() { _ = result.Resp.Body.Close() }()
 	require.Equal(t, http.StatusTooManyRequests, result.Resp.StatusCode)
 	require.True(t, handleErrorCalled)
@@ -1068,6 +1233,9 @@ func TestAntigravityRetryLoop_NoURLFallback_UsesConfiguredBaseURL(t *testing.T) 
 	require.Equal(t, base1, available[0])
 }
 
+// TestAntigravityRetryLoop_PreCheck_SwitchesWhenRateLimited starts with a
+// short active Claude model window and a sticky session. Prechecking switches
+// providers with the expected identity and model before any upstream request.
 func TestAntigravityRetryLoop_PreCheck_SwitchesWhenRateLimited(t *testing.T) {
 	upstream := &recordingOKUpstream{}
 	provider := &acct.Record{
@@ -1113,6 +1281,9 @@ func TestAntigravityRetryLoop_PreCheck_SwitchesWhenRateLimited(t *testing.T) {
 	require.Equal(t, 0, upstream.calls, "should not call upstream when switching on pre-check")
 }
 
+// TestAntigravityRetryLoop_PreCheck_SwitchesWhenRemainingLong starts with a
+// longer active Claude model window and a sticky session. The same precheck
+// returns a provider switch without sending an upstream request.
 func TestAntigravityRetryLoop_PreCheck_SwitchesWhenRemainingLong(t *testing.T) {
 	upstream := &recordingOKUpstream{}
 	provider := &acct.Record{
@@ -1158,6 +1329,9 @@ func TestAntigravityRetryLoop_PreCheck_SwitchesWhenRemainingLong(t *testing.T) {
 	require.Equal(t, 0, upstream.calls, "should not call upstream when switching on pre-check")
 }
 
+// TestSingleProviderRetryConstants fixes the in-place attempt count and
+// maximum individual and accumulated retry waits. These constant assertions
+// describe wait budgets without measuring a complete request's elapsed time.
 func TestSingleProviderRetryConstants(t *testing.T) {
 	require.Equal(t, 3, antigravity.AntigravitySingleProviderSmartRetryMaxAttempts,
 		"单提供商原地重试最多 3 次")
@@ -1167,8 +1341,10 @@ func TestSingleProviderRetryConstants(t *testing.T) {
 		"总累计等待不超过 30s")
 }
 
-// TestHandleSmartRetry_503_LongDelay_SingleProviderRetry_RetryInPlace checks capacity retries with one
-// provider.
+// TestHandleSmartRetry_503_LongDelay_SingleProviderRetry_RetryInPlace enables
+// single-provider mode for a capacity-exhaustion response advertising a long
+// delay. A successful retry returns HTTP 200 without switching or writing
+// model limits.
 func TestHandleSmartRetry_503_LongDelay_SingleProviderRetry_RetryInPlace(t *testing.T) {
 	successResp := &http.Response{
 		StatusCode: http.StatusOK,
@@ -1242,8 +1418,9 @@ func TestHandleSmartRetry_503_LongDelay_SingleProviderRetry_RetryInPlace(t *test
 	require.GreaterOrEqual(t, len(upstream.calls), 1, "should have made at least one retry call")
 }
 
-// TestHandleSmartRetry_503_LongDelay_NoSingleProviderRetry_StillSwitches checks model limits with
-// multiple providers.
+// TestHandleSmartRetry_503_LongDelay_NoSingleProviderRetry_StillSwitches uses
+// a long RATE_LIMIT_EXCEEDED delay without the single-provider flag. Handling
+// switches providers and records the exact Gemini model and its family window.
 func TestHandleSmartRetry_503_LongDelay_NoSingleProviderRetry_StillSwitches(t *testing.T) {
 	repo := &antigravityRetryStoreFixture{}
 	provider := &acct.Record{
@@ -1299,8 +1476,9 @@ func TestHandleSmartRetry_503_LongDelay_NoSingleProviderRetry_StillSwitches(t *t
 	require.Equal(t, "antigravity:gemini", repo.modelRateLimitCalls[1].modelKey)
 }
 
-// TestHandleSmartRetry_429_LongDelay_SingleProviderRetry_StillSwitches checks that the single-provider
-// exception applies to 503 responses.
+// TestHandleSmartRetry_429_LongDelay_SingleProviderRetry_StillSwitches enables
+// single-provider mode but receives a long HTTP 429 model limit. The HTTP 503
+// exception does not apply, so handling switches and records the model.
 func TestHandleSmartRetry_429_LongDelay_SingleProviderRetry_StillSwitches(t *testing.T) {
 	repo := &antigravityRetryStoreFixture{}
 	provider := &acct.Record{
@@ -1351,9 +1529,10 @@ func TestHandleSmartRetry_429_LongDelay_SingleProviderRetry_StillSwitches(t *tes
 		"429 should still set model rate limit even with SingleProviderRetry")
 }
 
-// TestHandleSmartRetry_503_ShortDelay_SingleProviderRetry_NoRateLimit returns 503 after retry
-// exhaustion without cooling the model.
-// RATE_LIMIT_EXCEEDED takes the one-retry path.
+// TestHandleSmartRetry_503_ShortDelay_SingleProviderRetry_NoRateLimit exhausts
+// the ordinary short-delay retry for RATE_LIMIT_EXCEEDED in single-provider
+// mode. It returns the remaining HTTP 503 response without switching or
+// writing model windows.
 func TestHandleSmartRetry_503_ShortDelay_SingleProviderRetry_NoRateLimit(t *testing.T) {
 	failRespBody := `{
 		"error": {
@@ -1431,9 +1610,10 @@ func TestHandleSmartRetry_503_ShortDelay_SingleProviderRetry_NoRateLimit(t *test
 		"should NOT set model rate limit for 503 in single provider mode")
 }
 
-// TestHandleSmartRetry_503_ShortDelay_NoSingleProviderRetry_SetsRateLimit records model limits after
-// retry exhaustion.
-// RATE_LIMIT_EXCEEDED uses the rate-limit retry budget; capacity exhaustion has a separate budget.
+// TestHandleSmartRetry_503_ShortDelay_NoSingleProviderRetry_SetsRateLimit
+// exhausts the same short RATE_LIMIT_EXCEEDED retry without single-provider
+// mode. Failure switches providers and records both the Gemini model and
+// family scopes.
 func TestHandleSmartRetry_503_ShortDelay_NoSingleProviderRetry_SetsRateLimit(t *testing.T) {
 	failRespBody := `{
 		"error": {
@@ -1509,6 +1689,9 @@ func TestHandleSmartRetry_503_ShortDelay_NoSingleProviderRetry_SetsRateLimit(t *
 	require.Equal(t, "antigravity:gemini", repo.modelRateLimitCalls[1].modelKey)
 }
 
+// TestHandleSingleProviderRetryInPlace_Success supplies one successful
+// exchange after an initial HTTP 503 response. The direct in-place helper
+// returns HTTP 200 with neither a switch nor a terminal error.
 func TestHandleSingleProviderRetryInPlace_Success(t *testing.T) {
 	successResp := &http.Response{
 		StatusCode: http.StatusOK,
@@ -1557,7 +1740,9 @@ func TestHandleSingleProviderRetryInPlace_Success(t *testing.T) {
 	require.Nil(t, result.Err)
 }
 
-// TestHandleSingleProviderRetryInPlace_AllRetriesFail returns the final 503 for the caller to handle.
+// TestHandleSingleProviderRetryInPlace_AllRetriesFail supplies HTTP 503 for
+// every permitted in-place attempt. It checks a failed HTTP 503 response after
+// the maximum attempt count, with no provider switch or terminal error.
 func TestHandleSingleProviderRetryInPlace_AllRetriesFail(t *testing.T) {
 	var responses []*http.Response
 	var errors []error
@@ -1624,7 +1809,9 @@ func TestHandleSingleProviderRetryInPlace_AllRetriesFail(t *testing.T) {
 		"should have made exactly maxAttempts retry calls")
 }
 
-// TestHandleSingleProviderRetryInPlace_WaitDurationClamped checks that a zero delay can complete a retry.
+// TestHandleSingleProviderRetryInPlace_WaitDurationClamped passes a zero wait
+// and then supplies a successful response. It checks successful completion
+// without measuring the helper's minimum wait or elapsed duration.
 func TestHandleSingleProviderRetryInPlace_WaitDurationClamped(t *testing.T) {
 	successResp := &http.Response{
 		StatusCode: http.StatusOK,
@@ -1663,7 +1850,8 @@ func TestHandleSingleProviderRetryInPlace_WaitDurationClamped(t *testing.T) {
 
 	svc := newAntigravityRetryFixture()
 
-	// A zero delay is raised to the minimum retry wait.
+	// The implementation raises zero to its minimum wait, but these assertions
+	// check successful completion only and do not measure that wait.
 	adapter, input := svc.Bind(params)
 	result := adapter.HandleSingleProviderRetryInPlace(input, resp, nil, "https://ag-1.test", 0, "gemini-3-pro")
 	require.NotNil(t, result)
@@ -1672,6 +1860,9 @@ func TestHandleSingleProviderRetryInPlace_WaitDurationClamped(t *testing.T) {
 	require.Equal(t, http.StatusOK, result.Resp.StatusCode)
 }
 
+// TestHandleSingleProviderRetryInPlace_ContextCanceled cancels the request
+// context before entering the direct retry helper. Waiting exits with a
+// terminal error before the transport records any request.
 func TestHandleSingleProviderRetryInPlace_ContextCanceled(t *testing.T) {
 	upstream := &mockSmartRetryUpstream{
 		responses: []*http.Response{nil},
@@ -1693,6 +1884,9 @@ func TestHandleSingleProviderRetryInPlace_ContextCanceled(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// Cancel before entering retry handling so the context-aware wait returns
+	// a terminal error before sending any subsequent exchange or persisting a
+	// model window.
 	cancel()
 
 	params := AntigravityRetryRequest{
@@ -1717,6 +1911,9 @@ func TestHandleSingleProviderRetryInPlace_ContextCanceled(t *testing.T) {
 	require.Len(t, upstream.calls, 0, "should not call upstream when context is canceled")
 }
 
+// TestHandleSingleProviderRetryInPlace_NetworkError_ContinuesRetry supplies a
+// nil response and nil error before a successful exchange. The empty exchange
+// consumes one attempt, and the second request succeeds.
 func TestHandleSingleProviderRetryInPlace_NetworkError_ContinuesRetry(t *testing.T) {
 	successResp := &http.Response{
 		StatusCode: http.StatusOK,
@@ -1724,7 +1921,9 @@ func TestHandleSingleProviderRetryInPlace_NetworkError_ContinuesRetry(t *testing
 		Body:       io.NopCloser(strings.NewReader(`{"result":"ok"}`)),
 	}
 	upstream := &mockSmartRetryUpstream{
-		// A nil response exercises the failed-exchange path before the successful retry.
+		// Both response and error are nil for this configured slot; it
+		// consumes a failed-exchange attempt before the second slot supplies
+		// success.
 		responses: []*http.Response{nil, successResp},
 		errors:    []error{nil, nil},
 	}
@@ -1765,8 +1964,10 @@ func TestHandleSingleProviderRetryInPlace_NetworkError_ContinuesRetry(t *testing
 	require.Len(t, upstream.calls, 2, "first call fails (network error), second succeeds")
 }
 
-// TestAntigravityRetryLoop_PreCheck_SingleProviderRetry_SkipsRateLimit checks the single-provider
-// precheck exception.
+// TestAntigravityRetryLoop_PreCheck_SingleProviderRetry_SkipsRateLimit enables
+// single-provider mode while a model window remains active. The precheck
+// permits one successful upstream request instead of returning a provider
+// switch.
 func TestAntigravityRetryLoop_PreCheck_SingleProviderRetry_SkipsRateLimit(t *testing.T) {
 	upstream := &recordingOKUpstream{}
 	provider := &acct.Record{
@@ -1810,8 +2011,9 @@ func TestAntigravityRetryLoop_PreCheck_SingleProviderRetry_SkipsRateLimit(t *tes
 	require.Equal(t, 1, upstream.calls, "should have reached upstream despite rate limit")
 }
 
-// TestAntigravityRetryLoop_PreCheck_NoSingleProviderRetry_SwitchesOnRateLimit rejects a limited model
-// before sending a request.
+// TestAntigravityRetryLoop_PreCheck_NoSingleProviderRetry_SwitchesOnRateLimit
+// leaves single-provider mode disabled with the same active model window. The
+// outer loop switches before the transport records any request.
 func TestAntigravityRetryLoop_PreCheck_NoSingleProviderRetry_SwitchesOnRateLimit(t *testing.T) {
 	upstream := &recordingOKUpstream{}
 	provider := &acct.Record{
@@ -1859,7 +2061,9 @@ func TestAntigravityRetryLoop_PreCheck_NoSingleProviderRetry_SwitchesOnRateLimit
 	require.Equal(t, 0, upstream.calls, "upstream should NOT be called when pre-check blocks")
 }
 
-// TestHandleSmartRetry_503_SingleProvider_RetryInPlace_ThenSuccess_E2E succeeds on the second retry.
+// TestHandleSmartRetry_503_SingleProvider_RetryInPlace_ThenSuccess_E2E calls
+// the in-place helper directly with a failed exchange followed by success. Two
+// requests produce HTTP 200 without a provider switch.
 func TestHandleSmartRetry_503_SingleProvider_RetryInPlace_ThenSuccess_E2E(t *testing.T) {
 	fail503Body := `{
 		"error": {
@@ -1924,8 +2128,9 @@ func TestHandleSmartRetry_503_SingleProvider_RetryInPlace_ThenSuccess_E2E(t *tes
 	require.Len(t, upstream.calls, 2, "first 503, second OK")
 }
 
-// TestAntigravityRetryLoop_503_SingleProvider_InPlaceRetryUsed_E2E exercises the outer loop through
-// in-place recovery.
+// TestAntigravityRetryLoop_503_SingleProvider_InPlaceRetryUsed_E2E sends the
+// outer loop through an initial capacity failure and successful in-place
+// recovery. The returned HTTP 200 requires no model-limit persistence.
 func TestAntigravityRetryLoop_503_SingleProvider_InPlaceRetryUsed_E2E(t *testing.T) {
 	initial503Body := []byte(`{
 		"error": {
@@ -1993,6 +2198,9 @@ func TestAntigravityRetryLoop_503_SingleProvider_InPlaceRetryUsed_E2E(t *testing
 		"should NOT set model rate limit in single provider retry mode")
 }
 
+// TestHandleSmartRetry_URLLevelRateLimit submits generic resource exhaustion
+// while another URL remains in the attempt input. Handling requests URL
+// continuation without a response, provider switch or terminal error.
 func TestHandleSmartRetry_URLLevelRateLimit(t *testing.T) {
 	provider := &acct.Record{
 		ID:       1,
@@ -2032,6 +2240,9 @@ func TestHandleSmartRetry_URLLevelRateLimit(t *testing.T) {
 	require.Nil(t, result.SwitchError)
 }
 
+// TestHandleSmartRetry_LongDelay_ReturnsSwitchError submits a model retry
+// delay above the short-retry threshold for a sticky provider. The result
+// records the model window and carries the provider, model and sticky flag.
 func TestHandleSmartRetry_LongDelay_ReturnsSwitchError(t *testing.T) {
 	repo := &antigravityRetryStoreFixture{}
 	provider := &acct.Record{
@@ -2089,6 +2300,9 @@ func TestHandleSmartRetry_LongDelay_ReturnsSwitchError(t *testing.T) {
 	require.Equal(t, "claude-sonnet-4-5", repo.modelRateLimitCalls[0].modelKey)
 }
 
+// TestHandleSmartRetry_ShortDelay_SmartRetrySuccess supplies a successful
+// exchange after a sub-threshold model delay. One retry forwards the user
+// agent and returns HTTP 200 without switching or a terminal error.
 func TestHandleSmartRetry_ShortDelay_SmartRetrySuccess(t *testing.T) {
 	successResp := &http.Response{
 		StatusCode: http.StatusOK,
@@ -2154,6 +2368,9 @@ func TestHandleSmartRetry_ShortDelay_SmartRetrySuccess(t *testing.T) {
 	require.Equal(t, "probe-client/9.9", upstream.userAgents[0])
 }
 
+// TestHandleSmartRetry_ShortDelay_SmartRetryFailed_ReturnsSwitchError supplies
+// another HTTP 429 after the single permitted short-delay retry. Failure
+// records both Gemini scopes and returns a non-sticky provider switch.
 func TestHandleSmartRetry_ShortDelay_SmartRetryFailed_ReturnsSwitchError(t *testing.T) {
 	// One failed response exhausts the rate-limit retry budget.
 	failRespBody := `{
@@ -2237,6 +2454,9 @@ func TestHandleSmartRetry_ShortDelay_SmartRetryFailed_ReturnsSwitchError(t *test
 	require.Len(t, upstream.calls, 1, "should have made one retry call (max attempts)")
 }
 
+// TestHandleSmartRetry_503_ModelCapacityExhausted_RetrySuccess advertises a
+// 39-second delay for capacity exhaustion and then succeeds. Capacity handling
+// uses its separate retry path without recording a model limit or switching.
 func TestHandleSmartRetry_503_ModelCapacityExhausted_RetrySuccess(t *testing.T) {
 	repo := &antigravityRetryStoreFixture{}
 	provider := &acct.Record{
@@ -2304,6 +2524,9 @@ func TestHandleSmartRetry_503_ModelCapacityExhausted_RetrySuccess(t *testing.T) 
 	require.Len(t, upstream.calls, 1, "should have made one retry call before success")
 }
 
+// TestHandleSmartRetry_503_ModelCapacityExhausted_ContextCancel cancels before
+// the capacity retry wait can complete. The result carries a terminal error
+// with no provider switch or model-limit persistence.
 func TestHandleSmartRetry_503_ModelCapacityExhausted_ContextCancel(t *testing.T) {
 	repo := &antigravityRetryStoreFixture{}
 	provider := &acct.Record{
@@ -2330,6 +2553,9 @@ func TestHandleSmartRetry_503_ModelCapacityExhausted_ContextCancel(t *testing.T)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	// Cancel before entering retry handling so the context-aware wait returns
+	// a terminal error before sending any subsequent exchange or persisting a
+	// model window.
 	cancel()
 
 	params := AntigravityRetryRequest{
@@ -2355,6 +2581,10 @@ func TestHandleSmartRetry_503_ModelCapacityExhausted_ContextCancel(t *testing.T)
 	require.Empty(t, repo.modelRateLimitCalls, "should not set model rate limit on context cancel")
 }
 
+// TestHandleSmartRetry_NonAntigravityProvider_ContinuesDefaultLogic pairs
+// Antigravity-shaped rate-limit details with an Anthropic provider. Platform
+// handling declines the response and leaves default retry processing to its
+// caller.
 func TestHandleSmartRetry_NonAntigravityProvider_ContinuesDefaultLogic(t *testing.T) {
 	provider := &acct.Record{
 		ID:       4,
@@ -2403,6 +2633,9 @@ func TestHandleSmartRetry_NonAntigravityProvider_ContinuesDefaultLogic(t *testin
 	require.Nil(t, result.SwitchError)
 }
 
+// TestHandleSmartRetry_NonModelRateLimit_ContinuesDefaultLogic submits HTTP
+// 429 with RetryInfo but no recognized model-limit or capacity reason.
+// Handling continues without returning a response, switch or terminal error.
 func TestHandleSmartRetry_NonModelRateLimit_ContinuesDefaultLogic(t *testing.T) {
 	provider := &acct.Record{
 		ID:       5,
@@ -2451,6 +2684,9 @@ func TestHandleSmartRetry_NonModelRateLimit_ContinuesDefaultLogic(t *testing.T) 
 	require.Nil(t, result.SwitchError)
 }
 
+// TestHandleSmartRetry_ExactlyAtThreshold_ReturnsSwitchError supplies the
+// seven-second boundary as the parsed model delay. The boundary takes the
+// provider-switch path and retains the Gemini model identity.
 func TestHandleSmartRetry_ExactlyAtThreshold_ReturnsSwitchError(t *testing.T) {
 	repo := &antigravityRetryStoreFixture{}
 	provider := &acct.Record{
@@ -2501,6 +2737,9 @@ func TestHandleSmartRetry_ExactlyAtThreshold_ReturnsSwitchError(t *testing.T) {
 	require.Equal(t, "gemini-pro", result.SwitchError.RateLimitedModel)
 }
 
+// TestAntigravityRetryLoop_HandleSmartRetry_SwitchError_Propagates sends the
+// outer loop a long model rate limit for a sticky provider. It returns no
+// response and preserves the switch error's provider, model and sticky flag.
 func TestAntigravityRetryLoop_HandleSmartRetry_SwitchError_Propagates(t *testing.T) {
 	respBody := []byte(`{
 		"error": {
@@ -2560,8 +2799,12 @@ func TestAntigravityRetryLoop_HandleSmartRetry_SwitchError_Propagates(t *testing
 	require.True(t, switchErr.IsStickySession)
 }
 
+// TestHandleSmartRetry_NetworkError_ExhaustsRetry supplies a nil response and
+// nil error for the one permitted short-delay exchange. The exhausted path
+// records the Claude model limit and requests a provider switch.
 func TestHandleSmartRetry_NetworkError_ExhaustsRetry(t *testing.T) {
-	// A nil response exhausts the single retry as a failed exchange.
+	// The transport supplies nil response and nil error for its only slot; the
+	// empty exchange exhausts the ordinary one-attempt retry budget.
 	upstream := &mockSmartRetryUpstream{
 		responses: []*http.Response{nil},
 		errors:    []error{nil},
@@ -2623,6 +2866,10 @@ func TestHandleSmartRetry_NetworkError_ExhaustsRetry(t *testing.T) {
 	require.Equal(t, "claude-sonnet-4-5", repo.modelRateLimitCalls[0].modelKey)
 }
 
+// TestHandleSmartRetry_NoRetryDelay_UsesDefaultRateLimit omits RetryInfo from
+// a recognized model rate-limit response. Handling switches the sticky
+// provider and records its model without asserting an exact default reset
+// duration.
 func TestHandleSmartRetry_NoRetryDelay_UsesDefaultRateLimit(t *testing.T) {
 	repo := &antigravityRetryStoreFixture{}
 	provider := &acct.Record{
@@ -2678,11 +2925,18 @@ func TestHandleSmartRetry_NoRetryDelay_UsesDefaultRateLimit(t *testing.T) {
 	require.Equal(t, "claude-sonnet-4-5", repo.modelRateLimitCalls[0].modelKey)
 }
 
+// TestSmartRetryMaxAttempts_VerifyConstant asserts that ordinary model rate
+// limits receive one smart retry. Capacity and single-provider paths have
+// separate attempt budgets and are covered by their own cases.
 func TestSmartRetryMaxAttempts_VerifyConstant(t *testing.T) {
 	require.Equal(t, 1, antigravity.AntigravitySmartRetryMaxAttempts,
 		"antigravity.AntigravitySmartRetryMaxAttempts should be 1 to prevent repeated rate limiting")
 }
 
+// TestHandleSmartRetry_ShortDelay_StickySession_FailedRetry_ClearsSession
+// binds a sticky-cache deletion callback and exhausts a short Claude retry.
+// It checks the model-window key, sticky switch details and one deletion using
+// the supplied group/hash.
 func TestHandleSmartRetry_ShortDelay_StickySession_FailedRetry_ClearsSession(t *testing.T) {
 	failRespBody := `{
 		"error": {
@@ -2737,8 +2991,11 @@ func TestHandleSmartRetry_ShortDelay_StickySession_FailedRetry_ClearsSession(t *
 		Do: func(req *http.Request) (*http.Response, error) {
 			return upstream.Do(req, "", provider.ID, provider.Concurrency)
 		},
-		ModelStore:  repo,
-		Sticky:      true,
+		ModelStore: repo,
+		Sticky:     true,
+		// Bind deletion to group 42 and sticky-hash-abc so assertions observe
+		// the exact session identity; the fixture always succeeds and its
+		// ignored error does not affect retry results.
 		ClearSticky: func() { _ = cache.DeleteSessionProviderID(context.Background(), 42, "sticky-hash-abc") },
 		HandleError: func(int, http.Header, []byte) {
 		},
@@ -2766,6 +3023,10 @@ func TestHandleSmartRetry_ShortDelay_StickySession_FailedRetry_ClearsSession(t *
 	require.Equal(t, "claude-sonnet-4-5", repo.modelRateLimitCalls[0].modelKey)
 }
 
+// TestHandleSmartRetry_ShortDelay_NonStickySession_FailedRetry_NoDeleteSession
+// exhausts a short retry without binding a sticky-clear callback. The switch
+// remains non-sticky and the separately created, unbound cache records no
+// deletion.
 func TestHandleSmartRetry_ShortDelay_NonStickySession_FailedRetry_NoDeleteSession(t *testing.T) {
 	failRespBody := `{
 		"error": {
@@ -2840,6 +3101,9 @@ func TestHandleSmartRetry_ShortDelay_NonStickySession_FailedRetry_NoDeleteSessio
 	require.Len(t, cache.deleteCalls, 0, "should NOT call DeleteSessionProviderID when sessionHash is empty")
 }
 
+// TestHandleSmartRetry_ShortDelay_StickySession_FailedRetry_NilCache_NoPanic
+// marks the request sticky but leaves the clear callback unset. Failed retry
+// handling remains callable and returns a switch retaining the sticky flag.
 func TestHandleSmartRetry_ShortDelay_StickySession_FailedRetry_NilCache_NoPanic(t *testing.T) {
 	failRespBody := `{
 		"error": {
@@ -2913,6 +3177,9 @@ func TestHandleSmartRetry_ShortDelay_StickySession_FailedRetry_NilCache_NoPanic(
 	})
 }
 
+// TestHandleSmartRetry_ShortDelay_StickySession_SuccessRetry_NoDeleteSession
+// binds a sticky-clear callback and then completes the short retry
+// successfully. The returned HTTP 200 leaves the cache deletion record empty.
 func TestHandleSmartRetry_ShortDelay_StickySession_SuccessRetry_NoDeleteSession(t *testing.T) {
 	successResp := &http.Response{
 		StatusCode: http.StatusOK,
@@ -2957,7 +3224,10 @@ func TestHandleSmartRetry_ShortDelay_StickySession_SuccessRetry_NoDeleteSession(
 		Do: func(req *http.Request) (*http.Response, error) {
 			return upstream.Do(req, "", provider.ID, provider.Concurrency)
 		},
-		Sticky:      true,
+		Sticky: true,
+		// Bind deletion to group 42 and sticky-hash-success so assertions
+		// observe the exact session identity; the fixture always succeeds and
+		// its ignored error does not affect retry results.
 		ClearSticky: func() { _ = cache.DeleteSessionProviderID(context.Background(), 42, "sticky-hash-success") },
 		HandleError: func(int, http.Header, []byte) {
 		},
@@ -2978,6 +3248,10 @@ func TestHandleSmartRetry_ShortDelay_StickySession_SuccessRetry_NoDeleteSession(
 	require.Len(t, cache.deleteCalls, 0, "should NOT call DeleteSessionProviderID on successful retry")
 }
 
+// TestHandleSmartRetry_LongDelay_StickySession_ClearsSession binds a
+// sticky-clear callback before submitting a long model delay. The
+// provider-switch result follows one deletion using the configured group and
+// session hash.
 func TestHandleSmartRetry_LongDelay_StickySession_ClearsSession(t *testing.T) {
 	repo := &antigravityRetryStoreFixture{}
 	cache := &stubSmartRetryCache{}
@@ -3012,6 +3286,9 @@ func TestHandleSmartRetry_LongDelay_StickySession_ClearsSession(t *testing.T) {
 		Body:        []byte(`{"input":"test"}`),
 		ModelStore:  repo,
 		Sticky:      true,
+		// Bind deletion to group 42 and sticky-hash-long-delay so assertions
+		// observe the exact session identity; the fixture always succeeds and
+		// its ignored error does not affect retry results.
 		ClearSticky: func() { _ = cache.DeleteSessionProviderID(context.Background(), 42, "sticky-hash-long-delay") },
 		HandleError: func(int, http.Header, []byte) {
 		},
@@ -3033,6 +3310,10 @@ func TestHandleSmartRetry_LongDelay_StickySession_ClearsSession(t *testing.T) {
 	require.Equal(t, "sticky-hash-long-delay", cache.deleteCalls[0].sessionHash)
 }
 
+// TestHandleSmartRetry_ShortDelay_NetworkError_StickySession_ClearsSession
+// returns an empty exchange with nil error after a short Gemini limit.
+// It checks both Gemini scope keys, sticky switch details and one deletion
+// using the bound session identity.
 func TestHandleSmartRetry_ShortDelay_NetworkError_StickySession_ClearsSession(t *testing.T) {
 	upstream := &mockSmartRetryUpstream{
 		responses: []*http.Response{nil}, // Simulate a failed exchange.
@@ -3073,8 +3354,11 @@ func TestHandleSmartRetry_ShortDelay_NetworkError_StickySession_ClearsSession(t 
 		Do: func(req *http.Request) (*http.Response, error) {
 			return upstream.Do(req, "", provider.ID, provider.Concurrency)
 		},
-		ModelStore:  repo,
-		Sticky:      true,
+		ModelStore: repo,
+		Sticky:     true,
+		// Bind deletion to group 99 and sticky-net-error so assertions observe
+		// the exact session identity; the fixture always succeeds and its
+		// ignored error does not affect retry results.
 		ClearSticky: func() { _ = cache.DeleteSessionProviderID(context.Background(), 99, "sticky-net-error") },
 		HandleError: func(int, http.Header, []byte) {
 		},
@@ -3099,6 +3383,9 @@ func TestHandleSmartRetry_ShortDelay_NetworkError_StickySession_ClearsSession(t 
 	require.Equal(t, "antigravity:gemini", repo.modelRateLimitCalls[1].modelKey)
 }
 
+// TestHandleSmartRetry_ShortDelay_503_StickySession_FailedRetry_ClearsSession
+// uses HTTP 429 for both actual exchanges despite its name. The failed short
+// Gemini retry records both scopes and deletes the supplied sticky session.
 func TestHandleSmartRetry_ShortDelay_503_StickySession_FailedRetry_ClearsSession(t *testing.T) {
 	failRespBody := `{
 		"error": {
@@ -3155,8 +3442,11 @@ func TestHandleSmartRetry_ShortDelay_503_StickySession_FailedRetry_ClearsSession
 		Do: func(req *http.Request) (*http.Response, error) {
 			return upstream.Do(req, "", provider.ID, provider.Concurrency)
 		},
-		ModelStore:  repo,
-		Sticky:      true,
+		ModelStore: repo,
+		Sticky:     true,
+		// Bind deletion to group 77 and sticky-503-short so assertions observe
+		// the exact session identity; the fixture always succeeds and its
+		// ignored error does not affect retry results.
 		ClearSticky: func() { _ = cache.DeleteSessionProviderID(context.Background(), 77, "sticky-503-short") },
 		HandleError: func(int, http.Header, []byte) {
 		},
@@ -3182,6 +3472,10 @@ func TestHandleSmartRetry_ShortDelay_503_StickySession_FailedRetry_ClearsSession
 	require.Equal(t, "antigravity:gemini", repo.modelRateLimitCalls[1].modelKey)
 }
 
+// TestAntigravityRetryLoop_SmartRetryFailed_StickySession_SwitchErrorPropagates
+// exhausts a short retry through the outer loop with a bound sticky-clear
+// callback. It checks the propagated switch retains provider/model identity
+// and that one deletion uses the configured session.
 func TestAntigravityRetryLoop_SmartRetryFailed_StickySession_SwitchErrorPropagates(t *testing.T) {
 	initialRespBody := []byte(`{
 		"error": {
@@ -3241,8 +3535,11 @@ func TestAntigravityRetryLoop_SmartRetryFailed_StickySession_SwitchErrorPropagat
 		Do: func(req *http.Request) (*http.Response, error) {
 			return upstream.Do(req, "", provider.ID, provider.Concurrency)
 		},
-		ModelStore:  repo,
-		Sticky:      true,
+		ModelStore: repo,
+		Sticky:     true,
+		// Bind deletion to group 55 and sticky-loop-test so assertions observe
+		// the exact session identity; the fixture always succeeds and its
+		// ignored error does not affect retry results.
 		ClearSticky: func() { _ = cache.DeleteSessionProviderID(context.Background(), 55, "sticky-loop-test") },
 		HandleError: func(int, http.Header, []byte) {
 		},
@@ -3263,6 +3560,9 @@ func TestAntigravityRetryLoop_SmartRetryFailed_StickySession_SwitchErrorPropagat
 	require.Equal(t, "sticky-loop-test", cache.deleteCalls[0].sessionHash)
 }
 
+// Do counts a serial exchange and returns the configured status and body
+// without inspecting routing inputs. Each response owns a fresh reader that
+// its consumer may read and close.
 func (u *epFixedUpstream) Do(req *http.Request, proxyURL string, providerID int64, providerConcurrency int) (*http.Response, error) {
 	u.calls++
 	return &http.Response{
@@ -3272,32 +3572,49 @@ func (u *epFixedUpstream) Do(req *http.Request, proxyURL string, providerID int6
 	}, nil
 }
 
+// DoWithTLS delegates to the same fixed-response transport and counter. The
+// supplied TLS profile is ignored because this fixture models response
+// handling without opening a connection.
 func (u *epFixedUpstream) DoWithTLS(req *http.Request, proxyURL string, providerID int64, providerConcurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
 	return u.Do(req, proxyURL, providerID, providerConcurrency)
 }
 
+// SetTempUnschedulable counts a provider-wide temporary health write and
+// succeeds.
 func (r *epProviderRepo) SetTempUnschedulable(_ context.Context, _ int64, _ time.Time, _ string) error {
 	r.tempCalls++
 	return nil
 }
 
+// SetError counts a generic provider error write and succeeds.
 func (r *epProviderRepo) SetError(_ context.Context, _ int64, _ string) error {
 	r.setErrCalls++
 	return nil
 }
 
+// saveAndSetBaseURLs installs one deterministic endpoint and a fresh
+// availability tracker. Its test cleanup restores the copied endpoint list and
+// previous tracker; callers must keep these process-wide mutations serial.
 func saveAndSetBaseURLs(t *testing.T) {
 	t.Helper()
+	// Copy the process-wide endpoints and retain their availability tracker
+	// before installing the isolated test endpoint; callers must avoid
+	// parallel mutation of these inputs.
 	oldBaseURLs := append([]string(nil), antigravity.BaseURLs...)
 	oldAvail := antigravity.DefaultURLAvailability
 	antigravity.BaseURLs = []string{"https://ep-test.example"}
 	antigravity.DefaultURLAvailability = antigravity.NewURLAvailability(time.Minute)
+	// Restore the saved endpoint list and tracker after the owning test
+	// completes, including cleanup registered by nested nonparallel cases.
 	t.Cleanup(func() {
 		antigravity.BaseURLs = oldBaseURLs
 		antigravity.DefaultURLAvailability = oldAvail
 	})
 }
 
+// newRetryParams binds a fixed transport, Claude model, request body and error
+// callback to the supplied provider. Provider and transport must be non-nil
+// when its Do callback executes; callers may replace the background context.
 func newRetryParams(provider *acct.Record, upstream *epFixedUpstream, handleError func(int, http.Header, []byte)) AntigravityRetryRequest {
 	return AntigravityRetryRequest{
 		Context:     context.Background(),
@@ -3314,55 +3631,82 @@ func newRetryParams(provider *acct.Record, upstream *epFixedUpstream, handleErro
 	}
 }
 
+// SetRateLimited counts a generic rate-limit write and retains its provider
+// ID.
 func (r *epTrackingRepo) SetRateLimited(_ context.Context, id int64, _ time.Time) error {
 	r.rateLimitedCalls++
 	r.rateLimitedID = id
 	return nil
 }
 
+// SetError counts a generic error write and retains its provider ID.
 func (r *epTrackingRepo) SetError(_ context.Context, id int64, _ string) error {
 	r.setErrCalls++
 	r.setErrID = id
 	return nil
 }
 
+// SetTempUnschedulable counts a provider-wide temporary write without
+// retaining its parameters.
 func (r *epTrackingRepo) SetTempUnschedulable(_ context.Context, _ int64, _ time.Time, _ string) error {
 	r.tempCalls++
 	return nil
 }
 
-// SetModelRateLimit succeeds without recording; this fixture counts provider-level writes separately.
+// SetModelRateLimit accepts model writes without recording or updating
+// provider state.
 func (r *epProviderRepo) SetModelRateLimit(context.Context, int64, string, time.Time, ...string) error {
 	return nil
 }
 
+// SetModelRateLimit succeeds without changing the separately observed
+// provider-level counters.
 func (r *epTrackingRepo) SetModelRateLimit(context.Context, int64, string, time.Time, ...string) error {
 	return nil
 }
 
+// SetModelRateLimit appends the requested scope key in call order.
 func (s *antigravityFamilyStoreFixture) SetModelRateLimit(_ context.Context, _ int64, key string, _ time.Time, _ ...string) error {
-	s.modelRateLimitCalls = append(s.modelRateLimitCalls, struct{ modelKey string }{key})
+	s.modelRateLimitCalls = append(s.modelRateLimitCalls, struct {
+		modelKey string /* Requested model or family key. */
+	}{key})
 	return nil
 }
 
+// SetTempUnschedulable counts provider-wide temporary writes independently of
+// model scopes.
 func (s *antigravityPolicyStoreFixture) SetTempUnschedulable(context.Context, int64, time.Time, string) error {
 	s.tempCalls++
 	return nil
 }
 
+// SetModelRateLimit records the requested key in both scope and modelKey
+// observations.
 func (s *antigravityPolicyStoreFixture) SetModelRateLimit(_ context.Context, _ int64, key string, _ time.Time, _ ...string) error {
-	s.modelRateLimitCalls = append(s.modelRateLimitCalls, struct{ scope, modelKey string }{key, key})
+	s.modelRateLimitCalls = append(s.modelRateLimitCalls, struct { /* scope records the health scope; modelKey records the model
+		assertion key. Both retain the same argument without normalization, so
+		the duplicated observations do not represent independently selected scopes. */
+		scope, modelKey string
+	}{key, key})
 	return nil
 }
 
+// UpdateExtra accepts extra-data writes without recording or applying the
+// supplied values.
 func (s *antigravityPolicyStoreFixture) UpdateExtra(context.Context, int64, map[string]any) error {
 	return nil
 }
 
+// newAntigravityPolicyFixture wires policy evaluation to the recording model
+// store and production scope mapping. Its logging callbacks discard output,
+// and it supplies no network transport for request execution.
 func newAntigravityPolicyFixture(store *antigravityPolicyStoreFixture, policy *acct.HealthService) *AntigravityRetry {
 	return &AntigravityRetry{Policy: policy, Health: &acct.AntigravityHealth{Store: store, ModelKeys: AntigravityModelLimitKeys, Info: func(string, ...any) {}, Logf: func(string, ...any) {}}}
 }
 
+// Do records each request URL and returns HTTP 429 for the firstBase prefix.
+// Every other URL receives HTTP 200; secondBase does not participate in
+// response selection, and each body has a fresh reader.
 func (s *stubAntigravityUpstream) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
 	url := req.URL.String()
 	s.calls = append(s.calls, url)
@@ -3372,20 +3716,40 @@ func (s *stubAntigravityUpstream) Do(req *http.Request, _ string, _ int64, _ int
 	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("ok"))}, nil
 }
 
+// Do counts each serial exchange and returns a fresh HTTP 200 response.
+// Routing arguments are unused, and the caller consumes and closes the newly
+// allocated response body.
 func (r *recordingOKUpstream) Do(*http.Request, string, int64, int) (*http.Response, error) {
 	r.calls++
 	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("ok"))}, nil
 }
 
+// DeleteSessionProviderID records the supplied group and session hash and
+// always succeeds.
 func (c *stubSmartRetryCache) DeleteSessionProviderID(_ context.Context, groupID int64, sessionHash string) error {
 	c.deleteCalls = append(c.deleteCalls, deleteSessionCall{groupID: groupID, sessionHash: sessionHash})
 	return nil
 }
 
+// Do captures the URL, user agent and request bytes before selecting the next
+// configured response. Request and URL must be non-nil, error entries must
+// cover every selected response slot, and calls must remain serial. A nil
+// response returns its paired error; exhausting the list returns an empty
+// exchange unless repeatLast selects the final slot.
+//
+// Response bodies are read once into a byte cache and the original reader is
+// closed. Each non-nil result shallow-copies the response and replaces its
+// cached body with a fresh reader, while headers and other referenced values
+// remain shared. Read and close errors are discarded by this fixture;
+// request-body replacement retains the captured bytes without closing the
+// previous request reader.
 func (m *mockSmartRetryUpstream) Do(req *http.Request, proxyURL string, providerID int64, providerConcurrency int) (*http.Response, error) {
 	idx := m.callIdx
 	m.calls = append(m.calls, req.URL.String())
 	m.userAgents = append(m.userAgents, req.Header.Get("User-Agent"))
+	// Capture request bytes and replace the consumed reader for later
+	// inspection; read errors retain partial bytes, and this fixture does not
+	// close the old request body.
 	if req != nil && req.Body != nil {
 		body, _ := io.ReadAll(req.Body)
 		m.requestBodies = append(m.requestBodies, body)
@@ -3395,6 +3759,9 @@ func (m *mockSmartRetryUpstream) Do(req *http.Request, proxyURL string, provider
 	}
 	m.callIdx++
 
+	// Sequence exhaustion either produces an empty exchange or reuses the
+	// final configured response/error pair; every transport call still
+	// advances the captured call index.
 	respIdx := idx
 	if respIdx >= len(m.responses) {
 		if !m.repeatLast || len(m.responses) == 0 {
@@ -3409,19 +3776,26 @@ func (m *mockSmartRetryUpstream) Do(req *http.Request, proxyURL string, provider
 		return nil, respErr
 	}
 
-	// Cache each body before it is consumed so repeatLast can replay it.
+	// Grow the cache to the selected response slot before capturing its body;
+	// later repeats reuse these bytes rather than rereading a consumed
+	// original response reader.
 	if respIdx >= len(m.responseBodies) {
 		for len(m.responseBodies) <= respIdx {
 			m.responseBodies = append(m.responseBodies, nil)
 		}
 	}
+	// Read and close the original response body once, discarding both errors
+	// while retaining any captured bytes so retries can rebuild readable
+	// response bodies.
 	if m.responseBodies[respIdx] == nil && resp.Body != nil {
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
 		m.responseBodies[respIdx] = bodyBytes
 	}
 
-	// Give each exchange a fresh body reader.
+	// Shallow-copy the configured response and rebuild only its cached body
+	// reader; callers can consume each replay independently while headers and
+	// other referenced values remain shared.
 	cloned := *resp
 	if m.responseBodies[respIdx] != nil {
 		cloned.Body = io.NopCloser(bytes.NewReader(m.responseBodies[respIdx]))
@@ -3429,12 +3803,21 @@ func (m *mockSmartRetryUpstream) Do(req *http.Request, proxyURL string, provider
 	return &cloned, respErr
 }
 
+// DoWithTLS uses the same serial response sequence and request capture as Do.
+// The TLS profile is ignored because this fixture does not establish a
+// transport connection.
 func (m *mockSmartRetryUpstream) DoWithTLS(req *http.Request, proxyURL string, providerID int64, providerConcurrency int, profile *tlsfingerprint.Profile) (*http.Response, error) {
 	return m.Do(req, proxyURL, providerID, providerConcurrency)
 }
 
-// newAntigravityRetryFixture binds production platform retries to test health callbacks.
+// newAntigravityRetryFixture supplies production URL redaction, UTF-8
+// truncation, model-scope mapping and paid-tier endpoint resolution. It bounds
+// reads at 512 KiB and suppresses health logging; callers inject stores,
+// policy and request transport as needed.
 func newAntigravityRetryFixture() *AntigravityRetry {
+	// Suppress each health logging callback through the same no-op function;
+	// this fixture observes persistence and retry decisions without retaining
+	// or checking log output.
 	noop := func(string, ...any) {}
 	return &AntigravityRetry{
 		SafeURL: logredact.SafeUpstreamURL, TruncateString: logredact.TruncateUTF8, Health: &acct.AntigravityHealth{ModelKeys: AntigravityModelLimitKeys, Logf: noop, Info: noop, Warn: noop, Error: noop},
@@ -3444,15 +3827,20 @@ func newAntigravityRetryFixture() *AntigravityRetry {
 	}
 }
 
+// SetModelRateLimit records provider identity, scope key and reset time in
+// call order.
 func (s *antigravityRetryStoreFixture) SetModelRateLimit(_ context.Context, id int64, key string, at time.Time, _ ...string) error {
 	s.modelRateLimitCalls = append(s.modelRateLimitCalls, struct {
-		providerID int64
-		modelKey   string
-		resetAt    time.Time
+		providerID int64     // Provider receiving the model window.
+		modelKey   string    // Requested model or family key.
+		resetAt    time.Time // Reset time supplied by the writer.
 	}{id, key, at})
 	return nil
 }
 
+// UpdateExtra appends the supplied map reference without copying or applying
+// its entries. Tests use serial writes and must account for later mutation
+// when inspecting the retained map.
 func (s *antigravityRetryStoreFixture) UpdateExtra(_ context.Context, _ int64, value map[string]any) error {
 	s.extraUpdateCalls = append(s.extraUpdateCalls, value)
 	return nil

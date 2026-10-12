@@ -10,11 +10,19 @@ import (
 	xai "github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// Grok OAuth text defaults and media defaults can resolve to different hosts.
+// These cases exercise grok_provider_endpoint.go with empty, official, regional,
+// malformed and custom addresses, checking that endpoint selection retains custom
+// routing while canonical CLI targets map to the media API.
+
+// TestGetGrokBaseURLUsesSubscriptionProxyForOAuth compares OAuth and API-key
+// provider endpoint choices. It checks saved official/custom addresses, malformed
+// OAuth fallback, CLI subscription defaults and the public API-key default.
 func TestGetGrokBaseURLUsesSubscriptionProxyForOAuth(t *testing.T) {
 	tests := []struct {
-		name     string
-		provider acct.Record
-		expected string
+		name     string      // subtest display label
+		provider acct.Record // input provider endpoint fixture
+		expected string      // expected selected endpoint address
 	}{
 		{
 			name: "oauth without base_url uses CLI subscription proxy",
@@ -109,6 +117,9 @@ func TestGetGrokBaseURLUsesSubscriptionProxyForOAuth(t *testing.T) {
 	}
 }
 
+// TestGetGrokBaseURLHonorsOAuthCustomRegardlessOfUnsafeOverrides supplies a custom
+// OAuth address with the legacy unsafe-override environment setting enabled.
+// It checks endpoint selection returns the same configured custom address.
 func TestGetGrokBaseURLHonorsOAuthCustomRegardlessOfUnsafeOverrides(t *testing.T) {
 	t.Setenv(xai.EnvAllowUnsafeURLOverrides, "true")
 	provider := acct.Record{
@@ -122,11 +133,14 @@ func TestGetGrokBaseURLHonorsOAuthCustomRegardlessOfUnsafeOverrides(t *testing.T
 	require.Equal(t, "https://custom.example.com/v1", GrokProviderBaseURL(&provider))
 }
 
+// TestGetGrokMediaBaseURLRedirectsCLIGatewayToOfficialAPI compares OAuth CLI
+// spellings with regional, custom and API-key routes. It checks canonical media
+// redirection, malformed OAuth fallback and empty results for non-Grok records.
 func TestGetGrokMediaBaseURLRedirectsCLIGatewayToOfficialAPI(t *testing.T) {
 	tests := []struct {
-		name     string
-		provider acct.Record
-		expected string
+		name     string      // subtest display label
+		provider acct.Record // input provider endpoint fixture
+		expected string      // expected selected endpoint address
 	}{
 		{
 			name: "oauth without base_url uses official media API",
@@ -232,6 +246,9 @@ func TestGetGrokMediaBaseURLRedirectsCLIGatewayToOfficialAPI(t *testing.T) {
 	}
 }
 
+// TestGetGrokMediaBaseURLHonorsOAuthCustomRegardlessOfUnsafeOverrides supplies a
+// custom OAuth media address with the legacy unsafe-override setting enabled.
+// It checks the custom endpoint still remains the selected media address.
 func TestGetGrokMediaBaseURLHonorsOAuthCustomRegardlessOfUnsafeOverrides(t *testing.T) {
 	t.Setenv(xai.EnvAllowUnsafeURLOverrides, "true")
 	provider := acct.Record{
