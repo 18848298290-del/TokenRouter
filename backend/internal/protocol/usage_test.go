@@ -4,16 +4,38 @@ import (
 	"testing"
 )
 
+// Cache-write usage can arrive as an aggregate or separate TTL counts, while
+// reasoning observations can overlap reported output. The fixtures compare TTL
+// movement and inclusive output results, with separate assertions protecting
+// unrelated usage fields during cache reclassification.
+
 // TestApplyCacheTTLOverrideContract reclassifies absent, mixed, and already
 // classified cache-write details with known and unknown TTL targets. The changed
 // flag must distinguish category movement from initial aggregate filling, and
 // unrelated usage fields must retain their values.
 func TestApplyCacheTTLOverrideContract(t *testing.T) {
 	tests := []struct {
-		name, target          string // scenario and TTL selection
-		aggregate, five, hour int    // initial total and TTL buckets
-		wantFive, wantHour    int    // expected TTL category counts
-		changed               bool   // expected category movement
+		// target supplies the exact TTL selection passed to ApplyCacheTTLOverride.
+		// Only 1h selects the hour category; other spellings in these fixtures
+		// select the five-minute category.
+		// name: fixture subtest display label
+		// target: requested cache-write TTL category
+		name, target string
+		// aggregate supplies CacheCreationInputTokens while five and hour
+		// initialize the two TTL detail counters. Existing detail totals take
+		// precedence; a positive aggregate fills five only when both detail counts
+		// are zero.
+		// aggregate: initial aggregate cache-write tokens
+		// five: initial five-minute cache-write tokens
+		// hour: initial one-hour cache-write tokens
+		aggregate, five, hour int
+		// wantFive and wantHour are compared after reclassification and default to
+		// zero when omitted by a fixture. Their expected details are separate from
+		// changed, which reports category movement.
+		// wantFive: expected five-minute cache-write tokens
+		// wantHour: expected one-hour cache-write tokens
+		wantFive, wantHour int
+		changed            bool // expected category movement
 	}{
 		{name: "empty", target: "1h"},
 		{name: "aggregate fills 5m without reporting override", target: "5m", aggregate: 9, wantFive: 9},

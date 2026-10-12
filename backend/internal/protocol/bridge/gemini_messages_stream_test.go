@@ -6,7 +6,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestNativeGeminiMessagesIteratorKeepsUsageUpdateAfterOutput verifies that stopping iteration before all output skips the usage update.
+// Native Messages iteration updates usage after its output and flush yields
+// finish. A consumer stopping at the visible delta therefore retains earlier
+// counts; this fixture checks that ordering with one text part and supplied
+// prompt metadata.
+
+// TestNativeGeminiMessagesIteratorKeepsUsageUpdateAfterOutput breaks on the
+// text delta before the remaining flush and usage update. It checks that the
+// supplied prompt count has not reached the state.
 func TestNativeGeminiMessagesIteratorKeepsUsageUpdateAfterOutput(t *testing.T) {
 	state := NewNativeGeminiMessagesStream(NativeGeminiRuntime{})
 	response := map[string]any{"candidates": []any{map[string]any{"content": map[string]any{"parts": []any{map[string]any{"text": "hello"}}}}}}

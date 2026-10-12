@@ -7,6 +7,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Client thinking formats distinguish absent controls from a disabled zero
+// budget and from model-selected effort or budget settings. These fixtures
+// compare encoded fields under resolved capabilities and exercise output
+// reservation, including a mutable output limit that makes the allowed budget
+// impossible.
+
+// TestResolveGeminiThinkingWireControls combines client reasoning formats with
+// budget, level, private, and unknown-capability options. Each fixture checks
+// serialized field selection or the expected rejection, including disabling
+// and effort adaptation.
 func TestResolveGeminiThinkingWireControls(t *testing.T) {
 	zero, limit, output, padding := 0, 24576, 64000, 1000
 	yes := true
@@ -14,10 +24,12 @@ func TestResolveGeminiThinkingWireControls(t *testing.T) {
 	levelOptions := GeminiThinkingOptions{ControlsKnown: true, Reasoning: &yes, Efforts: []string{"low", "medium", "high"}}
 	privateOptions := GeminiThinkingOptions{ControlsKnown: true, Reasoning: &yes, ForceBudget: true, AdaptiveBudget: 24576, OutputLimit: &output, BudgetPadding: padding, Efforts: []string{"low", "medium", "high", "max"}}
 	cases := []struct {
-		name, body string
-		options    GeminiThinkingOptions
-		want       string
-		failure    bool
+		name, body string                // name subtest label; body request JSON
+		options    GeminiThinkingOptions // resolved model control capabilities
+		// want is compared as JSON when failure is false. A true failure checks
+		// the resolver error and returns before serialization, so want is unused.
+		want    string // expected serialized thinking config
+		failure bool   // expected resolver error condition
 	}{
 		{"absent", `{"model":"any"}`, levelOptions, `null`, false},
 		{"budget high", `{"reasoning":{"effort":"high"}}`, budgetOptions, `{"includeThoughts":true,"thinkingBudget":10240}`, false},
@@ -49,6 +61,10 @@ func TestResolveGeminiThinkingWireControls(t *testing.T) {
 	}
 }
 
+// TestGeminiThinkingBudgetAndOutputLimit combines a minimum budget with
+// reserved output capacity and a mutable output limit. It checks capping,
+// impossible-budget rejection, and zero-budget retention through a JSON round
+// trip.
 func TestGeminiThinkingBudgetAndOutputLimit(t *testing.T) {
 	minBudget, output := 1024, 9000
 	options := GeminiThinkingOptions{ControlsKnown: true, ForceBudget: true, BudgetMin: &minBudget, OutputLimit: &output, BudgetPadding: 1000}

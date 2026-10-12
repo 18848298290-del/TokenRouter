@@ -7,14 +7,34 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// HTTP lifecycle payloads can need wrapping or status-derived terminal labels
+// before Responses readers use them. The fixtures check retained vendor fields,
+// effective labels, repaired sequences, and duplicate detection while keeping
+// exact-byte assertions separate from repaired-field assertions.
+
 // TestResponseLifecycleNormalizer supplies bare, wrapped, legacy, invalid, and
 // unidentified lifecycle payloads. Supported repairs must retain vendor detail
 // and provide the expected type/status/sequence, while unchanged cases retain
 // their supplied bytes and avoid a duplicate flag.
 func TestResponseLifecycleNormalizer(t *testing.T) {
 	tests := []struct {
-		name, header, payload, wantType, wantStatus string // case name, SSE header, payload, expected label/status
-		unchanged                                   bool   // supplied bytes retained
+		// header supplies the SSE event label when payload has no nonblank type.
+		// The normalizer prefers the payload type, and an empty header leaves that
+		// payload-derived decision in control.
+		//
+		// wantType is checked for every fixture as the returned effective event
+		// label. wantStatus is checked inside the repaired response only when
+		// unchanged is false; byte-preserving cases return before field assertions.
+		// name: fixture subtest display label
+		// header: input SSE event label
+		// payload: supplied SSE payload text
+		// wantType: expected effective event label
+		// wantStatus: expected nested response status
+		name, header, payload, wantType, wantStatus string
+		// unchanged selects exact-byte comparison and skips repaired JSON field
+		// checks. A false value requires expected type/status, retained vendor
+		// details and a numeric sequence in the result.
+		unchanged bool // supplied payload bytes retained
 	}{
 		{"bare created", "response.created", `{"object":"response","id":"resp_1","status":"in_progress","output":[],"vendor":{"opaque":"keep"}}`, "response.created", "in_progress", false},
 		{"bare completed", "response.completed", `{"object":"response","id":"resp_1","status":"completed","output":[],"vendor":{"opaque":"keep"}}`, "response.completed", "completed", false},
