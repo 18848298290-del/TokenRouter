@@ -8,6 +8,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestResponsesUsageUnmarshalAcceptsChatUsageShape decodes prompt/completion
+// usage into the aliased Responses type. It checks selected counts, a
+// recomputed total, and both cached-input and reasoning-output detail fields.
 func TestResponsesUsageUnmarshalAcceptsChatUsageShape(t *testing.T) {
 	var usage ResponsesUsage
 	err := json.Unmarshal([]byte(`{"prompt_tokens":31,"completion_tokens":9,"prompt_tokens_details":{"cached_tokens":11},"completion_tokens_details":{"reasoning_tokens":4}}`), &usage)
@@ -22,11 +25,17 @@ func TestResponsesUsageUnmarshalAcceptsChatUsageShape(t *testing.T) {
 	assert.Equal(t, 4, usage.OutputTokensDetails.ReasoningTokens)
 }
 
+// TestResponsesUsageNestedCacheWritePresenceOverridesTopLevelAlias combines a
+// positive top-level cache count with present nested cache-write values. Both
+// explicit zero and positive nested values must determine the selected count.
 func TestResponsesUsageNestedCacheWritePresenceOverridesTopLevelAlias(t *testing.T) {
 	tests := []struct {
-		name       string
-		nestedJSON string
-		want       int
+		name string // cache-write fixture label
+		// nestedJSON supplies a present nested cache-write value, while want
+		// records the count selected despite a positive top-level alias. This
+		// pairing covers both zero-presence and positive-value fixture cases.
+		nestedJSON string // present nested usage object
+		want       int    // selected cache-creation token count
 	}{
 		{name: "explicit zero", nestedJSON: `{"cache_write_tokens":0}`, want: 0},
 		{name: "nonzero", nestedJSON: `{"cache_write_tokens":7}`, want: 7},
@@ -42,6 +51,9 @@ func TestResponsesUsageNestedCacheWritePresenceOverridesTopLevelAlias(t *testing
 	}
 }
 
+// TestResponsesTool_StrictFalseIsSerialized supplies a nonnil false pointer
+// for a function tool's strict setting. JSON equality confirms that false
+// remains present alongside the tool type.
 func TestResponsesTool_StrictFalseIsSerialized(t *testing.T) {
 	strict := false
 	payload, err := json.Marshal(ResponsesTool{
@@ -52,6 +64,9 @@ func TestResponsesTool_StrictFalseIsSerialized(t *testing.T) {
 	assert.JSONEq(t, `{"type":"function","strict":false}`, string(payload))
 }
 
+// TestWire_CreatedAtPresentEvenAtZero marshals a created event whose response
+// timestamp is zero. The decoded response must include created_at and keep its
+// numeric zero value.
 func TestWire_CreatedAtPresentEvenAtZero(t *testing.T) {
 	resp := responseObjectOf(t, ResponsesStreamEvent{
 		Type:     "response.created",
@@ -61,6 +76,9 @@ func TestWire_CreatedAtPresentEvenAtZero(t *testing.T) {
 	require.EqualValues(t, 0, resp["created_at"])
 }
 
+// TestResponsesStreamEvent_CreatedAtSurvivesUnmarshalRemarshal decodes a
+// completed response carrying a positive creation timestamp. Remarshaling
+// through the aliased event codec must retain that same value.
 func TestResponsesStreamEvent_CreatedAtSurvivesUnmarshalRemarshal(t *testing.T) {
 	upstream := []byte(`{"type":"response.completed","response":{"id":"resp_9","object":"response",` +
 		`"created_at":1700000123,"model":"gpt-5.5","status":"completed","output":[]}}`)
@@ -72,7 +90,9 @@ func TestResponsesStreamEvent_CreatedAtSurvivesUnmarshalRemarshal(t *testing.T) 
 	require.EqualValues(t, 1700000123, requireCreatedAt(t, responseObjectOf(t, evt)))
 }
 
-// TestWire_IndexFieldsPresentAtZero protects required zero-valued indexes from omitempty.
+// TestWire_IndexFieldsPresentAtZero marshals text and reasoning deltas for the
+// first output position. Required output/content/summary index keys remain
+// present, with the text output index asserted as zero.
 func TestWire_IndexFieldsPresentAtZero(t *testing.T) {
 	m := marshalEvent(t, ResponsesStreamEvent{
 		Type: "response.output_text.delta", OutputIndex: 0, ContentIndex: 0, ItemID: "msg_1", Delta: "hi",
@@ -88,8 +108,9 @@ func TestWire_IndexFieldsPresentAtZero(t *testing.T) {
 	require.Contains(t, r, "summary_index")
 }
 
-// TestWire_FunctionCallItemAlwaysComplete checks required call_id, name, and arguments,
-// including empty arguments on added events.
+// TestWire_FunctionCallItemAlwaysComplete marshals a newly added function call
+// with empty arguments. The item must contain call_id, name, and arguments,
+// including the exact empty argument string.
 func TestWire_FunctionCallItemAlwaysComplete(t *testing.T) {
 	added := marshalEvent(t, ResponsesStreamEvent{
 		Type:        "response.output_item.added",
@@ -104,6 +125,9 @@ func TestWire_FunctionCallItemAlwaysComplete(t *testing.T) {
 	require.Equal(t, "", item["arguments"])
 }
 
+// TestWire_MessageItemContentAlwaysArray marshals a newly added message with
+// no content parts. The decoded item must contain a content field represented
+// by an array.
 func TestWire_MessageItemContentAlwaysArray(t *testing.T) {
 	m := marshalEvent(t, ResponsesStreamEvent{
 		Type:        "response.output_item.added",
@@ -117,6 +141,9 @@ func TestWire_MessageItemContentAlwaysArray(t *testing.T) {
 	require.True(t, ok, "content must be an array")
 }
 
+// TestWire_ReasoningItemSummaryAlwaysArray marshals a newly added reasoning
+// item with no summary blocks. The decoded item must contain a summary field
+// represented by an array.
 func TestWire_ReasoningItemSummaryAlwaysArray(t *testing.T) {
 	m := marshalEvent(t, ResponsesStreamEvent{
 		Type:        "response.output_item.added",
@@ -130,6 +157,9 @@ func TestWire_ReasoningItemSummaryAlwaysArray(t *testing.T) {
 	require.True(t, ok, "summary must be an array")
 }
 
+// TestWire_ContentPartCarriesAnnotationsLogprobs marshals an empty output-text
+// part at the first content position. The decoded part retains its type and
+// includes text, annotations, and logprobs keys.
 func TestWire_ContentPartCarriesAnnotationsLogprobs(t *testing.T) {
 	m := marshalEvent(t, ResponsesStreamEvent{
 		Type: "response.content_part.added", OutputIndex: 0, ContentIndex: 0, ItemID: "msg_1",
@@ -143,6 +173,9 @@ func TestWire_ContentPartCarriesAnnotationsLogprobs(t *testing.T) {
 	require.Contains(t, part, "logprobs")
 }
 
+// TestWire_ArgumentsDonePresentEvenEmpty marshals a completed argument event
+// with no argument text. Its decoded object must still include arguments as an
+// empty string.
 func TestWire_ArgumentsDonePresentEvenEmpty(t *testing.T) {
 	m := marshalEvent(t, ResponsesStreamEvent{
 		Type: "response.function_call_arguments.done", OutputIndex: 1, ItemID: "fc_1", CallID: "call_a", Name: "exec", Arguments: "",
@@ -151,8 +184,9 @@ func TestWire_ArgumentsDonePresentEvenEmpty(t *testing.T) {
 	require.Equal(t, "", m["arguments"])
 }
 
-// TestWire_CustomToolCallInputIndexPresentAtZero checks output_index serialization
-// for custom tool delta and done events at the first output position.
+// TestWire_CustomToolCallInputIndexPresentAtZero marshals custom-tool input
+// delta and done events at index zero. Both retain that index; done carries
+// input and omits delta.
 func TestWire_CustomToolCallInputIndexPresentAtZero(t *testing.T) {
 	d := marshalEvent(t, ResponsesStreamEvent{
 		Type: "response.custom_tool_call_input.delta", OutputIndex: 0, ItemID: "ct_1", Delta: "dir",
@@ -170,7 +204,9 @@ func TestWire_CustomToolCallInputIndexPresentAtZero(t *testing.T) {
 	require.NotContains(t, done, "delta")
 }
 
-// TestWire_UnknownEventFallsBackToDefault checks default serialization of a response event.
+// TestWire_UnknownEventFallsBackToDefault marshals a completed lifecycle event
+// through the codec's default case. The resulting object must contain its
+// response field after decoding.
 func TestWire_UnknownEventFallsBackToDefault(t *testing.T) {
 	m := marshalEvent(t, ResponsesStreamEvent{
 		Type:     "response.completed",
@@ -179,8 +215,9 @@ func TestWire_UnknownEventFallsBackToDefault(t *testing.T) {
 	require.Contains(t, m, "response")
 }
 
-// TestResponsesOutputUnmarshal_ToolSearchObjectArguments checks that object arguments
-// remain objects after a JSON round trip.
+// TestResponsesOutputUnmarshal_ToolSearchObjectArguments decodes a tool-search
+// argument object into internal argument text. Reencoding keeps an argument
+// object whose query value matches the fixture.
 func TestResponsesOutputUnmarshal_ToolSearchObjectArguments(t *testing.T) {
 	var item ResponsesOutput
 	require.NoError(t, json.Unmarshal([]byte(`{
@@ -202,6 +239,9 @@ func TestResponsesOutputUnmarshal_ToolSearchObjectArguments(t *testing.T) {
 	require.Equal(t, "gmail", args["query"])
 }
 
+// TestResponsesResponseUnmarshal_ToolSearchObjectArguments decodes a buffered
+// response containing one tool-search call. The output length and the call's
+// raw-object argument text must match the fixture.
 func TestResponsesResponseUnmarshal_ToolSearchObjectArguments(t *testing.T) {
 	var response ResponsesResponse
 	require.NoError(t, json.Unmarshal([]byte(`{
@@ -219,8 +259,9 @@ func TestResponsesResponseUnmarshal_ToolSearchObjectArguments(t *testing.T) {
 	require.Equal(t, `{"query":"gmail"}`, response.Output[0].Arguments)
 }
 
-// TestResponsesStreamEventUnmarshal_ToolSearchObjectArguments decodes an argument object
-// into the internal string representation used by stream conversion.
+// TestResponsesStreamEventUnmarshal_ToolSearchObjectArguments decodes a done
+// event carrying tool-search object arguments. The item exists and stores that
+// raw object in the bridge's string argument field.
 func TestResponsesStreamEventUnmarshal_ToolSearchObjectArguments(t *testing.T) {
 	var event ResponsesStreamEvent
 	require.NoError(t, json.Unmarshal([]byte(`{
@@ -236,6 +277,9 @@ func TestResponsesStreamEventUnmarshal_ToolSearchObjectArguments(t *testing.T) {
 	require.Equal(t, `{"query":"gmail"}`, event.Item.Arguments)
 }
 
+// TestResponsesResponse_UnmarshalPreservesServiceTier decodes a completed
+// Responses object that reports the flex service tier. The typed response must
+// expose that exact tier string.
 func TestResponsesResponse_UnmarshalPreservesServiceTier(t *testing.T) {
 	var resp ResponsesResponse
 	require.NoError(t, json.Unmarshal([]byte(`{"id":"resp_1","object":"response","model":"gpt-5.5","status":"completed","service_tier":"flex","output":[]}`), &resp))

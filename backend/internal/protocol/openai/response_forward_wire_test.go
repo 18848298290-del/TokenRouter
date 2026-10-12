@@ -9,8 +9,13 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// benchmarkUsageSink retains each successful benchmark extraction so its
+// selected count values remain available after the timed loop finishes.
 var benchmarkUsageSink ForwardUsage
 
+// BenchmarkOpenAIUsageExtractLegacy measures typed decoding of a fixed
+// canonical usage response. Fixture construction precedes timing, and each
+// successful extraction is retained in the shared usage sink.
 func BenchmarkOpenAIUsageExtractLegacy(b *testing.B) {
 	body := benchmarkOpenAIUsageJSONBytes()
 
@@ -24,6 +29,9 @@ func BenchmarkOpenAIUsageExtractLegacy(b *testing.B) {
 	}
 }
 
+// BenchmarkOpenAIUsageExtractOptimized measures the production raw usage
+// extractor on the fixed canonical response. Fixture construction precedes
+// timing, and each successful extraction is retained in the shared usage sink.
 func BenchmarkOpenAIUsageExtractOptimized(b *testing.B) {
 	body := benchmarkOpenAIUsageJSONBytes()
 
@@ -37,8 +45,11 @@ func BenchmarkOpenAIUsageExtractOptimized(b *testing.B) {
 	}
 }
 
+// TestExtractOpenAIUsageFromJSONBytes_MergesHostedImageGenToolUsage places
+// main and hosted-image usage under a terminal response object. It checks
+// retained input/output totals and the selected image-input/output detail
+// counts.
 func TestExtractOpenAIUsageFromJSONBytes_MergesHostedImageGenToolUsage(t *testing.T) {
-	// Streaming terminal events nest both main usage and image tool usage under response.
 	body := []byte(`{
 		"type": "response.completed",
 		"response": {
@@ -67,8 +78,10 @@ func TestExtractOpenAIUsageFromJSONBytes_MergesHostedImageGenToolUsage(t *testin
 	require.Equal(t, 7620, usage.ImageInputTokens)
 }
 
+// TestExtractOpenAIUsageFromJSONBytes_NonStreamingMergesImageGen places main
+// and hosted-image usage at the top level. It checks retained input/output
+// totals and the selected image-input/output detail counts.
 func TestExtractOpenAIUsageFromJSONBytes_NonStreamingMergesImageGen(t *testing.T) {
-	// Non-streaming responses put both main usage and image tool usage at the top level.
 	body := []byte(`{
 		"id": "resp_abc123",
 		"object": "response",
@@ -95,12 +108,19 @@ func TestExtractOpenAIUsageFromJSONBytes_NonStreamingMergesImageGen(t *testing.T
 	require.Equal(t, 2800, usage.ImageInputTokens)
 }
 
+// TestExtractOpenAIUsageFromJSONBytes_HostedImageGenFallbackRules supplies
+// absent tool usage, existing image counters, and fractional/negative hosted
+// details. The asserted image buckets remain zero or keep their selected base
+// counts.
 func TestExtractOpenAIUsageFromJSONBytes_HostedImageGenFallbackRules(t *testing.T) {
 	tests := []struct {
-		name            string
-		body            string
-		wantImageInput  int
-		wantImageOutput int
+		name string // response wire fixture label
+		body string // raw response JSON or SSE
+		// wantImageInput and wantImageOutput record independent selected buckets
+		// from body. A valid hosted detail can fill one zero category even when
+		// the other remains absent or already has a base observation.
+		wantImageInput  int // expected image-input token count
+		wantImageOutput int // expected image-output token count
 	}{
 		{
 			name:            "without tool usage",
@@ -132,10 +152,13 @@ func TestExtractOpenAIUsageFromJSONBytes_HostedImageGenFallbackRules(t *testing.
 	}
 }
 
+// TestMergeHostedImageGenToolUsage_EmptyImageGen supplies missing, null, and
+// scalar hosted-image values beside existing aggregate counts. Every fixture
+// must keep the complete ForwardUsage value equal to its snapshot.
 func TestMergeHostedImageGenToolUsage_EmptyImageGen(t *testing.T) {
 	tests := []struct {
-		name string
-		json string
+		name string // response wire fixture label
+		json string // raw hosted-image JSON fixture
 	}{
 		{name: "missing", json: `{}`},
 		{name: "null", json: `{"image_gen":null}`},
@@ -151,6 +174,9 @@ func TestMergeHostedImageGenToolUsage_EmptyImageGen(t *testing.T) {
 	}
 }
 
+// TestParseSSEUsageBytes_ResponseCompletedWithImageGen supplies a terminal
+// response with main and hosted-image observations. The aggregate must expose
+// the four asserted input/output and image-input/output counts.
 func TestParseSSEUsageBytes_ResponseCompletedWithImageGen(t *testing.T) {
 	data := []byte(`{
 		"type": "response.completed",
@@ -174,13 +200,16 @@ func TestParseSSEUsageBytes_ResponseCompletedWithImageGen(t *testing.T) {
 	require.Equal(t, 3800, usage.ImageInputTokens)
 }
 
+// TestReplaceModelInResponseBody supplies matching, unmatched, missing,
+// invalid, empty, and nested-data response fixtures. Exact equality checks the
+// expected top-level patch or unchanged bytes for each supplied case.
 func TestReplaceModelInResponseBody(t *testing.T) {
 	tests := []struct {
-		name     string
-		body     string
-		from     string
-		to       string
-		expected string
+		name     string // response wire fixture label
+		body     string // raw response JSON or SSE
+		from     string // source model match value
+		to       string // replacement model label value
+		expected string // expected complete output text
 	}{
 		{
 			name:     "替换顶层 model",
@@ -234,14 +263,17 @@ func TestReplaceModelInResponseBody(t *testing.T) {
 	}
 }
 
-// TestReplaceModelInSSELine checks model replacement within SSE data lines.
+// TestReplaceModelInSSELine supplies top-level/nested models, varied prefixes,
+// sentinels, invalid/unmatched data, and simultaneous model fields. Exact
+// expected lines check canonical changed prefixes, field retention, and
+// top-level match priority.
 func TestReplaceModelInSSELine(t *testing.T) {
 	tests := []struct {
-		name     string
-		line     string
-		from     string
-		to       string
-		expected string
+		name     string // response wire fixture label
+		line     string // raw SSE data line
+		from     string // source model match value
+		to       string // replacement model label value
+		expected string // expected complete output text
 	}{
 		{
 			name:     "顶层 model 字段替换",
@@ -344,13 +376,16 @@ func TestReplaceModelInSSELine(t *testing.T) {
 	}
 }
 
+// TestReplaceModelInSSEBody supplies multi-event, unmatched, mixed event/data,
+// and empty buffered bodies. Exact equality checks model patches while
+// retaining the expected line separators and unaffected event text.
 func TestReplaceModelInSSEBody(t *testing.T) {
 	tests := []struct {
-		name     string
-		body     string
-		from     string
-		to       string
-		expected string
+		name     string // response wire fixture label
+		body     string // raw response JSON or SSE
+		from     string // source model match value
+		to       string // replacement model label value
+		expected string // expected complete output text
 	}{
 		{
 			name:     "多行 SSE body 替换",
@@ -390,28 +425,30 @@ func TestReplaceModelInSSEBody(t *testing.T) {
 	}
 }
 
+// TestParseSSEUsage_SelectiveParsing feeds progressive usage and several
+// terminal kinds into one aggregate. It checks positive progressive
+// replacement, retained cache counts, terminal counts, and compatible Chat
+// aliases at each asserted step.
 func TestParseSSEUsage_SelectiveParsing(t *testing.T) {
 	usage := &ForwardUsage{InputTokens: 9, OutputTokens: 8, CacheReadInputTokens: 7}
 
-	// Merge positive usage fields received before the terminal event.
 	ParseSSEUsageBytes([]byte(`{"type":"response.in_progress","response":{"usage":{"input_tokens":1,"output_tokens":2}}}`), usage)
 	require.Equal(t, 1, usage.InputTokens)
 	require.Equal(t, 2, usage.OutputTokens)
 	require.Equal(t, 7, usage.CacheReadInputTokens)
 
-	// Completed events supply terminal usage.
 	ParseSSEUsageBytes([]byte(`{"type":"response.completed","response":{"usage":{"input_tokens":3,"output_tokens":5,"input_tokens_details":{"cached_tokens":2}}}}`), usage)
 	require.Equal(t, 3, usage.InputTokens)
 	require.Equal(t, 5, usage.OutputTokens)
 	require.Equal(t, 2, usage.CacheReadInputTokens)
 
-	// Legacy done events can also supply terminal usage.
 	ParseSSEUsageBytes([]byte(`{"type":"response.done","response":{"usage":{"input_tokens":13,"output_tokens":15,"input_tokens_details":{"cached_tokens":4}}}}`), usage)
 	require.Equal(t, 13, usage.InputTokens)
 	require.Equal(t, 15, usage.OutputTokens)
 	require.Equal(t, 4, usage.CacheReadInputTokens)
 
-	// Failed events can report consumed tokens, as in WebSocket and passthrough paths.
+	// A failed terminal can still contain consumed-token observations. The
+	// aggregate update remains independent of whether the response was delivered successfully.
 	ParseSSEUsageBytes([]byte(`{"type":"response.failed","response":{"usage":{"input_tokens":17,"output_tokens":19,"input_tokens_details":{"cached_tokens":6}}}}`), usage)
 	require.Equal(t, 17, usage.InputTokens)
 	require.Equal(t, 19, usage.OutputTokens)
@@ -423,6 +460,10 @@ func TestParseSSEUsage_SelectiveParsing(t *testing.T) {
 	require.Equal(t, 6, usage.CacheReadInputTokens)
 }
 
+// TestParseSSEUsage_NonTerminalUsageMergesNonZeroFields combines nonterminal
+// observations with explicit zero fields and later positive counters. The
+// final four asserted buckets retain earlier positives or take the later
+// positive values.
 func TestParseSSEUsage_NonTerminalUsageMergesNonZeroFields(t *testing.T) {
 	usage := &ForwardUsage{}
 
@@ -435,6 +476,10 @@ func TestParseSSEUsage_NonTerminalUsageMergesNonZeroFields(t *testing.T) {
 	require.Equal(t, 3, usage.CacheCreationInputTokens)
 }
 
+// TestParseSSEUsage_TerminalUsageReplacesFallback follows progressive cache
+// usage with a populated terminal object lacking cache detail. Terminal
+// input/output counts replace the aggregate and its earlier cache count
+// becomes zero.
 func TestParseSSEUsage_TerminalUsageReplacesFallback(t *testing.T) {
 	usage := &ForwardUsage{}
 
@@ -446,6 +491,9 @@ func TestParseSSEUsage_TerminalUsageReplacesFallback(t *testing.T) {
 	require.Zero(t, usage.CacheReadInputTokens)
 }
 
+// TestParseSSEUsage_TerminalWithoutUsageKeepsFallback follows progressive
+// counts with a usage-free terminal and whitespace-padded done sentinel. Both
+// original input and output counts remain available after those observations.
 func TestParseSSEUsage_TerminalWithoutUsageKeepsFallback(t *testing.T) {
 	usage := &ForwardUsage{}
 
@@ -457,6 +505,9 @@ func TestParseSSEUsage_TerminalWithoutUsageKeepsFallback(t *testing.T) {
 	require.Equal(t, 5, usage.OutputTokens)
 }
 
+// TestEffectiveOpenAISSEEventTypePrefersPayload compares payload type with
+// conflicting or fallback frame labels. It checks selected labels and JSON
+// equality for type injection into a payload with a blank type.
 func TestEffectiveOpenAISSEEventTypePrefersPayload(t *testing.T) {
 	t.Parallel()
 
@@ -465,6 +516,9 @@ func TestEffectiveOpenAISSEEventTypePrefersPayload(t *testing.T) {
 	require.JSONEq(t, `{"type":"error","error":{"message":"failed"}}`, OpenAICompatPayloadWithEventType(`{"type":"","error":{"message":"failed"}}`, "error"))
 }
 
+// TestExtractOpenAISSETerminalEventUsesFinalAuthoritativeTerminal places an
+// error before a completed response in one buffered body. Extraction must
+// select the later completion type and its response identity.
 func TestExtractOpenAISSETerminalEventUsesFinalAuthoritativeTerminal(t *testing.T) {
 	t.Parallel()
 
@@ -476,6 +530,10 @@ func TestExtractOpenAISSETerminalEventUsesFinalAuthoritativeTerminal(t *testing.
 	require.Equal(t, "resp_1", gjson.GetBytes(payload, "response.id").String())
 }
 
+// TestParseSSEUsageEffectiveTerminalRules supplies separate labels for
+// progressive, absent, zero, and positive terminal usage. Complete aggregate
+// equality checks retained earlier counts and replacement by the positive
+// terminal object.
 func TestParseSSEUsageEffectiveTerminalRules(t *testing.T) {
 	t.Parallel()
 
@@ -491,6 +549,9 @@ func TestParseSSEUsageEffectiveTerminalRules(t *testing.T) {
 	require.Equal(t, ForwardUsage{InputTokens: 2}, *usage)
 }
 
+// BenchmarkParseSSEUsageNoUsageDelta measures repeated observation of a text
+// delta containing no usage object. Payload construction precedes timing, and
+// allocation reporting covers calls using the same aggregate.
 func BenchmarkParseSSEUsageNoUsageDelta(b *testing.B) {
 	usage := &ForwardUsage{}
 	payload := []byte(`{"type":"response.output_text.delta","delta":"hello"}`)
@@ -501,6 +562,9 @@ func BenchmarkParseSSEUsageNoUsageDelta(b *testing.B) {
 	}
 }
 
+// TestForEachOpenAISSEFrameDataTypeOverridesEventField gives one frame a
+// declared in-progress label and a completed payload type. The callback must
+// observe only the completed type selected from data.
 func TestForEachOpenAISSEFrameDataTypeOverridesEventField(t *testing.T) {
 	t.Parallel()
 
@@ -515,17 +579,27 @@ func TestForEachOpenAISSEFrameDataTypeOverridesEventField(t *testing.T) {
 	require.Equal(t, []string{"response.completed"}, types)
 }
 
+// benchmarkOpenAIUsageJSONBytes creates a fresh canonical response fixture
+// with input, output, and cached-input counts.
 func benchmarkOpenAIUsageJSONBytes() []byte {
 	return []byte(`{"id":"resp_bench","object":"response","model":"gpt-5.3-codex","usage":{"input_tokens":3210,"output_tokens":987,"input_tokens_details":{"cached_tokens":456}}}`)
 }
 
+// legacyExtractOpenAIUsageFromJSONBytes decodes the benchmark's canonical
+// input/output/cache fields using encoding/json. A decoding error returns zero
+// usage and false; valid input without those fields can return zero usage with
+// true, including JSON null.
 func legacyExtractOpenAIUsageFromJSONBytes(body []byte) (ForwardUsage, bool) {
 	var response struct {
+		// Usage retains the benchmark's canonical object fields; omitted values
+		// remain zero because this typed fixture decoder performs no presence tracking.
 		Usage struct {
-			InputTokens       int `json:"input_tokens"`
-			OutputTokens      int `json:"output_tokens"`
+			InputTokens  int `json:"input_tokens"`  // canonical input token count
+			OutputTokens int `json:"output_tokens"` // canonical output token count
+			// InputTokenDetails contributes cached input only, leaving other
+			// categories outside the benchmark's small typed decoding shape.
 			InputTokenDetails struct {
-				CachedTokens int `json:"cached_tokens"`
+				CachedTokens int `json:"cached_tokens"` // canonical cached-input token count
 			} `json:"input_tokens_details"`
 		} `json:"usage"`
 	}

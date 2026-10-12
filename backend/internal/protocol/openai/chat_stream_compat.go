@@ -9,25 +9,36 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// RawStreamTerminalState records terminal signals in a raw Chat Completions SSE stream.
-// HTTP 200 alone cannot establish completion; missing terminal signals indicate truncation.
-// Any of the following counts as termination:
-//   - [DONE], the Chat Completions sentinel.
-//   - A usage object, normally sent in the final include_usage chunk.
-//   - A nonempty finish_reason such as stop, length, or tool_calls.
+// Tool-argument fragments can carry empty identity fields after a first chunk
+// supplied their ID and name. A client that overwrites every present field
+// would replace its stored identity with empty text, so raw Chat cleanup
+// removes those exact empty keys while retaining the argument fragments. The
+// repair is stateless and keeps every call's array position.
 //
-// This accepts upstreams that close after a final chunk or omit include_usage.
+// Raw streams can terminate with a done sentinel, a usage object, or a
+// nonblank finish reason. Those observations accumulate independently.
+// Truncation also depends on whether data payloads were observed and whether
+// output began: an already forwarded non-SSE response can finish without SSE
+// markers, while an empty or unterminated SSE read lacks the required
+// evidence.
+
+// RawStreamTerminalState accumulates raw Chat stream terminal evidence for one
+// read. Callers trim each data payload and serialize state access; the zero
+// value is ready to observe a new stream.
 type RawStreamTerminalState struct {
-	// sawDataLine enables SSE truncation checks after any data line.
-	// Already-forwarded non-SSE bodies are exempt.
-	sawDataLine     bool
-	sawDone         bool
-	sawUsage        bool
-	sawFinishReason bool
+	// sawDataLine records SSE participation. sawDone, sawUsage, and
+	// sawFinishReason accumulate independent termination signals; any one
+	// ends truncation detection, while data presence removes the non-SSE exemption.
+	sawDataLine     bool // observed SSE data payload
+	sawDone         bool // observed exact done sentinel
+	sawUsage        bool // observed usage object value
+	sawFinishReason bool // observed nonblank finish reason
 }
 
-// EnsureOpenAIChatStreamUsage enables usage in raw Chat Completions streaming requests.
-// Forwarded usage supports downstream proxies and billing systems.
+// EnsureOpenAIChatStreamUsage sets stream_options.include_usage to true for a
+// Chat request body. Existing false values are overwritten, and patch errors
+// return the supplied body; callers choose whether the request follows the raw
+// streaming path.
 func EnsureOpenAIChatStreamUsage(body []byte) ([]byte, error) {
 	updated, err := sjson.SetBytes(body, "stream_options.include_usage", true)
 	if err != nil {
@@ -36,6 +47,9 @@ func EnsureOpenAIChatStreamUsage(body []byte) ([]byte, error) {
 	return updated, nil
 }
 
+// IsOpenAIChatUsageOnlyStreamChunk reports an existing usage key with an empty
+// choices array. Key presence can include null usage, and path inspection does
+// not validate the complete document or its token counts.
 func IsOpenAIChatUsageOnlyStreamChunk(payload string) bool {
 	if strings.TrimSpace(payload) == "" {
 		return false
@@ -47,8 +61,10 @@ func IsOpenAIChatUsageOnlyStreamChunk(payload string) bool {
 	return choices.Exists() && choices.IsArray() && len(choices.Array()) == 0
 }
 
-// ExtractCCStreamUsage reads usage from one Chat Completions chunk.
-// Callers can replace previously observed counts when an upstream repeats usage.
+// ExtractCCStreamUsage reads an object-shaped usage value from one Chat
+// payload. Missing or nonobject usage returns nil; an empty object returns a
+// present zero-count observation. Values follow OpenAIUsageFromGJSON coercion,
+// and callers decide whether the observation replaces earlier stream counts.
 func ExtractCCStreamUsage(payload string) *ForwardUsage {
 	usageResult := gjson.Get(payload, "usage")
 	if !usageResult.Exists() || !usageResult.IsObject() {
@@ -61,6 +77,10 @@ func ExtractCCStreamUsage(payload string) *ForwardUsage {
 	return &u
 }
 
+// ChatChunkStartsResponsesOutput reports content/reasoning pointer presence or
+// any tool-call records in a choice. Empty pointed-to text still qualifies,
+// and a nil chunk returns false; this signal identifies structural output for
+// Responses conversion.
 func ChatChunkStartsResponsesOutput(chunk *ChatCompletionsChunk) bool {
 	if chunk == nil {
 		return false
@@ -73,7 +93,8 @@ func ChatChunkStartsResponsesOutput(chunk *ChatCompletionsChunk) bool {
 	return false
 }
 
-// ChatCompletionsChunkHasToolCallDelta reports whether any choice contains tool call deltas.
+// ChatCompletionsChunkHasToolCallDelta reports whether any choice contains
+// tool-call records in its delta.
 func ChatCompletionsChunkHasToolCallDelta(chunk *ChatCompletionsChunk) bool {
 	if chunk == nil {
 		return false
@@ -86,8 +107,10 @@ func ChatCompletionsChunkHasToolCallDelta(chunk *ChatCompletionsChunk) bool {
 	return false
 }
 
-// OpenAIChatCompletionServiceTierEventType identifies terminal Chat chunks so their
-// service tier can take precedence over earlier request-tier echoes.
+// OpenAIChatCompletionServiceTierEventType returns response.completed for
+// usage-only payloads or choices with a nonblank gjson finish-reason string.
+// Other payloads return empty text; this classification supplies metadata
+// precedence, rather than validating successful delivery.
 func OpenAIChatCompletionServiceTierEventType(payload []byte) string {
 	if len(payload) == 0 {
 		return ""
@@ -103,14 +126,10 @@ func OpenAIChatCompletionServiceTierEventType(payload []byte) string {
 	return ""
 }
 
-// StripEmptyChatToolCallIdentityFromSSELine removes empty tool IDs and function names
-// from a Chat Completions SSE data line, retaining the data prefix.
-//
-// Compatible upstreams can send valid identity in the first tool delta, then empty
-// id and function.name fields alongside later argument fragments. Clients such as dsh
-// overwrite existing values whenever a field is present, producing an unknown empty tool.
-// Removing empty identity fields prevents that overwrite while retaining arguments.
-// The rewrite is stateless and applies to raw Chat forwarding for every provider.
+// StripEmptyChatToolCallIdentityFromSSELine delegates identity cleanup for an
+// SSE data payload and retains its exact line prefix. Non-data lines, blank
+// payloads, the done sentinel, and unchanged cleanup results keep the supplied
+// line.
 func StripEmptyChatToolCallIdentityFromSSELine(line string) string {
 	payload, ok := ExtractSSEDataLine(line)
 	if !ok {
@@ -131,17 +150,23 @@ func StripEmptyChatToolCallIdentityFromSSELine(line string) string {
 	return line[:prefixLen] + string(rewritten)
 }
 
-// StripEmptyChatToolCallIdentity removes empty string IDs and function names from
-// choices[*].delta.tool_calls[*]. It retains arguments, indexes, types, other fields,
-// and nonempty identities across all choices and tool indexes.
+// StripEmptyChatToolCallIdentity removes exact empty-string tool IDs and
+// function names from choices[*].delta.tool_calls[*]. Null, whitespace-only,
+// and nonstring identities remain. It requires valid JSON after its literal
+// tool_calls screen; an escaped spelling that misses this screen is returned
+// unchanged.
 //
-// Empty or invalid JSON, unrelated payloads, and deletion failures return the original
-// payload with false. The boolean reports whether fields were removed.
+// Removing those keys lets a client that overwrites every present identity
+// keep its earlier ID and name while appending later argument fragments. Every
+// choice and call-array position is visited. Arguments, indexes, and other
+// fields remain in the raw JSON; any deletion failure returns the supplied
+// payload with false, discarding the candidate sequence.
 func StripEmptyChatToolCallIdentity(payload []byte) ([]byte, bool) {
 	if len(payload) == 0 {
 		return payload, false
 	}
-	// Skip parsing chunks that cannot contain tool calls.
+	// The literal screen avoids parsing ordinary content chunks. Escaped key
+	// spellings can miss this screen, so this helper is a targeted raw-stream repair.
 	if !bytes.Contains(payload, []byte("tool_calls")) {
 		return payload, false
 	}
@@ -152,6 +177,8 @@ func StripEmptyChatToolCallIdentity(payload []byte) ([]byte, bool) {
 	if !choices.Exists() || !choices.IsArray() {
 		return payload, false
 	}
+	// Keep candidate deletions separate from the result decision. A later error
+	// rejects all earlier removals and returns the source payload to the reader.
 	updated := payload
 	changed := false
 	for ci, choice := range choices.Array() {
@@ -188,7 +215,16 @@ func StripEmptyChatToolCallIdentity(payload []byte) ([]byte, bool) {
 	return updated, true
 }
 
-// ObserveDataLine records terminal signals from one SSE data payload. Callers trim whitespace first.
+// ObserveDataLine records one caller-trimmed SSE payload and marks that data
+// was seen even when the payload is empty or malformed. Exact [DONE], an
+// object-shaped usage value, or a nonblank gjson finish-reason string each
+// supplies terminal evidence. A nil receiver has no effect.
+//
+// The flags accumulate across calls, so one later payload cannot erase a prior
+// terminal observation. Usage-object presence is sufficient even for an empty
+// object, and finish-reason path inspection does not validate the enclosing
+// JSON. IsTruncated combines this evidence with whether the caller already
+// forwarded output.
 func (t *RawStreamTerminalState) ObserveDataLine(payload string) {
 	if t == nil {
 		return
@@ -205,7 +241,8 @@ func (t *RawStreamTerminalState) ObserveDataLine(payload string) {
 		return
 	}
 	for _, choice := range gjson.Get(payload, "choices").Array() {
-		// A null finish_reason becomes an empty string and does not terminate the stream.
+		// gjson string conversion maps null to empty text. Require a nonblank
+		// result so unfinished choice chunks cannot supply this terminal signal.
 		if strings.TrimSpace(choice.Get("finish_reason").String()) != "" {
 			t.sawFinishReason = true
 			return
@@ -213,13 +250,21 @@ func (t *RawStreamTerminalState) ObserveDataLine(payload string) {
 	}
 }
 
-// Terminated reports whether any terminal signal was observed.
+// Terminated reports whether any done, usage-object, or finish-reason evidence
+// was recorded.
 func (t *RawStreamTerminalState) Terminated() bool {
 	return t != nil && (t.sawDone || t.sawUsage || t.sawFinishReason)
 }
 
-// IsTruncated reports missing termination after SSE data or an entirely empty response.
-// A started non-SSE response is exempt because it has no data lines or SSE terminator.
+// IsTruncated reports missing terminal evidence after data was observed or
+// before any client output began. Nil state and a recorded terminal signal
+// return false. The caller passes whether output actually started, since these
+// flags cannot detect a forwarded non-SSE body.
+//
+// A started response with no data observations is exempt: it can be plain JSON
+// returned for a streaming request. Once an SSE payload was seen, that
+// exemption ends, and a response lacking all three terminal signals is
+// considered truncated regardless of previously forwarded content.
 func (t *RawStreamTerminalState) IsTruncated(clientOutputStarted bool) bool {
 	if t == nil || t.Terminated() {
 		return false
@@ -227,5 +272,5 @@ func (t *RawStreamTerminalState) IsTruncated(clientOutputStarted bool) bool {
 	return t.sawDataLine || !clientOutputStarted
 }
 
-// SawDataLine reports whether a data payload was observed, for truncation diagnostics.
+// SawDataLine reports whether this state observed any SSE data payload at all.
 func (t *RawStreamTerminalState) SawDataLine() bool { return t != nil && t.sawDataLine }

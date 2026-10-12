@@ -7,9 +7,10 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// TestNormalizeResponsesStreamingTerminalOutputPreservesReportedItems checks reconstruction from done items.
-// The delta accumulator models one reasoning item and one message, so it cannot retain
-// the identities and structure of an arbitrary multi-item turn.
+// TestNormalizeResponsesStreamingTerminalOutputPreservesReportedItems repairs
+// an empty terminal array from two completed items. It checks their selected
+// identities, encrypted reasoning, message status/phase, and text in the
+// rebuilt output.
 func TestNormalizeResponsesStreamingTerminalOutputPreservesReportedItems(t *testing.T) {
 	doneItems := NewResponsesStreamOutputItems()
 
@@ -49,6 +50,9 @@ func TestNormalizeResponsesStreamingTerminalOutputPreservesReportedItems(t *test
 	require.Equal(t, "shipped", gjson.GetBytes(normalized, "response.output.1.content.0.text").String())
 }
 
+// TestResponsesStreamOutputItemsOrderByOutputIndex observes two completed
+// items whose indexes arrive in reverse order. The encoded output must put the
+// lower-index identity before the higher-index identity.
 func TestResponsesStreamOutputItemsOrderByOutputIndex(t *testing.T) {
 	doneItems := NewResponsesStreamOutputItems()
 	doneItems.Observe([]byte(`{"type":"response.output_item.done","output_index":2,"item":{"id":"c","type":"message"}}`))
@@ -60,7 +64,9 @@ func TestResponsesStreamOutputItemsOrderByOutputIndex(t *testing.T) {
 	require.Equal(t, "c", gjson.GetBytes(built, "1.id").String())
 }
 
-// TestNormalizeResponsesStreamingTerminalOutputIgnoresNonDoneEvents verifies that added and delta events do not count as completed items.
+// TestNormalizeResponsesStreamingTerminalOutputIgnoresNonDoneEvents supplies
+// an added event and a text delta to the completed-item recorder. No items are
+// stored, and an empty terminal remains unchanged.
 func TestNormalizeResponsesStreamingTerminalOutputIgnoresNonDoneEvents(t *testing.T) {
 	doneItems := NewResponsesStreamOutputItems()
 	doneItems.Observe([]byte(`{"type":"response.output_item.added","output_index":0,"item":{"id":"msg_1","type":"message"}}`))
@@ -73,8 +79,9 @@ func TestNormalizeResponsesStreamingTerminalOutputIgnoresNonDoneEvents(t *testin
 	require.Equal(t, string(raw), string(normalized))
 }
 
-// TestNormalizeResponsesStreamingTerminalOutputRepairsTruncatedOutput covers a terminal output that
-// contains one synthetic item after the stream has reported two real items.
+// TestNormalizeResponsesStreamingTerminalOutputRepairsTruncatedOutput combines
+// two completed records with a one-item terminal array. Repair must restore
+// two items and replace the synthetic identity with the reported identities.
 func TestNormalizeResponsesStreamingTerminalOutputRepairsTruncatedOutput(t *testing.T) {
 	doneItems := NewResponsesStreamOutputItems()
 	doneItems.Observe([]byte(`{
@@ -99,6 +106,9 @@ func TestNormalizeResponsesStreamingTerminalOutputRepairsTruncatedOutput(t *test
 		"the id the stream reported must replace the fabricated one")
 }
 
+// TestNormalizeResponsesStreamingTerminalOutputLeavesCompleteOutputAlone
+// compares a one-item terminal array with one stored done index. Equal counts
+// keep the complete terminal bytes despite different item identities.
 func TestNormalizeResponsesStreamingTerminalOutputLeavesCompleteOutputAlone(t *testing.T) {
 	doneItems := NewResponsesStreamOutputItems()
 	doneItems.Observe([]byte(`{

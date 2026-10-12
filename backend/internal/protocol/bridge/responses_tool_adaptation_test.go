@@ -7,6 +7,9 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestAdaptOpenAIResponsesClientToolsLeavesNamespaceOnlyBodyUnchanged screens
+// a request containing a namespace with an ordinary function. Its bytes remain
+// equal, and all returned client-tool mapping collections are empty.
 func TestAdaptOpenAIResponsesClientToolsLeavesNamespaceOnlyBodyUnchanged(t *testing.T) {
 	body := []byte(`{
 		"model": "gpt-5.5",
@@ -23,6 +26,9 @@ func TestAdaptOpenAIResponsesClientToolsLeavesNamespaceOnlyBodyUnchanged(t *test
 	require.False(t, mapping.ToolSearch)
 }
 
+// TestAdaptOpenAIResponsesClientToolsRejectsTrailingData appends garbage or a
+// second document to a custom-tool request. Both cases return a trailing-input
+// error, source bytes, and an empty mapping.
 func TestAdaptOpenAIResponsesClientToolsRejectsTrailingData(t *testing.T) {
 	tests := map[string][]byte{
 		"trailing garbage":     append(openAIClientToolsRequest(false), []byte(` garbage`)...),
@@ -40,6 +46,9 @@ func TestAdaptOpenAIResponsesClientToolsRejectsTrailingData(t *testing.T) {
 	}
 }
 
+// TestResponsesFunctionUpstreamsLowerToolSearchDiscoveryOutput runs OpenAI and
+// Grok adaptation on client discovery output. Both produce function output
+// containing the discovered tool list and remove discovery-only fields.
 func TestResponsesFunctionUpstreamsLowerToolSearchDiscoveryOutput(t *testing.T) {
 	body := []byte(`{"tools":[{"type":"tool_search"}],"input":[{"type":"tool_search_output","call_id":"search_1","tools":[{"type":"namespace","name":"github"}],"status":"completed","execution":"client"}]}`)
 	adapters := map[string]func([]byte) ([]byte, ResponsesClientToolMapping, error){
@@ -62,6 +71,8 @@ func TestResponsesFunctionUpstreamsLowerToolSearchDiscoveryOutput(t *testing.T) 
 	}
 }
 
+// openAIClientToolsRequest builds a Responses fixture with two custom tools
+// and the supplied streaming flag.
 func openAIClientToolsRequest(stream bool) []byte {
 	streamValue := "false"
 	if stream {
