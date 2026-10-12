@@ -10,17 +10,27 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
+// tencentCaptchaAPIStub captures the submitted request and returns configured SDK output.
 type tencentCaptchaAPIStub struct {
+	// request retains the exact pointer passed by VerifyTicket so assertions can
+	// inspect the SDK fields after the synchronous stub call returns.
 	request  *capcha.DescribeCaptchaResultRequest
-	response *capcha.DescribeCaptchaResultResponse
-	err      error
+	response *capcha.DescribeCaptchaResultResponse // configured SDK response pointer
+	err      error                                 // configured request failure result
 }
 
+// DescribeCaptchaResultWithContext saves the supplied request pointer and returns
+// the configured response and error. The fixture ignores context cancellation;
+// its caller performs request-field assertions after this synchronous call.
 func (s *tencentCaptchaAPIStub) DescribeCaptchaResultWithContext(_ context.Context, request *capcha.DescribeCaptchaResultRequest) (*capcha.DescribeCaptchaResultResponse, error) {
 	s.request = request
 	return s.response, s.err
 }
 
+// TestTencentCaptchaVerifierMapsCredentialsRequestAndResponse supplies an
+// international endpoint and captures a complete ticket request. The factory
+// receives cloud credentials, SDK fields retain application credentials and proof,
+// and the response fields map into identity values.
 func TestTencentCaptchaVerifierMapsCredentialsRequestAndResponse(t *testing.T) {
 	code := int64(1)
 	message := "OK"
@@ -51,7 +61,8 @@ func TestTencentCaptchaVerifierMapsCredentialsRequestAndResponse(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "cloud-secret-id", gotSecretID)
 	require.Equal(t, "cloud-secret-key", gotSecretKey)
-	// The adapter must use the service-selected international endpoint.
+	// Keep the regional endpoint tied to these credentials so this mapping test
+	// detects an adapter that silently selects the China endpoint during construction.
 	require.Equal(t, "captcha.intl.tencentcloudapi.com", gotEndpoint)
 	require.NotNil(t, client.request)
 	require.Equal(t, uint64(9), *client.request.CaptchaType)

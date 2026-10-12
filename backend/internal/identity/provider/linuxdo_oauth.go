@@ -15,25 +15,51 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
+// LinuxDo code exchange accepts JSON and form-encoded token replies, while
+// userinfo can vary in where it places identity fields. Configured gjson paths
+// precede common field names, and the subject is checked before it can participate
+// in the local synthetic email or username. Profile suggestions remain separate
+// from that stable provider subject.
+//
+// Token exchange retains failure status and trimmed response text for callback handling.
+// Successful parsing requires access_token, and an omitted token type becomes
+// Bearer at exchange time. Userinfo construction accepts Bearer alone and rejects
+// whitespace inside the credential. A missing userinfo email uses a subject-derived
+// synthetic address; callers decide account binding and registration from the
+// resulting subject and profile.
+
 type (
-	LinuxDoTokenResponse      = identity.LinuxDoTokenResponse
+	// LinuxDoTokenResponse aliases token fields consumed by the identity OAuth flow.
+	LinuxDoTokenResponse = identity.LinuxDoTokenResponse
+	// LinuxDoTokenExchangeError aliases provider failure details retained for callback handling.
 	LinuxDoTokenExchangeError = identity.LinuxDoTokenExchangeError
 )
 
 // LinuxDoClient exchanges authorization codes and retrieves LinuxDo profiles.
 type LinuxDoClient struct{}
 
-// LinuxDoOptions aliases the identity module's LinuxDo configuration.
+// LinuxDoOptions aliases the resolved LinuxDo authorization settings supplied by identity.
 type LinuxDoOptions = identity.LinuxDoOAuthOptions
 
+// ExchangeCode delegates code exchange with the callback and optional PKCE
+// verifier supplied by the authorization flow. Authentication method and token
+// parsing follow the effective LinuxDo options; failures return the underlying
+// exchange error.
 func (LinuxDoClient) ExchangeCode(ctx context.Context, o LinuxDoOptions, code, redirect, verifier string) (*LinuxDoTokenResponse, error) {
 	return LinuxDoExchangeCode(ctx, o, code, redirect, verifier)
 }
 
+// FetchUserInfo delegates profile retrieval with a nonnil token and the supplied
+// LinuxDo options. Successful output includes the stable subject and profile
+// suggestions; a missing email can become the subject-derived synthetic address.
 func (LinuxDoClient) FetchUserInfo(ctx context.Context, o LinuxDoOptions, t *LinuxDoTokenResponse) (string, string, string, string, string, error) {
 	return LinuxDoFetchUserInfo(ctx, o, t)
 }
 
+// LinuxDoExchangeCode submits a code grant with a thirty-second request budget.
+// The caller supplies the callback and optional PKCE verifier; empty authentication
+// method uses client_secret_post, while basic and none select the other supported
+// credential forms. Failure responses retain status and body in an exchange error.
 func LinuxDoExchangeCode(
 	ctx context.Context,
 	cfg LinuxDoOptions,
@@ -56,6 +82,8 @@ func LinuxDoExchangeCode(
 		SetContext(ctx).
 		SetHeader("Accept", "application/json")
 
+	// Select one configured authentication form so a basic-auth endpoint receives
+	// the secret in its header, while post-auth endpoints receive it in the grant body.
 	switch strings.ToLower(strings.TrimSpace(cfg.TokenAuthMethod)) {
 	case "", "client_secret_post":
 		form.Set("client_secret", cfg.ClientSecret)
@@ -89,11 +117,17 @@ func LinuxDoExchangeCode(
 		}
 	}
 	if strings.TrimSpace(tokenResp.TokenType) == "" {
+		// Accept providers that omit the type by selecting the same Bearer scheme
+		// supported by profile fetching; supplied unsupported types still fail at that request.
 		tokenResp.TokenType = "Bearer"
 	}
 	return tokenResp, nil
 }
 
+// LinuxDoFetchUserInfo retrieves a profile using a nonnil bearer token and a
+// thirty-second request budget. BuildBearerAuthorization rejects unsupported token
+// types and embedded whitespace, then LinuxDoParseUserInfo supplies the validated
+// subject and display candidates from a successful response.
 func LinuxDoFetchUserInfo(
 	ctx context.Context,
 	cfg LinuxDoOptions,
@@ -120,7 +154,18 @@ func LinuxDoFetchUserInfo(
 	return LinuxDoParseUserInfo(resp.String(), cfg)
 }
 
+// LinuxDoParseUserInfo returns a stable subject with email and suggested profile
+// fields from provider JSON. Configured paths take precedence over ordered common
+// field names, so deployment-specific response shapes can select their values
+// before the defaults are tried. A missing or unsafe subject fails the profile.
+//
+// The checked subject is also used to build a synthetic email when userinfo omits
+// email, keeping the login identity usable by the local user record. Missing
+// username becomes linuxdo_ plus subject, and missing display name uses that
+// username. These display replacements remain separate from subject identity.
 func LinuxDoParseUserInfo(body string, cfg LinuxDoOptions) (email string, username string, subject string, displayName string, avatarURL string, err error) {
+	// Resolve configurable fields before common shapes so this login uses the
+	// administrator-selected email, username, and subject when those values are present.
 	email = identity.OAuthFirstNonEmpty(
 		GetGJSON(body, cfg.UserInfoEmailPath),
 		GetGJSON(body, "email"),
@@ -145,6 +190,8 @@ func LinuxDoParseUserInfo(body string, cfg LinuxDoOptions) (email string, userna
 		GetGJSON(body, "user.id"),
 	)
 
+	// Derive display suggestions independently from the stable subject fields;
+	// a provider can supply name and avatar through different userinfo response shapes.
 	displayName = identity.OAuthFirstNonEmpty(
 		GetGJSON(body, "name"),
 		GetGJSON(body, "nickname"),
@@ -172,16 +219,21 @@ func LinuxDoParseUserInfo(body string, cfg LinuxDoOptions) (email string, userna
 
 	email = strings.TrimSpace(email)
 	if email == "" {
-		// LinuxDo may omit email; a stable synthetic address satisfies the required unique user email.
+		// The checked subject determines a synthetic address when no email candidate
+		// is present, allowing local user storage to retain a stable account email value.
 		email = identity.OAuthLinuxDoSyntheticEmail(subject)
 	}
 
 	username = strings.TrimSpace(username)
 	if username == "" {
+		// Give accepted subjects a username suggestion even when userinfo lacks one,
+		// so the local account flow receives a usable display candidate for signup.
 		username = "linuxdo_" + subject
 	}
 	displayName = strings.TrimSpace(displayName)
 	if displayName == "" {
+		// Use the resolved username after name candidates are absent so returned
+		// profile suggestions still contain display text for the identity flow.
 		displayName = username
 	}
 	avatarURL = strings.TrimSpace(avatarURL)
@@ -189,6 +241,15 @@ func LinuxDoParseUserInfo(body string, cfg LinuxDoOptions) (email string, userna
 	return email, username, subject, displayName, avatarURL, nil
 }
 
+// ParseOAuthProviderError extracts a provider error code and description from
+// JSON paths, then tries form-encoded fields when neither JSON selection is
+// nonempty. Each representation has ordered field candidates, and one selected
+// JSON value is sufficient to keep that result.
+//
+// GetGJSON can stringify a non-string JSON value, so an object under error can
+// become the selected error text before nested paths are considered. Empty input
+// or an unparseable form returns empty strings; callers retain the trimmed response
+// text separately in their token-exchange errors.
 func ParseOAuthProviderError(body string) (providerErr string, providerDesc string) {
 	body = strings.TrimSpace(body)
 	if body == "" {
@@ -211,6 +272,8 @@ func ParseOAuthProviderError(body string) (providerErr string, providerDesc stri
 		return providerErr, providerDesc
 	}
 
+	// Try the form representation after JSON supplies no usable fields, keeping
+	// OAuth endpoints that return query-encoded bodies readable by the same caller.
 	values, err := url.ParseQuery(body)
 	if err != nil {
 		return "", ""
@@ -220,6 +283,15 @@ func ParseOAuthProviderError(body string) (providerErr string, providerDesc stri
 	return providerErr, providerDesc
 }
 
+// ParseLinuxDoTokenResponse decodes JSON or form-encoded token fields while
+// requiring a nonempty access_token in either representation. JSON token presence
+// selects that representation first, and the returned token type remains as decoded
+// for the exchange caller to supply its default.
+//
+// Form decoding is attempted when JSON yields no access token. A malformed form
+// or absent token returns false. An absent or invalid decimal expires_in becomes
+// zero in the form result; the JSON result uses gjson's integer conversion.
+// Profile retrieval later validates the token type before constructing Authorization.
 func ParseLinuxDoTokenResponse(body string) (*LinuxDoTokenResponse, bool) {
 	body = strings.TrimSpace(body)
 	if body == "" {
@@ -241,6 +313,8 @@ func ParseLinuxDoTokenResponse(body string) (*LinuxDoTokenResponse, bool) {
 		}, true
 	}
 
+	// Try the form representation after JSON supplies no usable fields, keeping
+	// OAuth endpoints that return query-encoded bodies readable by the same caller.
 	values, err := url.ParseQuery(body)
 	if err != nil {
 		return nil, false
@@ -251,6 +325,8 @@ func ParseLinuxDoTokenResponse(body string) (*LinuxDoTokenResponse, bool) {
 	}
 	expiresIn := int64(0)
 	if raw := strings.TrimSpace(values.Get("expires_in")); raw != "" {
+		// Malformed lifetime text leaves zero while the access token stays usable;
+		// LinuxDoFetchUserInfo uses the token type and access credential from this result.
 		if v, err := strconv.ParseInt(raw, 10, 64); err == nil {
 			expiresIn = v
 		}
@@ -264,6 +340,9 @@ func ParseLinuxDoTokenResponse(body string) (*LinuxDoTokenResponse, bool) {
 	}, true
 }
 
+// GetGJSON reads a trimmed gjson path and returns the selected value's string
+// representation. An empty path or absent value returns empty text, allowing
+// provider parsers to continue through their ordered candidate paths.
 func GetGJSON(body string, path string) string {
 	path = strings.TrimSpace(path)
 	if path == "" {
@@ -276,6 +355,9 @@ func GetGJSON(body string, path string) string {
 	return res.String()
 }
 
+// BuildBearerAuthorization builds a normalized Bearer header from a supported
+// token type and trimmed access token. An empty type defaults to Bearer; other
+// types, missing token text, and remaining space, tab, or line breaks fail.
 func BuildBearerAuthorization(tokenType, accessToken string) (string, error) {
 	tokenType = strings.TrimSpace(tokenType)
 	if tokenType == "" {
@@ -292,5 +374,7 @@ func BuildBearerAuthorization(tokenType, accessToken string) (string, error) {
 	if strings.ContainsAny(accessToken, " \t\r\n") {
 		return "", errors.New("access_token contains whitespace")
 	}
+	// Normalize accepted case variants to one header scheme so userinfo receives
+	// a consistent Authorization value after token type and credential validation.
 	return "Bearer " + accessToken, nil
 }

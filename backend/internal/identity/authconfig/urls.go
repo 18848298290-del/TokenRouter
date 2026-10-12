@@ -6,7 +6,13 @@ import (
 	"strings"
 )
 
-// ValidateAbsoluteHTTPURL requires an absolute HTTP(S) URL with a host and no fragment.
+// OAuth endpoints need an absolute HTTP or HTTPS address, while frontend callback
+// routes may also be paths on the current origin. These checks validate the saved
+// URL shape; endpoint fetching and redirect execution belong to their callers.
+
+// ValidateAbsoluteHTTPURL checks a trimmed endpoint for an HTTP(S) scheme, host,
+// and absent fragment. The caller retains its input and decides whether credentials,
+// ports, paths, or endpoint reachability are acceptable.
 func ValidateAbsoluteHTTPURL(raw string) error {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -31,7 +37,9 @@ func ValidateAbsoluteHTTPURL(raw string) error {
 	return nil
 }
 
-// ValidateFrontendRedirectURL accepts a single-slash relative path or an absolute HTTP(S) URL and rejects line breaks.
+// ValidateFrontendRedirectURL accepts a trimmed single-slash path or an absolute
+// HTTP(S) URL with a host and no fragment. It rejects remaining line breaks and
+// protocol-relative prefixes; single-slash paths are accepted before URL parsing.
 func ValidateFrontendRedirectURL(raw string) error {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -65,6 +73,7 @@ func ValidateFrontendRedirectURL(raw string) error {
 	return nil
 }
 
+// isHTTPScheme reports whether the scheme is HTTP or HTTPS, ignoring case.
 func isHTTPScheme(scheme string) bool {
 	return strings.EqualFold(scheme, "http") || strings.EqualFold(scheme, "https")
 }

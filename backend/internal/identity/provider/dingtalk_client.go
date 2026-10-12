@@ -16,42 +16,84 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
-// DingTalkClientConfig contains the credentials and endpoints used by DingTalkClient.
+// DingTalk login identifies a user by unionID from the user-token endpoint, while
+// organization profile reads require an application token and a directory user ID.
+// The client resolves those different identifiers before returning staff and
+// department data for local profile synchronization. A legacy organization error
+// can therefore be interpreted separately from a missing login subject.
+//
+// Application tokens are cached within one client under a mutex that also covers
+// fetching a replacement. Configuration changes select a new client while earlier
+// requests can finish on their existing client. Modern and legacy error envelopes
+// are normalized into the same identity error representation. Staff email selection
+// keeps enterprise email precedence separate from nickname and department data.
+
+// DingTalkClientConfig supplies application credentials and endpoints used by DingTalk requests.
 type DingTalkClientConfig struct {
-	ClientID     string
-	ClientSecret string
-	TokenURL     string
-	UserInfoURL  string
+	// ClientID and ClientSecret authorize both user-token exchange and application-
+	// token refresh for this client. ForConfig copies the pair so each selected
+	// configuration keeps its application-token cache tied to those credentials.
+	ClientID     string // registered DingTalk application identifier
+	ClientSecret string // application token exchange secret
+	// TokenURL serves user-token exchange. GetAppToken rewrites the recognized
+	// userAccessToken path for application-token exchange, retaining other configured URLs.
+	TokenURL string
+	// UserInfoURL serves the current-user profile. Directory methods derive a
+	// legacy OAPI origin when this value contains /contact/users/me; other values
+	// are used directly as their request endpoint.
+	UserInfoURL string
 }
 
+// DingTalkClient exchanges user credentials and caches an organization application token.
 type DingTalkClient struct {
-	cfg         DingTalkClientConfig
-	appToken    string
-	appTokenExp time.Time // Provider expiry minus 200 seconds when its lifetime exceeds 200 seconds.
-	mu          sync.Mutex
-	httpClient  *http.Client
+	// cfg is copied when ForConfig constructs this client. HTTP methods read
+	// it outside the token lock, so it remains unchanged during concurrent use.
+	cfg DingTalkClientConfig
+	// appToken and appTokenExp are read and published together under mu. The
+	// lock remains held during a refresh request so other organization reads
+	// can reuse the replacement once it becomes available.
+	appToken    string     // cached organization application token
+	appTokenExp time.Time  // local token reuse cutoff
+	mu          sync.Mutex // application token cache lock
+	// httpClient is shared by this client's requests. ForConfig installs its
+	// timeout once; callers leave the transport configuration stable during use.
+	httpClient *http.Client
 	// TODO(multi-instance): Share the application token cache through Redis.
 }
 
+// DingTalkUserTokenResp aliases the user credential response consumed by identity callbacks.
 type DingTalkUserTokenResp = identity.DingTalkUserTokenResp
 
+// DingTalkAPIError aliases provider code, message, and HTTP status for policy handling.
 type DingTalkAPIError = identity.DingTalkAPIError
 
+// DingTalkStaffInfo aliases the directory profile fields passed to identity synchronization.
 type DingTalkStaffInfo = identity.DingTalkProfileSnapshot
 
-// DingTalkDeptInfo contains department fields returned by topapi/v2/department/get.
+// DingTalkDeptInfo holds directory department identity, display name, and parent relation.
 type DingTalkDeptInfo struct {
-	DeptID   int64
-	Name     string
-	ParentID int64
+	DeptID int64 // provider directory department identifier
+	// Name is trimmed by ResolveDingTalkDeptPath before becoming a path component.
+	// Empty names are omitted, affecting which collected ancestor is later removed.
+	Name string // returned directory department name
+	// ParentID selects the next request in ResolveDingTalkDeptPath. Nonpositive
+	// values and self-parents stop that walk before common highest-name removal.
+	ParentID int64 // parent directory department identifier
 }
 
 // DingTalkClients caches a client and its token until the configuration changes.
 type DingTalkClients struct {
-	mu     sync.Mutex
-	client *DingTalkClient
+	// mu serializes client selection and replacement. client keeps the current
+	// configuration's token cache, while already returned clients can finish requests
+	// after this holder selects a replacement.
+	mu     sync.Mutex      // current client selection lock
+	client *DingTalkClient // client for latest configuration
 }
 
+// ExchangeCodeForUserToken posts an authorization code using this client's
+// application credentials. It accepts HTTP 200 with a decoded nonempty access
+// token; provider failures become DingTalkAPIError for the identity callback to
+// classify before profile lookup.
 func (c *DingTalkClient) ExchangeCodeForUserToken(ctx context.Context, code string) (*DingTalkUserTokenResp, error) {
 	body := map[string]string{
 		"clientId":     c.cfg.ClientID,
@@ -59,6 +101,8 @@ func (c *DingTalkClient) ExchangeCodeForUserToken(ctx context.Context, code stri
 		"code":         code,
 		"grantType":    "authorization_code",
 	}
+	// These request maps contain JSON-supported scalar values. Encoding is
+	// treated as infallible here before the resulting bytes become the request body.
 	payload, _ := json.Marshal(body)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.cfg.TokenURL, bytes.NewReader(payload))
 	if err != nil {
@@ -70,6 +114,8 @@ func (c *DingTalkClient) ExchangeCodeForUserToken(ctx context.Context, code stri
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
+	// Keep any bytes returned when reading fails and discard the read error.
+	// Acceptance then depends on status and parsing checks of those available bytes.
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		return nil, ParseDingTalkErr(raw, resp.StatusCode)
@@ -84,27 +130,43 @@ func (c *DingTalkClient) ExchangeCodeForUserToken(ctx context.Context, code stri
 	return &out, nil
 }
 
+// ParseDingTalkErr converts modern code/message fields or legacy errcode/errmsg
+// fields into a DingTalkAPIError carrying the supplied HTTP status. Modern
+// nonempty values take precedence; a nonzero legacy numeric code becomes decimal
+// text when the modern code is absent.
+//
+// Decoding is best effort because callers use this helper after an HTTP or
+// provider-result failure has already been observed. A decoding error is discarded
+// and any fields populated before it remain available. The result is still an API
+// error even when its code or message is empty.
 func ParseDingTalkErr(raw []byte, status int) error {
 	var v struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
-		ErrCode int    `json:"errcode"`
-		ErrMsg  string `json:"errmsg"`
+		Code    string `json:"code"`    // modern provider error code
+		Message string `json:"message"` // modern provider error message
+		ErrCode int    `json:"errcode"` // legacy provider result code
+		ErrMsg  string `json:"errmsg"`  // legacy provider result message
 	}
+	// Status or result checking already selected an error path. Retain any
+	// decoded envelope fields and report that provider failure even if JSON decoding fails.
 	_ = json.Unmarshal(raw, &v)
 	code := v.Code
+	// Modern error text takes precedence; convert a legacy numeric code only
+	// when needed so identity policy can compare one normalized code string.
 	if code == "" && v.ErrCode != 0 {
 		code = fmt.Sprintf("%d", v.ErrCode)
 	}
 	msg := v.Message
+	// Legacy messages complete error envelopes that omit modern message text,
+	// giving callback diagnostics the provider-supplied description when it is available.
 	if msg == "" {
 		msg = v.ErrMsg
 	}
 	return &DingTalkAPIError{Code: code, Message: msg, HTTP: status}
 }
 
-// GetUnionIdByUserToken reads unionId and the user-selected nick from /v1.0/contact/users/me.
-// This profile nickname comes from the OIDC endpoint, separate from legacy user/get.nickname.
+// GetUnionIdByUserToken reads the current-user endpoint with the supplied user
+// access token and returns unionId plus nick. It requires HTTP 200, decoded JSON,
+// and a unionId nonempty after trimming; returned fields retain their supplied text.
 func (c *DingTalkClient) GetUnionIdByUserToken(ctx context.Context, userToken string) (unionID string, nick string, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.cfg.UserInfoURL, nil)
 	if err != nil {
@@ -116,13 +178,15 @@ func (c *DingTalkClient) GetUnionIdByUserToken(ctx context.Context, userToken st
 		return "", "", err
 	}
 	defer func() { _ = resp.Body.Close() }()
+	// Keep any bytes returned when reading fails and discard the read error.
+	// Acceptance then depends on status and parsing checks of those available bytes.
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		return "", "", ParseDingTalkErr(raw, resp.StatusCode)
 	}
 	var v struct {
-		UnionID string `json:"unionId"`
-		Nick    string `json:"nick"`
+		UnionID string `json:"unionId"` // stable cross-application user subject
+		Nick    string `json:"nick"`    // current-user endpoint profile nickname
 	}
 	if err := json.Unmarshal(raw, &v); err != nil {
 		return "", "", err
@@ -133,33 +197,53 @@ func (c *DingTalkClient) GetUnionIdByUserToken(ctx context.Context, userToken st
 	return v.UnionID, v.Nick, nil
 }
 
-// DingTalkOAPIBase derives the legacy OAPI URL, mapping api.dingtalk.com to oapi.dingtalk.com.
-// The getbyunionid and topapi/v2/user/get endpoints use OAPI.
+// DingTalkOAPIBase derives a legacy API origin from the configured userinfo URL.
+// An api. host prefix becomes oapi.; invalid or incomplete URLs select the default
+// DingTalk OAPI origin used by organization lookup requests.
 func (c *DingTalkClient) DingTalkOAPIBase() string {
 	u, err := url.Parse(c.cfg.UserInfoURL)
 	if err != nil || u.Scheme == "" || u.Host == "" {
+		// Use the production legacy origin when the configured userinfo address
+		// cannot yield one, so downstream directory requests receive a complete base URL.
 		return "https://oapi.dingtalk.com"
 	}
 	host := u.Host
 	if after, ok := strings.CutPrefix(host, "api."); ok {
+		// Directory endpoints use the legacy API host alongside the user-token API,
+		// so translate the api. prefix while retaining the configured remaining hostname.
 		host = "oapi." + after
 	}
 	return u.Scheme + "://" + host
 }
 
+// GetAppToken returns this client's cached application token before its local
+// expiry cutoff, otherwise fetching and publishing a replacement. The client mutex
+// covers the cache check and the network request so concurrent organization reads
+// reuse one successfully fetched value.
+//
+// A provider lifetime above 200 seconds is shortened by 200 before computing
+// the cutoff; shorter, zero, and negative lifetimes are used directly. Requests
+// carry ctx, while mutex waiting itself has no context-select path. The token
+// and cutoff are updated together under that lock after decoding succeeds.
 func (c *DingTalkClient) GetAppToken(ctx context.Context) (string, error) {
+	// Hold the token lock across checking, fetching, and publication so another
+	// request cannot publish a competing application-token refresh for this client.
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.appToken != "" && time.Now().Before(c.appTokenExp) {
 		return c.appToken, nil
 	}
 	body := map[string]string{"appKey": c.cfg.ClientID, "appSecret": c.cfg.ClientSecret}
+	// These request maps contain JSON-supported scalar values. Encoding is
+	// treated as infallible here before the resulting bytes become the request body.
 	payload, _ := json.Marshal(body)
-	// Request the internal application token from POST /v1.0/oauth2/accessToken.
-	// Subsequent legacy OAPI requests use this token in their access_token query parameter.
+	// The current user-token path names a different credential from directory
+	// authorization. Rewrite that path for application-token exchange used by OAPI calls.
 	appTokenURL := strings.Replace(c.cfg.TokenURL, "/oauth2/userAccessToken", "/oauth2/accessToken", 1)
 	if !strings.Contains(appTokenURL, "accessToken") && !strings.Contains(appTokenURL, "gettoken") {
-		appTokenURL = c.cfg.TokenURL // fallback for test stub
+		// Retain an unrecognized configured endpoint so direct clients and local
+		// fixtures can supply their own application-token exchange URL shape.
+		appTokenURL = c.cfg.TokenURL
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, appTokenURL, bytes.NewReader(payload))
 	if err != nil {
@@ -171,13 +255,15 @@ func (c *DingTalkClient) GetAppToken(ctx context.Context) (string, error) {
 		return "", err
 	}
 	defer func() { _ = resp.Body.Close() }()
+	// Keep any bytes returned when reading fails and discard the read error.
+	// Acceptance then depends on status and parsing checks of those available bytes.
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		return "", ParseDingTalkErr(raw, resp.StatusCode)
 	}
 	var v struct {
-		AccessToken string `json:"accessToken"`
-		ExpireIn    int64  `json:"expireIn"`
+		AccessToken string `json:"accessToken"` // returned organization application token
+		ExpireIn    int64  `json:"expireIn"`    // seconds
 	}
 	if err := json.Unmarshal(raw, &v); err != nil {
 		return "", err
@@ -187,27 +273,37 @@ func (c *DingTalkClient) GetAppToken(ctx context.Context) (string, error) {
 	}
 	c.appToken = v.AccessToken
 	ttl := v.ExpireIn
+	// Reuse long-lived tokens until 200 seconds before provider expiry.
 	if ttl > 200 {
 		ttl -= 200
 	}
+	// Convert the selected provider lifetime to the local wall-clock cutoff.
 	c.appTokenExp = time.Now().Add(time.Duration(ttl) * time.Second)
 	return c.appToken, nil
 }
 
+// GetUserIdByUnionId resolves the stable unionID to a user identifier in this
+// application's organization directory. It obtains an application token first;
+// HTTP or provider-result failures, including a missing directory user, return
+// DingTalkAPIError for the caller's organization policy.
 func (c *DingTalkClient) GetUserIdByUnionId(ctx context.Context, unionID string) (string, error) {
 	appToken, err := c.GetAppToken(ctx)
 	if err != nil {
 		return "", err
 	}
 	body := map[string]string{"unionid": unionID}
+	// These request maps contain JSON-supported scalar values. Encoding is
+	// treated as infallible here before the resulting bytes become the request body.
 	payload, _ := json.Marshal(body)
-	// Legacy OAPI resolves unionId through POST /topapi/user/getbyunionid.
-	// Pass the application token in the access_token query parameter.
+	// Resolve a login unionID through the legacy directory using the application
+	// token in the query, keeping organization user IDs separate from login subjects.
 	var targetURL string
 	if strings.Contains(c.cfg.UserInfoURL, "/contact/users/me") {
 		targetURL = c.DingTalkOAPIBase() + "/topapi/user/getbyunionid?access_token=" + url.QueryEscape(appToken)
 	} else {
-		targetURL = c.cfg.UserInfoURL // fallback for test stub
+		// An unrecognized userinfo path is used directly for directory requests,
+		// allowing configured clients and fixtures to supply an endpoint with another shape.
+		targetURL = c.cfg.UserInfoURL
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(payload))
 	if err != nil {
@@ -219,16 +315,18 @@ func (c *DingTalkClient) GetUserIdByUnionId(ctx context.Context, unionID string)
 		return "", err
 	}
 	defer func() { _ = resp.Body.Close() }()
+	// Keep any bytes returned when reading fails and discard the read error.
+	// Acceptance then depends on status and parsing checks of those available bytes.
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		return "", ParseDingTalkErr(raw, resp.StatusCode)
 	}
 	var v struct {
-		Result struct {
-			UserID string `json:"userid"`
+		Result struct { // legacy directory result envelope
+			UserID string `json:"userid"` // organization directory user identifier
 		} `json:"result"`
-		ErrCode int    `json:"errcode"`
-		ErrMsg  string `json:"errmsg"`
+		ErrCode int    `json:"errcode"` // legacy provider result code
+		ErrMsg  string `json:"errmsg"`  // legacy provider result message
 	}
 	if err := json.Unmarshal(raw, &v); err != nil {
 		return "", err
@@ -242,20 +340,26 @@ func (c *DingTalkClient) GetUserIdByUnionId(ctx context.Context, unionID string)
 	return v.Result.UserID, nil
 }
 
-// GetDeptInfo fetches one department for hierarchical path construction.
-// It calls POST /topapi/v2/department/get with access_token in the query string.
+// GetDeptInfo reads one directory department using the application token before
+// path construction. HTTP and provider errcode failures are returned; an accepted
+// result can contain zero IDs or an empty name, which ResolveDingTalkDeptPath
+// interprets while walking the hierarchy.
 func (c *DingTalkClient) GetDeptInfo(ctx context.Context, deptID int64) (*DingTalkDeptInfo, error) {
 	appToken, err := c.GetAppToken(ctx)
 	if err != nil {
 		return nil, err
 	}
 	body := map[string]any{"dept_id": deptID, "language": "zh_CN"}
+	// These request maps contain JSON-supported scalar values. Encoding is
+	// treated as infallible here before the resulting bytes become the request body.
 	payload, _ := json.Marshal(body)
 	var targetURL string
 	if strings.Contains(c.cfg.UserInfoURL, "/contact/users/me") {
 		targetURL = c.DingTalkOAPIBase() + "/topapi/v2/department/get?access_token=" + url.QueryEscape(appToken)
 	} else {
-		targetURL = c.cfg.UserInfoURL // test stub fallback
+		// An unrecognized userinfo path is used directly for directory requests,
+		// allowing configured clients and fixtures to supply an endpoint with another shape.
+		targetURL = c.cfg.UserInfoURL
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(payload))
 	if err != nil {
@@ -267,18 +371,20 @@ func (c *DingTalkClient) GetDeptInfo(ctx context.Context, deptID int64) (*DingTa
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
+	// Keep any bytes returned when reading fails and discard the read error.
+	// Acceptance then depends on status and parsing checks of those available bytes.
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		return nil, ParseDingTalkErr(raw, resp.StatusCode)
 	}
 	var v struct {
-		Result struct {
-			DeptID   int64  `json:"dept_id"`
-			Name     string `json:"name"`
-			ParentID int64  `json:"parent_id"`
+		Result struct { // legacy directory result envelope
+			DeptID   int64  `json:"dept_id"`   // provider directory department identifier
+			Name     string `json:"name"`      // directory display name text
+			ParentID int64  `json:"parent_id"` // parent directory department identifier
 		} `json:"result"`
-		ErrCode int    `json:"errcode"`
-		ErrMsg  string `json:"errmsg"`
+		ErrCode int    `json:"errcode"` // legacy provider result code
+		ErrMsg  string `json:"errmsg"`  // legacy provider result message
 	}
 	if err := json.Unmarshal(raw, &v); err != nil {
 		return nil, err
@@ -293,19 +399,34 @@ func (c *DingTalkClient) GetDeptInfo(ctx context.Context, deptID int64) (*DingTa
 	}, nil
 }
 
+// GetStaffInfoByUserId reads directory fields for the supplied organization user
+// identifier and returns a profile synchronization snapshot. The application token
+// authorizes the legacy request; HTTP errors, nonzero errcode, and a missing returned
+// userid stop before the snapshot is prepared.
+//
+// Enterprise email selection prefers trimmed org_email, then email, then the
+// enterprise-email member of the JSON-encoded extension map. Invalid extension
+// JSON leaves email empty. Names and department identifiers remain profile data
+// for the core, while unionID from the separate current-user request remains the
+// login subject used by the HTTP flow.
 func (c *DingTalkClient) GetStaffInfoByUserId(ctx context.Context, userID string) (*DingTalkStaffInfo, error) {
 	appToken, err := c.GetAppToken(ctx)
 	if err != nil {
 		return nil, err
 	}
 	body := map[string]string{"userid": userID}
+	// These request maps contain JSON-supported scalar values. Encoding is
+	// treated as infallible here before the resulting bytes become the request body.
 	payload, _ := json.Marshal(body)
-	// Fetch staff details from the legacy OAPI topapi/v2/user/get endpoint.
+	// A directory user ID selects staff details through the application-token
+	// API; this profile request does not replace the unionID used for login identity.
 	var targetURL string
 	if strings.Contains(c.cfg.UserInfoURL, "/contact/users/me") {
 		targetURL = c.DingTalkOAPIBase() + "/topapi/v2/user/get?access_token=" + url.QueryEscape(appToken)
 	} else {
-		targetURL = c.cfg.UserInfoURL // fallback for test stub
+		// An unrecognized userinfo path is used directly for directory requests,
+		// allowing configured clients and fixtures to supply an endpoint with another shape.
+		targetURL = c.cfg.UserInfoURL
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(payload))
 	if err != nil {
@@ -317,22 +438,24 @@ func (c *DingTalkClient) GetStaffInfoByUserId(ctx context.Context, userID string
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
+	// Keep any bytes returned when reading fails and discard the read error.
+	// Acceptance then depends on status and parsing checks of those available bytes.
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		return nil, ParseDingTalkErr(raw, resp.StatusCode)
 	}
 	var v struct {
-		Result struct {
-			UserID    string  `json:"userid"`
-			Name      string  `json:"name"`
-			Nickname  string  `json:"nickname"`
-			Email     string  `json:"email"`
-			OrgEmail  string  `json:"org_email"`
-			Extension string  `json:"extension"`
-			DeptID    []int64 `json:"dept_id_list"`
+		Result struct { // legacy directory result envelope
+			UserID    string  `json:"userid"`       // organization directory user identifier
+			Name      string  `json:"name"`         // directory display name text
+			Nickname  string  `json:"nickname"`     // legacy directory nickname text
+			Email     string  `json:"email"`        // personal directory email text
+			OrgEmail  string  `json:"org_email"`    // enterprise directory email text
+			Extension string  `json:"extension"`    // JSON-encoded custom profile fields
+			DeptID    []int64 `json:"dept_id_list"` // provider directory department identifiers
 		} `json:"result"`
-		ErrCode int    `json:"errcode"`
-		ErrMsg  string `json:"errmsg"`
+		ErrCode int    `json:"errcode"` // legacy provider result code
+		ErrMsg  string `json:"errmsg"`  // legacy provider result message
 	}
 	if err := json.Unmarshal(raw, &v); err != nil {
 		return nil, err
@@ -343,7 +466,9 @@ func (c *DingTalkClient) GetStaffInfoByUserId(ctx context.Context, userID string
 	if strings.TrimSpace(v.Result.UserID) == "" {
 		return nil, ParseDingTalkErr(raw, resp.StatusCode)
 	}
-	// Email precedence: org_email, email, then the enterprise-email extension field in the JSON-encoded custom fields.
+	// Enterprise email wins before personal email for the synchronized profile.
+	// The extension map is consulted after both fields are empty, and failure leaves
+	// the snapshot with an empty email for the caller's completion policy.
 	email := strings.TrimSpace(v.Result.OrgEmail)
 	emailSource := "org_email"
 	if email == "" {
@@ -353,6 +478,8 @@ func (c *DingTalkClient) GetStaffInfoByUserId(ctx context.Context, userID string
 	extensionParsed := false
 	if email == "" && strings.TrimSpace(v.Result.Extension) != "" {
 		var ext map[string]string
+		// Treat an unusable extension as missing email rather than rejecting the
+		// directory profile; the login flow independently handles required-email completion.
 		if err := json.Unmarshal([]byte(v.Result.Extension), &ext); err == nil {
 			extensionParsed = true
 			if v, ok := ext["企业邮箱"]; ok {
@@ -385,7 +512,17 @@ func (c *DingTalkClient) GetStaffInfoByUserId(ctx context.Context, userID string
 	}, nil
 }
 
+// ForConfig returns the client selected for the supplied credentials and two
+// endpoints. Selection and replacement happen under the holder mutex, so concurrent
+// requests obtain a complete client for that exact configuration.
+//
+// A changed configuration creates a client with an empty application-token cache
+// and a ten-second HTTP budget. Earlier callers can continue using their returned
+// client; its configuration and transport remain stable. The holder stores one
+// current client, and token caching is local to each client instance.
 func (s *DingTalkClients) ForConfig(cfg DingTalkClientConfig) *DingTalkClient {
+	// Replace the selected client when credentials or endpoints differ so the
+	// next configuration starts with its own application-token cache under this holder lock.
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.client == nil || s.client.cfg != cfg {
@@ -394,7 +531,10 @@ func (s *DingTalkClients) ForConfig(cfg DingTalkClientConfig) *DingTalkClient {
 	return s.client
 }
 
-// ResolveDepartmentPath returns the department hierarchy as a slash-separated path.
+// ResolveDepartmentPath delegates directory traversal for the supplied department
+// identifier. A completed or bounded walk omits its highest collected name; lookup
+// failures return an error, and the identity sync caller decides whether to update
+// the local attribute.
 func (c *DingTalkClient) ResolveDepartmentPath(ctx context.Context, id int64) (string, error) {
 	return ResolveDingTalkDeptPath(ctx, c, id)
 }

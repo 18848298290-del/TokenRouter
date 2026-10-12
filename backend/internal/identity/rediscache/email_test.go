@@ -6,11 +6,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestVerifyCodeKey covers empty and punctuated mailbox inputs used as challenge
+// keys. The returned key retains plus tags, dots, and subdomains after adding the
+// verification prefix for each supplied address.
 func TestVerifyCodeKey(t *testing.T) {
 	tests := []struct {
-		name     string
-		email    string
-		expected string
+		name     string // named key construction case
+		email    string // supplied mailbox input text
+		expected string // expected Redis key text
 	}{
 		{
 			name:     "normal_email",

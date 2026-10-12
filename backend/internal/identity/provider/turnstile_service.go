@@ -13,19 +13,32 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient"
 )
 
+// Turnstile sends challenge decisions as JSON after a form-encoded verification
+// request. The adapter returns that decision even when success is false; the
+// identity service interprets rejection and secret-key probe results using the
+// same transport implementation.
+
+// turnstileVerifyURL selects the Cloudflare verification endpoint for adapters
+// constructed with the production HTTP client and request settings.
 const turnstileVerifyURL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 
+// turnstileVerifier carries the HTTP transport and endpoint for Turnstile verification.
 type turnstileVerifier struct {
-	httpClient *http.Client
-	verifyURL  string
+	httpClient *http.Client // HTTP verification request transport
+	verifyURL  string       // challenge verification endpoint URL
 }
 
+// NewTurnstileVerifier constructs an adapter with a ten-second HTTP budget and
+// the Cloudflare verification endpoint. Shared-client setup failure selects a
+// standard HTTP client; the constructor still returns a usable adapter.
 func NewTurnstileVerifier() identity.TurnstileVerifier {
 	sharedClient, err := httpclient.GetClient(httpclient.Options{
 		Timeout:            10 * time.Second,
 		ValidateResolvedIP: true,
 	})
 	if err != nil {
+		// Continue verification after shared-client setup fails using the same timeout.
+		// The replacement uses the default transport and omits the shared resolved-IP validator.
 		sharedClient = &http.Client{Timeout: 10 * time.Second}
 	}
 	return &turnstileVerifier{
@@ -34,6 +47,9 @@ func NewTurnstileVerifier() identity.TurnstileVerifier {
 	}
 }
 
+// VerifyToken posts the supplied secret and challenge, adding remoteip when
+// nonempty. It decodes the response body regardless of HTTP status and returns
+// provider success and error codes for the identity service to interpret.
 func (v *turnstileVerifier) VerifyToken(ctx context.Context, secretKey, token, remoteIP string) (*identity.TurnstileVerifyResponse, error) {
 	formData := url.Values{}
 	formData.Set("secret", secretKey)

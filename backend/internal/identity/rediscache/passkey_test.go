@@ -12,6 +12,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
+// TestPasskeySessionStoreConsumesSessionOnce stores a login ceremony and consumes
+// it through Redis GETDEL. The recovered kind and user match the saved record,
+// and reuse returns ErrPasskeySession for the consumed token.
 func TestPasskeySessionStoreConsumesSessionOnce(t *testing.T) {
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
@@ -28,11 +31,13 @@ func TestPasskeySessionStoreConsumesSessionOnce(t *testing.T) {
 	require.Equal(t, "login", consumed.Kind)
 	require.EqualValues(t, 42, consumed.UserID)
 
-	// A token consumed through GETDEL cannot complete authentication again.
 	_, err = store.Consume(ctx, token)
 	require.ErrorIs(t, err, identity.ErrPasskeySession)
 }
 
+// TestPasskeySessionStoreExpiresSession advances the Redis fixture to the stored
+// ceremony's expiry. Consume returns ErrPasskeySession, keeping an expired
+// registration challenge from being recovered for a finish request.
 func TestPasskeySessionStoreExpiresSession(t *testing.T) {
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
@@ -42,6 +47,8 @@ func TestPasskeySessionStoreExpiresSession(t *testing.T) {
 
 	token, err := store.Store(ctx, &identity.PasskeySession{Kind: "registration", UserID: 7}, time.Minute)
 	require.NoError(t, err)
+	// Advance Redis expiry independently of wall-clock waiting so the finish
+	// lookup observes a missing record at the exact supplied one-minute lifetime.
 	server.FastForward(time.Minute)
 
 	_, err = store.Consume(ctx, token)

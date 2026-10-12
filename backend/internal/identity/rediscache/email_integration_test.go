@@ -15,16 +15,23 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/rediscontainer"
 )
 
+// EmailCacheSuite exercises identity challenge storage against the Redis container fixture.
 type EmailCacheSuite struct {
-	rediscontainer.Suite
-	cache identity.EmailCache
+	rediscontainer.Suite                     // container lifecycle and Redis state
+	cache                identity.EmailCache // challenge cache under test
 }
 
+// TestGetVerificationCode_Missing queries an address with no saved challenge in
+// the isolated Redis fixture. The returned error matches redis.Nil, retaining the
+// absence signal used by the identity service.
 func (s *EmailCacheSuite) TestGetVerificationCode_Missing() {
 	_, err := s.cache.GetVerificationCode(s.Ctx, "nonexistent@example.com")
 	require.True(s.T(), errors.Is(err, redis.Nil), "expected redis.Nil for missing verification code")
 }
 
+// TestSetAndGetVerificationCode stores a challenge record with an attempt count
+// and then reads it through the cache. The decoded code and attempts retain the
+// values written into Redis.
 func (s *EmailCacheSuite) TestSetAndGetVerificationCode() {
 	email := "a@example.com"
 	emailTTL := 2 * time.Minute
@@ -38,6 +45,9 @@ func (s *EmailCacheSuite) TestSetAndGetVerificationCode() {
 	require.Equal(s.T(), 1, got.Attempts)
 }
 
+// TestVerificationCode_TTL writes a challenge with a two-minute lifetime and
+// reads the Redis key's TTL. The measured lifetime is at least one second and
+// no greater than the requested duration in the fixture assertion.
 func (s *EmailCacheSuite) TestVerificationCode_TTL() {
 	email := "ttl@example.com"
 	emailTTL := 2 * time.Minute
@@ -51,6 +61,9 @@ func (s *EmailCacheSuite) TestVerificationCode_TTL() {
 	s.AssertTTLWithin(ttl, 1*time.Second, emailTTL)
 }
 
+// TestDeleteVerificationCode saves and reads a challenge before deleting its key.
+// A subsequent read returns redis.Nil, showing that cleanup removes the stored
+// credential used by the verification flow.
 func (s *EmailCacheSuite) TestDeleteVerificationCode() {
 	email := "delete@example.com"
 	data := &identity.VerificationCodeData{Code: "999999", Attempts: 0, CreatedAt: time.Now()}
@@ -66,11 +79,16 @@ func (s *EmailCacheSuite) TestDeleteVerificationCode() {
 	require.True(s.T(), errors.Is(err, redis.Nil), "expected redis.Nil after delete")
 }
 
+// TestDeleteVerificationCode_NonExistent deletes an address whose challenge key
+// is absent from Redis. Cleanup still succeeds, protecting callers that repeat
+// credential removal after another path already removed it.
 func (s *EmailCacheSuite) TestDeleteVerificationCode_NonExistent() {
-	// Deleting a missing key is idempotent.
 	require.NoError(s.T(), s.cache.DeleteVerificationCode(s.Ctx, "nonexistent@example.com"), "DeleteVerificationCode non-existent")
 }
 
+// TestGetVerificationCode_JSONCorruption saves invalid JSON at a present challenge
+// key. The read returns an error outside redis.Nil, distinguishing corrupted stored
+// state from an absent verification credential.
 func (s *EmailCacheSuite) TestGetVerificationCode_JSONCorruption() {
 	emailKey := "verify_code:" + "corrupted@example.com"
 
@@ -81,10 +99,16 @@ func (s *EmailCacheSuite) TestGetVerificationCode_JSONCorruption() {
 	require.False(s.T(), errors.Is(err, redis.Nil), "expected decoding error, not redis.Nil")
 }
 
+// TestEmailCacheSuite runs credential persistence, removal, and TTL checks with
+// the Redis container fixture. Each suite case receives isolated cache state before
+// checking its observed record or error result.
 func TestEmailCacheSuite(t *testing.T) {
 	suite.Run(t, new(EmailCacheSuite))
 }
 
+// SetupTest obtains a client with a fresh test namespace and binds its cache
+// to that client. The embedded suite shares the Redis container while its
+// namespaced clients keep credential records separate between test cases.
 func (s *EmailCacheSuite) SetupTest() {
 	s.Suite.SetupTest()
 	s.cache = NewEmailCache(s.RDB)

@@ -22,47 +22,91 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
+// OIDC token replies can provide an access token, an ID token, or both.
+// The client keeps those credentials separate because an omitted userinfo endpoint
+// allows the HTTP flow to derive identity from validated ID-token claims, while
+// a configured endpoint requires access-token retrieval. Suggested profile fields
+// from userinfo remain separate for that flow to reconcile against issuer and subject.
+//
+// ID-token verification fetches the provider's JWKS, applies configured JWT method
+// and issuer/audience checks, then checks nonce and multiple-audience azp rules.
+// JWK metadata filters select the first decodable key; signature verification
+// performs the final algorithm and key-type check. RSA parameter decoding and
+// EC curve membership are checked at public-key construction; unsupported types
+// and curves fail before token signature verification.
+
 type (
-	OidcTokenResponse      = identity.OIDCTokenResponse
+	// OidcTokenResponse aliases credentials and lifetime fields returned to identity flows.
+	OidcTokenResponse = identity.OIDCTokenResponse
+	// OidcTokenExchangeError aliases provider response details retained when grant exchange fails.
 	OidcTokenExchangeError = identity.OIDCTokenExchangeError
 )
 
+// OidcIDTokenClaims represents signed identity and JWT claims used for OIDC verification.
 type OidcIDTokenClaims struct {
-	Email             string `json:"email,omitempty"`
+	Email string `json:"email,omitempty"` // suggested provider email address
+	// EmailVerified preserves omitted versus supplied verification. OIDCHandler
+	// uses userinfo's present flag first, then this pointer when userinfo omits it.
 	EmailVerified     *bool  `json:"email_verified,omitempty"`
-	PreferredUsername string `json:"preferred_username,omitempty"`
-	Name              string `json:"name,omitempty"`
-	Nonce             string `json:"nonce,omitempty"`
-	Azp               string `json:"azp,omitempty"`
-	jwt.RegisteredClaims
+	PreferredUsername string `json:"preferred_username,omitempty"` // suggested provider username text
+	Name              string `json:"name,omitempty"`               // suggested provider display name
+	// Nonce is compared after trimming when the caller supplies expectedNonce.
+	// An empty expectedNonce leaves this claim outside that additional check.
+	Nonce string `json:"nonce,omitempty"`
+	// Azp names the authorized party. Multiple audiences require a nonempty value
+	// matching the configured ClientID; a single audience does not trigger this check.
+	Azp                  string `json:"azp,omitempty"`
+	jwt.RegisteredClaims        // standard issuer, subject, audience, and time claims
 }
 
+// OidcUserInfoClaims aliases identity profile suggestions returned from optional OIDC userinfo.
 type OidcUserInfoClaims = identity.OIDCUserInfoClaims
 
+// OidcJWKSet holds the provider's ordered candidates for ID-token signature verification.
 type OidcJWKSet struct {
+	// Keys retains response order, which OidcFindPublicKey uses to select its
+	// first decodable metadata match. Callers keep the slice stable during validation.
 	Keys []OidcJWK `json:"keys"`
 }
 
+// OidcJWK contains metadata and encoded RSA or EC public-key material from JWKS.
 type OidcJWK struct {
-	Kty string `json:"kty"`
+	Kty string `json:"kty"` // public-key type RSA or EC
+	// Kid is compared with the token header when its trimmed kid is nonempty.
+	// A missing header kid leaves every otherwise eligible key available for decoding.
 	Kid string `json:"kid"`
+	// Use admits an empty value or sig ignoring case. Other nonempty uses
+	// exclude this candidate before OidcFindPublicKey tries its encoded key material.
 	Use string `json:"use"`
+	// Alg is optional metadata. When nonempty, it must match the requested method
+	// ignoring case before this candidate reaches public-key decoding and JWT verification.
 	Alg string `json:"alg"`
 
-	N string `json:"n"`
-	E string `json:"e"`
+	// N and E provide unsigned big-endian RSA parameters encoded as unpadded
+	// base64url. PublicKey requires a positive modulus and a positive exponent
+	// after reconstructing the exponent in int.
+	N string `json:"n"` // base64url RSA modulus
+	E string `json:"e"` // base64url RSA exponent
 
-	Crv string `json:"crv"`
-	X   string `json:"x"`
-	Y   string `json:"y"`
+	// Crv chooses P-256, P-384, or P-521 for X and Y, whose base64url integers
+	// locate the EC public point. PublicKey rejects coordinates outside that curve.
+	Crv string `json:"crv"` // named elliptic curve value
+	X   string `json:"x"`   // base64url EC x-coordinate
+	Y   string `json:"y"`   // base64url EC y-coordinate
 }
 
-// OIDCClient exchanges codes, retrieves profiles, and validates ID tokens against allowed algorithms.
+// OIDCClient exchanges codes, retrieves profiles, and validates ID tokens against
+// the configured signing algorithms.
 type OIDCClient struct{}
 
-// OIDCOptions aliases the identity module's OIDC configuration.
+// OIDCOptions aliases the resolved OIDC authorization and validation settings from identity.
 type OIDCOptions = identity.OIDCOAuthOptions
 
+// OidcExchangeCode exchanges an authorization code with the supplied callback
+// and optional PKCE verifier using a thirty-second request budget. Empty token
+// authentication method uses client_secret_post; basic and none select the other
+// supported forms. A successful JSON or form result can carry an access token,
+// an ID token, or both.
 func OidcExchangeCode(
 	ctx context.Context,
 	cfg OIDCOptions,
@@ -85,6 +129,8 @@ func OidcExchangeCode(
 		SetContext(ctx).
 		SetHeader("Accept", "application/json")
 
+	// Send credentials through the configured authentication form so basic-auth
+	// providers receive a header and post-auth providers receive grant-body credentials.
 	switch strings.ToLower(strings.TrimSpace(cfg.TokenAuthMethod)) {
 	case "", "client_secret_post":
 		form.Set("client_secret", cfg.ClientSecret)
@@ -115,6 +161,8 @@ func OidcExchangeCode(
 		return nil, &OidcTokenExchangeError{StatusCode: resp.StatusCode, Body: body}
 	}
 	if strings.TrimSpace(tokenResp.TokenType) == "" {
+		// An omitted type selects the Bearer scheme accepted by the userinfo helper,
+		// while an ID-token-only reply remains usable when that request is unconfigured.
 		tokenResp.TokenType = "Bearer"
 	}
 	if strings.TrimSpace(tokenResp.AccessToken) == "" && strings.TrimSpace(tokenResp.IDToken) == "" {
@@ -123,6 +171,16 @@ func OidcExchangeCode(
 	return tokenResp, nil
 }
 
+// OidcParseTokenResponse decodes JSON token fields before trying a form-encoded
+// reply. Either a nonempty access_token or id_token makes that representation
+// usable, allowing an ID-token-only result when userinfo is optional in the flow.
+// The token type remains as parsed for exchange-time default selection.
+//
+// When JSON has neither credential, form parsing is attempted and must find at
+// least one. Invalid form syntax returns false, while invalid decimal expires_in
+// leaves zero alongside an otherwise accepted credential. JSON lifetime uses
+// gjson's integer conversion, and each accepted result retains both token fields
+// for its caller to apply configured validation.
 func OidcParseTokenResponse(body string) (*OidcTokenResponse, bool) {
 	body = strings.TrimSpace(body)
 	if body == "" {
@@ -146,6 +204,8 @@ func OidcParseTokenResponse(body string) (*OidcTokenResponse, bool) {
 		}, true
 	}
 
+	// Try form fields after JSON has no usable credential, retaining compatibility
+	// with token endpoints that return query-encoded access or ID-token responses.
 	values, err := url.ParseQuery(body)
 	if err != nil {
 		return nil, false
@@ -157,6 +217,8 @@ func OidcParseTokenResponse(body string) (*OidcTokenResponse, bool) {
 	}
 	expiresIn := int64(0)
 	if raw := strings.TrimSpace(values.Get("expires_in")); raw != "" {
+		// Invalid lifetime text retains zero while either credential can still
+		// supply the caller's configured ID-token validation or userinfo request.
 		if v, parseErr := strconv.ParseInt(raw, 10, 64); parseErr == nil {
 			expiresIn = v
 		}
@@ -171,12 +233,18 @@ func OidcParseTokenResponse(body string) (*OidcTokenResponse, bool) {
 	}, true
 }
 
+// OidcFetchUserInfo retrieves claims through a thirty-second bearer request when
+// UserInfoURL is configured. An empty URL returns an empty claims object before
+// checking token presence, allowing an ID-token-only flow; configured userinfo
+// requires a nonempty access token and successful HTTP status.
 func OidcFetchUserInfo(
 	ctx context.Context,
 	cfg OIDCOptions,
 	token *OidcTokenResponse,
 ) (*OidcUserInfoClaims, error) {
 	if strings.TrimSpace(cfg.UserInfoURL) == "" {
+		// Skip optional userinfo before requiring an access token so a configured
+		// ID-token-only flow can still reconcile an empty profile with signed identity claims.
 		return &OidcUserInfoClaims{}, nil
 	}
 	if token == nil || strings.TrimSpace(token.AccessToken) == "" {
@@ -204,8 +272,19 @@ func OidcFetchUserInfo(
 	return OidcParseUserInfo(resp.String(), cfg), nil
 }
 
+// OidcParseUserInfo builds suggested identity and profile claims from provider
+// JSON using configured paths before common field names. Missing text stays
+// empty, and the HTTP flow decides whether the resulting identity is complete.
+//
+// email_verified retains its presence separately from the gjson boolean value.
+// A present false flag can therefore override an ID-token verification flag during
+// HTTP reconciliation, while an omitted flag leaves that other claim available.
+// Display and avatar suggestions are selected independently from the subject
+// fields, and accepted text values are trimmed before returning the profile.
 func OidcParseUserInfo(body string, cfg OIDCOptions) *OidcUserInfoClaims {
 	claims := &OidcUserInfoClaims{}
+	// Configured email, username, and subject paths precede common shapes so
+	// an administrator's selected response fields win when they provide nonempty values.
 	claims.Email = identity.OAuthFirstNonEmpty(
 		GetGJSON(body, cfg.UserInfoEmailPath),
 		GetGJSON(body, "email"),
@@ -229,9 +308,13 @@ func OidcParseUserInfo(body string, cfg OIDCOptions) *OidcUserInfoClaims {
 		GetGJSON(body, "uid"),
 		GetGJSON(body, "user.id"),
 	)
+	// Carry a present verification flag even when false so userinfo can override
+	// a true ID-token claim when the HTTP flow reconciles the two sources.
 	if verified, ok := GetGJSONBool(body, "email_verified"); ok {
 		claims.EmailVerified = &verified
 	}
+	// Select optional display and avatar candidates independently from subject
+	// fields, giving the HTTP account flow suggestions without making them login identity.
 	claims.DisplayName = identity.OAuthFirstNonEmpty(
 		GetGJSON(body, "name"),
 		GetGJSON(body, "nickname"),
@@ -255,6 +338,9 @@ func OidcParseUserInfo(body string, cfg OIDCOptions) *OidcUserInfoClaims {
 	return claims
 }
 
+// GetGJSONBool returns gjson's boolean conversion and whether a trimmed path
+// exists in the JSON. Empty paths or absent values return false with false
+// presence; present values are converted without requiring a JSON boolean type.
 func GetGJSONBool(body string, path string) (bool, bool) {
 	path = strings.TrimSpace(path)
 	if path == "" {
@@ -267,6 +353,16 @@ func GetGJSONBool(body string, path string) (bool, bool) {
 	return res.Bool(), true
 }
 
+// OidcParseAndValidateIDToken verifies a trimmed ID token using freshly fetched
+// JWKS and the configured signing algorithms, audience, issuer, and clock leeway.
+// After JWT validation, it requires a nonempty subject, compares a supplied nonce,
+// and requires azp to match ClientID when the token has multiple audiences.
+//
+// JWT defaults validate expiry and not-before when present; these options do not
+// require an expiry claim or enable issued-at checking. Key selection returns the
+// first decodable metadata match, while the JWT signing method checks key-type
+// compatibility afterward. The returned claims keep provider text for the HTTP
+// flow to reconcile with userinfo and select the issuer/subject identity.
 func OidcParseAndValidateIDToken(ctx context.Context, cfg OIDCOptions, idToken string, expectedNonce string) (*OidcIDTokenClaims, error) {
 	idToken = strings.TrimSpace(idToken)
 	if idToken == "" {
@@ -281,6 +377,7 @@ func OidcParseAndValidateIDToken(ctx context.Context, cfg OIDCOptions, idToken s
 	if err != nil {
 		return nil, err
 	}
+	// Convert the settings reader's seconds into JWT time-validation leeway.
 	leeway := time.Duration(cfg.ClockSkewSeconds) * time.Second
 	claims := &OidcIDTokenClaims{}
 
@@ -309,9 +406,13 @@ func OidcParseAndValidateIDToken(ctx context.Context, cfg OIDCOptions, idToken s
 	if strings.TrimSpace(claims.Subject) == "" {
 		return nil, errors.New("id_token missing sub")
 	}
+	// Bind a supplied nonce to this browser flow after signature and issuer checks;
+	// no nonce comparison runs when a direct caller supplies an empty expectation.
 	if expectedNonce != "" && strings.TrimSpace(claims.Nonce) != strings.TrimSpace(expectedNonce) {
 		return nil, errors.New("id_token nonce mismatch")
 	}
+	// Multiple audiences need the client-specific authorized-party claim as an
+	// additional binding, preventing another listed audience from satisfying this check alone.
 	if len(claims.Audience) > 1 {
 		if strings.TrimSpace(claims.Azp) == "" || strings.TrimSpace(claims.Azp) != strings.TrimSpace(cfg.ClientID) {
 			return nil, errors.New("id_token azp mismatch")
@@ -320,8 +421,14 @@ func OidcParseAndValidateIDToken(ctx context.Context, cfg OIDCOptions, idToken s
 	return claims, nil
 }
 
+// OidcAllowedSigningAlgs returns trimmed uppercase algorithm names in first-seen
+// order with duplicates removed. Empty input selects RS256, ES256, and PS256;
+// separator-only input can produce no algorithms, and JWT parsing later rejects
+// unsupported method names.
 func OidcAllowedSigningAlgs(raw string) []string {
 	if strings.TrimSpace(raw) == "" {
+		// Supply the built-in asymmetric methods for an omitted setting so token
+		// verification still has a finite allowlist before parsing and key lookup.
 		return []string{"RS256", "ES256", "PS256"}
 	}
 	seen := make(map[string]struct{})
@@ -340,6 +447,9 @@ func OidcAllowedSigningAlgs(raw string) []string {
 	return out
 }
 
+// OidcFetchJWKSet retrieves and decodes a nonempty JWKS key list from a trimmed
+// URL using a thirty-second request budget. Each validation call fetches its own
+// set; non-success status, decoding failure, or an empty key list returns an error.
 func OidcFetchJWKSet(ctx context.Context, jwksURL string) (*OidcJWKSet, error) {
 	jwksURL = strings.TrimSpace(jwksURL)
 	if jwksURL == "" {
@@ -367,6 +477,15 @@ func OidcFetchJWKSet(ctx context.Context, jwksURL string) (*OidcJWKSet, error) {
 	return set, nil
 }
 
+// OidcFindPublicKey returns the first decodable key matching the optional kid
+// and metadata filters. Nonempty use must be sig, a supplied kid must match exactly
+// after trimming, and nonempty alg must match the requested algorithm ignoring
+// case. Set order determines the first accepted key.
+//
+// A key decoding failure is retained while later eligible keys are considered.
+// If none decodes, the last decoding error wins over the missing-key error. A
+// returned key can still fail the signing method's later type check; this selection
+// does not retry another key after JWT signature verification fails.
 func OidcFindPublicKey(set *OidcJWKSet, kid, alg string) (any, error) {
 	if set == nil {
 		return nil, errors.New("jwks not loaded")
@@ -388,6 +507,8 @@ func OidcFindPublicKey(set *OidcJWKSet, kid, alg string) (any, error) {
 		}
 		pk, err := k.PublicKey()
 		if err != nil {
+			// A malformed eligible key need not hide a later usable candidate. Retain
+			// its decoding error for the caller if every remaining candidate also fails.
 			lastErr = err
 			continue
 		}
@@ -404,6 +525,16 @@ func OidcFindPublicKey(set *OidcJWKSet, kid, alg string) (any, error) {
 	return nil, errors.New("jwk not found")
 }
 
+// PublicKey decodes RSA or supported EC JWK parameters into Go verification
+// keys. RSA requires a nonempty exponent whose converted integer is positive and
+// a positive modulus; EC requires a supported named curve and a point on that
+// curve. Unsupported types and malformed encodings return errors.
+//
+// RSA exponent accumulation uses native int width, with a positivity check after
+// conversion and no separate encoded-length or overflow check. Moduli and EC
+// coordinates use big.Int before their positivity or curve checks. JWT signature
+// verification later decides whether the constructed key type and algorithm can
+// verify the submitted token.
 func (k OidcJWK) PublicKey() (any, error) {
 	switch strings.ToUpper(strings.TrimSpace(k.Kty)) {
 	case "RSA":
@@ -418,6 +549,8 @@ func (k OidcJWK) PublicKey() (any, error) {
 		if len(eBytes) == 0 {
 			return nil, errors.New("empty rsa e")
 		}
+		// JWK exponent bytes are unsigned big-endian. Reconstruct the native int
+		// required by rsa.PublicKey before its positivity check and later signature verification.
 		e := 0
 		for _, b := range eBytes {
 			e = (e << 8) | int(b)
@@ -459,6 +592,9 @@ func (k OidcJWK) PublicKey() (any, error) {
 	}
 }
 
+// DecodeBase64URLBigInt decodes a trimmed, unpadded base64url value as an unsigned
+// big-endian integer. Empty decoded bytes fail; zero-valued nonempty encodings
+// remain valid here for PublicKey to apply modulus or curve-specific checks.
 func DecodeBase64URLBigInt(raw string) (*big.Int, error) {
 	buf, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(raw))
 	if err != nil {
@@ -467,9 +603,14 @@ func DecodeBase64URLBigInt(raw string) (*big.Int, error) {
 	if len(buf) == 0 {
 		return nil, errors.New("empty value")
 	}
+	// JWK numeric fields encode unsigned big-endian bytes, matching SetBytes and
+	// leaving positivity or curve membership to the public-key constructor that consumes them.
 	return new(big.Int).SetBytes(buf), nil
 }
 
+// ContainsString reports whether a slice contains the trimmed target ignoring
+// case and surrounding whitespace on each element. Empty targets can match an
+// empty element, allowing callers to supply their own input-admission rules.
 func ContainsString(values []string, target string) bool {
 	target = strings.TrimSpace(target)
 	for _, v := range values {
@@ -480,14 +621,24 @@ func ContainsString(values []string, target string) bool {
 	return false
 }
 
+// ExchangeCode delegates OIDC grant exchange with the caller's callback and
+// optional PKCE verifier. Successful results retain access and ID tokens independently,
+// so the configured flow can decide which validation and userinfo steps to perform.
 func (OIDCClient) ExchangeCode(ctx context.Context, c OIDCOptions, code, redirect, verifier string) (*OidcTokenResponse, error) {
 	return OidcExchangeCode(ctx, c, code, redirect, verifier)
 }
 
+// FetchUserInfo delegates the optional OIDC userinfo request with the supplied
+// configuration and token. An absent endpoint returns empty claims; a configured
+// endpoint requires an access token and a supported bearer header.
 func (OIDCClient) FetchUserInfo(ctx context.Context, c OIDCOptions, t *OidcTokenResponse) (*OidcUserInfoClaims, error) {
 	return OidcFetchUserInfo(ctx, c, t)
 }
 
+// ValidateIDToken verifies the credential and returns the subset consumed by
+// identity HTTP flows. It retains issuer, subject, profile suggestions, and the
+// optional email-verification pointer from the validated claims for userinfo
+// reconciliation and account decisions.
 func (OIDCClient) ValidateIDToken(ctx context.Context, c OIDCOptions, token, nonce string) (*identity.OIDCVerifiedClaims, error) {
 	v, e := OidcParseAndValidateIDToken(ctx, c, token, nonce)
 	if v == nil {

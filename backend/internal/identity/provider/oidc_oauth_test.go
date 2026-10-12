@@ -16,7 +16,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestOIDCParseAndValidateIDToken signs a multiple-audience token with matching
+// authorized party and nonce, and serves its public key locally. Validation retains
+// issuer and subject; supplying a different expected nonce rejects that signed token.
 func TestOIDCParseAndValidateIDToken(t *testing.T) {
+	// Use one fixture RSA key for the accepted and nonce-rejected requests so
+	// the changed expectation is evaluated against otherwise identical signed token data.
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 
@@ -62,6 +67,9 @@ func TestOIDCParseAndValidateIDToken(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestOIDCParseUserInfoIncludesSuggestedProfile supplies standard userinfo
+// identity, display, avatar, and verification fields. Assertions check subject,
+// username, display name, and avatar, plus a present, true email-verification flag.
 func TestOIDCParseUserInfoIncludesSuggestedProfile(t *testing.T) {
 	cfg := OIDCOptions{}
 
@@ -82,6 +90,9 @@ func TestOIDCParseUserInfoIncludesSuggestedProfile(t *testing.T) {
 	require.True(t, *claims.EmailVerified)
 }
 
+// buildRSAJWK encodes the supplied nonnil RSA public key as an RS256 signing
+// candidate with kid metadata. Modulus and exponent become unsigned big-endian
+// base64url fields used by the local JWKS response.
 func buildRSAJWK(kid string, pub *rsa.PublicKey) OidcJWK {
 	n := base64.RawURLEncoding.EncodeToString(pub.N.Bytes())
 	e := base64.RawURLEncoding.EncodeToString(big.NewInt(int64(pub.E)).Bytes())

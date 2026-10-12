@@ -13,22 +13,47 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
+// WeChat returns access credentials and channel-specific identity fields in two
+// HTTP responses. Code exchange obtains the token and openid, then userinfo uses
+// both values in a query request; the identity flow later chooses the stable
+// subject and applies cross-channel requirements.
+
+// These defaults select the production WeChat token and userinfo endpoints
+// when application assembly creates the HTTP identity client.
 const (
 	DefaultWeChatTokenURL    = "https://api.weixin.qq.com/sns/oauth2/access_token"
 	DefaultWeChatUserInfoURL = "https://api.weixin.qq.com/sns/userinfo"
 )
 
-// WeChatOptions contains client credentials and request endpoints.
-type WeChatOptions struct{ AppID, AppSecret, TokenURL, UserInfoURL string }
+// WeChatOptions supplies application credentials and endpoints for one resolved login channel.
+type WeChatOptions struct {
+	// AppID and AppSecret identify the resolved channel used by code exchange.
+	// TokenURL and UserInfoURL supply separate requests; the caller validates and
+	// selects those addresses before invoking the adapter.
+	// AppID: resolved application identifier; AppSecret: application exchange secret.
+	// TokenURL: code exchange endpoint; UserInfoURL: profile fetch endpoint.
+	AppID, AppSecret, TokenURL, UserInfoURL string
+}
 
 type (
-	WechatOAuthTokenResponse    = identity.WeChatOAuthTokenResponse
+	// WechatOAuthTokenResponse aliases the identity credential and channel-ID response.
+	WechatOAuthTokenResponse = identity.WeChatOAuthTokenResponse
+	// WechatOAuthUserInfoResponse aliases the WeChat profile values used for local identity.
 	WechatOAuthUserInfoResponse = identity.WeChatOAuthUserInfoResponse
 )
 
-// WeChatClient exchanges authorization codes and retrieves profiles; tests can override its endpoints.
-type WeChatClient struct{ TokenURL, UserInfoURL string }
+// WeChatClient performs channel code exchange and userinfo reads through configured endpoints.
+type WeChatClient struct {
+	// TokenURL and UserInfoURL are copied into each FetchIdentity request's options.
+	// Assembly supplies production addresses; direct callers can select fixture
+	// endpoints before the client starts handling requests.
+	// TokenURL: code exchange endpoint; UserInfoURL: profile fetch endpoint.
+	TokenURL, UserInfoURL string
+}
 
+// FetchWeChatOAuthIdentity exchanges the supplied authorization code before
+// fetching userinfo with the resulting token and openid. It returns both responses
+// after success; a userinfo failure stops the flow even after token exchange succeeded.
 func FetchWeChatOAuthIdentity(ctx context.Context, cfg WeChatOptions, code string) (*WechatOAuthTokenResponse, *WechatOAuthUserInfoResponse, error) {
 	tokenResp, err := ExchangeWeChatOAuthCode(ctx, cfg, code)
 	if err != nil {
@@ -41,6 +66,10 @@ func FetchWeChatOAuthIdentity(ctx context.Context, cfg WeChatOptions, code strin
 	return tokenResp, userInfo, nil
 }
 
+// ExchangeWeChatOAuthCode sends a GET grant request with application credentials
+// and the trimmed authorization code. The request has a thirty-second budget;
+// non-success status, provider errcode, malformed JSON, or an absent access token
+// prevents returning a credential.
 func ExchangeWeChatOAuthCode(ctx context.Context, cfg WeChatOptions, code string) (*WechatOAuthTokenResponse, error) {
 	endpoint, err := url.Parse(cfg.TokenURL)
 	if err != nil {
@@ -87,6 +116,9 @@ func ExchangeWeChatOAuthCode(ctx context.Context, cfg WeChatOptions, code string
 	return &tokenResp, nil
 }
 
+// FetchWeChatUserInfo requests the Chinese-language profile using a nonnil token
+// response's access token and openid. It requires successful HTTP status, decoded
+// JSON, and zero provider errcode; subject completeness is checked by the identity flow.
 func FetchWeChatUserInfo(ctx context.Context, userInfoURL string, tokenResp *WechatOAuthTokenResponse) (*WechatOAuthUserInfoResponse, error) {
 	if tokenResp == nil {
 		return nil, fmt.Errorf("wechat token response is nil")
@@ -132,6 +164,9 @@ func FetchWeChatUserInfo(ctx context.Context, userInfoURL string, tokenResp *Wec
 	return &userInfo, nil
 }
 
+// FetchIdentity resolves request options from the supplied channel credentials
+// and this client's configured endpoints. It performs code exchange followed by
+// userinfo retrieval, returning both provider responses after the two requests succeed.
 func (c WeChatClient) FetchIdentity(ctx context.Context, o identity.WeChatOAuthOptions, code string) (*WechatOAuthTokenResponse, *WechatOAuthUserInfoResponse, error) {
 	return FetchWeChatOAuthIdentity(ctx, WeChatOptions{AppID: o.AppID, AppSecret: o.AppSecret, TokenURL: c.TokenURL, UserInfoURL: c.UserInfoURL}, code)
 }

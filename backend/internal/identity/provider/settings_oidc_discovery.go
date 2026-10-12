@@ -12,7 +12,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
-// ResolveSettingsOIDCMetadata fetches discovery endpoints for the identity settings service.
+// Missing OIDC endpoint settings can be filled from the provider discovery
+// document. This reader obtains the document with a bounded request and decodes
+// endpoint metadata; OAuthSettings decides which missing values to fill and
+// validates the effective URLs before authorization starts.
+
+// ResolveSettingsOIDCMetadata fetches and decodes endpoints from a trimmed,
+// nonempty discovery URL using a fifteen-second request budget. Non-success HTTP
+// responses and malformed JSON fail; the identity settings reader validates the
+// returned endpoint values.
 func ResolveSettingsOIDCMetadata(ctx context.Context, discoveryURL string) (*identity.OAuthProviderMetadata, error) {
 	discoveryURL = strings.TrimSpace(discoveryURL)
 	if discoveryURL == "" {
