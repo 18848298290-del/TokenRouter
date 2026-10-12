@@ -9,14 +9,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestApplicationError_Basics supplies direct and wrapped application errors
+// with differing messages and reasons. Status fields must match constructor
+// inputs, and errors.Is must compare category and reason while ignoring
+// message.
 func TestApplicationError_Basics(t *testing.T) {
 	tests := []struct {
-		name    string
-		err     *ApplicationError
-		want    Status
-		wantIs  bool
-		target  error
-		wrapped error
+		name    string            // subtest display name
+		err     *ApplicationError // supplied error fixture
+		want    Status            // expected public status
+		wantIs  bool              // expected identity comparison result
+		target  error             // identity comparison target
+		wrapped error             // wrapped lookup fixture
 	}{
 		{
 			name: "new",
@@ -71,10 +75,13 @@ func TestApplicationError_Basics(t *testing.T) {
 	}
 }
 
+// TestApplicationError_WithMetadataDeepCopy attaches a populated map and a nil
+// map to an error. Mutating the supplied populated map must leave the error
+// metadata unchanged, while nil stays nil.
 func TestApplicationError_WithMetadataDeepCopy(t *testing.T) {
 	tests := []struct {
-		name string
-		md   map[string]string
+		name string            // subtest display name
+		md   map[string]string // supplied metadata fixture
 	}{
 		{name: "non_nil", md: map[string]string{"a": "1"}},
 		{name: "nil", md: nil},
@@ -95,13 +102,16 @@ func TestApplicationError_WithMetadataDeepCopy(t *testing.T) {
 	}
 }
 
+// TestFromError_Generic supplies plain and wrapped errors that have no
+// application status. Each result must expose the generic public description
+// and retain the supplied error as its cause.
 func TestFromError_Generic(t *testing.T) {
 	tests := []struct {
-		name       string
-		err        error
-		wantCode   int32
-		wantReason string
-		wantMsg    string
+		name       string // subtest display name
+		err        error  // supplied error fixture
+		wantCode   int32  // expected numeric category
+		wantReason string // expected reason identifier
+		wantMsg    string // expected public message
 	}{
 		{
 			name:       "plain_error",

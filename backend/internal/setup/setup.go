@@ -19,55 +19,104 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 )
 
+// Installation remains disabled when either its configuration file or its
+// separate marker exists. Setup probes storage, applies migrations, creates an
+// initial administrator only for an empty user database, writes runtime
+// configuration, and finally writes the marker. Connection probing can create
+// the target PostgreSQL database before later stages begin.
+//
+// These stages use separate operations and have persistent partial results when
+// a later stage fails. An already-written configuration file disables another
+// ordinary Install attempt even if marker creation failed. HTTP callers
+// serialize installation in their handler; automatic setup relies on the
+// startup caller to check NeedsSetup before this sequence. Administrator
+// credentials are used during creation and omitted from the generated
+// configuration.
+
 const (
-	// ConfigFileName is the configuration file written by setup.
-	ConfigFileName          = "config.yaml"
-	InstallLockFile         = ".installed"
+	// ConfigFileName and InstallLockFile identify separate persisted evidence of
+	// installation; NeedsSetup requires both to be absent before allowing ordinary setup.
+	ConfigFileName  = "config.yaml" // generated runtime configuration filename
+	InstallLockFile = ".installed"  // separate installation marker filename
+
+	// These defaults give a new administrator five concurrent requests and bound
+	// setup migrations to one minute when no positive custom budget is supplied.
 	defaultUserConcurrency  = 5
 	defaultMigrationTimeout = 60 * time.Second
 
-	adminBootstrapReasonAdminExists            = "admin_exists"
-	adminBootstrapReasonUsersExistWithoutAdmin = "users_exist_without_admin"
+	// These identity bootstrap reasons distinguish an existing administrator from
+	// a nonempty user database whose credentials setup also leaves unchanged.
+	adminBootstrapReasonAdminExists            = "admin_exists"              // existing administrator skip reason
+	adminBootstrapReasonUsersExistWithoutAdmin = "users_exist_without_admin" // nonempty user database skip reason
 )
 
-// SetupConfig contains the configuration used for initial installation.
+// SetupConfig holds installation inputs for storage probes, initial identity
+// creation, and configuration output.
 type SetupConfig struct {
-	Database                DatabaseConfig `json:"database" yaml:"database"`
-	Redis                   RedisConfig    `json:"redis" yaml:"redis"`
-	Admin                   AdminConfig    `json:"admin" yaml:"-"` // Omitted from the configuration file.
-	Server                  ServerConfig   `json:"server" yaml:"server"`
-	JWT                     JWTConfig      `json:"jwt" yaml:"jwt"`
-	Timezone                string         `json:"timezone" yaml:"timezone"` // IANA time zone, such as "Asia/Shanghai" or "UTC".
-	MigrationTimeoutSeconds int            `json:"migration_timeout_seconds" yaml:"migration_timeout_seconds,omitempty"`
+	Database DatabaseConfig `json:"database" yaml:"database"` // installation PostgreSQL connection settings
+	Redis    RedisConfig    `json:"redis" yaml:"redis"`       // installation Redis connection settings
+	// Admin is passed to empty-database bootstrap during installation. Runtime YAML
+	// omits these credentials when writeConfigFile emits the configuration for later startup.
+	Admin  AdminConfig  `json:"admin" yaml:"-"`
+	Server ServerConfig `json:"server" yaml:"server"` // persisted HTTP listener settings
+	JWT    JWTConfig    `json:"jwt" yaml:"jwt"`       // persisted signing and expiry settings
+	// Timezone selects local-day rules written into runtime YAML. An empty value
+	// is replaced by Asia/Shanghai when writeConfigFile builds that document.
+	Timezone string `json:"timezone" yaml:"timezone"`
+	// MigrationTimeoutSeconds overrides the setup migration budget when positive.
+	// Nonpositive values use the default minute, and writeConfigFile omits this setup-only option.
+	MigrationTimeoutSeconds int `json:"migration_timeout_seconds" yaml:"migration_timeout_seconds,omitempty"`
 }
 
+// DatabaseConfig aliases bootstrap's temporary PostgreSQL connection settings
+// used by installation operations.
 type DatabaseConfig = bootstrap.SetupDatabaseConfig
 
+// RedisConfig aliases bootstrap's temporary Redis connection settings used by
+// installation probes.
 type RedisConfig = bootstrap.SetupRedisConfig
 
+// AdminConfig carries credentials considered when the empty database needs its
+// initial administrator.
 type AdminConfig struct {
-	Email    string `json:"email"`
+	Email string `json:"email"` // initial administrator email text
+	// Password is used when initial creation proceeds. A blank password lets
+	// identity bootstrap invoke createAdminUser's generator and update this field.
 	Password string `json:"password"`
 }
 
+// ServerConfig contains the listener and Gin mode written into the startup
+// configuration.
 type ServerConfig struct {
-	Host string `json:"host" yaml:"host"`
-	Port int    `json:"port" yaml:"port"`
-	Mode string `json:"mode" yaml:"mode"`
+	Host string `json:"host" yaml:"host"` // configured listener host text
+	Port int    `json:"port" yaml:"port"` // configured listener TCP port
+	Mode string `json:"mode" yaml:"mode"` // configured Gin mode text
 }
 
+// JWTConfig holds signing and expiry settings persisted for subsequent
+// application startup.
 type JWTConfig struct {
+	// Secret is persisted for application startup. Install replaces a literally
+	// empty value with generated hexadecimal text before beginning its storage probes.
 	Secret     string `json:"secret" yaml:"secret"`
-	ExpireHour int    `json:"expire_hour" yaml:"expire_hour"`
+	ExpireHour int    `json:"expire_hour" yaml:"expire_hour"` // access-token lifetime in hours
 }
 
-// setupDefaultAdminConcurrency returns the initial administrator's concurrency limit.
+// setupDefaultAdminConcurrency returns the fixed concurrency granted to a newly
+// bootstrapped administrator.
 func setupDefaultAdminConcurrency() int {
 	return defaultUserConcurrency
 }
 
-// GetDataDir returns the data directory for storing config and lock files.
-// Priority: DATA_DIR env > /app/data (if exists and writable) > current directory.
+// GetDataDir selects the directory used for configuration and installation
+// marker paths. A nonempty DATA_DIR is returned as supplied, so its owner
+// arranges existence and writability before setup writes files.
+//
+// Otherwise an existing /app/data directory is selected when a .write_test file
+// can be created there. The probe closes and removes that path with discarded
+// cleanup errors. Failed stat or creation falls through to the current
+// directory, represented by a dot. Each path helper repeats this selection,
+// including the probe when applicable.
 func GetDataDir() string {
 	if dir := os.Getenv("DATA_DIR"); dir != "" {
 		return dir
@@ -75,7 +124,8 @@ func GetDataDir() string {
 
 	dockerDataDir := "/app/data"
 	if info, err := os.Stat(dockerDataDir); err == nil && info.IsDir() {
-		// Probe the container data directory before selecting it for persistent files.
+		// Select the container mount after a successful creation probe so generated
+		// files use its persistence directory. Close and removal errors do not change selection.
 		testFile := dockerDataDir + "/.write_test"
 		if f, err := os.Create(testFile); err == nil {
 			_ = f.Close()
@@ -87,17 +137,23 @@ func GetDataDir() string {
 	return "."
 }
 
-// GetConfigFilePath returns the config.yaml path under GetDataDir.
+// GetConfigFilePath returns the configuration filename under the directory
+// selected by GetDataDir. Directory selection can perform its /app/data write
+// probe, and it leaves a supplied DATA_DIR value as given.
 func GetConfigFilePath() string {
 	return GetDataDir() + "/" + ConfigFileName
 }
 
-// GetInstallLockPath returns the installation marker path under GetDataDir.
+// GetInstallLockPath returns the marker filename under the directory selected
+// by GetDataDir. Directory selection can perform its /app/data write probe, and
+// the marker independently records completion of setup.
 func GetInstallLockPath() string {
 	return GetDataDir() + "/" + InstallLockFile
 }
 
-// skipSetupEnabled reports whether SKIP_SETUP disables the installation wizard.
+// skipSetupEnabled reports whether trimmed, case-insensitive SKIP_SETUP text
+// selects true, one, or yes. Missing and other values leave file-based setup
+// detection active so deployment startup can inspect installation evidence.
 func skipSetupEnabled() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("SKIP_SETUP"))) {
 	case "true", "1", "yes":
@@ -107,14 +163,24 @@ func skipSetupEnabled() bool {
 	}
 }
 
-// NeedsSetup reports whether setup is enabled and both installation files are absent.
-// Stat errors other than nonexistence disable setup, as does either existing file.
+// NeedsSetup reports whether ordinary installation is enabled and both
+// persisted evidence paths are absent. SKIP_SETUP disables it before file
+// checks, using the normalized values accepted by skipSetupEnabled.
+//
+// Either existing file or a stat error other than nonexistence rejects setup.
+// This prevents removal of just the configuration or just the marker from
+// reopening installation, and avoids admitting setup when filesystem errors
+// leave prior installation uncertain. Path lookup may perform GetDataDir's
+// container-directory probe; callers coordinate any installation that can race
+// with these checks.
 func NeedsSetup() bool {
 	if skipSetupEnabled() {
 		logging.L().Debug("setup.needs_setup_bypassed", zap.String("reason", "skip_setup_enabled"))
 		return false
 	}
 
+	// Treat existing or uncertain installation evidence as a closed setup path.
+	// Both paths must report nonexistence before another installation can be admitted.
 	if _, err := os.Stat(GetConfigFilePath()); !os.IsNotExist(err) {
 		return false
 	}
@@ -126,10 +192,32 @@ func NeedsSetup() bool {
 	return true
 }
 
+// TestDatabaseConnection delegates maintenance and target probing to bootstrap
+// with nonnil cfg. The probe can create a missing target database; callers
+// supply a validated database identifier and libpq-compatible field text for
+// its interpolated DSNs.
 func TestDatabaseConnection(cfg *DatabaseConfig) error {
 	return bootstrap.TestSetupDatabaseConnection(cfg)
 }
+
+// TestRedisConnection delegates a temporary Redis Ping probe using nonnil cfg.
+// Bootstrap applies optional TLS, closes the client, and uses go-redis
+// option-based socket budgets plus eligible retries, so its supplied
+// five-second context is not a strict end-to-end cap.
 func TestRedisConnection(cfg *RedisConfig) error { return bootstrap.TestSetupRedisConnection(cfg) }
+
+// Install performs ordinary first installation after checking NeedsSetup,
+// returning the failed stage as an error. cfg must be nonnil and contain
+// validated storage and administrator inputs; this sequence performs no
+// complete configuration validation or cross-process installation locking.
+//
+// An empty JWT secret is generated and assigned to cfg before probing
+// PostgreSQL and Redis. Database probing can create the target database,
+// migrations follow successful probes, and administrator bootstrap keeps
+// existing user databases unchanged. Configuration is written before the
+// separate marker. Earlier database effects survive later errors, and a written
+// configuration file already disables later ordinary setup even if marker
+// creation fails.
 func Install(cfg *SetupConfig) error {
 	if !NeedsSetup() {
 		return fmt.Errorf("system is already installed, re-installation is not allowed")
@@ -156,7 +244,8 @@ func Install(cfg *SetupConfig) error {
 		return fmt.Errorf("database initialization failed: %w", err)
 	}
 
-	// Create admin user (only when database is empty and no admin exists).
+	// Migrations establish the schema before identity bootstrap counts existing users.
+	// Existing users skip administrator creation, retaining their stored passwords and roles.
 	if _, _, err := createAdminUser(cfg); err != nil {
 		return fmt.Errorf("admin user creation failed: %w", err)
 	}
@@ -165,7 +254,8 @@ func Install(cfg *SetupConfig) error {
 		return fmt.Errorf("config file creation failed: %w", err)
 	}
 
-	// The separate marker keeps setup disabled if the configuration file is later removed.
+	// Configuration is already persisted before the marker is attempted. The marker
+	// independently keeps setup closed after configuration removal, and its failure leaves that configuration present.
 	if err := createInstallLock(); err != nil {
 		return fmt.Errorf("failed to create install lock: %w", err)
 	}
@@ -173,23 +263,43 @@ func Install(cfg *SetupConfig) error {
 	return nil
 }
 
-// createInstallLock writes the marker used by NeedsSetup to disable reinstallation.
+// createInstallLock writes the UTC installation timestamp at
+// GetInstallLockPath. A newly created marker receives owner-read permission;
+// os.WriteFile retains an existing file's mode, and write errors are returned
+// after any prior configuration write.
 func createInstallLock() error {
 	content := fmt.Sprintf("installed_at=%s\n", time.Now().UTC().Format(time.RFC3339))
-	return os.WriteFile(GetInstallLockPath(), []byte(content), 0o400) // Read-only for owner
+	return os.WriteFile(GetInstallLockPath(), []byte(content), 0o400) // Requested creation mode permits owner reads.
 }
 
+// initializeDatabase applies embedded migrations through bootstrap using a
+// nonnil setup configuration. It supplies a Background-derived migration
+// timeout, while bootstrap owns the temporary target pool and returns migration
+// or connection failure.
 func initializeDatabase(cfg *SetupConfig) error {
 	return bootstrap.InitializeSetupDatabase(context.Background(), &cfg.Database, cfg.migrationTimeout())
 }
 
+// migrationTimeout returns a positive configured number of seconds as a
+// duration. Nil cfg and nonpositive values use the default minute; callers keep
+// large positive values within time.Duration conversion limits.
 func (cfg *SetupConfig) migrationTimeout() time.Duration {
 	if cfg != nil && cfg.MigrationTimeoutSeconds > 0 {
+		// Convert setup seconds to the duration consumed by bootstrap migration context.
 		return time.Duration(cfg.MigrationTimeoutSeconds) * time.Second
 	}
 	return defaultMigrationTimeout
 }
 
+// createAdminUser delegates identity bootstrap and returns its creation flag,
+// decision reason, and error. A nonnil cfg supplies storage and credentials,
+// while existing user data causes bootstrap to skip creation.
+//
+// When an empty or whitespace-only password needs generation, the callback
+// assigns sixteen random bytes as hexadecimal text into cfg.Admin.Password and
+// prints it for the operator during the creation attempt. Bootstrap owns its
+// temporary pool and operation context; a generated password can be printed
+// before a later creation error.
 func createAdminUser(cfg *SetupConfig) (bool, string, error) {
 	return bootstrap.InitializeSetupAdmin(context.Background(), &cfg.Database, identity.InitialAdminInput{Email: cfg.Admin.Email, Password: cfg.Admin.Password, Concurrency: setupDefaultAdminConcurrency(), Now: time.Now}, func() (string, error) {
 		password, err := generateSecret(16)
@@ -203,48 +313,60 @@ func createAdminUser(cfg *SetupConfig) (bool, string, error) {
 	})
 }
 
+// writeConfigFile encodes runtime storage, server, JWT, and fixed onboarding
+// defaults into YAML using nonnil cfg. Empty Timezone selects Asia/Shanghai;
+// the administrator credentials and setup migration timeout are omitted from
+// this output.
+//
+// The destination is written with os.WriteFile after the full document is
+// encoded. Newly created files receive mode 0600, while an existing mode is
+// retained. The write is not atomic, and a failed write can leave partial
+// configuration that NeedsSetup still treats as installation evidence.
+// Remaining input settings are emitted as supplied for the normal loader to
+// validate.
 func writeConfigFile(cfg *SetupConfig) error {
 	tz := cfg.Timezone
 	if tz == "" {
 		tz = "Asia/Shanghai"
 	}
 
-	// Persist runtime credentials and defaults; administrator credentials are used only for bootstrap.
+	// Select runtime fields for serialization because administrator credentials belong
+	// to initial creation. The generated document also leaves setup-only migration budget out.
 	yamlConfig := struct {
-		Server   ServerConfig   `yaml:"server"`
-		Database DatabaseConfig `yaml:"database"`
-		Redis    RedisConfig    `yaml:"redis"`
+		Server   ServerConfig   `yaml:"server"`   // persisted HTTP listener settings
+		Database DatabaseConfig `yaml:"database"` // installation PostgreSQL connection settings
+		Redis    RedisConfig    `yaml:"redis"`    // installation Redis connection settings
 		JWT      struct {
-			Secret     string `yaml:"secret"`
-			ExpireHour int    `yaml:"expire_hour"`
-		} `yaml:"jwt"`
+			Secret     string `yaml:"secret"`      // persisted JWT signing secret
+			ExpireHour int    `yaml:"expire_hour"` // access-token lifetime in hours
+		} `yaml:"jwt"` // persisted signing and expiry settings
 		Default struct {
-			UserConcurrency int     `yaml:"user_concurrency"`
-			UserBalance     float64 `yaml:"user_balance"`
-			APIKeyPrefix    string  `yaml:"api_key_prefix"`
-			RateMultiplier  float64 `yaml:"rate_multiplier"`
-		} `yaml:"default"`
+			UserConcurrency int     `yaml:"user_concurrency"` // default concurrent request limit
+			UserBalance     float64 `yaml:"user_balance"`     // default initial USD balance
+			APIKeyPrefix    string  `yaml:"api_key_prefix"`   // generated key text prefix
+			RateMultiplier  float64 `yaml:"rate_multiplier"`  // default billing rate multiplier
+		} `yaml:"default"` // fixed new-user configuration values
 		RateLimit struct {
-			RequestsPerMinute int `yaml:"requests_per_minute"`
-			BurstSize         int `yaml:"burst_size"`
-		} `yaml:"rate_limit"`
-		Timezone string `yaml:"timezone"`
+			RequestsPerMinute int `yaml:"requests_per_minute"` // legacy request-rate setting value
+			BurstSize         int `yaml:"burst_size"`          // legacy burst setting value
+		} `yaml:"rate_limit"` // legacy request-rate configuration values
+		Timezone string `yaml:"timezone"` // selected IANA timezone name
 	}{
 		Server:   cfg.Server,
 		Database: cfg.Database,
 		Redis:    cfg.Redis,
 		JWT: struct {
-			Secret     string `yaml:"secret"`
-			ExpireHour int    `yaml:"expire_hour"`
+			Secret     string `yaml:"secret"`      // persisted JWT signing secret
+			ExpireHour int    `yaml:"expire_hour"` // access-token lifetime in hours
 		}{
 			Secret:     cfg.JWT.Secret,
 			ExpireHour: cfg.JWT.ExpireHour,
 		},
 		Default: struct {
-			UserConcurrency int     `yaml:"user_concurrency"`
-			UserBalance     float64 `yaml:"user_balance"`
-			APIKeyPrefix    string  `yaml:"api_key_prefix"`
-			RateMultiplier  float64 `yaml:"rate_multiplier"`
+			UserConcurrency int     `yaml:"user_concurrency"` // default concurrent request limit
+			UserBalance     float64 `yaml:"user_balance"`     // default initial USD balance
+			APIKeyPrefix    string  `yaml:"api_key_prefix"`   // generated key text prefix
+			RateMultiplier  float64 `yaml:"rate_multiplier"`  // default billing rate multiplier
 		}{
 			UserConcurrency: defaultUserConcurrency,
 			UserBalance:     0,
@@ -252,8 +374,8 @@ func writeConfigFile(cfg *SetupConfig) error {
 			RateMultiplier:  1.0,
 		},
 		RateLimit: struct {
-			RequestsPerMinute int `yaml:"requests_per_minute"`
-			BurstSize         int `yaml:"burst_size"`
+			RequestsPerMinute int `yaml:"requests_per_minute"` // legacy request-rate setting value
+			BurstSize         int `yaml:"burst_size"`          // legacy burst setting value
 		}{
 			RequestsPerMinute: 60,
 			BurstSize:         10,
@@ -266,9 +388,15 @@ func writeConfigFile(cfg *SetupConfig) error {
 		return err
 	}
 
+	// Encode the document before opening its destination. WriteFile can truncate
+	// an existing file and leaves any partially written configuration as setup evidence on failure.
 	return os.WriteFile(GetConfigFilePath(), data, 0o600)
 }
 
+// generateSecret returns lowercase hexadecimal text from length
+// cryptographically random bytes. The result has twice that many characters;
+// zero gives empty text, negative length panics on allocation, and random-read
+// errors are returned.
 func generateSecret(length int) (string, error) {
 	bytes := make([]byte, length)
 	if _, err := rand.Read(bytes); err != nil {
@@ -277,13 +405,17 @@ func generateSecret(length int) (string, error) {
 	return hex.EncodeToString(bytes), nil
 }
 
-// AutoSetupEnabled accepts the exact AUTO_SETUP values true, 1, and yes.
+// AutoSetupEnabled reports whether AUTO_SETUP exactly equals true, one, or yes.
+// Unlike skipSetupEnabled, it performs no trimming or case folding, so other
+// spelling leaves the automatic startup path disabled.
 func AutoSetupEnabled() bool {
 	val := os.Getenv("AUTO_SETUP")
 	return val == "true" || val == "1" || val == "yes"
 }
 
-// getEnvOrDefault returns a nonempty environment value or the supplied default.
+// getEnvOrDefault returns a nonempty environment value as supplied or
+// defaultValue. Whitespace remains a configured value, and this helper applies
+// no validation to the text passed into automatic setup.
 func getEnvOrDefault(key, defaultValue string) string {
 	if val := os.Getenv(key); val != "" {
 		return val
@@ -291,9 +423,13 @@ func getEnvOrDefault(key, defaultValue string) string {
 	return defaultValue
 }
 
-// getEnvIntOrDefault returns a parsed environment integer, or the default for missing or invalid values.
+// getEnvIntOrDefault returns an environment integer accepted by strconv.Atoi or
+// the supplied default. Missing, empty, or malformed text uses the default;
+// accepted negative values remain for downstream handling.
 func getEnvIntOrDefault(key string, defaultValue int) int {
 	if val := os.Getenv(key); val != "" {
+		// Malformed integer text has no usable deployment value. Use the supplied
+		// default while retaining successfully parsed values for subsequent setup handling.
 		if i, err := strconv.Atoi(val); err == nil {
 			return i
 		}
@@ -301,13 +437,24 @@ func getEnvIntOrDefault(key string, defaultValue int) int {
 	return defaultValue
 }
 
-// AutoSetupFromEnv installs using environment variables and writes configuration and an installation marker.
-// The caller checks NeedsSetup before invoking this automatic deployment path.
+// AutoSetupFromEnv performs installation using deployment environment values
+// and writes runtime configuration plus its marker. The startup caller checks
+// NeedsSetup first because this automatic path does not repeat that guard or
+// acquire the HTTP installation mutex.
+//
+// TZ takes precedence over TIMEZONE, while missing or malformed integer
+// variables use their field defaults. Supplied text and accepted integers are
+// passed to bootstrap as given, so the deployment owner provides valid
+// connection fields. JWT generation precedes probes; migration and
+// empty-database administrator creation precede configuration and marker
+// writes. Failure retains completed database or filesystem effects, and
+// creation skip reasons determine the operator log messages.
 func AutoSetupFromEnv() error {
 	logging.LegacyPrintf("setup", "%s", "Auto setup enabled, configuring from environment variables...")
 	logging.LegacyPrintf("setup", "Data directory: %s", GetDataDir())
 
-	// Get timezone from TZ or TIMEZONE env var (TZ is standard for Docker)
+	// Use the standard container TZ value first so automatic setup writes the
+	// same local-day zone; the legacy TIMEZONE value remains available when TZ is empty.
 	tz := getEnvOrDefault("TZ", "")
 	if tz == "" {
 		tz = getEnvOrDefault("TIMEZONE", "Asia/Shanghai")
@@ -368,6 +515,8 @@ func AutoSetupFromEnv() error {
 	}
 	logging.LegacyPrintf("setup", "%s", "Redis connection successful")
 
+	// Probe success precedes migration and administrator creation, and both database
+	// stages finish before configuration is written. Later failures retain earlier persistent effects.
 	logging.LegacyPrintf("setup", "%s", "Initializing database...")
 	if err := initializeDatabase(cfg); err != nil {
 		return fmt.Errorf("database initialization failed: %w", err)
@@ -398,6 +547,8 @@ func AutoSetupFromEnv() error {
 	}
 	logging.LegacyPrintf("setup", "%s", "Configuration file created")
 
+	// The written configuration already disables file-based setup detection. Attempt
+	// the separate marker afterward so either persisted path can keep installation closed.
 	if err := createInstallLock(); err != nil {
 		return fmt.Errorf("failed to create install lock: %w", err)
 	}

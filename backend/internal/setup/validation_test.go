@@ -5,12 +5,15 @@ import (
 	"testing"
 )
 
+// TestValidateHostname supplies accepted host characters, bare IPv6 text,
+// length limits, and rejected syntax. Character-only strings can pass, while
+// brackets, zones, Unicode, and injected separators must fail.
 func TestValidateHostname(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name string
-		host string
-		want bool
+		name string // subtest display name
+		host string // supplied hostname syntax fixture
+		want bool   // expected syntax acceptance flag
 	}{
 		{"empty", "", false},
 		{"hostname", "db-1.example.com", true},
@@ -36,11 +39,14 @@ func TestValidateHostname(t *testing.T) {
 	}
 }
 
+// TestValidateDBName supplies PostgreSQL database identifiers at and beyond the
+// byte limit. Letter-leading ASCII names must pass, while digits first,
+// punctuation, Unicode, whitespace, and empty values must fail.
 func TestValidateDBName(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name string
-		want bool
+		name string // supplied database identifier text
+		want bool   // expected syntax acceptance flag
 	}{
 		{"", false},
 		{"a", true},
@@ -64,11 +70,14 @@ func TestValidateDBName(t *testing.T) {
 	}
 }
 
+// TestValidateUsername supplies ASCII usernames including digit-leading and
+// underscore-only values. Accepted character forms within the byte limit must
+// pass, while punctuation, Unicode, whitespace, and oversized values must fail.
 func TestValidateUsername(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name string
-		want bool
+		name string // supplied database username text
+		want bool   // expected syntax acceptance flag
 	}{
 		{"", false},
 		{"1", true},
@@ -91,12 +100,16 @@ func TestValidateUsername(t *testing.T) {
 	}
 }
 
+// TestValidateEmail supplies plain, display-name, quoted-local-part, and
+// Unicode display-name address forms. Valid syntax within the complete text
+// byte limit must pass, while overflow, missing domains, and address lists must
+// fail.
 func TestValidateEmail(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name  string
-		email string
-		want  bool
+		name  string // subtest display name
+		email string // supplied full address text
+		want  bool   // expected syntax acceptance flag
 	}{
 		{"empty", "", false},
 		{"plain address", "admin@example.com", true},
@@ -119,11 +132,14 @@ func TestValidateEmail(t *testing.T) {
 	}
 }
 
+// TestValidatePort supplies values below, at, and above the usable TCP port
+// range. Zero and out-of-range values must fail while positive ports through
+// 65535 pass.
 func TestValidatePort(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		port int
-		want bool
+		port int  // supplied TCP port number
+		want bool // expected syntax acceptance flag
 	}{
 		{-1, false},
 		{0, false},
@@ -139,11 +155,14 @@ func TestValidatePort(t *testing.T) {
 	}
 }
 
+// TestValidateSSLMode supplies supported setup TLS spellings and unsupported
+// libpq or formatted variants. Only the four exact accepted strings must pass,
+// including rejection of case and surrounding whitespace variants.
 func TestValidateSSLMode(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		mode string
-		want bool
+		mode string // supplied TLS mode spelling
+		want bool   // expected syntax acceptance flag
 	}{
 		{"", false},
 		{"disable", true},

@@ -18,7 +18,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
-// New applies the embedded migrations and closes connections before terminating the test container.
+// PostgreSQL storage fixtures apply the application's embedded migrations
+// before domain records are read or written. New starts a dedicated container,
+// obtains a UTC connection, and registers cleanup so the SQL pool closes before
+// container termination at test completion.
+
+// New returns a pool for a dedicated migrated PostgreSQL fixture or fails the
+// calling test. Container startup, connection-string discovery, and migrations
+// share a two-minute context; TOKENROUTER_TEST_POSTGRES_IMAGE can replace the
+// default image. Cleanup closes the pool before container termination.
 func New(t *testing.T) *sql.DB {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -33,6 +41,8 @@ func New(t *testing.T) *sql.DB {
 		tcpostgres.WithPassword("postgres"),
 		tcpostgres.BasicWaitStrategies())
 	require.NoError(t, err)
+	// Register container termination immediately after acquisition. Later pool and
+	// application cleanups run first because testing executes cleanup callbacks in reverse order.
 	t.Cleanup(func() { require.NoError(t, container.Terminate(context.Background())) })
 	dsn, err := container.ConnectionString(ctx, "sslmode=disable", "TimeZone=UTC")
 	require.NoError(t, err)

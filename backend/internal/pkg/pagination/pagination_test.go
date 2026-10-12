@@ -2,14 +2,17 @@ package pagination
 
 import "testing"
 
+// TestNormalizeSortOrder supplies accepted, mixed-case, padded, and invalid
+// sort text with varying defaults. Each result must select the expected
+// normalized direction, including desc for an invalid default.
 func TestNormalizeSortOrder(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name         string
-		input        string
-		defaultOrder string
-		want         string
+		name         string // subtest display name
+		input        string // requested sort direction
+		defaultOrder string // direction used for invalid input
+		want         string // expected normalized result
 	}{
 		{name: "asc", input: "asc", defaultOrder: "desc", want: "asc"},
 		{name: "uppercase asc", input: "ASC", defaultOrder: "desc", want: "asc"},
@@ -30,6 +33,9 @@ func TestNormalizeSortOrder(t *testing.T) {
 	}
 }
 
+// TestPaginationParamsNormalizedSortOrder exercises normalization through the
+// parameter receiver rather than the standalone helper. Accepted uppercase text
+// must become asc, and invalid text must use the supplied asc default.
 func TestPaginationParamsNormalizedSortOrder(t *testing.T) {
 	t.Parallel()
 
@@ -44,13 +50,16 @@ func TestPaginationParamsNormalizedSortOrder(t *testing.T) {
 	}
 }
 
+// TestPaginationParamsLimit supplies nonpositive, ordinary, maximum, and
+// oversized requested sizes. The effective limit must use twenty by default and
+// remain at most one thousand rows.
 func TestPaginationParamsLimit(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		pageSize int
-		want     int
+		name     string // subtest display name
+		pageSize int    // supplied rows per page
+		want     int    // expected normalized result
 	}{
 		{name: "non-positive falls back to default", pageSize: 0, want: 20},
 		{name: "negative falls back to default", pageSize: -1, want: 20},
@@ -70,14 +79,17 @@ func TestPaginationParamsLimit(t *testing.T) {
 	}
 }
 
+// TestPaginationParamsOffsetUsesNormalizedLimit combines page numbers with
+// invalid and oversized requested sizes. Offset must normalize the page minimum
+// and multiply by the effective limit used for querying.
 func TestPaginationParamsOffsetUsesNormalizedLimit(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		page     int
-		pageSize int
-		want     int
+		name     string // subtest display name
+		page     int    // supplied one-based page number
+		pageSize int    // supplied rows per page
+		want     int    // expected normalized result
 	}{
 		{name: "invalid page uses first page", page: 0, pageSize: 50, want: 0},
 		{name: "zero page size uses default", page: 2, pageSize: 0, want: 20},

@@ -10,7 +10,21 @@ import (
 	"golang.org/x/term"
 )
 
-// RunCLI runs the CLI setup wizard.
+// Interactive installation collects and validates storage fields before running
+// connection probes. The PostgreSQL probe can create its target database during
+// this wizard, while persistent configuration and administrator creation wait
+// for the final installation confirmation and the Install sequence.
+
+// RunCLI runs the stdin/stdout installation wizard and returns probe or
+// installation errors. Invalid field input repeats its prompt, and declining
+// final confirmation returns nil.
+//
+// PostgreSQL and Redis are probed before administrator and listener choices are
+// finalized, and PostgreSQL probing can create the target database even if the
+// operator later cancels. Install repeats both probes and performs migration,
+// administrator creation, configuration output, and marker output. Password
+// reads prefer terminal input with echo disabled, using trimmed line input when
+// redirected or when terminal reading fails.
 func RunCLI() error {
 	reader := bufio.NewReader(os.Stdin)
 
@@ -33,6 +47,9 @@ func RunCLI() error {
 
 	fmt.Println("── Database Configuration ──")
 
+	// Collect valid host, port, user, database name, and TLS mode before probing.
+	// Bootstrap interpolates these fields into DSNs and a database-creation statement, so rejected text
+	// repeats its prompt before it can enter that probe.
 	for {
 		cfg.Database.Host = promptString(reader, "PostgreSQL Host", "localhost")
 		if validateHostname(cfg.Database.Host) {
@@ -86,6 +103,8 @@ func RunCLI() error {
 	fmt.Println()
 	fmt.Println("── Redis Configuration ──")
 
+	// Redis host and port prompts repeat until their syntax is accepted. Those
+	// validated values then select the temporary client used by the later connection probe.
 	for {
 		cfg.Redis.Host = promptString(reader, "Redis Host", "localhost")
 		if validateHostname(cfg.Redis.Host) {
@@ -104,6 +123,7 @@ func RunCLI() error {
 
 	cfg.Redis.Password = promptPassword("Redis Password (optional)")
 
+	// The wizard shares the Web probe's zero-through-fifteen database range.
 	for {
 		cfg.Redis.DB = promptInt(reader, "Redis DB", 0)
 		if cfg.Redis.DB >= 0 && cfg.Redis.DB <= 15 {
@@ -125,6 +145,8 @@ func RunCLI() error {
 	fmt.Println()
 	fmt.Println("── Admin Account ──")
 
+	// Keep prompting until an address form accepted by the Web installer is supplied.
+	// The identity bootstrap input receives that accepted text when installation proceeds.
 	for {
 		cfg.Admin.Email = promptString(reader, "Admin Email", "admin@example.com")
 		if validateEmail(cfg.Admin.Email) {
@@ -135,7 +157,8 @@ func RunCLI() error {
 
 	for {
 		cfg.Admin.Password = promptPassword("Admin Password")
-		// Match the Web setup API's eight-byte minimum.
+		// Match the Web installer's byte range before confirming this password.
+		// Repeating the prompt keeps an invalid credential out of the Install input.
 		if len(cfg.Admin.Password) < 8 {
 			fmt.Println("  Password must be at least 8 characters")
 			continue
@@ -155,6 +178,8 @@ func RunCLI() error {
 	fmt.Println()
 	fmt.Println("── Server Configuration ──")
 
+	// Choose a usable listener port before showing the installation summary and
+	// writing server settings, so the printed administrator URL uses the selected port.
 	for {
 		cfg.Server.Port = promptInt(reader, "Server Port", 8080)
 		if validatePort(cfg.Server.Port) {
@@ -199,6 +224,9 @@ func RunCLI() error {
 	return nil
 }
 
+// promptString prints prompt and reads trimmed line text through reader. Empty
+// text returns defaultVal, and read errors are discarded while any returned
+// text still participates in this choice.
 func promptString(reader *bufio.Reader, prompt, defaultVal string) string {
 	if defaultVal != "" {
 		fmt.Printf("  %s [%s]: ", prompt, defaultVal)
@@ -206,6 +234,9 @@ func promptString(reader *bufio.Reader, prompt, defaultVal string) string {
 		fmt.Printf("  %s: ", prompt)
 	}
 
+	// Use available string text when EOF accompanies an unterminated final line.
+	// Trimming then distinguishes that value from empty input selecting the shown
+	// default.
 	input, _ := reader.ReadString('\n')
 	input = strings.TrimSpace(input)
 
@@ -215,9 +246,15 @@ func promptString(reader *bufio.Reader, prompt, defaultVal string) string {
 	return input
 }
 
+// promptInt reads a trimmed decimal integer after showing the numeric default.
+// Empty or malformed text returns defaultVal, and read errors are discarded
+// even when a partial line is returned.
 func promptInt(reader *bufio.Reader, prompt string, defaultVal int) int {
 	fmt.Printf("  %s [%d]: ", prompt, defaultVal)
 
+	// A final integer token can arrive with EOF before a newline. Keep the
+	// returned text for parsing so a usable token can override the numeric
+	// default.
 	input, _ := reader.ReadString('\n')
 	input = strings.TrimSpace(input)
 
@@ -227,15 +264,23 @@ func promptInt(reader *bufio.Reader, prompt string, defaultVal int) int {
 
 	val, err := strconv.Atoi(input)
 	if err != nil {
+		// RunCLI checks the returned port or database number with its normal range
+		// validation. Failed parsing therefore sends the displayed default through
+		// that validation before a connection probe or installation can use it.
 		return defaultVal
 	}
 	return val
 }
 
+// promptPassword reads a credential with terminal echo disabled when stdin is a
+// terminal. Successful terminal bytes are returned unchanged; redirection or a
+// terminal-read error selects a new buffered reader whose line text is trimmed,
+// and line-read errors are discarded.
 func promptPassword(prompt string) string {
 	fmt.Printf("  %s: ", prompt)
 
-	// Suppress terminal echo while reading credentials.
+	// Terminal password input hides credentials from the echoed display. Its result
+	// keeps the exact bytes because trimming is part of the redirected-line path below.
 	if term.IsTerminal(int(os.Stdin.Fd())) {
 		password, err := term.ReadPassword(int(os.Stdin.Fd()))
 		fmt.Println()
@@ -244,14 +289,24 @@ func promptPassword(prompt string) string {
 		}
 	}
 
-	// Use line input when stdin is redirected or terminal password reading fails.
+	// Redirection or terminal-read failure selects line input so the wizard can
+	// still obtain a credential. This new reader trims the line and discards read errors.
 	reader := bufio.NewReader(os.Stdin)
+	// Redirected password input can end after credential bytes without a newline.
+	// Use and trim those returned bytes even when the line reader also reports an
+	// error.
 	input, _ := reader.ReadString('\n')
 	return strings.TrimSpace(input)
 }
 
+// promptConfirm prints a default-no confirmation and reads one trimmed line
+// from reader. Case-insensitive y or yes returns true; other text returns
+// false, and any read error is discarded.
 func promptConfirm(reader *bufio.Reader, prompt string) bool {
 	fmt.Printf("%s [y/N]: ", prompt)
+	// An unterminated final answer can still carry y or yes. Retain that text
+	// after a read error so confirmation can recognize the operator's affirmative
+	// choice.
 	input, _ := reader.ReadString('\n')
 	input = strings.TrimSpace(strings.ToLower(input))
 	return input == "y" || input == "yes"

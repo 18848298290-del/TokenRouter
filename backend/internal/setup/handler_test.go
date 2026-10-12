@@ -11,11 +11,14 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// TestTestDatabaseValidationOrder begins with multiple invalid PostgreSQL
+// fields and repairs them one at a time. Each request must report the next
+// expected validation message before any connection probe can run.
 func TestTestDatabaseValidationOrder(t *testing.T) {
 	req := TestDatabaseRequest{Host: "invalid host", Port: -1, User: "invalid user", DBName: "1db", SSLMode: "Require"}
 	steps := []struct {
-		message string
-		fix     func()
+		message string // expected first validation message
+		fix     func() // repair applied after assertion
 	}{
 		{"Invalid hostname format", func() { req.Host = "localhost" }},
 		{"Invalid port number", func() { req.Port = 5432 }},
@@ -31,11 +34,14 @@ func TestTestDatabaseValidationOrder(t *testing.T) {
 	}
 }
 
+// TestTestRedisValidationOrder combines invalid host, port, database number,
+// and oversized username. Successive repairs must expose those validation
+// messages in order while leaving one invalid field to prevent probing.
 func TestTestRedisValidationOrder(t *testing.T) {
 	req := TestRedisRequest{Host: "invalid host", Port: -1, DB: -1, Username: strings.Repeat("a", 129)}
 	steps := []struct {
-		message string
-		fix     func()
+		message string // expected first validation message
+		fix     func() // repair applied after assertion
 	}{
 		{"Invalid hostname format", func() { req.Host = "localhost" }},
 		{"Invalid port number", func() { req.Port = 6379 }},
@@ -50,6 +56,10 @@ func TestTestRedisValidationOrder(t *testing.T) {
 	}
 }
 
+// TestInstallWithRestartValidationOrder keeps setup open with a temporary data
+// directory and supplies invalid fields across installation inputs. Incremental
+// repairs must retain exact first-error order through listener and TLS
+// validation.
 func TestInstallWithRestartValidationOrder(t *testing.T) {
 	t.Setenv("DATA_DIR", t.TempDir())
 	t.Setenv("SKIP_SETUP", "false")
@@ -60,8 +70,8 @@ func TestInstallWithRestartValidationOrder(t *testing.T) {
 		Server:   ServerConfig{Port: -1, Mode: "invalid"},
 	}
 	steps := []struct {
-		message string
-		fix     func()
+		message string // expected first validation message
+		fix     func() // repair applied after assertion
 	}{
 		{"Invalid database hostname", func() { req.Database.Host = " localhost " }},
 		{"Invalid database port", func() { req.Database.Port = 5432 }},
@@ -86,6 +96,9 @@ func TestInstallWithRestartValidationOrder(t *testing.T) {
 	}
 }
 
+// assertSetupValidationError encodes req as JSON and invokes handler in an
+// isolated Gin context. It requires HTTP 400 and compares the decoded message,
+// failing the test if request encoding or response decoding fails.
 func assertSetupValidationError(t *testing.T, handler gin.HandlerFunc, req any, wantMessage string) {
 	t.Helper()
 	body, err := json.Marshal(req)
@@ -101,7 +114,7 @@ func assertSetupValidationError(t *testing.T, handler gin.HandlerFunc, req any, 
 		t.Fatalf("status = %d, want %d; body = %s", recorder.Code, http.StatusBadRequest, recorder.Body)
 	}
 	var response struct {
-		Message string `json:"message"`
+		Message string `json:"message"` // decoded public error text
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)

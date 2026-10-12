@@ -8,10 +8,25 @@ import (
 	"github.com/spf13/viper"
 )
 
-// legacyConfigKeys maps retired deployment keys to their replacements.
+// Deployment files and environment variables can still contain retired field
+// names that describe provider pools or scheduling values. Alias binding checks
+// the new environment name before the old name, and normal Viper precedence
+// puts usable environment values ahead of the YAML layer. Within YAML, an
+// existing new field wins even when its value is zero or false.
+//
+// Absent new YAML keys receive a field-sized nested patch assembled from the
+// old key. Merging that patch into configuration storage keeps sibling fields
+// and custom map names intact, while the mounted file stays unchanged.
+// Pool-isolation enum aliases are normalized separately, and removed Responses
+// WS options are registered for presence warnings rather than copied into
+// current fields.
+
+// legacyConfigKeys pairs each supported retired dotted configuration key with
+// the current field whose loader accepts its value, covering pool limits,
+// provider switching, and scheduler defaults.
 var legacyConfigKeys = []struct {
-	oldKey string
-	newKey string
+	oldKey string // accepted retired dotted key
+	newKey string // replacement current dotted key
 }{
 	{"pricing.hash_check_interval_minutes", "pricing.check_interval_minutes"},
 	{"gateway.max_account_switches", "gateway.max_provider_switches"},
@@ -35,8 +50,17 @@ var legacyConfigKeys = []struct {
 	{"gateway.openai_scheduler.sticky_escape_error_rate", "gateway.advanced_scheduler.sticky_escape_error_rate"},
 }
 
-// applyLegacyConfigCompatibility resolves old names in memory during configuration loading.
-// Environment values precede YAML; new names win within each source. Presence checks retain zero and false.
+// applyLegacyConfigCompatibility binds supported aliases and merges missing
+// current YAML fields in the process Viper instance. Call it after reading
+// configuration and before Unmarshal, with global Viper use serialized by the
+// caller.
+//
+// New and old environment names are bound in that order; Viper's normal
+// empty-environment behavior still applies. New YAML key presence blocks old
+// YAML replacement, including zero and false values. Otherwise a nested
+// per-field patch is merged into memory, leaving sibling values and the
+// configuration file available as supplied. Bind or merge failure returns an
+// error after any earlier bindings or patches already applied.
 // @project-doc docs/interfaces/configuration.md#configuration_sources
 func applyLegacyConfigCompatibility() error {
 	for _, item := range legacyConfigKeys {
@@ -48,7 +72,8 @@ func applyLegacyConfigCompatibility() error {
 		if viper.InConfig(item.newKey) || !viper.InConfig(item.oldKey) {
 			continue
 		}
-		// Merge into the in-memory YAML layer so environment variables retain precedence over the aliases.
+		// Build a patch for this missing current YAML field alone. MergeConfigMap
+		// updates that layer while environment lookup remains higher priority and sibling fields remain present.
 		parts := strings.Split(item.newKey, ".")
 		patch := map[string]any{}
 		parent := patch
@@ -65,7 +90,10 @@ func applyLegacyConfigCompatibility() error {
 	return nil
 }
 
-// normalizeLegacyConnectionPoolIsolation maps old names to the same pool isolation granularity.
+// normalizeLegacyConnectionPoolIsolation maps the exact retired account and
+// account_proxy values to provider equivalents. Other text is returned
+// unchanged so normal loading normalization and validation determine whether
+// that value is accepted.
 func normalizeLegacyConnectionPoolIsolation(value string) string {
 	switch value {
 	case "account":
@@ -77,9 +105,14 @@ func normalizeLegacyConnectionPoolIsolation(value string) string {
 	}
 }
 
-// warnLegacyResponsesWSSettings directs operators to group protocols for client WS permissions.
+// warnLegacyResponsesWSSettings registers retired Responses WS keys for
+// environment lookup and logs each present key. Presence can include false or
+// zero; the function warns about these values while current configuration
+// decoding ignores their removed fields.
 func warnLegacyResponsesWSSettings() {
 	for _, key := range []string{"gateway.openai_ws.allow_store_recovery", "gateway.openai_ws.apikey_enabled", "gateway.openai_ws.enabled", "gateway.openai_ws.event_flush_batch_size", "gateway.openai_ws.event_flush_interval_ms", "gateway.openai_ws.force_http", "gateway.openai_ws.http_bridge_enabled", "gateway.openai_ws.ingress_mode_default", "gateway.openai_ws.mode_router_v2_enabled", "gateway.openai_ws.oauth_enabled", "gateway.openai_ws.payload_log_sample_rate", "gateway.openai_ws.prewarm_generate_enabled", "gateway.openai_ws.responses_websockets", "gateway.openai_ws.responses_websockets_v2", "gateway.openai_ws.retry_backoff_initial_ms", "gateway.openai_ws.retry_backoff_max_ms", "gateway.openai_ws.retry_jitter_ratio", "gateway.openai_ws.retry_total_budget_ms", "gateway.openai_ws.store_disabled_conn_mode", "gateway.openai_ws.store_disabled_force_new_conn"} {
+		// A single nonempty key is a valid BindEnv call. Discard its error while
+		// registering presence lookup so retired environment variables can still produce operator warnings.
 		_ = viper.BindEnv(key)
 		if viper.IsSet(key) {
 			slog.Warn("旧 Responses WS 参数已停用，请在分组协议中设置客户端权限，在网关设置中调整连接参数", "key", key)

@@ -7,13 +7,16 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// TestIsFingerprintedEmbeddedAssetPath supplies nested assets, URL-safe
+// fingerprints, alternate directories, short suffixes, and ordinary page paths.
+// The recognizer must accept only the tested fingerprint spelling under assets.
 func TestIsFingerprintedEmbeddedAssetPath(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name string
-		path string
-		want bool
+		name string // subtest display name
+		path string // supplied asset path spelling
+		want bool   // expected fingerprint recognition flag
 	}{
 		{name: "fingerprinted_js", path: "assets/index-AbCd1234.js", want: true},
 		{name: "fingerprinted_css", path: "assets/app-a1B2c3D4.css", want: true},
@@ -40,6 +43,10 @@ func TestIsFingerprintedEmbeddedAssetPath(t *testing.T) {
 	}
 }
 
+// TestApplyStaticAssetCacheHeaders supplies a fingerprinted asset, ordinary
+// static names, the entry page, and nil headers. Recognized assets must receive
+// the immutable policy, while other cases must keep an empty cache header or
+// safely return.
 func TestApplyStaticAssetCacheHeaders(t *testing.T) {
 	t.Parallel()
 

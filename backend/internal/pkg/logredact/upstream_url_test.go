@@ -6,11 +6,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestSafeUpstreamURL supplies endpoints with query strings, fragments, both
+// suffixes, and blank input. The returned display value must match the expected
+// endpoint prefix after trimming and suffix removal.
 func TestSafeUpstreamURL(t *testing.T) {
 	tests := []struct {
-		name  string
-		input string
-		want  string
+		name  string // subtest display name
+		input string // supplied endpoint text
+		want  string // expected displayed endpoint
 	}{
 		{"strips query", "https://api.anthropic.com/v1/messages?beta=true", "https://api.anthropic.com/v1/messages"},
 		{"strips fragment", "https://api.openai.com/v1/responses#frag", "https://api.openai.com/v1/responses"},

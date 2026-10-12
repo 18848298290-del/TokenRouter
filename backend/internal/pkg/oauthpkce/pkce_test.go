@@ -6,7 +6,9 @@ import (
 	"testing"
 )
 
-// TestPlatformVerifierFormats checks base64url and hexadecimal verifier lengths and encoding.
+// TestPlatformVerifierFormats generates both supported verifier encodings and
+// decodes their text. Base64url must contain 32 bytes in 43 characters, and
+// hexadecimal must contain 64 bytes in 128 characters.
 func TestPlatformVerifierFormats(t *testing.T) {
 	verifier, err := Verifier()
 	if err != nil {
@@ -26,7 +28,9 @@ func TestPlatformVerifierFormats(t *testing.T) {
 	}
 }
 
-// TestS256RFCVector checks the digest and unpadded encoding against the RFC test vector.
+// TestS256RFCVector supplies the known PKCE verifier used by the RFC example.
+// The returned S256 challenge must match its expected digest and unpadded
+// URL-safe encoding.
 func TestS256RFCVector(t *testing.T) {
 	if got := Challenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"); got != "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM" {
 		t.Fatalf("unexpected challenge: %s", got)

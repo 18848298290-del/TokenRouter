@@ -10,15 +10,18 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
+// TestDecideAdminBootstrap supplies empty, administrator-containing, and
+// user-only database counts to the identity decision helper. Only the empty
+// case must permit creation, with each case returning its expected reason.
 func TestDecideAdminBootstrap(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
-		totalUsers int64
-		adminUsers int64
-		should     bool
-		reason     string
+		name       string // subtest display name
+		totalUsers int64  // total stored user count
+		adminUsers int64  // stored administrator user count
+		should     bool   // expected creation admission flag
+		reason     string // expected bootstrap decision reason
 	}{
 		{
 			name:       "empty database should create admin",
@@ -57,6 +60,9 @@ func TestDecideAdminBootstrap(t *testing.T) {
 	}
 }
 
+// TestSetupDefaultAdminConcurrency supplies both retired RUN_MODE values before
+// reading the initial administrator limit. Neither value must change the fixed
+// default used by setup administrator creation.
 func TestSetupDefaultAdminConcurrency(t *testing.T) {
 	t.Run("旧配置不改变初始并发", func(t *testing.T) {
 		t.Setenv("RUN_MODE", "simple")
@@ -73,10 +79,13 @@ func TestSetupDefaultAdminConcurrency(t *testing.T) {
 	})
 }
 
+// TestNeedsSetupSkipsWhenSkipSetupIsEnabled supplies the supported skip values
+// including trimmed and mixed-case text. Setup must remain closed in each empty
+// temporary data directory when the deployment skip switch is enabled.
 func TestNeedsSetupSkipsWhenSkipSetupIsEnabled(t *testing.T) {
 	tests := []struct {
-		name  string
-		value string
+		name  string // subtest display name
+		value string // supplied skip environment text
 	}{
 		{name: "true", value: "true"},
 		{name: "one", value: "1"},
@@ -97,13 +106,17 @@ func TestNeedsSetupSkipsWhenSkipSetupIsEnabled(t *testing.T) {
 	}
 }
 
+// TestNeedsSetupFallsBackToFileDetectionWhenSkipSetupIsDisabled combines unset,
+// false, and invalid skip values with individual installation files. Empty
+// directories must permit setup, and either persisted evidence file must close
+// the gate.
 func TestNeedsSetupFallsBackToFileDetectionWhenSkipSetupIsDisabled(t *testing.T) {
 	tests := []struct {
-		name         string
-		skipSetupSet bool
-		skipSetup    string
-		markerFile   string
-		want         bool
+		name         string // subtest display name
+		skipSetupSet bool   // skip variable presence flag
+		skipSetup    string // supplied skip environment text
+		markerFile   string // created installation evidence filename
+		want         bool   // expected setup admission result
 	}{
 		{
 			name: "unset without installation files",
@@ -144,6 +157,9 @@ func TestNeedsSetupFallsBackToFileDetectionWhenSkipSetupIsDisabled(t *testing.T)
 			if tc.skipSetupSet {
 				t.Setenv("SKIP_SETUP", tc.skipSetup)
 			} else {
+				// Model true absence while retaining the process's prior environment value.
+				// Cleanup attempts to restore that presence state and discards restoration errors
+				// after the serial setup-gate assertion completes.
 				originalValue, wasSet := os.LookupEnv("SKIP_SETUP")
 				if err := os.Unsetenv("SKIP_SETUP"); err != nil {
 					t.Fatalf("Unsetenv(SKIP_SETUP) error = %v", err)
@@ -170,11 +186,14 @@ func TestNeedsSetupFallsBackToFileDetectionWhenSkipSetupIsDisabled(t *testing.T)
 	}
 }
 
+// TestSetupMigrationTimeout supplies nil, zero, negative, and positive
+// migration-budget configurations. The first three cases must use the default
+// duration, while positive seconds must become the configured timeout.
 func TestSetupMigrationTimeout(t *testing.T) {
 	tests := []struct {
-		name string
-		cfg  *SetupConfig
-		want time.Duration
+		name string        // subtest display name
+		cfg  *SetupConfig  // supplied migration timeout configuration
+		want time.Duration // expected migration budget duration
 	}{
 		{name: "nil config uses default", cfg: nil, want: defaultMigrationTimeout},
 		{name: "zero uses default", cfg: &SetupConfig{}, want: defaultMigrationTimeout},
@@ -190,6 +209,9 @@ func TestSetupMigrationTimeout(t *testing.T) {
 	}
 }
 
+// TestWriteConfigFileKeepsDefaultUserConcurrency writes setup YAML while the
+// retired simple run mode is set. Reading the file must show the fixed
+// five-request user concurrency default.
 func TestWriteConfigFileKeepsDefaultUserConcurrency(t *testing.T) {
 	t.Setenv("RUN_MODE", "simple")
 	t.Setenv("DATA_DIR", t.TempDir())
@@ -208,6 +230,9 @@ func TestWriteConfigFileKeepsDefaultUserConcurrency(t *testing.T) {
 	}
 }
 
+// TestWriteConfigFileIncludesRedisUsername writes configuration with a Redis
+// authentication username in a temporary directory. The emitted YAML must
+// contain that username for normal startup configuration loading.
 func TestWriteConfigFileIncludesRedisUsername(t *testing.T) {
 	t.Setenv("DATA_DIR", t.TempDir())
 

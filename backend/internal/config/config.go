@@ -23,11 +23,28 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpconfig"
 )
 
+// Startup configuration can distinguish an omitted key from a deliberately
+// supplied zero, false, or empty list. Loading registers Viper decode keys,
+// resolves file and environment precedence, and maps selected retired inputs
+// before the values reach module options. Trusted-proxy and forwarded-header
+// lists separately record environment presence so emptiness can replace
+// configured data.
+//
+// Validation mutates selected values while checking coupled startup
+// requirements, and an error can follow those mutations. Forwarded-IP policy
+// has another lifetime: copied trust/header pairs are atomically published
+// after the cell is initialized, while their static startup fields remain
+// available to validation. Bootstrap loading can defer JWT secret selection to
+// persistent storage; generated TOTP input is marked separately from a
+// configured encryption key.
+
 const (
-	// Usage-record queue overflow policies.
-	UsageRecordOverflowPolicyDrop   = "drop"
-	UsageRecordOverflowPolicySample = "sample"
-	UsageRecordOverflowPolicySync   = "sync"
+	// These policy strings select how completion work handles failed queue admission.
+	// Inline execution, percentage selection, or dropped work have different
+	// recorded outcomes.
+	UsageRecordOverflowPolicyDrop   = "drop"   // discarded overflow work mode
+	UsageRecordOverflowPolicySample = "sample" // percentage inline overflow mode
+	UsageRecordOverflowPolicySync   = "sync"   // inline overflow execution mode
 
 	// DefaultCSPPolicy is the default Content-Security-Policy.
 	// SecurityHeaders replaces __CSP_NONCE__ with a per-request nonce.
@@ -53,133 +70,229 @@ const (
 	// Override it with gateway.models_list_read_max_bytes.
 	DefaultModelsListReadMaxBytes int64 = 8 * 1024 * 1024
 
+	// These values supply WeChat Open-mode and frontend callback defaults while
+	// normalization resolves omitted deployment text and maps supported legacy
+	// credentials.
 	defaultWeChatConnectMode             = "open"
 	defaultWeChatConnectScopes           = "snsapi_login"
 	defaultWeChatConnectFrontendRedirect = "/auth/wechat/callback"
 
+	// MaxForwardedClientIPHeaders shares the discovery-source limit with the policy
+	// normalizer used by both process configuration and persisted runtime settings.
 	MaxForwardedClientIPHeaders = ippolicy.MaxForwardedClientIPHeaders
 
-	ImageConcurrencyOverflowModeReject = "reject"
-	ImageConcurrencyOverflowModeWait   = "wait"
+	// These modes choose immediate rejection or queue waiting when separate image
+	// admission reaches its process request capacity in the image limiter.
+	ImageConcurrencyOverflowModeReject = "reject" // immediate image-slot rejection mode
+	ImageConcurrencyOverflowModeWait   = "wait"   // queued image-slot admission mode
 
-	// DefaultOpenAIWSClientFirstMessageTimeoutSeconds bounds the wait for the first inbound message.
+	// DefaultOpenAIWSClientFirstMessageTimeoutSeconds supplies the deployment ingress
+	// budget for the first client message before a Responses WebSocket turn begins.
 	DefaultOpenAIWSClientFirstMessageTimeoutSeconds = 30
 )
 
 var (
-	// ErrDingTalkV1AppTypeMismatch reports a conflict between the app type and enterprise restriction.
+	// ErrDingTalkV1AppTypeMismatch shares identity validation's sentinel for an
+	// app type conflicting with its configured enterprise restriction in enabled
+	// login settings.
 	ErrDingTalkV1AppTypeMismatch = authconfig.ErrDingTalkV1AppTypeMismatch
 
-	// ErrDingTalkV4InvalidAppKind reports an invalid DingTalk app kind.
+	// ErrDingTalkV4InvalidAppKind shares identity validation's sentinel for an
+	// unsupported application kind, allowing facade callers to retain errors.Is identity.
 	ErrDingTalkV4InvalidAppKind = authconfig.ErrDingTalkV4InvalidAppKind
 )
 
 // RequestLogConfig sets retention in days for request summaries.
 type RequestLogConfig struct {
-	RetentionDays int `mapstructure:"retention_days"`
+	RetentionDays int `mapstructure:"retention_days"` // request summary retention days
 }
 
+// Config holds process startup settings decoded from Viper and supplied to
+// application construction. Load normalizes and validates these values, while
+// the forwarded-IP accessors separately publish copied live policy snapshots.
 type Config struct {
-	RequestLog        RequestLogConfig           `mapstructure:"request_log"`
-	Server            ServerConfig               `mapstructure:"server"`
-	Log               LogConfig                  `mapstructure:"log"`
-	CORS              CORSConfig                 `mapstructure:"cors"`
-	Security          SecurityConfig             `mapstructure:"security"`
-	Billing           BillingConfig              `mapstructure:"billing"`
-	Turnstile         TurnstileConfig            `mapstructure:"turnstile"`
-	Database          DatabaseConfig             `mapstructure:"database"`
-	Redis             RedisConfig                `mapstructure:"redis"`
-	Ops               OpsConfig                  `mapstructure:"ops"`
-	JWT               JWTConfig                  `mapstructure:"jwt"`
-	Totp              TotpConfig                 `mapstructure:"totp"`
-	WebAuthn          WebAuthnConfig             `mapstructure:"webauthn"`
-	LinuxDo           LinuxDoConnectConfig       `mapstructure:"linuxdo_connect"`
-	WeChat            WeChatConnectConfig        `mapstructure:"wechat_connect"`
-	OIDC              OIDCConnectConfig          `mapstructure:"oidc_connect"`
-	DingTalk          DingTalkConnectConfig      `mapstructure:"dingtalk_connect"`
-	GitHubOAuth       EmailOAuthProviderConfig   `mapstructure:"github_oauth"`
-	GoogleOAuth       EmailOAuthProviderConfig   `mapstructure:"google_oauth"`
-	Default           DefaultConfig              `mapstructure:"default"`
-	RateLimit         RateLimitConfig            `mapstructure:"rate_limit"`
-	Pricing           PricingConfig              `mapstructure:"pricing"`
-	Gateway           GatewayConfig              `mapstructure:"gateway"`
-	APIKeyAuth        APIKeyAuthCacheConfig      `mapstructure:"api_key_auth_cache"`
-	SubscriptionCache SubscriptionCacheConfig    `mapstructure:"subscription_cache"`
-	Dashboard         DashboardCacheConfig       `mapstructure:"dashboard_cache"`
-	DashboardAgg      DashboardAggregationConfig `mapstructure:"dashboard_aggregation"`
-	UsageCleanup      UsageCleanupConfig         `mapstructure:"usage_cleanup"`
-	Concurrency       ConcurrencyConfig          `mapstructure:"concurrency"`
-	TokenRefresh      TokenRefreshConfig         `mapstructure:"token_refresh"`
-	Timezone          string                     `mapstructure:"timezone"` // e.g. "Asia/Shanghai", "UTC"
-	Gemini            GeminiConfig               `mapstructure:"gemini"`
-	Update            UpdateConfig               `mapstructure:"update"`
-	Idempotency       IdempotencyConfig          `mapstructure:"idempotency"`
-	BatchImage        BatchImageConfig           `mapstructure:"batch_image"`
-	Creative          CreativeConfig             `mapstructure:"creative"`
-	Team              TeamConfig                 `mapstructure:"team"`
+	// request summary retention settings
+	RequestLog RequestLogConfig `mapstructure:"request_log"`
+	// HTTP ingress and listener settings
+	Server ServerConfig `mapstructure:"server"`
+	Log    LogConfig    `mapstructure:"log"` // process logging output settings
+	// browser cross-origin response settings
+	CORS CORSConfig `mapstructure:"cors"`
+	// URL and response security settings
+	Security SecurityConfig `mapstructure:"security"`
+	// forwarding balance protection settings
+	Billing BillingConfig `mapstructure:"billing"`
+	// captcha deployment requirement settings
+	Turnstile TurnstileConfig `mapstructure:"turnstile"`
+	// PostgreSQL connection and pool settings
+	Database DatabaseConfig `mapstructure:"database"`
+	// Redis connection and pool settings
+	Redis RedisConfig `mapstructure:"redis"`
+	// operational monitoring process settings
+	Ops OpsConfig `mapstructure:"ops"`
+	JWT JWTConfig `mapstructure:"jwt"` // identity token signing settings
+	// secret encryption deployment settings
+	Totp TotpConfig `mapstructure:"totp"`
+	// passkey relying-party deployment settings
+	WebAuthn WebAuthnConfig `mapstructure:"webauthn"`
+	// LinuxDo login deployment settings
+	LinuxDo LinuxDoConnectConfig `mapstructure:"linuxdo_connect"`
+	// WeChat login deployment settings
+	WeChat WeChatConnectConfig `mapstructure:"wechat_connect"`
+	// OIDC login deployment settings
+	OIDC OIDCConnectConfig `mapstructure:"oidc_connect"`
+	// DingTalk login deployment settings
+	DingTalk DingTalkConnectConfig `mapstructure:"dingtalk_connect"`
+	// GitHub login deployment settings
+	GitHubOAuth EmailOAuthProviderConfig `mapstructure:"github_oauth"`
+	// Google login deployment settings
+	GoogleOAuth EmailOAuthProviderConfig `mapstructure:"google_oauth"`
+	// initial user and billing defaults
+	Default DefaultConfig `mapstructure:"default"`
+	// provider cooldown duration settings
+	RateLimit RateLimitConfig `mapstructure:"rate_limit"`
+	// model catalog source settings
+	Pricing PricingConfig `mapstructure:"pricing"`
+	// request forwarding process defaults
+	Gateway GatewayConfig `mapstructure:"gateway"`
+	// API-key authentication cache settings
+	APIKeyAuth APIKeyAuthCacheConfig `mapstructure:"api_key_auth_cache"`
+	// subscription authentication cache settings
+	SubscriptionCache SubscriptionCacheConfig `mapstructure:"subscription_cache"`
+	// dashboard Redis cache settings
+	Dashboard DashboardCacheConfig `mapstructure:"dashboard_cache"`
+	// dashboard aggregation job settings
+	DashboardAgg DashboardAggregationConfig `mapstructure:"dashboard_aggregation"`
+	// usage record cleanup settings
+	UsageCleanup UsageCleanupConfig `mapstructure:"usage_cleanup"`
+	// slot-wait keepalive settings
+	Concurrency ConcurrencyConfig `mapstructure:"concurrency"`
+	// OAuth refresh worker settings
+	TokenRefresh TokenRefreshConfig `mapstructure:"token_refresh"`
+	// Timezone selects the calendar zone initialized by app/bootstrap after
+	// loading. TZ precedes TIMEZONE, selected YAML, and Asia/Shanghai; bootstrap
+	// rejects an invalid IANA name before publishing time.Local.
+	Timezone string `mapstructure:"timezone"`
+	// Gemini OAuth and quota settings
+	Gemini GeminiConfig `mapstructure:"gemini"`
+	// GitHub release access settings
+	Update UpdateConfig `mapstructure:"update"`
+	// write coordination process defaults
+	Idempotency IdempotencyConfig `mapstructure:"idempotency"`
+	// batch image process defaults
+	BatchImage BatchImageConfig `mapstructure:"batch_image"`
+	// creative studio process defaults
+	Creative CreativeConfig `mapstructure:"creative"`
+	// team availability and membership defaults
+	Team TeamConfig `mapstructure:"team"`
 }
 
 // TeamConfig sets the default availability and limits of team features.
 type TeamConfig struct {
-	Enabled            bool `mapstructure:"enabled"`
+	Enabled bool `mapstructure:"enabled"` // deployment team availability flag
+	// user team creation availability flag
 	SelfServiceEnabled bool `mapstructure:"self_service_enabled"`
-	DefaultMemberLimit int  `mapstructure:"default_member_limit"`
+	// initial team membership limit
+	DefaultMemberLimit int `mapstructure:"default_member_limit"`
 }
 
+// LogConfig holds process logging thresholds, labels, sinks, rotation, and
+// sampling controls.
 type LogConfig struct {
-	Level           string            `mapstructure:"level"`
-	Format          string            `mapstructure:"format"`
-	ServiceName     string            `mapstructure:"service_name"`
-	Environment     string            `mapstructure:"env"`
-	Caller          bool              `mapstructure:"caller"`
-	StacktraceLevel string            `mapstructure:"stacktrace_level"`
-	Output          LogOutputConfig   `mapstructure:"output"`
-	Rotation        LogRotationConfig `mapstructure:"rotation"`
-	Sampling        LogSamplingConfig `mapstructure:"sampling"`
+	Level string `mapstructure:"level"` // minimum process log severity
+	// console or JSON encoding selection
+	Format string `mapstructure:"format"`
+	// record service label text
+	ServiceName string `mapstructure:"service_name"`
+	Environment string `mapstructure:"env"`    // record environment label text
+	Caller      bool   `mapstructure:"caller"` // caller location inclusion flag
+	// stacktrace inclusion severity text
+	StacktraceLevel string `mapstructure:"stacktrace_level"`
+	// stdout and file sink selection
+	Output LogOutputConfig `mapstructure:"output"`
+	// file rotation and retention settings
+	Rotation LogRotationConfig `mapstructure:"rotation"`
+	// repeated-message sampling settings
+	Sampling LogSamplingConfig `mapstructure:"sampling"`
 }
 
+// LogOutputConfig selects stdout and file sinks plus the optional file
+// destination.
 type LogOutputConfig struct {
-	ToStdout bool   `mapstructure:"to_stdout"`
-	ToFile   bool   `mapstructure:"to_file"`
+	ToStdout bool `mapstructure:"to_stdout"` // standard output sink switch
+	ToFile   bool `mapstructure:"to_file"`   // rotating file sink switch
+	// FilePath selects the rotating log destination. Empty text lets
+	// logging.buildFileCore resolve its default path before creating the parent
+	// directory and file writer.
 	FilePath string `mapstructure:"file_path"`
 }
 
+// LogRotationConfig supplies lumberjack file rotation sizes, retention,
+// compression, and naming time.
 type LogRotationConfig struct {
-	MaxSizeMB  int  `mapstructure:"max_size_mb"`
-	MaxBackups int  `mapstructure:"max_backups"`
-	MaxAgeDays int  `mapstructure:"max_age_days"`
-	Compress   bool `mapstructure:"compress"`
-	LocalTime  bool `mapstructure:"local_time"`
+	MaxSizeMB  int  `mapstructure:"max_size_mb"`  // rotation size in MiB
+	MaxBackups int  `mapstructure:"max_backups"`  // retained rotated file count
+	MaxAgeDays int  `mapstructure:"max_age_days"` // rotated file retention days
+	Compress   bool `mapstructure:"compress"`     // rotated file compression switch
+	LocalTime  bool `mapstructure:"local_time"`   // local-time filename timestamp switch
 }
 
+// LogSamplingConfig supplies repeated-message admission counts to the
+// configured Zap sampler.
 type LogSamplingConfig struct {
-	Enabled    bool `mapstructure:"enabled"`
-	Initial    int  `mapstructure:"initial"`
-	Thereafter int  `mapstructure:"thereafter"`
+	Enabled bool `mapstructure:"enabled"` // repeated-message sampling switch
+	// Initial and Thereafter configure repeated messages in the logging sampler's
+	// one-second tick. Initial admits the first messages and Thereafter selects
+	// the stride after that count; Enabled selects whether sampling runs.
+	Initial    int `mapstructure:"initial"`    // initial messages admitted per tick
+	Thereafter int `mapstructure:"thereafter"` // subsequent message sampling stride
 }
 
+// GeminiConfig holds process OAuth client input and Gemini quota policy
+// overrides.
 type GeminiConfig struct {
-	OAuth GeminiOAuthConfig `mapstructure:"oauth"`
-	Quota GeminiQuotaConfig `mapstructure:"quota"`
+	OAuth GeminiOAuthConfig `mapstructure:"oauth"` // process OAuth client settings
+	Quota GeminiQuotaConfig `mapstructure:"quota"` // static quota policy settings
 }
 
+// GeminiOAuthConfig supplies optional OAuth client credentials and requested
+// scope text.
 type GeminiOAuthConfig struct {
-	ClientID     string `mapstructure:"client_id"`
-	ClientSecret string `mapstructure:"client_secret"`
-	Scopes       string `mapstructure:"scopes"`
+	// ClientID and ClientSecret form the configured OAuth client pair. Validate
+	// requires both trimmed values to be supplied or both empty, so the consuming
+	// client can apply its default credential choice.
+	ClientID     string `mapstructure:"client_id"`     // configured OAuth client identifier
+	ClientSecret string `mapstructure:"client_secret"` // configured OAuth client secret
+	Scopes       string `mapstructure:"scopes"`        // requested OAuth scope text
 }
 
+// GeminiQuotaConfig supplies static tier overrides and a JSON policy to Gemini
+// quota construction.
 type GeminiQuotaConfig struct {
+	// static overrides by tier identifier
 	Tiers  map[string]GeminiTierQuotaConfig `mapstructure:"tiers"`
-	Policy string                           `mapstructure:"policy"`
+	Policy string                           `mapstructure:"policy"` // static JSON quota policy
 }
 
+// GeminiTierQuotaConfig carries optional daily quota and cooldown values for a
+// named tier.
 type GeminiTierQuotaConfig struct {
-	ProRPD          *int64 `mapstructure:"pro_rpd" json:"pro_rpd"`
-	FlashRPD        *int64 `mapstructure:"flash_rpd" json:"flash_rpd"`
-	CooldownMinutes *int   `mapstructure:"cooldown_minutes" json:"cooldown_minutes"`
+	// ProRPD is applied when nonnil by the provider quota policy. It overrides a
+	// positive shared daily limit when present, otherwise the Pro limit; -1
+	// denotes unlimited and values below -1 clamp to zero.
+	ProRPD *int64 `mapstructure:"pro_rpd" json:"pro_rpd"`
+	// FlashRPD overrides the Flash daily limit when nonnil and the policy has no
+	// positive shared limit. A ProRPD update runs first and can change that
+	// shared-limit condition before Flash is considered.
+	FlashRPD *int64 `mapstructure:"flash_rpd" json:"flash_rpd"`
+	// CooldownMinutes replaces the tier cooldown when nonnil. The policy clamps
+	// negative minutes to zero before converting the selected value to its stored
+	// duration.
+	CooldownMinutes *int `mapstructure:"cooldown_minutes" json:"cooldown_minutes"`
 }
 
+// UpdateConfig contains the optional proxy address used for GitHub release
+// access.
 type UpdateConfig struct {
 	// ProxyURL is the proxy address for GitHub access.
 	// Supported schemes are http, https, socks5, and socks5h.
@@ -187,75 +300,136 @@ type UpdateConfig struct {
 	ProxyURL string `mapstructure:"proxy_url"`
 }
 
+// IdempotencyConfig supplies record lifetimes, observation mode, and
+// coordinator maintenance limits.
 type IdempotencyConfig struct {
-	// ObserveOnly allows requests missing Idempotency-Key during observation.
+	// ObserveOnly permits a missing request key even for commands requiring one.
+	// Present keys still use the coordinator; false allows those command
+	// requirements to reject missing keys.
 	ObserveOnly bool `mapstructure:"observe_only"`
-	// DefaultTTLSeconds is the default retention for write-operation idempotency records.
+	// ordinary write record retention seconds
 	DefaultTTLSeconds int `mapstructure:"default_ttl_seconds"`
-	// SystemOperationTTLSeconds is the retention for system-operation idempotency records.
+	// system operation record retention seconds
 	SystemOperationTTLSeconds int `mapstructure:"system_operation_ttl_seconds"`
-	// ProcessingTimeoutSeconds is the lock timeout for records in processing state.
+	// processing record lock timeout seconds
 	ProcessingTimeoutSeconds int `mapstructure:"processing_timeout_seconds"`
-	// FailedRetryBackoffSeconds is the retry delay after a failed operation.
+	// failed-operation retry delay seconds
 	FailedRetryBackoffSeconds int `mapstructure:"failed_retry_backoff_seconds"`
 	// MaxStoredResponseLen limits persisted response bodies in bytes.
 	MaxStoredResponseLen int `mapstructure:"max_stored_response_len"`
-	// CleanupIntervalSeconds is the interval between expired-record cleanup runs.
+	// expired-record cleanup interval seconds
 	CleanupIntervalSeconds int `mapstructure:"cleanup_interval_seconds"`
 	// CleanupBatchSize limits the records removed in one cleanup batch.
 	CleanupBatchSize int `mapstructure:"cleanup_batch_size"`
 }
 
+// BatchImageConfig holds deployment inputs for batch image access, storage,
+// queueing, and cleanup.
 type BatchImageConfig struct {
-	Enabled                           bool   `mapstructure:"enabled"`
-	MaxItemsPerJobDefault             int    `mapstructure:"max_items_per_job_default"`
-	MaxItemsPerJobTrial               int    `mapstructure:"max_items_per_job_trial"`
-	MaxOutputImagesPerJob             int    `mapstructure:"max_output_images_per_job"`
-	MaxOutputImagesPerItem            int    `mapstructure:"max_output_images_per_item"`
-	MaxPromptCharsPerItem             int    `mapstructure:"max_prompt_chars_per_item"`
-	MaxReferenceImagesPerJob          int    `mapstructure:"max_reference_images_per_job"`
-	MaxReferenceInlineBytesPerJob     int    `mapstructure:"max_reference_inline_bytes_per_job"`
-	DefaultResponseMimeType           string `mapstructure:"default_response_mime_type"`
-	DefaultImageSize                  string `mapstructure:"default_image_size"`
-	MaxDownloadItemsZip               int    `mapstructure:"max_download_items_zip"`
-	MaxDownloadBytesPerRequest        int64  `mapstructure:"max_download_bytes_per_request"`
-	MaxDownloadDurationSeconds        int    `mapstructure:"max_download_duration_seconds"`
-	MaxDownloadConcurrencyPerUser     int    `mapstructure:"max_download_concurrency_per_user"`
-	InputRetentionAfterTerminalHours  int    `mapstructure:"input_retention_after_terminal_hours"`
-	OutputRetentionAfterTerminalHours int    `mapstructure:"output_retention_after_terminal_hours"`
-	OutputRetentionMaxDays            int    `mapstructure:"output_retention_max_days"`
-	CleanupIntervalMinutes            int    `mapstructure:"cleanup_interval_minutes"`
-	CleanupBatchSize                  int    `mapstructure:"cleanup_batch_size"`
-	QueueEnabled                      bool   `mapstructure:"queue_enabled"`
-	QueueReadyKey                     string `mapstructure:"queue_ready_key"`
-	QueueDelayedKey                   string `mapstructure:"queue_delayed_key"`
-	QueueActiveKey                    string `mapstructure:"queue_active_key"`
-	InflightKeyPrefix                 string `mapstructure:"inflight_key_prefix"`
-	LockKeyPrefix                     string `mapstructure:"lock_key_prefix"`
-	IdempotencyKeyPrefix              string `mapstructure:"idempotency_key_prefix"`
-	InflightTTLSeconds                int    `mapstructure:"inflight_ttl_seconds"`
-	JobLockTTLSeconds                 int    `mapstructure:"job_lock_ttl_seconds"`
-	DefaultRequeueDelaySeconds        int    `mapstructure:"default_requeue_delay_seconds"`
-	ErrorRetryDelaySeconds            int    `mapstructure:"error_retry_delay_seconds"`
-	LockConflictDelaySeconds          int    `mapstructure:"lock_conflict_delay_seconds"`
-	StaleActiveAfterSeconds           int    `mapstructure:"stale_active_after_seconds"`
-	DelayedMoverIntervalSeconds       int    `mapstructure:"delayed_mover_interval_seconds"`
-	RecoveryIntervalSeconds           int    `mapstructure:"recovery_interval_seconds"`
-	DelayedMoveLimit                  int    `mapstructure:"delayed_move_limit"`
-	RecoverLimit                      int    `mapstructure:"recover_limit"`
-	VertexEnabled                     bool   `mapstructure:"vertex_enabled"`
-	VertexProjectID                   string `mapstructure:"vertex_project_id"`
-	VertexLocation                    string `mapstructure:"vertex_location"`
+	// batch image API availability switch
+	Enabled bool `mapstructure:"enabled"`
+	// ordinary job item count limit
+	MaxItemsPerJobDefault int `mapstructure:"max_items_per_job_default"`
+	// MaxItemsPerJobTrial is parsed and defaulted by this loader. Current batch
+	// application construction does not pass this field to PublicOptions, so it
+	// has no named runtime reader there.
+	MaxItemsPerJobTrial int `mapstructure:"max_items_per_job_trial"`
+	// total output image count limit
+	MaxOutputImagesPerJob int `mapstructure:"max_output_images_per_job"`
+	// per-item output image count limit
+	MaxOutputImagesPerItem int `mapstructure:"max_output_images_per_item"`
+	// MaxPromptCharsPerItem supplies the batch prompt length limit.
+	// batchimage.Public validates trimmed prompt bytes with len, so this field
+	// counts bytes despite its characters-oriented name.
+	MaxPromptCharsPerItem int `mapstructure:"max_prompt_chars_per_item"`
+	// expanded reference image count limit
+	MaxReferenceImagesPerJob int `mapstructure:"max_reference_images_per_job"`
+	// expanded inline reference byte limit
+	MaxReferenceInlineBytesPerJob int `mapstructure:"max_reference_inline_bytes_per_job"`
+	// default output image MIME type
+	DefaultResponseMimeType string `mapstructure:"default_response_mime_type"`
+	// default requested image size text
+	DefaultImageSize string `mapstructure:"default_image_size"`
+	// maximum bundled ZIP item count
+	MaxDownloadItemsZip int `mapstructure:"max_download_items_zip"`
+	// download request byte count limit
+	MaxDownloadBytesPerRequest int64 `mapstructure:"max_download_bytes_per_request"`
+	// download request budget seconds
+	MaxDownloadDurationSeconds int `mapstructure:"max_download_duration_seconds"`
+	// per-user download admission limit
+	MaxDownloadConcurrencyPerUser int `mapstructure:"max_download_concurrency_per_user"`
+	// terminal job input retention hours
+	InputRetentionAfterTerminalHours int `mapstructure:"input_retention_after_terminal_hours"`
+	// terminal job output retention hours
+	OutputRetentionAfterTerminalHours int `mapstructure:"output_retention_after_terminal_hours"`
+	// OutputRetentionMaxDays is decoded and defaulted by this loader. Current
+	// batch application cleanup options do not reference this field, so its parsed
+	// day value does not control that cleanup.
+	OutputRetentionMaxDays int `mapstructure:"output_retention_max_days"`
+	// batch cleanup polling minutes
+	CleanupIntervalMinutes int `mapstructure:"cleanup_interval_minutes"`
+	// cleanup job batch size
+	CleanupBatchSize int `mapstructure:"cleanup_batch_size"`
+	// batch queue worker availability switch
+	QueueEnabled bool `mapstructure:"queue_enabled"`
+	// Redis ready-queue key name
+	QueueReadyKey string `mapstructure:"queue_ready_key"`
+	// Redis delayed-queue key name
+	QueueDelayedKey string `mapstructure:"queue_delayed_key"`
+	// Redis active-queue key name
+	QueueActiveKey string `mapstructure:"queue_active_key"`
+	// Redis active-task key prefix
+	InflightKeyPrefix string `mapstructure:"inflight_key_prefix"`
+	// Redis job-lock key prefix
+	LockKeyPrefix string `mapstructure:"lock_key_prefix"`
+	// Redis submission idempotency prefix
+	IdempotencyKeyPrefix string `mapstructure:"idempotency_key_prefix"`
+	// active-task marker lifetime seconds
+	InflightTTLSeconds int `mapstructure:"inflight_ttl_seconds"`
+	// job-lock lifetime in seconds
+	JobLockTTLSeconds int `mapstructure:"job_lock_ttl_seconds"`
+	// ordinary requeue delay seconds
+	DefaultRequeueDelaySeconds int `mapstructure:"default_requeue_delay_seconds"`
+	// provider-error retry delay seconds
+	ErrorRetryDelaySeconds int `mapstructure:"error_retry_delay_seconds"`
+	// occupied job-lock retry seconds
+	LockConflictDelaySeconds int `mapstructure:"lock_conflict_delay_seconds"`
+	// active-task recovery threshold seconds
+	StaleActiveAfterSeconds int `mapstructure:"stale_active_after_seconds"`
+	// delayed-task mover interval seconds
+	DelayedMoverIntervalSeconds int `mapstructure:"delayed_mover_interval_seconds"`
+	// active-task recovery interval seconds
+	RecoveryIntervalSeconds int `mapstructure:"recovery_interval_seconds"`
+	// delayed-task mover batch count
+	DelayedMoveLimit int `mapstructure:"delayed_move_limit"`
+	// active-task recovery batch count
+	RecoverLimit int `mapstructure:"recover_limit"`
+	// Vertex batch adapter availability switch
+	VertexEnabled bool `mapstructure:"vertex_enabled"`
+	// Vertex batch project identifier
+	VertexProjectID string `mapstructure:"vertex_project_id"`
+	// Vertex batch region identifier
+	VertexLocation string `mapstructure:"vertex_location"`
 	// VertexManagedGCSBucket is a server-owned bucket for batch JSONL input/output.
-	// Disable Cloud Storage soft delete on this bucket to avoid retaining deleted batch objects.
-	VertexManagedGCSBucket       string `mapstructure:"vertex_managed_gcs_bucket"`
-	VertexManagedGCSPrefix       string `mapstructure:"vertex_managed_gcs_prefix"`
-	VertexInputRetentionHours    int    `mapstructure:"vertex_input_retention_hours"`
-	VertexOutputRetentionHours   int    `mapstructure:"vertex_output_retention_hours"`
+	// Disable Cloud Storage soft delete on this bucket to avoid retaining deleted
+	// batch objects.
+	VertexManagedGCSBucket string `mapstructure:"vertex_managed_gcs_bucket"`
+	// VertexManagedGCSPrefix identifies managed object paths and must contain
+	// {batch_id} while Vertex is enabled. That placeholder separates objects
+	// belonging to different batch jobs in the managed bucket.
+	VertexManagedGCSPrefix string `mapstructure:"vertex_managed_gcs_prefix"`
+	// managed input retention hours
+	VertexInputRetentionHours int `mapstructure:"vertex_input_retention_hours"`
+	// managed output retention hours
+	VertexOutputRetentionHours int `mapstructure:"vertex_output_retention_hours"`
+	// Vertex batch endpoint override URL
 	VertexBatchPredictionBaseURL string `mapstructure:"vertex_batch_prediction_base_url"`
-	VertexGCSBaseURL             string `mapstructure:"vertex_gcs_base_url"`
+	// Cloud Storage endpoint override URL
+	VertexGCSBaseURL string `mapstructure:"vertex_gcs_base_url"`
 }
 
+// CreativeConfig supplies studio input limits and process defaults for its
+// worker queue.
 type CreativeConfig struct {
 	// Enabled controls Creative Studio HTTP API availability.
 	Enabled bool `mapstructure:"enabled"`
@@ -267,43 +441,73 @@ type CreativeConfig struct {
 	MaxAssetBytes int64 `mapstructure:"max_asset_bytes"`
 	// MaxTotalInputBytes limits the total input size of one task in bytes.
 	MaxTotalInputBytes int64 `mapstructure:"max_total_input_bytes"`
-	// MaxPromptChars limits prompt length in characters.
-	MaxPromptChars              int    `mapstructure:"max_prompt_chars"`
-	DefaultResponseMimeType     string `mapstructure:"default_response_mime_type"`
-	DefaultImageSize            string `mapstructure:"default_image_size"`
-	QueueReadyKey               string `mapstructure:"queue_ready_key"`
-	QueueDelayedKey             string `mapstructure:"queue_delayed_key"`
-	QueueActiveKey              string `mapstructure:"queue_active_key"`
-	InflightKeyPrefix           string `mapstructure:"inflight_key_prefix"`
-	LockKeyPrefix               string `mapstructure:"lock_key_prefix"`
-	InflightTTLSeconds          int    `mapstructure:"inflight_ttl_seconds"`
-	JobLockTTLSeconds           int    `mapstructure:"job_lock_ttl_seconds"`
-	DefaultRequeueDelaySeconds  int    `mapstructure:"default_requeue_delay_seconds"`
-	ErrorRetryDelaySeconds      int    `mapstructure:"error_retry_delay_seconds"`
-	LockConflictDelaySeconds    int    `mapstructure:"lock_conflict_delay_seconds"`
-	StaleActiveAfterSeconds     int    `mapstructure:"stale_active_after_seconds"`
-	DelayedMoverIntervalSeconds int    `mapstructure:"delayed_mover_interval_seconds"`
-	RecoveryIntervalSeconds     int    `mapstructure:"recovery_interval_seconds"`
-	DelayedMoveLimit            int    `mapstructure:"delayed_move_limit"`
-	RecoverLimit                int    `mapstructure:"recover_limit"`
+	// MaxPromptChars limits prompt text by Unicode rune count in creative.Public
+	// validation. It differs from the batch image prompt field, whose consumer
+	// counts trimmed bytes.
+	MaxPromptChars int `mapstructure:"max_prompt_chars"`
+	// default output image MIME type
+	DefaultResponseMimeType string `mapstructure:"default_response_mime_type"`
+	// default requested image size text
+	DefaultImageSize string `mapstructure:"default_image_size"`
+	// Redis ready-queue key name
+	QueueReadyKey string `mapstructure:"queue_ready_key"`
+	// Redis delayed-queue key name
+	QueueDelayedKey string `mapstructure:"queue_delayed_key"`
+	// Redis active-queue key name
+	QueueActiveKey string `mapstructure:"queue_active_key"`
+	// Redis active-run key prefix
+	InflightKeyPrefix string `mapstructure:"inflight_key_prefix"`
+	// Redis run-lock key prefix
+	LockKeyPrefix string `mapstructure:"lock_key_prefix"`
+	// active-run marker lifetime seconds
+	InflightTTLSeconds int `mapstructure:"inflight_ttl_seconds"`
+	// run-lock lifetime in seconds
+	JobLockTTLSeconds int `mapstructure:"job_lock_ttl_seconds"`
+	// ordinary requeue delay seconds
+	DefaultRequeueDelaySeconds int `mapstructure:"default_requeue_delay_seconds"`
+	// provider-error retry delay seconds
+	ErrorRetryDelaySeconds int `mapstructure:"error_retry_delay_seconds"`
+	// occupied run-lock retry seconds
+	LockConflictDelaySeconds int `mapstructure:"lock_conflict_delay_seconds"`
+	// active-run recovery threshold seconds
+	StaleActiveAfterSeconds int `mapstructure:"stale_active_after_seconds"`
+	// delayed-run mover interval seconds
+	DelayedMoverIntervalSeconds int `mapstructure:"delayed_mover_interval_seconds"`
+	// active-run recovery interval seconds
+	RecoveryIntervalSeconds int `mapstructure:"recovery_interval_seconds"`
+	// delayed-run mover batch count
+	DelayedMoveLimit int `mapstructure:"delayed_move_limit"`
+	// active-run recovery batch count
+	RecoverLimit int `mapstructure:"recover_limit"`
 	// ExecuteTimeoutSeconds bounds one upstream execution attempt.
 	ExecuteTimeoutSeconds int `mapstructure:"execute_timeout_seconds"`
-	// MaxExecuteAttempts limits attempts after transient provider errors, including the first attempt.
+	// MaxExecuteAttempts limits attempted upstream executions after transient
+	// provider errors. The count includes the initial execution before any retry,
+	// and enabled startup validation requires a positive value.
 	MaxExecuteAttempts int `mapstructure:"max_execute_attempts"`
 }
 
+// LinuxDoConnectConfig aliases the identity module's LinuxDo OAuth deployment
+// settings.
 type LinuxDoConnectConfig = authconfig.LinuxDoConnectConfig
 
+// WeChatConnectConfig aliases identity settings for Open, MP, and Mobile WeChat
+// login.
 type WeChatConnectConfig = authconfig.WeChatConnectConfig
 
+// OIDCConnectConfig aliases identity settings for issuer discovery and OIDC
+// login validation.
 type OIDCConnectConfig = authconfig.OIDCConnectConfig
 
+// DingTalkConnectConfig aliases identity settings for DingTalk credentials and
+// corporation restrictions.
 type DingTalkConnectConfig = authconfig.DingTalkConnectConfig
 
 // EmailOAuthProviderConfig configures email-based OAuth login such as GitHub and Google.
 type EmailOAuthProviderConfig = authconfig.EmailOAuthProviderConfig
 
-// TokenRefreshConfig configures automatic OAuth token refresh.
+// TokenRefreshConfig supplies polling, admission, retry, and timeout defaults
+// for token refresh workers.
 type TokenRefreshConfig struct {
 	// Enabled controls automatic token refresh.
 	Enabled bool `mapstructure:"enabled"`
@@ -311,52 +515,79 @@ type TokenRefreshConfig struct {
 	CheckIntervalMinutes int `mapstructure:"check_interval_minutes"`
 	// Hours before expiry at which a token becomes eligible for refresh.
 	RefreshBeforeExpiryHours float64 `mapstructure:"refresh_before_expiry_hours"`
-	// Maximum retry count.
+	// MaxRetries supplies the total attempted refresh exchanges, including the
+	// first request. provider.RefreshTuning.Retries selects one attempt for
+	// nonpositive input and caps positive counts at ten.
 	MaxRetries int `mapstructure:"max_retries"`
-	// Base retry backoff, in seconds.
+	// RetryBackoffSeconds supplies the initial retry delay in seconds.
+	// provider.RefreshTuning disables waiting for nonpositive input; positive
+	// delays undergo exponential growth, provider/attempt jitter, and a
+	// thirty-second final cap.
 	RetryBackoffSeconds int `mapstructure:"retry_backoff_seconds"`
-	// Maximum candidate providers fetched in one database page.
+	// CandidatePageSize, ProviderConcurrency, ProviderQPS, and
+	// ProviderFailureThreshold become bounded maintenance limits through
+	// provider.RefreshTuning. Its accessors replace nonpositive values with
+	// matching defaults and cap positive values at each owning ceiling.
+	// database candidate page size
 	CandidatePageSize int `mapstructure:"candidate_page_size"`
-	// Concurrent refresh limit per platform.
+	// occupied attempts per platform
 	ProviderConcurrency int `mapstructure:"provider_concurrency"`
-	// Refresh requests per second per platform in this process.
-	ProviderQPS int `mapstructure:"provider_qps"`
-	// Consecutive temporary failures that stop a platform's current refresh cycle.
+	ProviderQPS         int `mapstructure:"provider_qps"` // exchange starts per platform second
+	// consecutive platform failure trip count
 	ProviderFailureThreshold int `mapstructure:"provider_failure_threshold"`
-	// Timeout for one upstream refresh attempt, in seconds.
+	// AttemptTimeoutSeconds supplies each refresh exchange budget when the caller
+	// has no positive override. provider.RefreshTuning uses fifteen seconds for
+	// nonpositive input, caps configured positive budgets at five minutes, and can
+	// shorten them for a distributed lock lease.
 	AttemptTimeoutSeconds int `mapstructure:"attempt_timeout_seconds"`
-	// Total timeout for one background refresh cycle, in seconds.
+	// CycleTimeoutSeconds bounds a complete candidate scan, including its page
+	// processing. provider.RefreshTuning selects four minutes for nonpositive
+	// input and caps positive values at one hour.
 	CycleTimeoutSeconds int `mapstructure:"cycle_timeout_seconds"`
 }
 
+// PricingConfig supplies catalog download and local supplement inputs for model
+// pricing construction.
 type PricingConfig struct {
 	// Model price and attribute catalog URL in models.dev format.
 	RemoteURL string `mapstructure:"remote_url"`
-	// Local data directory.
-	DataDir string `mapstructure:"data_dir"`
-	// Optional custom price supplement; empty uses the catalog and embedded supplements.
+	DataDir   string `mapstructure:"data_dir"` // Local data directory.
+	// FallbackFile names the optional custom supplement used alongside catalog and
+	// embedded data. Empty text skips that custom source, and normalization
+	// migrates only missing recognized packaged paths in memory.
 	FallbackFile string `mapstructure:"fallback_file"`
 	// Catalog and local-file check interval, in minutes.
 	CheckIntervalMinutes int `mapstructure:"check_interval_minutes"`
 }
 
+// ServerConfig holds listener, ingress, trusted-proxy, and optional collector
+// settings for server construction.
 type ServerConfig struct {
-	Host                     string                        `mapstructure:"host"`
-	Port                     int                           `mapstructure:"port"`
-	Mode                     string                        `mapstructure:"mode"`                      // debug/release
-	EnableServerTiming       bool                          `mapstructure:"enable_server_timing"`      // Return Server-Timing for admin page requests.
-	FrontendURL              string                        `mapstructure:"frontend_url"`              // Frontend base URL used for external links in email.
-	ReadHeaderTimeout        int                           `mapstructure:"read_header_timeout"`       // Request-header read timeout, in seconds.
-	MaxHeaderBytes           int                           `mapstructure:"max_header_bytes"`          // Header size limit in bytes; maps to the HTTP/2 header-list limit.
-	IdleTimeout              int                           `mapstructure:"idle_timeout"`              // Idle connection timeout, in seconds.
-	TrustedProxies           []string                      `mapstructure:"trusted_proxies"`           // Trusted proxy CIDRs or IPs.
-	TrustedProxiesConfigured bool                          `mapstructure:"-" json:"-" yaml:"-"`       // Reports whether trusted proxies were configured, including an empty list.
+	Host string `mapstructure:"host"` // listener host address text
+	Port int    `mapstructure:"port"` // listener TCP port number
+	// Gin debug or release mode
+	Mode               string `mapstructure:"mode"`
+	EnableServerTiming bool   `mapstructure:"enable_server_timing"` // Return Server-Timing for admin page requests.
+	FrontendURL        string `mapstructure:"frontend_url"`         // Frontend base URL used for external links in email.
+	ReadHeaderTimeout  int    `mapstructure:"read_header_timeout"`  // Request-header read timeout, in seconds.
+	MaxHeaderBytes     int    `mapstructure:"max_header_bytes"`     // Header size limit in bytes; maps to the HTTP/2 header-list limit.
+	IdleTimeout        int    `mapstructure:"idle_timeout"`         // Idle connection timeout, in seconds.
+	// TrustedProxies is the ordered startup list of proxy IPs and CIDRs.
+	// TrustedProxiesConfigured distinguishes omission from supplied emptiness,
+	// while server/clientip interprets that presence when selecting address
+	// handling.
+	TrustedProxies []string `mapstructure:"trusted_proxies"`
+	// TrustedProxiesConfigured records operator presence independently of list
+	// length. An explicitly empty YAML or environment list selects configured
+	// proxy handling, and this derived flag is excluded from file decoding.
+	TrustedProxiesConfigured bool                          `mapstructure:"-" json:"-" yaml:"-"`
 	MaxRequestBodySize       int64                         `mapstructure:"max_request_body_size"`     // Global request-body size limit, in bytes.
 	H2C                      H2CConfig                     `mapstructure:"h2c"`                       // HTTP/2 cleartext settings.
 	TLSFingerprintCollector  TLSFingerprintCollectorConfig `mapstructure:"tls_fingerprint_collector"` // TLS fingerprint collector settings.
 }
 
-// TLSFingerprintCollectorConfig configures the TLS fingerprint collector.
+// TLSFingerprintCollectorConfig supplies listen settings and session limits for
+// fingerprint capture.
 type TLSFingerprintCollectorConfig struct {
 	Host                 string `mapstructure:"host"`                    // Collector listen address.
 	Port                 int    `mapstructure:"port"`                    // Collector listen port.
@@ -367,9 +598,11 @@ type TLSFingerprintCollectorConfig struct {
 	MaxRecordsPerSession int    `mapstructure:"max_records_per_session"` // Maximum collection records retained per session.
 }
 
-// H2CConfig configures HTTP/2 cleartext serving.
+// H2CConfig supplies HTTP/2 cleartext stream, frame, and receive-buffer
+// settings.
 type H2CConfig struct {
-	Enabled                      bool   `mapstructure:"enabled"`                          // Enable H2C.
+	// HTTP/2 cleartext listener switch
+	Enabled                      bool   `mapstructure:"enabled"`
 	MaxConcurrentStreams         uint32 `mapstructure:"max_concurrent_streams"`           // Maximum concurrent streams.
 	IdleTimeout                  int    `mapstructure:"idle_timeout"`                     // Idle timeout, in seconds.
 	MaxReadFrameSize             int    `mapstructure:"max_read_frame_size"`              // Maximum frame size, in bytes.
@@ -377,55 +610,98 @@ type H2CConfig struct {
 	MaxUploadBufferPerStream     int    `mapstructure:"max_upload_buffer_per_stream"`     // Upload buffer per stream, in bytes.
 }
 
+// CORSConfig aliases the HTTP configuration values consumed by server CORS
+// middleware.
 type CORSConfig = httpconfig.CORSConfig
 
 // WebAuthnConfig defines this deployment's fixed WebAuthn relying-party identity.
 // RPID and RPOrigins must not be inferred from untrusted Host or Origin headers.
 type WebAuthnConfig struct {
-	Enabled       bool     `mapstructure:"enabled"`
-	RPDisplayName string   `mapstructure:"rp_display_name"`
-	RPID          string   `mapstructure:"rp_id"`
-	RPOrigins     []string `mapstructure:"rp_origins"`
+	Enabled bool `mapstructure:"enabled"` // passkey login availability switch
+	// browser relying-party display name
+	RPDisplayName string `mapstructure:"rp_display_name"`
+	// RPID is the configured relying-party domain used for passkey checks. Enabled
+	// validation normalizes it and requires each accepted RPOrigins host to equal
+	// it or be its subdomain.
+	RPID string `mapstructure:"rp_id"`
+	// RPOrigins lists configured browser origins for this relying party. Enabled
+	// validation permits HTTPS or local loopback HTTP and replaces accepted
+	// entries with normalized scheme/host text before identity construction.
+	RPOrigins []string `mapstructure:"rp_origins"`
 }
 
+// ForwardedClientIPSettings pairs one live forwarding trust flag with its
+// ordered header names.
 type ForwardedClientIPSettings struct {
-	TrustForwardedIP bool
-	Headers          []string
+	// TrustForwardedIP and Headers form one policy observation. Config publishes
+	// them together in an immutable object and returns a copied header list so
+	// readers can retain the pair independently.
+	TrustForwardedIP bool     // raw forwarding-header trust switch
+	Headers          []string // ordered client-address header names
 }
 
+// SecurityConfig holds outbound checks, response policies, proxy controls, and
+// startup/live forwarding settings.
 type SecurityConfig struct {
-	URLAllowlist    URLAllowlistConfig   `mapstructure:"url_allowlist"`
+	// outbound host admission settings
+	URLAllowlist URLAllowlistConfig `mapstructure:"url_allowlist"`
+	// upstream response header filtering settings
 	ResponseHeaders ResponseHeaderConfig `mapstructure:"response_headers"`
-	CSP             CSPConfig            `mapstructure:"csp"`
-	ProxyFallback   ProxyFallbackConfig  `mapstructure:"proxy_fallback"`
-	ProxyProbe      ProxyProbeConfig     `mapstructure:"proxy_probe"`
+	CSP             CSPConfig            `mapstructure:"csp"` // browser content security policy
+	// auxiliary proxy failure handling settings
+	ProxyFallback ProxyFallbackConfig `mapstructure:"proxy_fallback"`
+	// proxy endpoint probe settings
+	ProxyProbe ProxyProbeConfig `mapstructure:"proxy_probe"`
 	// TrustForwardedIPForAPIKeyACL lets raw forwarding headers determine client IPs.
 	// When disabled, client IP consumers rely on server.trusted_proxies.
-	TrustForwardedIPForAPIKeyACL  bool                                       `mapstructure:"trust_forwarded_ip_for_api_key_acl"`
-	ForwardedClientIPHeaders      []string                                   `mapstructure:"forwarded_client_ip_headers" json:"forwarded_client_ip_headers" yaml:"forwarded_client_ip_headers"`
+	TrustForwardedIPForAPIKeyACL bool `mapstructure:"trust_forwarded_ip_for_api_key_acl"`
+	// startup client-address header names
+	ForwardedClientIPHeaders []string `mapstructure:"forwarded_client_ip_headers" json:"forwarded_client_ip_headers" yaml:"forwarded_client_ip_headers"`
+	// forwardedClientIPSettingsLive points to the lazily initialized atomic
+	// publication cell used by Config policy accessors. Initialize the pointer
+	// before concurrent access; subsequent stores replace immutable copied policy
+	// objects.
 	forwardedClientIPSettingsLive *atomic.Pointer[ForwardedClientIPSettings] `mapstructure:"-" json:"-" yaml:"-"`
 }
 
+// URLAllowlistConfig supplies host patterns and private or HTTP admission
+// choices for URL checks.
 type URLAllowlistConfig struct {
-	Enabled           bool     `mapstructure:"enabled"`
-	UpstreamHosts     []string `mapstructure:"upstream_hosts"`
-	PricingHosts      []string `mapstructure:"pricing_hosts"`
-	CRSHosts          []string `mapstructure:"crs_hosts"`
-	AllowPrivateHosts bool     `mapstructure:"allow_private_hosts"`
-	// Allow HTTP URLs when the allowlist is disabled; the default permits HTTPS only.
+	Enabled bool `mapstructure:"enabled"` // outbound allowlist check switch
+	// permitted upstream hostname patterns
+	UpstreamHosts []string `mapstructure:"upstream_hosts"`
+	// permitted catalog hostname patterns
+	PricingHosts []string `mapstructure:"pricing_hosts"`
+	// permitted CRS hostname patterns
+	CRSHosts []string `mapstructure:"crs_hosts"`
+	// private target address admission switch
+	AllowPrivateHosts bool `mapstructure:"allow_private_hosts"`
+	// AllowInsecureHTTP permits HTTP in format-only operator URL checks when the
+	// allowlist is disabled. setDefaults enables this flag; enabled
+	// OperatorURLPolicy instead applies its HTTPS allowlist check.
 	AllowInsecureHTTP bool `mapstructure:"allow_insecure_http"`
 }
 
+// ResponseHeaderConfig supplies allowed and removed header lists to upstream
+// response filtering.
 type ResponseHeaderConfig struct {
-	Enabled           bool     `mapstructure:"enabled"`
+	// configurable response header filtering switch
+	Enabled bool `mapstructure:"enabled"`
+	// extra permitted response header names
 	AdditionalAllowed []string `mapstructure:"additional_allowed"`
-	ForceRemove       []string `mapstructure:"force_remove"`
+	// forced removed response header names
+	ForceRemove []string `mapstructure:"force_remove"`
 }
 
+// CSPConfig aliases the HTTP content-security-policy values used by server
+// response middleware.
 type CSPConfig = httpconfig.CSPConfig
 
+// ProxyFallbackConfig supplies the auxiliary-service choice after proxy
+// construction fails.
 type ProxyFallbackConfig struct {
-	// AllowDirectOnError permits direct connections after auxiliary-service proxy initialization fails.
+	// AllowDirectOnError permits direct connections after auxiliary-service proxy
+	// initialization fails.
 	// It applies to these auxiliary services:
 	//   - GitHub Release update checks
 	//   - Pricing data downloads
@@ -435,70 +711,106 @@ type ProxyFallbackConfig struct {
 	AllowDirectOnError bool `mapstructure:"allow_direct_on_error"`
 }
 
+// ProxyProbeConfig supplies configured probe endpoints and the unsupported
+// TLS-skip input.
 type ProxyProbeConfig struct {
-	InsecureSkipVerify bool `mapstructure:"insecure_skip_verify"` // Unsupported: TLS certificate verification cannot be skipped.
+	// InsecureSkipVerify reaches proxy probe client construction as supplied.
+	// True makes httpclient.GetClient reject the probe, so this option cannot
+	// disable certificate verification.
+	InsecureSkipVerify bool `mapstructure:"insecure_skip_verify"`
 	// URLs lists probe endpoints in priority order; empty uses the built-in list.
 	URLs []ProbeURLConfig `mapstructure:"urls"`
 }
 
 // ProbeURLConfig describes a proxy-egress probe endpoint and its response parser.
 type ProbeURLConfig struct {
-	URL    string `mapstructure:"url"`
-	Parser string `mapstructure:"parser"` // ip-api / ipify / chatgpt-trace
+	URL    string `mapstructure:"url"`    // proxy probe endpoint URL
+	Parser string `mapstructure:"parser"` // ip-api, ipify, or chatgpt-trace parser
 }
 
+// BillingConfig supplies pre-forwarding balance reserve and billing
+// circuit-breaker deployment settings.
 type BillingConfig struct {
+	// billing failure circuit settings
 	CircuitBreaker CircuitBreakerConfig `mapstructure:"circuit_breaker"`
-	// MinimumBalanceReserve is the conservative balance threshold before balance-funded forwarding.
+	// MinimumBalanceReserve is the conservative balance threshold before
+	// balance-funded forwarding.
 	// Zero requires only balance > 0.
 	MinimumBalanceReserve float64 `mapstructure:"minimum_balance_reserve"`
 }
 
+// CircuitBreakerConfig supplies failure counts and recovery admission limits to
+// billing protection.
 type CircuitBreakerConfig struct {
-	Enabled             bool `mapstructure:"enabled"`
-	FailureThreshold    int  `mapstructure:"failure_threshold"`
-	ResetTimeoutSeconds int  `mapstructure:"reset_timeout_seconds"`
-	HalfOpenRequests    int  `mapstructure:"half_open_requests"`
+	// billing circuit availability switch
+	Enabled bool `mapstructure:"enabled"`
+	// failure count opening the circuit
+	FailureThreshold int `mapstructure:"failure_threshold"`
+	// open-circuit reset delay seconds
+	ResetTimeoutSeconds int `mapstructure:"reset_timeout_seconds"`
+	// half-open probe admission count
+	HalfOpenRequests int `mapstructure:"half_open_requests"`
 }
 
+// ConcurrencyConfig supplies the SSE keepalive interval used during
+// concurrency-slot waiting.
 type ConcurrencyConfig struct {
 	// PingInterval is the SSE ping interval while waiting for concurrency, in seconds.
 	PingInterval int `mapstructure:"ping_interval"`
 }
 
+// ImageConcurrencyConfig supplies separate image-request admission and
+// queue-wait deployment limits.
 type ImageConcurrencyConfig struct {
-	// Enabled controls the separate image-generation concurrency limit; disabled by default.
+	// Enabled selects the separate image admission limiter. Its deployment default
+	// is false, while the remaining fields describe the process capacity and
+	// overflow choices passed to image handling.
 	Enabled bool `mapstructure:"enabled"`
-	// MaxConcurrentRequests limits concurrent image requests in this process; zero is unlimited.
+	// MaxConcurrentRequests supplies the process image-slot limit. Zero is
+	// unlimited in the image admission consumer, and a negative configured value
+	// is rejected during startup validation.
 	MaxConcurrentRequests int `mapstructure:"max_concurrent_requests"`
 	// OverflowMode selects reject or wait when the image concurrency limit is reached.
 	OverflowMode string `mapstructure:"overflow_mode"`
-	// WaitTimeoutSeconds bounds slot waiting when overflow_mode is wait.
+	// WaitTimeoutSeconds supplies the image-slot wait budget in seconds. It is
+	// relevant when OverflowMode selects wait, alongside the queued-request limit
+	// used by image admission.
 	WaitTimeoutSeconds int `mapstructure:"wait_timeout_seconds"`
-	// MaxWaitingRequests limits queued image requests in this process when overflow_mode is wait.
+	// MaxWaitingRequests limits queued image requests in this process when
+	// overflow_mode is wait.
 	MaxWaitingRequests int `mapstructure:"max_waiting_requests"`
 }
 
-// GatewayConfig configures the API gateway.
+// GatewayConfig supplies process defaults for forwarding limits, provider
+// selection, and completion work.
 type GatewayConfig struct {
-	// Upstream response-header timeout, in seconds; zero disables it.
-	// This deadline ends when headers arrive and does not limit streaming duration.
+	// ResponseHeaderTimeout is the generic upstream header budget in seconds.
+	// Zero disables it; OpenAI and Grok profile selection uses their separate
+	// fields. This deadline ends when headers arrive, before streaming duration.
 	ResponseHeaderTimeout int `mapstructure:"response_header_timeout"`
-	// OpenAIResponseHeaderTimeout bounds OpenAI/Codex header waits in seconds; zero disables it.
+	// OpenAIResponseHeaderTimeout bounds OpenAI/Codex header waits in seconds;
+	// zero disables it.
 	// The default permits long upstream queue waits independently of the generic timeout.
 	OpenAIResponseHeaderTimeout int `mapstructure:"openai_response_header_timeout"`
-	// GrokResponseHeaderTimeout bounds the pre-first-byte wait for xAI/Grok.
-	// A zero value uses the provider-safe default instead of the generic gateway timeout.
+	// GrokResponseHeaderTimeout bounds xAI/Grok response-header waits in seconds.
+	// With configured transport options, zero disables this deadline; only absent
+	// options select the transport's 120-second Grok default. The generic gateway
+	// header timeout is replaced during Grok profile selection.
 	GrokResponseHeaderTimeout int `mapstructure:"grok_response_header_timeout"`
-	// OpenAIFirstOutputTimeoutSeconds bounds the first semantic output for native HTTP Responses; zero
-	// disables it.
+	// OpenAIFirstOutputTimeoutSeconds and
+	// OpenAIHighEffortFirstOutputTimeoutSeconds feed
+	// OpenAIResponseOutput.FirstOutputTimeout for HTTP and WS Responses. A
+	// nonpositive ordinary budget disables the deadline before the override is
+	// considered; with a positive ordinary budget, high, xhigh, and max reasoning
+	// requests use a positive override or retain the ordinary value.
+	// ordinary first-output deadline seconds
 	OpenAIFirstOutputTimeoutSeconds int `mapstructure:"openai_first_output_timeout_seconds"`
-	// OpenAIHighEffortFirstOutputTimeoutSeconds bounds the first semantic output for high/xhigh/max reasoning.
-	// Zero uses OpenAIFirstOutputTimeoutSeconds.
+	// high-effort first-output override seconds
 	OpenAIHighEffortFirstOutputTimeoutSeconds int `mapstructure:"openai_high_effort_first_output_timeout_seconds"`
 	// Maximum gateway request-body size, in bytes.
 	MaxBodySize int64 `mapstructure:"max_body_size"`
-	// TextMaxBodySize limits bodies on endpoints that disallow inline image or video payloads.
+	// TextMaxBodySize limits bodies on endpoints that disallow inline image or
+	// video payloads.
 	TextMaxBodySize int64 `mapstructure:"text_max_body_size"`
 	// Non-streaming upstream response limit in bytes, bounding memory used by body reads.
 	UpstreamResponseReadMaxBytes int64 `mapstructure:"upstream_response_read_max_bytes"`
@@ -513,20 +825,27 @@ type GatewayConfig struct {
 	// ForceCodexCLI treats OpenAI /v1/responses requests as Codex CLI requests.
 	// Use when a gateway removes or rewrites User-Agent; disabled by default.
 	ForceCodexCLI bool `mapstructure:"force_codex_cli"`
-	// CodexImageGenerationBridgeEnabled injects the image_generation tool and bridge instructions into Codex
+	// CodexImageGenerationBridgeEnabled injects the image_generation tool and
+	// bridge instructions into Codex
 	// /v1/responses.
-	// Disabled by default; requests already containing the tool still follow group capabilities.
+	// Disabled by default; requests already containing the tool still follow group
+	// capabilities.
 	CodexImageGenerationBridgeEnabled bool `mapstructure:"codex_image_generation_bridge_enabled"`
-	// ForcedCodexInstructionsTemplateFile is the template that supplies final Codex instructions.
+	// ForcedCodexInstructionsTemplateFile is the template that supplies final
+	// Codex instructions.
 	// The rendered template replaces instructions; include {{ .ExistingInstructions }} to retain converted client system text.
 	ForcedCodexInstructionsTemplateFile string `mapstructure:"forced_codex_instructions_template_file"`
 	// ForcedCodexInstructionsTemplate caches the template read at startup.
-	// It is excluded from configuration decoding so requests can use it without disk reads.
+	// It is excluded from configuration decoding so requests can use it without
+	// disk reads.
 	ForcedCodexInstructionsTemplate string `mapstructure:"-"`
-	// OpenAICompactModel supplies the global model for explicit compact requests when provider mapping misses.
+	// OpenAICompactModel supplies the global model for explicit compact requests
+	// when provider mapping misses.
 	OpenAICompactModel string `mapstructure:"openai_compact_model"`
-	// OpenAIPassthroughAllowTimeoutHeaders permits client timeout headers in OpenAI passthrough mode.
-	// Disabled by default so headers such as x-stainless-timeout do not prematurely end streams.
+	// OpenAIPassthroughAllowTimeoutHeaders permits client timeout headers in
+	// OpenAI passthrough mode.
+	// Disabled by default so headers such as x-stainless-timeout do not
+	// prematurely end streams.
 	OpenAIPassthroughAllowTimeoutHeaders bool `mapstructure:"openai_passthrough_allow_timeout_headers"`
 	// OpenAIWS configures OpenAI Responses WebSocket connections.
 	OpenAIWS GatewayOpenAIWSConfig `mapstructure:"openai_ws"`
@@ -538,15 +857,22 @@ type GatewayConfig struct {
 	OpenAIHTTP2 GatewayOpenAIHTTP2Config `mapstructure:"openai_http2"`
 	// OpenAIProxyStreamCircuit configures Responses SSE proxy-disconnection isolation.
 	OpenAIProxyStreamCircuit GatewayOpenAIProxyStreamCircuitConfig `mapstructure:"openai_proxy_stream_circuit"`
-	// ImageConcurrency configures the separate image concurrency limit; disabled by default.
+	// ImageConcurrency supplies a process image-admission policy separate from
+	// ordinary request concurrency. Its Enabled field defaults false, and the
+	// image consumer uses its capacity and overflow settings.
 	ImageConcurrency ImageConcurrencyConfig `mapstructure:"image_concurrency"`
 
-	// Upstream HTTP connection-pool limits.
+	// MaxIdleConns, MaxIdleConnsPerHost, and MaxConnsPerHost supply global pool
+	// limits. transport.Client.resolvePoolSettings replaces all three with a
+	// positive provider concurrency for provider or provider_proxy isolation;
+	// other pools retain these configured limits.
 	// MaxIdleConns limits idle connections across all hosts.
 	MaxIdleConns int `mapstructure:"max_idle_conns"`
 	// MaxIdleConnsPerHost limits idle connections retained per host for reuse.
 	MaxIdleConnsPerHost int `mapstructure:"max_idle_conns_per_host"`
-	// MaxConnsPerHost limits active and idle connections per host; zero is unlimited.
+	// MaxConnsPerHost bounds active and idle connections to one host when the
+	// global limits apply. Zero leaves that host limit unlimited while the idle
+	// limits still govern retained connections.
 	MaxConnsPerHost int `mapstructure:"max_conns_per_host"`
 	// IdleConnTimeoutSeconds is the idle connection timeout.
 	IdleConnTimeoutSeconds int `mapstructure:"idle_conn_timeout_seconds"`
@@ -567,15 +893,25 @@ type GatewayConfig struct {
 	// Sessions idle past the timeout are released.
 	SessionIdleTimeoutMinutes int `mapstructure:"session_idle_timeout_minutes"`
 
-	// StreamDataIntervalTimeout limits gaps between stream data in seconds; zero disables it.
+	// StreamDataIntervalTimeout is the allowed ordinary stream data gap in
+	// seconds. Zero disables the gap deadline; positive values reach the stream
+	// consumer separately from its keepalive interval.
 	StreamDataIntervalTimeout int `mapstructure:"stream_data_interval_timeout"`
-	// StreamKeepaliveInterval sets streaming keepalive seconds; zero disables it.
+	// StreamKeepaliveInterval supplies ordinary streaming ping intervals in
+	// seconds. Zero disables these keepalives, while the separate data-gap timeout
+	// can still bound an inactive upstream stream.
 	StreamKeepaliveInterval int `mapstructure:"stream_keepalive_interval"`
-	// ImageStreamDataIntervalTimeout limits image-stream data gaps in seconds; zero disables it.
+	// ImageStreamDataIntervalTimeout supplies the image stream data-gap limit in
+	// seconds. Zero disables that deadline; image generation uses this budget
+	// separately from ordinary text stream timing.
 	ImageStreamDataIntervalTimeout int `mapstructure:"image_stream_data_interval_timeout"`
-	// ImageStreamKeepaliveInterval sets image-stream keepalive seconds; zero disables it.
+	// ImageStreamKeepaliveInterval supplies image streaming keepalive seconds.
+	// Zero disables those pings, while the independent image data-gap timeout
+	// remains a separate stream liveness choice.
 	ImageStreamKeepaliveInterval int `mapstructure:"image_stream_keepalive_interval"`
-	// ImageNonstreamKeepaliveInterval sets non-streaming image JSON keepalive seconds; zero disables it.
+	// ImageNonstreamKeepaliveInterval supplies keepalive seconds for nonstreaming
+	// image JSON responses. Zero disables that behavior, and the setting remains
+	// separate from image SSE keepalive timing.
 	ImageNonstreamKeepaliveInterval int `mapstructure:"image_nonstream_keepalive_interval"`
 	// MaxLineSize limits an upstream SSE line in bytes; zero uses the default.
 	MaxLineSize int `mapstructure:"max_line_size"`
@@ -585,10 +921,13 @@ type GatewayConfig struct {
 	// Maximum logged upstream error-body bytes; longer bodies are truncated.
 	LogUpstreamErrorBodyMaxBytes int `mapstructure:"log_upstream_error_body_max_bytes"`
 
-	// Add required anthropic-beta values for API-key providers when absent from the client; disabled by default.
+	// Add required anthropic-beta values for API-key providers when absent from
+	// the client; disabled by default.
 	InjectBetaForAPIKey bool `mapstructure:"inject_beta_for_apikey"`
 
-	// Allow failover for selected HTTP 400 errors; disabled by default.
+	// FailoverOn400 permits provider switching for the selected recoverable HTTP
+	// 400 cases interpreted by gateway error handling. It defaults false and does
+	// not classify every 400 response as retryable.
 	FailoverOn400 bool `mapstructure:"failover_on_400"`
 
 	// Maximum provider switches after upstream errors.
@@ -596,7 +935,9 @@ type GatewayConfig struct {
 	// Separate maximum provider switches for Gemini.
 	MaxProviderSwitchesGemini int `mapstructure:"max_provider_switches_gemini"`
 
-	// Antigravity 429 cooldown in minutes when reset time cannot be parsed.
+	// AntigravityFallbackCooldownMinutes supplies the 429 cooldown when the
+	// adapter cannot parse a reset time. The application passes its minute value
+	// to the Antigravity fallback duration selection.
 	AntigravityFallbackCooldownMinutes int `mapstructure:"antigravity_fallback_cooldown_minutes"`
 
 	// Scheduling configures provider selection and waiting.
@@ -608,9 +949,13 @@ type GatewayConfig struct {
 	// UsageRecord configures the bounded asynchronous usage-record queue and workers.
 	UsageRecord GatewayUsageRecordConfig `mapstructure:"usage_record"`
 
-	// UserGroupRateCacheTTLSeconds is the cache lifetime for user/group rate multipliers.
+	// UserGroupRateCacheTTLSeconds supplies the retained lifetime of user/group
+	// rate multipliers in seconds. Startup requires a positive value before the
+	// rate cache uses this process default.
 	UserGroupRateCacheTTLSeconds int `mapstructure:"user_group_rate_cache_ttl_seconds"`
-	// ModelsListCacheTTLSeconds accepts legacy configuration; catalog queries do not use this cache.
+	// ModelsListCacheTTLSeconds accepts a retired cache lifetime in seconds and
+	// remains validated from ten through thirty. Current catalog queries read
+	// their provider configuration directly and do not consume this field.
 	ModelsListCacheTTLSeconds int `mapstructure:"models_list_cache_ttl_seconds"`
 
 	// UserMessageQueue configures user-message serialization.
@@ -624,20 +969,21 @@ type GatewayConfig struct {
 	CNProviders GatewayCNProvidersConfig `mapstructure:"cn_providers"`
 }
 
-// GatewayGrokConfig configures Grok scheduling and its free-tier quota gate.
-//
-// The quota gate uses a local rolling usage window.
-// It applies to OAuth providers marked free.
-// The token limit defines the nominal window allowance.
-// The gate stops new scheduling at a configured percentage from 1 to 100.
+// GatewayGrokConfig supplies Grok password authorization and its free-tier
+// rolling token gate. The gate applies to OAuth providers marked free and stops
+// new scheduling at a configured percentage of its nominal window allowance.
 // Window duration is measured in hours.
-// Usage statistics are cached so requests do not wait for the database.
-// A cache miss permits scheduling and refreshes statistics in the background.
+//
+// Quota observations are cached for scheduling consumers. A cache miss permits
+// scheduling while statistics refresh in the background, so the request does
+// not wait for the usage database to produce those observations.
 type GatewayGrokConfig struct {
-	// PasswordAuthEnabled enables the optional password-to-SSO OAuth flow; disabled by default.
+	// PasswordAuthEnabled enables the optional password-to-SSO OAuth flow;
+	// disabled by default.
 	// POST /admin/grok/oauth/password performs authorization only when enabled.
 	PasswordAuthEnabled bool `mapstructure:"password_auth_enabled"`
-	// FreeQuotaSoftGateEnabled gates Grok OAuth providers marked free using local rolling usage.
+	// FreeQuotaSoftGateEnabled gates Grok OAuth providers marked free using local
+	// rolling usage.
 	FreeQuotaSoftGateEnabled bool `mapstructure:"free_quota_soft_gate_enabled"`
 	// FreeQuotaTokenLimit is the nominal token allowance for the rolling window.
 	FreeQuotaTokenLimit int64 `mapstructure:"free_quota_token_limit"`
@@ -645,162 +991,261 @@ type GatewayGrokConfig struct {
 	FreeQuotaSoftGatePercent int `mapstructure:"free_quota_soft_gate_percent"`
 	// FreeQuotaWindowHours is the local usage window length.
 	FreeQuotaWindowHours int `mapstructure:"free_quota_window_hours"`
-	// FreeQuotaStatsCacheSeconds is the quota-statistics cache TTL; requests do not wait for usage_logs.
+	// FreeQuotaStatsCacheSeconds is the quota-statistics cache TTL; requests do
+	// not wait for usage_logs.
 	// A cache miss permits scheduling and triggers an asynchronous refresh.
 	FreeQuotaStatsCacheSeconds int `mapstructure:"free_quota_stats_cache_seconds"`
 }
 
-// GatewayCNProvidersConfig configures periodic balance and quota probes for Chinese suppliers.
-// Disabled by default; when enabled it probes active API-key providers. Manual queries run independently.
+// GatewayCNProvidersConfig configures periodic balance and quota probes for
+// Chinese suppliers.
+// Disabled by default; when enabled it probes active API-key providers. Manual
+// queries run independently.
 type GatewayCNProvidersConfig struct {
-	// MonitorEnabled enables background probes; manual queries remain available when disabled.
-	MonitorEnabled      bool    `mapstructure:"monitor_enabled"`
-	BalanceThreshold    float64 `mapstructure:"balance_threshold"`
-	IntervalMinutes     int     `mapstructure:"interval_minutes"`
-	Concurrency         int     `mapstructure:"concurrency"`
-	ProbeTimeoutSeconds int     `mapstructure:"probe_timeout_seconds"`
-	RoundTimeoutSeconds int     `mapstructure:"round_timeout_seconds"`
+	// MonitorEnabled selects periodic supplier probes, while the deployment
+	// default leaves that monitor disabled. Administrator-initiated usage queries
+	// remain separate from this background availability choice.
+	MonitorEnabled bool `mapstructure:"monitor_enabled"`
+	// supplier low-balance observation threshold
+	BalanceThreshold float64 `mapstructure:"balance_threshold"`
+	// supplier probe round interval minutes
+	IntervalMinutes int `mapstructure:"interval_minutes"`
+	// simultaneous supplier probe limit
+	Concurrency int `mapstructure:"concurrency"`
+	// per-supplier probe budget seconds
+	ProbeTimeoutSeconds int `mapstructure:"probe_timeout_seconds"`
+	// whole supplier round budget seconds
+	RoundTimeoutSeconds int `mapstructure:"round_timeout_seconds"`
 }
 
-// GatewayLiveConfig defines ChatGPT Frameless Live session limits.
+// GatewayLiveConfig supplies the hard session duration used by Frameless Live
+// forwarding.
 type GatewayLiveConfig struct {
-	// MaxSessionDurationSeconds is the hard Live session duration limit.
+	// MaxSessionDurationSeconds supplies the Live session cap in seconds. Validate
+	// replaces a nonpositive value with one hour before application construction
+	// passes it to Live forwarding.
 	MaxSessionDurationSeconds int `mapstructure:"max_session_duration_seconds"`
 }
 
 // GatewayOpenAIHTTP2Config configures OpenAI upstream HTTP versions.
-// HTTP/2 is preferred by default, with policy-controlled HTTP/1.1 fallback for incompatible proxies.
+// HTTP/2 is preferred by default, with policy-controlled HTTP/1.1 fallback for
+// incompatible proxies.
 type GatewayOpenAIHTTP2Config struct {
 	// Enabled enables the OpenAI HTTP/2 preference.
 	Enabled bool `mapstructure:"enabled"`
-	// AllowProxyFallbackToHTTP1 temporarily selects HTTP/1.1 after recognized proxy H2 compatibility errors.
+	// AllowProxyFallbackToHTTP1 permits recognized proxy H2 compatibility errors
+	// to select HTTP/1.1 while H2 preference is Enabled. FallbackErrorThreshold
+	// counts failures within FallbackWindowSeconds; FallbackTTLSeconds controls
+	// the resulting recovery period. The transport policy replaces nonpositive
+	// counts and durations with its corresponding defaults.
+	// proxy HTTP/1.1 recovery switch
 	AllowProxyFallbackToHTTP1 bool `mapstructure:"allow_proxy_fallback_to_http1"`
-	// FallbackErrorThreshold is the compatibility-error count that triggers fallback within the window.
+	// compatibility failure trigger count
 	FallbackErrorThreshold int `mapstructure:"fallback_error_threshold"`
-	// FallbackWindowSeconds is the compatibility-error counting window.
+	// compatibility failure window seconds
 	FallbackWindowSeconds int `mapstructure:"fallback_window_seconds"`
-	// FallbackTTLSeconds is the duration of HTTP/1.1 fallback.
+	// HTTP/1.1 recovery lifetime seconds
 	FallbackTTLSeconds int `mapstructure:"fallback_ttl_seconds"`
 }
 
-// GatewayOpenAIProxyStreamCircuitConfig configures bounded, process-local Responses SSE proxy isolation.
+// GatewayOpenAIProxyStreamCircuitConfig configures bounded, process-local
+// Responses SSE proxy isolation.
 type GatewayOpenAIProxyStreamCircuitConfig struct {
-	// Disabled turns off proxy-disconnection isolation; isolation is enabled by default.
+	// Disabled turns off the process proxy-disconnection isolation consumer. Its
+	// default false leaves that consumer enabled, with the configured window and
+	// count determining when isolation is selected.
 	Disabled bool `mapstructure:"disabled"`
-	// FailureThreshold is the disconnection count within the window that isolates a proxy.
+	// FailureThreshold counts eligible proxy disconnections within WindowSeconds,
+	// and TTLSeconds controls the resulting isolation period.
+	// egress.NewProxyStreamCircuit replaces nonpositive counts and durations with
+	// its corresponding defaults; Disabled independently bypasses circuit
+	// recording.
+	// proxy disconnection trigger count
 	FailureThreshold int `mapstructure:"failure_threshold"`
-	// WindowSeconds is the disconnection counting window.
+	// proxy disconnection window seconds
 	WindowSeconds int `mapstructure:"window_seconds"`
-	// TTLSeconds is the proxy isolation duration.
-	TTLSeconds int `mapstructure:"ttl_seconds"`
+	TTLSeconds    int `mapstructure:"ttl_seconds"` // proxy isolation retention seconds
 }
 
 // UserMessageQueueConfig configures serial user-message delivery
 // for Anthropic OAuth and SetupToken providers.
 type UserMessageQueueConfig struct {
-	// Mode selects the queue behavior:
-	// "serialize" uses a provider lock and RPM-based delay;
-	// "throttle" adds RPM-based delay while allowing concurrent requests;
-	// "" disables the queue by default.
-	Mode string `mapstructure:"mode"`
-	// Enabled is deprecated; true is equivalent to mode "serialize".
-	Enabled bool `mapstructure:"enabled"`
-	// LockTTLMs is the serial lock lifetime in milliseconds; set it longer than the longest request.
+	// Mode and Enabled express current and retired queue choices. Recognized
+	// serialize or throttle Mode values win; an absent or unsupported Mode uses
+	// Enabled, with true selecting serialization. Serialize holds a provider lock
+	// and applies RPM delay; throttle applies delay while allowing concurrent
+	// requests.
+	Mode    string `mapstructure:"mode"`    // serialize, throttle, or empty choice
+	Enabled bool   `mapstructure:"enabled"` // retired serialization availability switch
+	// LockTTLMs is the serial lock lifetime in milliseconds; set it longer than
+	// the longest request.
 	LockTTLMs int `mapstructure:"lock_ttl_ms"`
 	// WaitTimeoutMs bounds lock acquisition in milliseconds.
 	WaitTimeoutMs int `mapstructure:"wait_timeout_ms"`
-	// MinDelayMs is the minimum RPM-based delay in milliseconds.
+	// MinDelayMs and MaxDelayMs bound RPM-based delay interpolation in
+	// milliseconds. scheduler.CalculateRPMAwareDelay replaces nonpositive values
+	// with its defaults and swaps inverted bounds before calculating the delay and
+	// applying jitter.
+	// lower RPM-delay interpolation milliseconds
 	MinDelayMs int `mapstructure:"min_delay_ms"`
-	// MaxDelayMs is the maximum RPM-based delay in milliseconds.
+	// upper RPM-delay interpolation milliseconds
 	MaxDelayMs int `mapstructure:"max_delay_ms"`
-	// CleanupIntervalSeconds is the orphan-lock cleanup interval; zero disables cleanup.
+	// CleanupIntervalSeconds supplies the orphaned message-lock cleanup cadence.
+	// Zero disables this periodic cleanup choice, while message admission and its
+	// lock lifetime retain their own settings.
 	CleanupIntervalSeconds int `mapstructure:"cleanup_interval_seconds"`
 }
 
-// GatewayOpenAIWSConfig supplies deployment defaults for Responses WS, overridable by admin settings.
+// GatewayOpenAIWSConfig supplies deployment defaults for Responses WS,
+// overridable by admin settings.
 type GatewayOpenAIWSConfig struct {
-	ClientFirstMessageTimeoutSeconds            int     `mapstructure:"client_first_message_timeout_seconds"`
-	IngressInterTurnIdleTimeoutSeconds          int     `mapstructure:"ingress_inter_turn_idle_timeout_seconds"`
-	MaxIngressConnectionsPerAPIKey              int     `mapstructure:"max_ingress_connections_per_api_key"`
-	IngressPreviousResponseRecoveryEnabled      bool    `mapstructure:"ingress_previous_response_recovery_enabled"`
-	ClientReadLimitBytes                        int64   `mapstructure:"client_read_limit_bytes"`
-	HTTPBridgeThresholdBytes                    int64   `mapstructure:"http_bridge_threshold_bytes"`
-	MaxConnsPerProvider                         int     `mapstructure:"max_conns_per_provider"`
-	MinIdlePerProvider                          int     `mapstructure:"min_idle_per_provider"`
-	MaxIdlePerProvider                          int     `mapstructure:"max_idle_per_provider"`
-	DynamicMaxConnsByProviderConcurrencyEnabled bool    `mapstructure:"dynamic_max_conns_by_provider_concurrency_enabled"`
-	OAuthMaxConnsFactor                         float64 `mapstructure:"oauth_max_conns_factor"`
-	APIKeyMaxConnsFactor                        float64 `mapstructure:"apikey_max_conns_factor"`
-	DialTimeoutSeconds                          int     `mapstructure:"dial_timeout_seconds"`
-	ReadTimeoutSeconds                          int     `mapstructure:"read_timeout_seconds"`
-	WriteTimeoutSeconds                         int     `mapstructure:"write_timeout_seconds"`
-	PoolTargetUtilization                       float64 `mapstructure:"pool_target_utilization"`
-	QueueLimitPerConn                           int     `mapstructure:"queue_limit_per_conn"`
-	PrewarmCooldownMS                           int     `mapstructure:"prewarm_cooldown_ms"`
-	StickySessionTTLSeconds                     int     `mapstructure:"sticky_session_ttl_seconds"`
-	SessionHashReadOldFallback                  bool    `mapstructure:"session_hash_read_old_fallback"`
-	SessionHashDualWriteOld                     bool    `mapstructure:"session_hash_dual_write_old"`
-	MetadataBridgeEnabled                       bool    `mapstructure:"metadata_bridge_enabled"`
-	StickyResponseIDTTLSeconds                  int     `mapstructure:"sticky_response_id_ttl_seconds"`
-	StickyPreviousResponseTTLSeconds            int     `mapstructure:"sticky_previous_response_ttl_seconds"`
+	// ingress first-message wait seconds
+	ClientFirstMessageTimeoutSeconds int `mapstructure:"client_first_message_timeout_seconds"`
+	// ingress between-turn idle seconds
+	IngressInterTurnIdleTimeoutSeconds int `mapstructure:"ingress_inter_turn_idle_timeout_seconds"`
+	// per-key ingress connection limit
+	MaxIngressConnectionsPerAPIKey int `mapstructure:"max_ingress_connections_per_api_key"`
+	// ingress previous-response recovery switch
+	IngressPreviousResponseRecoveryEnabled bool `mapstructure:"ingress_previous_response_recovery_enabled"`
+	// client message read-limit bytes
+	ClientReadLimitBytes int64 `mapstructure:"client_read_limit_bytes"`
+	// large message HTTP-bridge threshold bytes
+	HTTPBridgeThresholdBytes int64 `mapstructure:"http_bridge_threshold_bytes"`
+	// MaxConnsPerProvider, MinIdlePerProvider, and MaxIdlePerProvider describe one
+	// provider pool. Startup validation keeps the idle minimum within the idle
+	// maximum and keeps that maximum within total capacity before pool
+	// construction.
+	// provider connection pool capacity
+	MaxConnsPerProvider int `mapstructure:"max_conns_per_provider"`
+	// provider idle connection minimum
+	MinIdlePerProvider int `mapstructure:"min_idle_per_provider"`
+	// provider idle connection maximum
+	MaxIdlePerProvider int `mapstructure:"max_idle_per_provider"`
+	// concurrency-derived pool capacity switch
+	DynamicMaxConnsByProviderConcurrencyEnabled bool `mapstructure:"dynamic_max_conns_by_provider_concurrency_enabled"`
+	// OAuth pool concurrency multiplier
+	OAuthMaxConnsFactor float64 `mapstructure:"oauth_max_conns_factor"`
+	// API-key pool concurrency multiplier
+	APIKeyMaxConnsFactor float64 `mapstructure:"apikey_max_conns_factor"`
+	// upstream connection dialing seconds
+	DialTimeoutSeconds int `mapstructure:"dial_timeout_seconds"`
+	// upstream frame reading seconds
+	ReadTimeoutSeconds int `mapstructure:"read_timeout_seconds"`
+	// upstream frame writing seconds
+	WriteTimeoutSeconds int `mapstructure:"write_timeout_seconds"`
+	// pool target occupation fraction
+	PoolTargetUtilization float64 `mapstructure:"pool_target_utilization"`
+	// per-connection queued request limit
+	QueueLimitPerConn int `mapstructure:"queue_limit_per_conn"`
+	// pool prewarming cooldown milliseconds
+	PrewarmCooldownMS int `mapstructure:"prewarm_cooldown_ms"`
+	// session affinity retention seconds
+	StickySessionTTLSeconds int `mapstructure:"sticky_session_ttl_seconds"`
+	// legacy session affinity read switch
+	SessionHashReadOldFallback bool `mapstructure:"session_hash_read_old_fallback"`
+	// legacy session affinity write switch
+	SessionHashDualWriteOld bool `mapstructure:"session_hash_dual_write_old"`
+	// session metadata forwarding switch
+	MetadataBridgeEnabled bool `mapstructure:"metadata_bridge_enabled"`
+	// response-ID affinity retention seconds
+	StickyResponseIDTTLSeconds int `mapstructure:"sticky_response_id_ttl_seconds"`
+	// StickyPreviousResponseTTLSeconds is the compatibility lifetime read by load
+	// and Validate. A positive value fills StickyResponseIDTTLSeconds when that
+	// current field is nonpositive; otherwise the current value wins.
+	StickyPreviousResponseTTLSeconds int `mapstructure:"sticky_previous_response_ttl_seconds"`
 }
 
 // GatewayAdvancedSchedulerScoreWeights weights provider scores in the advanced scheduler.
 type GatewayAdvancedSchedulerScoreWeights = schedulerpolicy.ConfigScoreWeights
 
-// GatewayAdvancedSchedulerConfig configures the cross-platform advanced scheduler.
+// GatewayAdvancedSchedulerConfig supplies cross-platform candidate scoring and
+// affinity-escape defaults.
 type GatewayAdvancedSchedulerConfig struct {
-	// LBTopK is the number of highest-scoring candidates retained before weighted selection.
+	// LBTopK is the number of highest-scoring candidates retained before weighted
+	// selection.
 	LBTopK int `mapstructure:"lb_top_k"`
 	// ScoreWeights weights candidate scores in the advanced scheduler.
 	ScoreWeights GatewayAdvancedSchedulerScoreWeights `mapstructure:"score_weights"`
-	// EWMAErrorRateAlpha smooths error-rate feedback; larger values favor recent samples.
+	// EWMAErrorRateAlpha and EWMATTFTAlpha weight the latest error or first-token
+	// latency observation against retained history. Startup requires finite
+	// coefficients in (0,1], and larger coefficients give recent observations more
+	// weight.
+	// error observation smoothing coefficient
 	EWMAErrorRateAlpha float64 `mapstructure:"ewma_error_rate_alpha"`
-	// EWMATTFTAlpha smooths first-token latency feedback; larger values favor recent samples.
+	// TTFT observation smoothing coefficient
 	EWMATTFTAlpha float64 `mapstructure:"ewma_ttft_alpha"`
-	// StickyEscapeEnabled permits leaving session_hash affinity when provider health worsens.
+	// StickyEscapeEnabled lets scheduler policy bypass session affinity based on
+	// configured TTFT or error-rate observations. It controls that health-based
+	// escape choice alongside its two separately configured thresholds.
 	StickyEscapeEnabled bool `mapstructure:"sticky_escape_enabled"`
-	// StickyEscapeTTFTMs is the TTFT EWMA threshold in milliseconds for skipping affinity.
+	// StickyEscapeTTFTMs is the TTFT EWMA threshold in milliseconds for skipping
+	// affinity.
 	StickyEscapeTTFTMs int `mapstructure:"sticky_escape_ttft_ms"`
-	// StickyEscapeErrorRate is the error-rate EWMA threshold for skipping affinity.
+	// StickyEscapeErrorRate supplies the error-rate EWMA threshold for
+	// health-based affinity escape. Startup range checks accept zero, and
+	// schedulerpolicy.NormalizeStickyEscape handles nonfinite or out-of-range
+	// values passed to it.
 	StickyEscapeErrorRate float64 `mapstructure:"sticky_escape_error_rate"`
 }
 
-// GatewayUsageRecordConfig configures the asynchronous usage-record queue.
+// GatewayUsageRecordConfig supplies completion queue admission, task budgets,
+// and worker scaling controls.
 type GatewayUsageRecordConfig struct {
-	// WorkerCount is the initial worker concurrency, including when autoscaling is enabled.
+	// WorkerCount supplies initial completion worker concurrency whether
+	// autoscaling is enabled or disabled. When AutoScaleEnabled is true, Validate
+	// requires it within the configured minimum and maximum before constructing
+	// the worker pool.
 	WorkerCount int `mapstructure:"worker_count"`
 	// QueueSize is the bounded queue capacity.
 	QueueSize int `mapstructure:"queue_size"`
-	// TaskTimeoutSeconds bounds one usage-record task.
+	// completion task timeout seconds
 	TaskTimeoutSeconds int `mapstructure:"task_timeout_seconds"`
-	// OverflowPolicy selects drop, sample, or sync when the queue is full.
+	// OverflowPolicy selects handling after queue admission fails: sync runs
+	// inline, sample may run inline by percentage, and drop discards work.
+	// Pool-stop rejection is handled separately by the completion consumer.
 	OverflowPolicy string `mapstructure:"overflow_policy"`
-	// OverflowSamplePercent is the percentage written synchronously under sample policy, from 1 to 100.
+	// OverflowSamplePercent is the percentage written synchronously under sample
+	// policy, from 1 to 100.
 	OverflowSamplePercent int `mapstructure:"overflow_sample_percent"`
 
 	// AutoScaleEnabled enables worker autoscaling.
 	AutoScaleEnabled bool `mapstructure:"auto_scale_enabled"`
-	// AutoScaleMinWorkers is the minimum worker count.
+	// AutoScaleMinWorkers and AutoScaleMaxWorkers bound the initial WorkerCount
+	// and subsequent autoscaling while AutoScaleEnabled is true. Startup
+	// validation rejects an inverted range or an initial count outside it.
+	// autoscaling worker count minimum
 	AutoScaleMinWorkers int `mapstructure:"auto_scale_min_workers"`
-	// AutoScaleMaxWorkers is the maximum worker count.
+	// autoscaling worker count maximum
 	AutoScaleMaxWorkers int `mapstructure:"auto_scale_max_workers"`
-	// AutoScaleUpQueuePercent is the queue occupancy percentage that triggers growth.
+	// AutoScaleUpQueuePercent and AutoScaleDownQueuePercent set separated
+	// occupancy thresholds for growth and shrinkage. When AutoScaleEnabled is
+	// true, Validate requires the shrinkage threshold below the growth threshold,
+	// leaving a gap between those decisions.
+	// queue occupancy growth percentage
 	AutoScaleUpQueuePercent int `mapstructure:"auto_scale_up_queue_percent"`
-	// AutoScaleDownQueuePercent is the occupancy percentage below which workers shrink.
+	// queue occupancy shrinkage percentage
 	AutoScaleDownQueuePercent int `mapstructure:"auto_scale_down_queue_percent"`
-	// AutoScaleUpStep is the number of workers added per adjustment.
+	// AutoScaleUpStep and AutoScaleDownStep supply positive worker-count changes
+	// for their respective scaling directions. When AutoScaleEnabled is true,
+	// Validate checks both before completion workers respond to queue
+	// observations.
+	// workers added per adjustment
 	AutoScaleUpStep int `mapstructure:"auto_scale_up_step"`
-	// AutoScaleDownStep is the number of workers removed per adjustment.
+	// workers removed per adjustment
 	AutoScaleDownStep int `mapstructure:"auto_scale_down_step"`
-	// AutoScaleCheckIntervalSeconds is the autoscaling check interval.
+	// AutoScaleCheckIntervalSeconds supplies observation cadence, and
+	// AutoScaleCooldownSeconds separates adjustment decisions, both in seconds.
+	// When AutoScaleEnabled is true, Validate requires a positive observation
+	// interval and permits a zero cooldown.
+	// scaling observation cadence seconds
 	AutoScaleCheckIntervalSeconds int `mapstructure:"auto_scale_check_interval_seconds"`
-	// AutoScaleCooldownSeconds is the delay between autoscaling adjustments.
+	// inter-adjustment cooldown in seconds
 	AutoScaleCooldownSeconds int `mapstructure:"auto_scale_cooldown_seconds"`
 }
 
-// TLSFingerprintConfig configures upstream TLS handshake fingerprints.
-// It can reproduce the TLS handshake characteristics of Claude CLI on Node.js.
+// TLSFingerprintConfig supplies global availability and named upstream
+// ClientHello profiles. The transport selects a named profile before
+// tlsfingerprint builds its supported extension values and protocol lists.
 type TLSFingerprintConfig struct {
 	// Enabled enables TLS fingerprinting globally.
 	Enabled bool `mapstructure:"enabled"`
@@ -809,19 +1254,27 @@ type TLSFingerprintConfig struct {
 	Profiles map[string]TLSProfileConfig `mapstructure:"profiles"`
 }
 
-// TLSProfileConfig configures one TLS fingerprint template.
-// Empty list fields use built-in defaults for Claude CLI 2.x / Node.js 20.x.
-// Use the TLS fingerprint collector to capture a complete profile.
+// TLSProfileConfig supplies one TLS fingerprint's configured parameters.
+// CipherSuites, Curves, PointFormats, SignatureAlgorithms, ALPNProtocols,
+// SupportedVersions, KeyShareGroups, PSKModes, and Extensions use their
+// respective defaults in tlsfingerprint.buildClientHelloSpecFromProfile when
+// empty; the fingerprint collector can supply captured values.
+//
+// Those defaults include http/1.1 ALPN, TLS 1.3 and 1.2 versions, X25519 key
+// share, and the extension order defined by
+// tlsfingerprint.defaultExtensionOrder. Explicit nonempty lists retain their
+// configured ordering for the dialer's ClientHello construction.
 type TLSProfileConfig struct {
-	// Name is the profile display name.
-	Name string `mapstructure:"name"`
+	Name string `mapstructure:"name"` // Name is the profile display name.
 	// EnableGREASE enables GREASE extensions for profiles such as Chrome.
 	EnableGREASE bool `mapstructure:"enable_grease"`
 	// CipherSuites lists TLS cipher suite IDs.
 	CipherSuites []uint16 `mapstructure:"cipher_suites"`
 	// Curves lists supported elliptic curve IDs.
 	Curves []uint16 `mapstructure:"curves"`
-	// PointFormats lists supported point format IDs.
+	// PointFormats supplies configured point-format identifiers. The dialer
+	// narrows each uint16 value to one byte when constructing the ClientHello
+	// supported-points extension, so upper bits are discarded.
 	PointFormats []uint16 `mapstructure:"point_formats"`
 	// SignatureAlgorithms lists signature algorithm IDs.
 	SignatureAlgorithms []uint16 `mapstructure:"signature_algorithms"`
@@ -831,110 +1284,145 @@ type TLSProfileConfig struct {
 	SupportedVersions []uint16 `mapstructure:"supported_versions"`
 	// KeyShareGroups lists curves sent in Key Share, such as [29] for X25519.
 	KeyShareGroups []uint16 `mapstructure:"key_share_groups"`
-	// PSKModes lists PSK exchange modes, such as [1] for psk_dhe_ke.
+	// PSKModes supplies configured pre-shared-key exchange identifiers. The dialer
+	// narrows each uint16 value to one byte when constructing the exchange-modes
+	// extension; empty uses its DHE default.
 	PSKModes []uint16 `mapstructure:"psk_modes"`
-	// Extensions lists TLS extension IDs in wire order.
-	// Empty uses the built-in order [0,11,10,35,16,22,23,13,43,45,51].
-	// GREASE IDs such as 0x0a0a insert GREASE extensions.
+	// Extensions supplies the TLS extension IDs in wire order. Empty uses
+	// tlsfingerprint.defaultExtensionOrder; GREASE IDs create GREASE entries,
+	// while unrecognized ordinary IDs produce empty-data GenericExtension entries.
 	Extensions []uint16 `mapstructure:"extensions"`
 }
 
 // GatewaySchedulingConfig configures provider selection, waiting, and snapshot refresh.
 type GatewaySchedulingConfig struct {
-	// Sticky-session queue limits.
-	StickySessionMaxWaiting  int           `mapstructure:"sticky_session_max_waiting"`
+	// StickySessionMaxWaiting and StickySessionWaitTimeout bound the queue for an
+	// already selected sticky provider. The first limits waiting requests; the
+	// second supplies their acquisition duration, and both require positive
+	// startup values.
+	// sticky-provider waiter count limit
+	StickySessionMaxWaiting int `mapstructure:"sticky_session_max_waiting"`
+	// sticky-provider wait duration
 	StickySessionWaitTimeout time.Duration `mapstructure:"sticky_session_wait_timeout"`
 
-	// Queue limits when the sticky provider is unavailable.
+	// FallbackWaitTimeout and FallbackMaxWaiting bound waiting after selection of
+	// an alternative provider. They supply the acquisition duration and queue
+	// capacity independently of the sticky-provider queue limits.
+	// alternative-provider wait duration
 	FallbackWaitTimeout time.Duration `mapstructure:"fallback_wait_timeout"`
-	FallbackMaxWaiting  int           `mapstructure:"fallback_max_waiting"`
+	// alternative-provider waiter count limit
+	FallbackMaxWaiting int `mapstructure:"fallback_max_waiting"`
 
-	// Selection mode: "last_used" orders by last use by default; "random" randomizes selection.
+	// Selection mode: "last_used" orders by last use by default; "random"
+	// randomizes selection.
 	FallbackSelectionMode string `mapstructure:"fallback_selection_mode"`
 
-	// PreferSoonestReset makes load-aware selection favor providers whose session windows reset soonest.
+	// PreferSoonestReset makes load-aware selection favor providers whose session
+	// windows reset soonest.
 	// This consumes allowances near reset before those with more time remaining.
 	// Disabled by default, using priority, load ratio, and LRU ordering.
 	PreferSoonestReset bool `mapstructure:"prefer_soonest_reset"`
 
-	// Batched load calculation and its cache lifetime.
-	LoadBatchEnabled    bool `mapstructure:"load_batch_enabled"`
-	LoadBatchCacheTTLMS int  `mapstructure:"load_batch_cache_ttl_ms"`
+	// batched load observation switch
+	LoadBatchEnabled bool `mapstructure:"load_batch_enabled"`
+	// LoadBatchCacheTTLMS supplies provider-load cache lifetime in milliseconds to
+	// scheduler.ConcurrencyService. Zero disables and clears that cache; the
+	// batched observation selection switch remains independently configured.
+	LoadBatchCacheTTLMS int `mapstructure:"load_batch_cache_ttl_ms"`
 	// MGET chunk size when reading snapshot buckets.
 	SnapshotMGetChunkSize int `mapstructure:"snapshot_mget_chunk_size"`
 	// Cache write chunk size when rebuilding snapshots.
 	SnapshotWriteChunkSize int `mapstructure:"snapshot_write_chunk_size"`
 
-	// Expired-slot cleanup interval; zero disables cleanup.
+	// SlotCleanupInterval supplies periodic expired-slot cleanup timing. Zero
+	// disables that cleanup loop, while admitted slots retain their separately
+	// configured TTL and normal release behavior.
 	SlotCleanupInterval time.Duration `mapstructure:"slot_cleanup_interval"`
 
-	// Enable database reads when cached scheduling data is unavailable.
+	// DbFallbackEnabled permits scheduler storage reads when cached scheduling
+	// data cannot supply trusted candidates. The timeout and per-process QPS
+	// fields then constrain those permitted database reads.
 	DbFallbackEnabled bool `mapstructure:"db_fallback_enabled"`
-	// Database-read timeout in seconds; zero adds no tighter deadline.
+	// DbFallbackTimeoutSeconds adds a timeout to permitted scheduler database
+	// reads when positive. Zero leaves the caller context budget in control, and
+	// values are supplied in seconds.
 	DbFallbackTimeoutSeconds int `mapstructure:"db_fallback_timeout_seconds"`
-	// Database-read QPS limit per process; zero is unlimited.
+	// DbFallbackMaxQPS supplies the per-process scheduler database-read rate
+	// limit. Zero leaves it unlimited, while DbFallbackEnabled still determines
+	// whether cache-miss database reads can run.
 	DbFallbackMaxQPS int `mapstructure:"db_fallback_max_qps"`
 
 	// Outbox polling and rebuild thresholds.
 	// Outbox polling interval, in seconds.
 	OutboxPollIntervalSeconds int `mapstructure:"outbox_poll_interval_seconds"`
-	// Outbox lag warning threshold, in seconds.
+	// OutboxLagWarnSeconds enables age warnings when positive. Positive
+	// OutboxLagRebuildSeconds enables the separate age trigger, and
+	// OutboxLagRebuildFailures counts eligible degraded observations before a
+	// rebuild. SnapshotService pauses that count while rebuilds or their lag
+	// retries are active; zero age thresholds disable their respective triggers.
+	// outbox age warning threshold seconds
 	OutboxLagWarnSeconds int `mapstructure:"outbox_lag_warn_seconds"`
-	// Outbox lag threshold for a forced rebuild, in seconds.
+	// outbox age rebuild threshold seconds
 	OutboxLagRebuildSeconds int `mapstructure:"outbox_lag_rebuild_seconds"`
-	// Consecutive excessive-lag observations required for a rebuild.
+	// eligible excessive-age observation count
 	OutboxLagRebuildFailures int `mapstructure:"outbox_lag_rebuild_failures"`
-	// Outbox backlog row count that triggers a rebuild.
+	// OutboxBacklogRebuildRows supplies the maximum-ID minus watermark threshold
+	// used by scheduler.SnapshotService. Zero disables this trigger; gaps in event
+	// IDs can make this ID distance exceed actual pending rows.
 	OutboxBacklogRebuildRows int `mapstructure:"outbox_backlog_rebuild_rows"`
 
-	// Periodic full snapshot rebuilds.
-	// Full rebuild interval in seconds; zero disables periodic rebuilds.
+	// FullRebuildIntervalSeconds supplies periodic complete snapshot refresh
+	// timing in seconds. Zero disables that loop, while outbox-triggered rebuild
+	// decisions retain their own configured thresholds.
 	FullRebuildIntervalSeconds int `mapstructure:"full_rebuild_interval_seconds"`
 }
 
 // DatabaseConfig configures database connections and their pool.
 // Pool limits control connection reuse and resource consumption.
 type DatabaseConfig struct {
-	Host     string `mapstructure:"host"`
-	Port     int    `mapstructure:"port"`
-	User     string `mapstructure:"user"`
-	Password string `mapstructure:"password"`
-	DBName   string `mapstructure:"dbname"`
-	SSLMode  string `mapstructure:"sslmode"`
-	// Database connection-pool limits.
-	// MaxOpenConns limits open database connections.
-	MaxOpenConns int `mapstructure:"max_open_conns"`
-	// MaxIdleConns limits idle connections retained for reuse.
-	MaxIdleConns int `mapstructure:"max_idle_conns"`
+	Host     string `mapstructure:"host"`     // PostgreSQL server host text
+	Port     int    `mapstructure:"port"`     // PostgreSQL connection port number
+	User     string `mapstructure:"user"`     // PostgreSQL authentication username text
+	Password string `mapstructure:"password"` // PostgreSQL authentication secret text
+	DBName   string `mapstructure:"dbname"`   // target PostgreSQL database name
+	SSLMode  string `mapstructure:"sslmode"`  // libpq TLS mode text
+	// MaxOpenConns and MaxIdleConns bound one shared SQL pool. Startup validation
+	// requires a positive open capacity and keeps the nonnegative idle limit
+	// within that capacity before database/sql receives them.
+	MaxOpenConns int `mapstructure:"max_open_conns"` // open SQL connection capacity
+	MaxIdleConns int `mapstructure:"max_idle_conns"` // retained idle SQL connection limit
 	// ConnMaxLifetimeMinutes limits a connection's total lifetime in minutes.
 	ConnMaxLifetimeMinutes int `mapstructure:"conn_max_lifetime_minutes"`
 	// ConnMaxIdleTimeMinutes limits a connection's idle lifetime in minutes.
 	ConnMaxIdleTimeMinutes int `mapstructure:"conn_max_idle_time_minutes"`
 }
 
-// RedisConfig configures Redis connections, pool limits, and timeouts.
-// Timeouts bound connection setup, reads, and writes.
+// RedisConfig holds Redis credentials, pool limits, and configured socket
+// operation budgets.
 type RedisConfig struct {
-	Host     string `mapstructure:"host"`
-	Port     int    `mapstructure:"port"`
-	Username string `mapstructure:"username"`
-	Password string `mapstructure:"password"`
-	DB       int    `mapstructure:"db"`
-	// Redis connection-pool limits and timeouts.
-	// DialTimeoutSeconds bounds connection establishment.
+	Host     string `mapstructure:"host"`     // Redis server host text
+	Port     int    `mapstructure:"port"`     // Redis connection port number
+	Username string `mapstructure:"username"` // Redis authentication username text
+	Password string `mapstructure:"password"` // Redis authentication secret text
+	DB       int    `mapstructure:"db"`       // Redis logical database number
+	// connection establishment budget seconds
 	DialTimeoutSeconds int `mapstructure:"dial_timeout_seconds"`
-	// ReadTimeoutSeconds bounds connection reads.
+	// socket read operation seconds
 	ReadTimeoutSeconds int `mapstructure:"read_timeout_seconds"`
-	// WriteTimeoutSeconds bounds connection writes.
+	// socket write operation seconds
 	WriteTimeoutSeconds int `mapstructure:"write_timeout_seconds"`
-	// PoolSize configures the connection pool size.
-	PoolSize int `mapstructure:"pool_size"`
-	// MinIdleConns keeps idle connections ready for reuse.
+	// PoolSize and MinIdleConns configure one Redis connection pool. Startup
+	// validation requires positive capacity and keeps its nonnegative ready-idle
+	// minimum within that capacity before client construction.
+	PoolSize int `mapstructure:"pool_size"` // Redis connection pool capacity
+	// ready idle Redis connection minimum
 	MinIdleConns int `mapstructure:"min_idle_conns"`
 	// EnableTLS enables TLS connections.
 	EnableTLS bool `mapstructure:"enable_tls"`
 }
 
+// OpsConfig supplies deployment availability, cleanup, aggregation, and
+// collector cache defaults.
 type OpsConfig struct {
 	// Enabled controls whether ops features should run.
 	//
@@ -945,126 +1433,192 @@ type OpsConfig struct {
 	// Cleanup controls periodic deletion of old ops data to prevent unbounded growth.
 	Cleanup OpsCleanupConfig `mapstructure:"cleanup"`
 
-	// MetricsCollectorCache controls Redis caching for expensive per-window collector queries.
+	// accepted collector-cache process inputs
 	MetricsCollectorCache OpsMetricsCollectorCacheConfig `mapstructure:"metrics_collector_cache"`
 
-	// Pre-aggregation configuration.
+	// operational metrics aggregation settings
 	Aggregation OpsAggregationConfig `mapstructure:"aggregation"`
 }
 
+// OpsCleanupConfig supplies the schedule, batch pacing, and retention of Ops
+// datasets.
 type OpsCleanupConfig struct {
-	Enabled      bool   `mapstructure:"enabled"`
-	Schedule     string `mapstructure:"schedule"`
-	BatchSize    int    `mapstructure:"batch_size"`
-	BatchPauseMS int    `mapstructure:"batch_pause_ms"`
+	Enabled   bool   `mapstructure:"enabled"`    // Ops cleanup job availability switch
+	Schedule  string `mapstructure:"schedule"`   // Ops cleanup cron expression
+	BatchSize int    `mapstructure:"batch_size"` // deleted rows per cleanup batch
+	// cleanup batch pause milliseconds
+	BatchPauseMS int `mapstructure:"batch_pause_ms"`
 
-	// Retention in days: zero clears the target table; positive values retain recent data.
-	// All Ops datasets default to 30 days of retention.
-	ErrorLogRetentionDays      int `mapstructure:"error_log_retention_days"`
-	SystemLogRetentionDays     int `mapstructure:"system_log_retention_days"`
+	// ErrorLogRetentionDays, SystemLogRetentionDays, MinuteMetricsRetentionDays,
+	// and HourlyMetricsRetentionDays supply day windows for their corresponding
+	// cleanup datasets. They default to thirty days; the cleanup consumer
+	// interprets zero as clearing that target dataset.
+	// error log retention days
+	ErrorLogRetentionDays int `mapstructure:"error_log_retention_days"`
+	// system log retention days
+	SystemLogRetentionDays int `mapstructure:"system_log_retention_days"`
+	// minute metrics retention days
 	MinuteMetricsRetentionDays int `mapstructure:"minute_metrics_retention_days"`
+	// hourly metrics retention days
 	HourlyMetricsRetentionDays int `mapstructure:"hourly_metrics_retention_days"`
 }
 
+// OpsAggregationConfig supplies deployment availability for operational metrics
+// preaggregation jobs.
 type OpsAggregationConfig struct {
-	Enabled bool `mapstructure:"enabled"`
+	Enabled bool `mapstructure:"enabled"` // Ops aggregation job availability switch
 }
 
+// OpsMetricsCollectorCacheConfig holds accepted availability and lifetime
+// inputs copied into Ops runtime options.
 type OpsMetricsCollectorCacheConfig struct {
-	Enabled bool          `mapstructure:"enabled"`
-	TTL     time.Duration `mapstructure:"ttl"`
+	// Enabled and TTL are decoded and copied into ops.Options, with negative TTL
+	// rejected by startup validation. Current collection uses direct
+	// MetricsQueries SQL reads, so these accepted inputs have no metrics-query
+	// cache consumer.
+	Enabled bool          `mapstructure:"enabled"` // accepted cache availability flag
+	TTL     time.Duration `mapstructure:"ttl"`     // accepted cache duration input
 }
 
+// JWTConfig holds signing input and access/refresh token lifetime values for
+// identity construction.
 type JWTConfig struct {
+	// Secret is signing input validated during ordinary Load. LoadForBootstrap can
+	// return it empty until database bootstrap selects the persisted key, then
+	// performs full validation before identity construction.
 	Secret     string `mapstructure:"secret"`
-	ExpireHour int    `mapstructure:"expire_hour"`
-	// AccessTokenExpireMinutes is the access-token lifetime in minutes.
-	// Positive values take precedence over ExpireHour.
-	// Zero uses ExpireHour for compatibility.
+	ExpireHour int    `mapstructure:"expire_hour"` // legacy access-token expiry hours
+	// AccessTokenExpireMinutes overrides ExpireHour when positive for access-token
+	// expiry selection. Zero retains hour-based behavior, and startup validation
+	// rejects a negative override before identity consumes these settings.
 	AccessTokenExpireMinutes int `mapstructure:"access_token_expire_minutes"`
-	// RefreshTokenExpireDays is the refresh-token lifetime; the default is 30 days.
+	// RefreshTokenExpireDays supplies the refresh-token lifetime in days. Default
+	// loading selects thirty days, and validation requires a positive lifetime
+	// while warning when the supplied value exceeds ninety days.
 	RefreshTokenExpireDays int `mapstructure:"refresh_token_expire_days"`
-	// RefreshWindowMinutes permits refresh this many minutes before access-token expiry.
+	// RefreshWindowMinutes permits a refresh request this many minutes before
+	// access-token expiry. Startup validation accepts zero and rejects negative
+	// window lengths before identity uses these settings.
 	RefreshWindowMinutes int `mapstructure:"refresh_window_minutes"`
 }
 
-// TotpConfig configures TOTP two-factor authentication.
+// TotpConfig supplies the secret encryption key and whether deployment input
+// configured it.
 type TotpConfig struct {
 	// EncryptionKey is the hex-encoded 32-byte AES-256 key used to encrypt TOTP secrets.
 	// Empty generates a random development key at startup.
 	EncryptionKey string `mapstructure:"encryption_key"`
-	// EncryptionKeyConfigured reports whether the key was configured rather than generated.
+	// EncryptionKeyConfigured reports whether the key was configured rather than
+	// generated.
 	// Admin settings permit enabling TOTP only with a configured key.
 	EncryptionKeyConfigured bool `mapstructure:"-"`
 }
 
+// TurnstileConfig supplies the deployment default for mandatory Turnstile
+// verification.
 type TurnstileConfig struct {
-	Required bool `mapstructure:"required"`
+	Required bool `mapstructure:"required"` // default mandatory captcha verification flag
 }
 
+// DefaultConfig supplies initial administrator input and default user, key, and
+// billing values.
 type DefaultConfig struct {
-	AdminEmail      string  `mapstructure:"admin_email"`
-	AdminPassword   string  `mapstructure:"admin_password"`
-	UserConcurrency int     `mapstructure:"user_concurrency"`
-	UserBalance     float64 `mapstructure:"user_balance"`
-	APIKeyPrefix    string  `mapstructure:"api_key_prefix"`
-	RateMultiplier  float64 `mapstructure:"rate_multiplier"`
+	// AdminEmail and AdminPassword remain accepted startup bootstrap inputs with
+	// empty loader defaults. The ordinary installation flow obtains initial
+	// credentials separately, and identity bootstrap leaves existing user data
+	// unchanged.
+	// bootstrap administrator email text
+	AdminEmail string `mapstructure:"admin_email"`
+	// bootstrap administrator password text
+	AdminPassword string `mapstructure:"admin_password"`
+	// new-user concurrent request limit
+	UserConcurrency int `mapstructure:"user_concurrency"`
+	// new-user initial balance amount
+	UserBalance float64 `mapstructure:"user_balance"`
+	// generated API-key text prefix
+	APIKeyPrefix string `mapstructure:"api_key_prefix"`
+	// new-user billing rate multiplier
+	RateMultiplier float64 `mapstructure:"rate_multiplier"`
 }
 
+// RateLimitConfig supplies provider cooldown durations after overload and OAuth
+// authorization failures.
 type RateLimitConfig struct {
 	OverloadCooldownMinutes int `mapstructure:"overload_cooldown_minutes"`  // HTTP 529 overload cooldown, in minutes.
 	OAuth401CooldownMinutes int `mapstructure:"oauth_401_cooldown_minutes"` // OAuth HTTP 401 scheduling cooldown, in minutes.
 }
 
-// APIKeyAuthCacheConfig configures API-key authentication caches.
+// APIKeyAuthCacheConfig supplies authentication cache lifetimes, lookup
+// admission, and invalid-key abuse limits.
 type APIKeyAuthCacheConfig struct {
-	L1Size             int                    `mapstructure:"l1_size"`
-	L1TTLSeconds       int                    `mapstructure:"l1_ttl_seconds"`
-	L2TTLSeconds       int                    `mapstructure:"l2_ttl_seconds"`
-	NegativeTTLSeconds int                    `mapstructure:"negative_ttl_seconds"`
-	JitterPercent      int                    `mapstructure:"jitter_percent"`
-	Singleflight       bool                   `mapstructure:"singleflight"`
-	LookupConcurrency  int                    `mapstructure:"lookup_concurrency"`
-	InvalidAbuse       InvalidAuthAbuseConfig `mapstructure:"invalid_abuse"`
-}
-
-type InvalidAuthAbuseConfig struct {
-	Enabled       bool `mapstructure:"enabled"`
-	Threshold     int  `mapstructure:"threshold"`
-	WindowSeconds int  `mapstructure:"window_seconds"`
-	BlockSeconds  int  `mapstructure:"block_seconds"`
-	Capacity      int  `mapstructure:"capacity"`
-}
-
-// SubscriptionCacheConfig configures the subscription-authentication L1 cache.
-type SubscriptionCacheConfig struct {
-	L1Size        int `mapstructure:"l1_size"`
-	L1TTLSeconds  int `mapstructure:"l1_ttl_seconds"`
+	// process authentication entry capacity
+	L1Size int `mapstructure:"l1_size"`
+	// process authentication retention seconds
+	L1TTLSeconds int `mapstructure:"l1_ttl_seconds"`
+	// Redis authentication retention seconds
+	L2TTLSeconds int `mapstructure:"l2_ttl_seconds"`
+	// missing-key observation retention seconds
+	NegativeTTLSeconds int `mapstructure:"negative_ttl_seconds"`
+	// entry lifetime jitter percent
 	JitterPercent int `mapstructure:"jitter_percent"`
+	// same-key authentication load coalescing switch
+	Singleflight bool `mapstructure:"singleflight"`
+	// authentication lookup admission limit
+	LookupConcurrency int `mapstructure:"lookup_concurrency"`
+	// invalid-key abuse observation settings
+	InvalidAbuse InvalidAuthAbuseConfig `mapstructure:"invalid_abuse"`
 }
 
-// DashboardCacheConfig configures dashboard statistics caching.
+// InvalidAuthAbuseConfig supplies process-local repeated invalid authentication
+// observation and blocking limits.
+type InvalidAuthAbuseConfig struct {
+	// invalid-auth observation availability switch
+	Enabled   bool `mapstructure:"enabled"`
+	Threshold int  `mapstructure:"threshold"` // invalid-auth count triggering block
+	// invalid-auth observation window seconds
+	WindowSeconds int `mapstructure:"window_seconds"`
+	// invalid-auth blocking duration seconds
+	BlockSeconds int `mapstructure:"block_seconds"`
+	Capacity     int `mapstructure:"capacity"` // observed invalid-auth source capacity
+}
+
+// SubscriptionCacheConfig supplies the subscription authentication L1 cache
+// capacity and entry lifetime.
+type SubscriptionCacheConfig struct {
+	// subscription authentication entry capacity
+	L1Size int `mapstructure:"l1_size"`
+	// subscription authentication retention seconds
+	L1TTLSeconds  int `mapstructure:"l1_ttl_seconds"`
+	JitterPercent int `mapstructure:"jitter_percent"` // entry lifetime jitter percent
+}
+
+// DashboardCacheConfig supplies Redis statistics freshness, total retention,
+// and refresh timeout settings.
 type DashboardCacheConfig struct {
 	// Enabled enables dashboard caching.
 	Enabled bool `mapstructure:"enabled"`
 	// KeyPrefix isolates Redis keys across deployments.
 	KeyPrefix string `mapstructure:"key_prefix"`
-	// StatsFreshTTLSeconds is the period during which cached statistics are considered fresh.
+	// StatsFreshTTLSeconds and StatsTTLSeconds separate the fresh period from
+	// total Redis retention. Enabled startup validation requires positive values
+	// and bounds freshness by total lifetime, allowing retained statistics to
+	// outlive their fresh period.
+	// statistics freshness duration seconds
 	StatsFreshTTLSeconds int `mapstructure:"stats_fresh_ttl_seconds"`
-	// StatsTTLSeconds is the total Redis cache lifetime.
+	// total statistics retention seconds
 	StatsTTLSeconds int `mapstructure:"stats_ttl_seconds"`
-	// StatsRefreshTimeoutSeconds bounds asynchronous refreshes.
+	// background refresh budget seconds
 	StatsRefreshTimeoutSeconds int `mapstructure:"stats_refresh_timeout_seconds"`
 }
 
-// DashboardAggregationConfig configures dashboard preaggregation.
+// DashboardAggregationConfig supplies aggregation cadence, historical work, and
+// table retention defaults.
 type DashboardAggregationConfig struct {
 	// Enabled enables preaggregation jobs.
 	Enabled bool `mapstructure:"enabled"`
-	// IntervalSeconds is the aggregation refresh interval.
+	// aggregate refresh interval seconds
 	IntervalSeconds int `mapstructure:"interval_seconds"`
-	// LookbackSeconds is the aggregation lookback window.
-	LookbackSeconds int `mapstructure:"lookback_seconds"`
+	LookbackSeconds int `mapstructure:"lookback_seconds"` // recent data lookback seconds
 	// BackfillEnabled permits full backfills.
 	BackfillEnabled bool `mapstructure:"backfill_enabled"`
 	// BackfillMaxDays limits the time span of a backfill.
@@ -1075,15 +1629,24 @@ type DashboardAggregationConfig struct {
 	RecomputeDays int `mapstructure:"recompute_days"`
 }
 
-// DashboardAggregationRetentionConfig sets retention windows in days.
+// DashboardAggregationRetentionConfig supplies day-based retention for raw
+// usage, deduplication, and aggregates.
 type DashboardAggregationRetentionConfig struct {
-	UsageLogsDays         int `mapstructure:"usage_logs_days"`
+	// UsageLogsDays and UsageBillingDedupDays retain raw usage and billing
+	// deduplication records in days. Startup validation keeps deduplication
+	// retention at least as long as raw-record retention when both are positive,
+	// including disabled aggregation settings.
+	UsageLogsDays int `mapstructure:"usage_logs_days"` // raw usage record retention days
+	// billing deduplication retention days
 	UsageBillingDedupDays int `mapstructure:"usage_billing_dedup_days"`
-	HourlyDays            int `mapstructure:"hourly_days"`
-	DailyDays             int `mapstructure:"daily_days"`
+	// hourly aggregate retention days
+	HourlyDays int `mapstructure:"hourly_days"`
+	// daily aggregate retention days
+	DailyDays int `mapstructure:"daily_days"`
 }
 
-// UsageCleanupConfig configures usage-record cleanup jobs.
+// UsageCleanupConfig supplies background cleanup range, batching, polling, and
+// execution budgets.
 type UsageCleanupConfig struct {
 	// Enabled enables the cleanup executor.
 	Enabled bool `mapstructure:"enabled"`
@@ -1091,12 +1654,15 @@ type UsageCleanupConfig struct {
 	MaxRangeDays int `mapstructure:"max_range_days"`
 	// BatchSize limits rows deleted per batch.
 	BatchSize int `mapstructure:"batch_size"`
-	// WorkerIntervalSeconds is the background task polling interval.
+	// cleanup task polling interval seconds
 	WorkerIntervalSeconds int `mapstructure:"worker_interval_seconds"`
-	// TaskTimeoutSeconds bounds one cleanup task.
+	// cleanup task execution budget seconds
 	TaskTimeoutSeconds int `mapstructure:"task_timeout_seconds"`
 }
 
+// firstNonEmptyString returns the first trimmed nonblank value in supplied
+// order. It returns empty text when every value is blank, allowing credential
+// compatibility code to apply its ordered source choices.
 func firstNonEmptyString(values ...string) string {
 	for _, value := range values {
 		if trimmed := strings.TrimSpace(value); trimmed != "" {
@@ -1106,6 +1672,9 @@ func firstNonEmptyString(values ...string) string {
 	return ""
 }
 
+// normalizeWeChatConnectMode returns mp or mobile for trimmed case-insensitive
+// matches, otherwise the default open mode. Unknown and empty input share that
+// default before stored-mode availability is considered.
 func normalizeWeChatConnectMode(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "mp":
@@ -1117,6 +1686,15 @@ func normalizeWeChatConnectMode(raw string) string {
 	}
 }
 
+// normalizeWeChatConnectStoredMode selects a display mode consistent with the
+// available WeChat mode flags. The normalized requested mode wins when its
+// corresponding flag is enabled.
+//
+// If that mode is disabled, available modes are tried in Open, MP, then Mobile
+// order. With no enabled mode the normalized request is returned, allowing
+// later validation and feature availability to handle the inactive
+// configuration. This keeps mode selection separate from the overall Enabled
+// value used by its caller.
 func normalizeWeChatConnectStoredMode(openEnabled, mpEnabled, mobileEnabled bool, mode string) string {
 	mode = normalizeWeChatConnectMode(mode)
 	switch mode {
@@ -1133,6 +1711,8 @@ func normalizeWeChatConnectStoredMode(openEnabled, mpEnabled, mobileEnabled bool
 			return "mobile"
 		}
 	}
+	// The requested mode has no enabled path. Select an available login path in
+	// priority order so the stored display mode follows usable mode flags.
 	switch {
 	case openEnabled:
 		return "open"
@@ -1145,6 +1725,9 @@ func normalizeWeChatConnectStoredMode(openEnabled, mpEnabled, mobileEnabled bool
 	}
 }
 
+// defaultWeChatConnectScopesForMode returns the built-in scope text for the
+// normalized login mode. MP uses snsapi_userinfo, Mobile uses empty text, and
+// Open or unknown input uses snsapi_login.
 func defaultWeChatConnectScopesForMode(mode string) string {
 	switch normalizeWeChatConnectMode(mode) {
 	case "mp":
@@ -1156,6 +1739,10 @@ func defaultWeChatConnectScopesForMode(mode string) string {
 	}
 }
 
+// normalizeWeChatConnectScopes selects scope text accepted for the normalized
+// mode. MP retains snsapi_base or snsapi_userinfo exactly after trimming and
+// otherwise uses its default; Mobile clears scopes and Open uses the fixed
+// login scope.
 func normalizeWeChatConnectScopes(raw, mode string) string {
 	switch normalizeWeChatConnectMode(mode) {
 	case "mp":
@@ -1165,6 +1752,8 @@ func normalizeWeChatConnectScopes(raw, mode string) string {
 		case "snsapi_userinfo":
 			return "snsapi_userinfo"
 		default:
+			// MP accepts the two recognized consent scopes exactly. Replace unsupported
+			// scope text with the mode default before this value reaches login settings.
 			return defaultWeChatConnectScopesForMode(mode)
 		}
 	case "mobile":
@@ -1174,6 +1763,9 @@ func normalizeWeChatConnectScopes(raw, mode string) string {
 	}
 }
 
+// shouldApplyLegacyWeChatEnv reports whether a retired variable may supply this
+// current field. YAML presence blocks compatibility, and any current
+// environment presence also blocks it, including an explicitly empty variable.
 func shouldApplyLegacyWeChatEnv(configKey, envKey string) bool {
 	if viper.InConfig(configKey) {
 		return false
@@ -1182,6 +1774,9 @@ func shouldApplyLegacyWeChatEnv(configKey, envKey string) bool {
 	return !hasNewEnv
 }
 
+// hasExplicitConfigOrEnv reports whether the current field appears in YAML or
+// its named environment variable exists. Empty, zero, and false values still
+// count as explicit inputs for OIDC presence flags.
 func hasExplicitConfigOrEnv(configKey, envKey string) bool {
 	if viper.InConfig(configKey) {
 		return true
@@ -1190,11 +1785,24 @@ func hasExplicitConfigOrEnv(configKey, envKey string) bool {
 	return ok
 }
 
+// applyLegacyWeChatConnectEnvCompatibility fills eligible WeChat fields from
+// retired environment input, accepting a nil cfg as a no-op. Current YAML or
+// environment presence blocks each corresponding compatibility assignment.
+//
+// Open and MP credential pairs additionally respect the generic AppID and
+// AppSecret current inputs. A complete eligible retired pair can enable the
+// overall and specific mode flags, and selection favors Open when both pairs
+// are complete. Mode, scopes, and frontend redirect are updated only when their
+// own current inputs are absent. The resulting fields still pass through normal
+// WeChat normalization and validation.
 func applyLegacyWeChatConnectEnvCompatibility(cfg *WeChatConnectConfig) {
 	if cfg == nil {
 		return
 	}
 
+	// Retired Open and MP credentials are eligible only when neither their current
+	// mode field nor the generic credential field has YAML/environment presence.
+	// Track eligible complete pairs before enabling modes.
 	legacyOpenAppID := ""
 	if shouldApplyLegacyWeChatEnv("wechat_connect.open_app_id", "WECHAT_CONNECT_OPEN_APP_ID") &&
 		shouldApplyLegacyWeChatEnv("wechat_connect.app_id", "WECHAT_CONNECT_APP_ID") {
@@ -1237,6 +1845,9 @@ func applyLegacyWeChatConnectEnvCompatibility(cfg *WeChatConnectConfig) {
 		}
 	}
 
+	// Enable compatibility modes from complete eligible credential pairs so a lone
+	// retired ID or secret cannot activate a login mode. Open wins display
+	// selection when both pairs are complete.
 	hasLegacyOpen := legacyOpenAppID != "" && legacyOpenAppSecret != ""
 	hasLegacyMP := legacyMPAppID != "" && legacyMPAppSecret != ""
 
@@ -1267,6 +1878,18 @@ func applyLegacyWeChatConnectEnvCompatibility(cfg *WeChatConnectConfig) {
 	}
 }
 
+// normalizeWeChatConnectConfig trims WeChat deployment text and supplies
+// related credential and mode defaults in place. A nil pointer performs no
+// work, and callers invoke this before using the fields for validation or login
+// settings.
+//
+// Generic credentials prefer their supplied values, then Open, MP, and Mobile
+// values. Each mode-specific credential separately uses the resulting generic
+// value when empty, so callers supply matched credential pairs when mixing
+// sources. An enabled legacy configuration with no individual mode flags
+// enables its selected mode; stored-mode selection then follows available
+// flags, scopes follow that mode, and an empty frontend redirect receives its
+// default.
 func normalizeWeChatConnectConfig(cfg *WeChatConnectConfig) {
 	if cfg == nil {
 		return
@@ -1284,6 +1907,9 @@ func normalizeWeChatConnectConfig(cfg *WeChatConnectConfig) {
 	cfg.RedirectURL = strings.TrimSpace(cfg.RedirectURL)
 	cfg.FrontendRedirectURL = strings.TrimSpace(cfg.FrontendRedirectURL)
 
+	// Resolve generic credentials before filling mode-specific omissions. Each
+	// credential member uses its own ordered nonblank choice, so supplied pairs
+	// must remain consistent across these sources.
 	cfg.AppID = firstNonEmptyString(cfg.AppID, cfg.OpenAppID, cfg.MPAppID, cfg.MobileAppID)
 	cfg.AppSecret = firstNonEmptyString(cfg.AppSecret, cfg.OpenAppSecret, cfg.MPAppSecret, cfg.MobileAppSecret)
 	cfg.OpenAppID = firstNonEmptyString(cfg.OpenAppID, cfg.AppID)
@@ -1293,6 +1919,9 @@ func normalizeWeChatConnectConfig(cfg *WeChatConnectConfig) {
 	cfg.MobileAppID = firstNonEmptyString(cfg.MobileAppID, cfg.AppID)
 	cfg.MobileAppSecret = firstNonEmptyString(cfg.MobileAppSecret, cfg.AppSecret)
 
+	// An enabled legacy configuration can express its choice through Mode alone.
+	// Promote that selected mode before stored-mode normalization so its login
+	// path remains available to consumers.
 	if !cfg.OpenEnabled && !cfg.MPEnabled && !cfg.MobileEnabled && cfg.Enabled {
 		switch cfg.Mode {
 		case "mp":
@@ -1310,10 +1939,17 @@ func normalizeWeChatConnectConfig(cfg *WeChatConnectConfig) {
 	}
 }
 
+// NormalizeForwardedClientIPHeaders delegates ordered HTTP field-name
+// normalization to the client-IP policy owner. It trims and canonicalizes
+// names, removes case aliases, rejects invalid or excess unique names, and
+// returns an allocated empty slice for empty input.
 func NormalizeForwardedClientIPHeaders(headers []string) ([]string, error) {
 	return ippolicy.NormalizeForwardedClientIPHeaders(headers)
 }
 
+// cloneForwardedClientIPHeaders returns an independently allocated list of the
+// supplied header names. Empty and nil input both return a nonnil empty slice,
+// supporting policy JSON arrays and independent snapshot editing.
 func cloneForwardedClientIPHeaders(headers []string) []string {
 	if len(headers) == 0 {
 		return []string{}
@@ -1321,6 +1957,17 @@ func cloneForwardedClientIPHeaders(headers []string) []string {
 	return append([]string(nil), headers...)
 }
 
+// ForwardedClientIPSettings returns one trust/header policy with copied header
+// storage. Nil configuration returns an empty policy with an allocated empty
+// list, and a populated live pointer supplies the policy ahead of startup
+// fields.
+//
+// The trust flag and header list are read from one published immutable object
+// so request consumers see a complete policy. Before live pointer
+// initialization, the method copies the static Security fields instead.
+// Initialize that pointer before concurrent access and keep startup fields
+// stable while readers can use this path; the getter does not normalize
+// arbitrary supplied names.
 func (c *Config) ForwardedClientIPSettings() ForwardedClientIPSettings {
 	if c == nil {
 		return ForwardedClientIPSettings{Headers: []string{}}
@@ -1340,32 +1987,65 @@ func (c *Config) ForwardedClientIPSettings() ForwardedClientIPSettings {
 	}
 }
 
+// TrustForwardedIPForAPIKeyACL returns the forwarding trust flag from the
+// current copied policy snapshot. Nil configuration uses false, while an
+// initialized live snapshot takes precedence over the original startup flag.
 func (c *Config) TrustForwardedIPForAPIKeyACL() bool {
 	return c.ForwardedClientIPSettings().TrustForwardedIP
 }
 
+// SetForwardedClientIPSettings copies headers and publishes one immutable
+// trust/header pair, accepting nil configuration as a no-op. Callers validate
+// header names before publication; this setter does not invoke the normalizer.
+//
+// The atomic cell is allocated lazily and its pointer assignment is
+// unsynchronized, so initialize it before concurrent readers or publishers
+// start. Later stores replace the whole pair and leave the static startup
+// fields unchanged. Copying the list keeps subsequent caller slice edits
+// outside the published policy used by request consumers.
 func (c *Config) SetForwardedClientIPSettings(enabled bool, headers []string) {
 	if c == nil {
 		return
 	}
 	headers = cloneForwardedClientIPHeaders(headers)
+	// Allocate the live publication cell before sharing this configuration
+	// concurrently. The pointer assignment itself is ordinary storage, while
+	// subsequent atomic stores publish copied whole-policy objects.
 	if c.Security.forwardedClientIPSettingsLive == nil {
 		c.Security.forwardedClientIPSettingsLive = &atomic.Pointer[ForwardedClientIPSettings]{}
 	}
+	// Publish trust and header names as one copied object so a request cannot
+	// combine values from separate policy updates. The startup fields stay
+	// available for validation and prepublication lookup.
 	c.Security.forwardedClientIPSettingsLive.Store(&ForwardedClientIPSettings{
 		TrustForwardedIP: enabled,
 		Headers:          headers,
 	})
 }
 
+// SetTrustForwardedIPForAPIKeyACL republishes enabled with the headers read
+// from the current policy, accepting nil configuration as a no-op. It delegates
+// copied whole-policy storage to SetForwardedClientIPSettings.
+//
+// Reading the headers and storing the replacement are separate operations. A
+// publisher can install a new header list between them, after which this method
+// can replace that list with its earlier observation. Callers serialize coupled
+// policy edits when retaining the latest headers matters and initialize live
+// storage before concurrent use.
 func (c *Config) SetTrustForwardedIPForAPIKeyACL(enabled bool) {
 	if c == nil {
 		return
 	}
+	// Header retention uses a separate read before publication. Serialize coupled
+	// edits when another publisher could otherwise replace headers between this
+	// read and the store.
 	c.SetForwardedClientIPSettings(enabled, c.ForwardedClientIPSettings().Headers)
 }
 
-// normalizeProxyProbeURLs validates and normalizes configured probe endpoints.
+// normalizeProxyProbeURLs returns trimmed HTTP(S) endpoints and normalized
+// recognized parser names in input order. Empty input returns nil; the first
+// invalid entry returns an indexed error, and URL host/scheme validation leaves
+// additional URL details for the probe consumer.
 func normalizeProxyProbeURLs(targets []ProbeURLConfig) ([]ProbeURLConfig, error) {
 	if len(targets) == 0 {
 		return nil, nil
@@ -1398,32 +2078,56 @@ func normalizeProxyProbeURLs(targets []ProbeURLConfig) ([]ProbeURLConfig, error)
 	return normalized, nil
 }
 
-// WaitTimeout returns the configured wait duration, or 30 seconds for a nonpositive value.
+// WaitTimeout returns the configured positive millisecond value as a duration,
+// otherwise thirty seconds. The receiver must be nonnil, and callers keep
+// values within time.Duration conversion limits when bypassing normal
+// deployment input.
 func (c *UserMessageQueueConfig) WaitTimeout() time.Duration {
 	if c.WaitTimeoutMs <= 0 {
 		return 30 * time.Second
 	}
+	// Convert configured milliseconds to the duration consumed by queue
+	// acquisition contexts.
 	return time.Duration(c.WaitTimeoutMs) * time.Millisecond
 }
 
-// GetEffectiveMode returns serialize, throttle, or an empty string for disabled queuing.
-// Load clears unsupported modes; the legacy Enabled flag also selects serialization.
+// GetEffectiveMode selects a recognized serialize or throttle mode before
+// consulting the legacy Enabled flag. Its receiver must be nonnil; a recognized
+// Mode wins independently of that flag.
+//
+// When the supplied mode is empty or unsupported, true Enabled selects
+// serialize and remaining cases return disabled text. load clears an
+// unsupported Mode but retains Enabled, so that loading path can still produce
+// serialization through this method. Callers use this effective choice rather
+// than assuming an empty Mode disables the queue.
 func (c *UserMessageQueueConfig) GetEffectiveMode() string {
 	if c.Mode == schedulerpolicy.MessageQueueSerialize || c.Mode == schedulerpolicy.MessageQueueThrottle {
 		return c.Mode
 	}
+	// An absent or unsupported Mode leaves the retired Enabled switch in control,
+	// so compatibility loading can still select serialized message-lock
+	// acquisition.
 	if c.Enabled {
 		return schedulerpolicy.MessageQueueSerialize // Legacy Enabled flag.
 	}
 	return ""
 }
 
+// Address formats the nonnil server settings as host text followed by a colon
+// and port. It performs no validation or IPv6 bracketing, so callers supply
+// host spelling accepted by their listener.
 func (s *ServerConfig) Address() string {
 	return fmt.Sprintf("%s:%d", s.Host, s.Port)
 }
 
+// DSN formats nonnil PostgreSQL settings as an interpolated libpq keyword
+// string. Empty password omits that parameter, and remaining fields are
+// inserted without quoting, so callers supply values valid in this DSN
+// representation.
 func (d *DatabaseConfig) DSN() string {
-	// Omit an empty password parameter so libpq can parse the remaining DSN fields.
+	// Empty keyword password text would run into the next interpolated DSN field.
+	// Omit the parameter so libpq can parse the remaining unquoted connection
+	// values as intended.
 	if d.Password == "" {
 		return fmt.Sprintf(
 			"host=%s port=%d user=%s dbname=%s sslmode=%s",
@@ -1436,12 +2140,16 @@ func (d *DatabaseConfig) DSN() string {
 	)
 }
 
-// DSNWithTimezone returns a DSN with the supplied time zone; empty uses Asia/Shanghai.
+// DSNWithTimezone formats the interpolated libpq settings with the supplied
+// timezone, using Asia/Shanghai for empty tz. Empty password is omitted, and
+// caller-supplied field text must be valid for unquoted keyword DSN input.
 func (d *DatabaseConfig) DSNWithTimezone(tz string) string {
 	if tz == "" {
 		tz = "Asia/Shanghai"
 	}
-	// Omit an empty password parameter so libpq can parse the remaining DSN fields.
+	// Empty keyword password text would run into the next interpolated DSN field.
+	// Omit the parameter so libpq can parse the remaining unquoted connection
+	// values as intended.
 	if d.Password == "" {
 		return fmt.Sprintf(
 			"host=%s port=%d user=%s dbname=%s sslmode=%s TimeZone=%s",
@@ -1454,34 +2162,62 @@ func (d *DatabaseConfig) DSNWithTimezone(tz string) string {
 	)
 }
 
+// Address formats the nonnil Redis settings as host text followed by a colon
+// and port. The host is retained as supplied without IPv6 bracketing, so
+// callers provide address spelling accepted by the client.
 func (r *RedisConfig) Address() string {
 	return fmt.Sprintf("%s:%d", r.Host, r.Port)
 }
 
-// Load reads and validates the full configuration, requiring a configured jwt.secret.
+// Load decodes normalized process configuration and requires a nonempty,
+// sufficiently long JWT secret during validation. It uses process Viper state,
+// so callers serialize loader use and handle its configuration-source,
+// decoding, template-read, or validation errors.
 func Load() (*Config, error) {
 	return load(false)
 }
 
-// LoadForBootstrap reads configuration for startup.
-//
-// It permits an empty jwt.secret; database initialization must supply it and validate again.
+// LoadForBootstrap decodes normalized process configuration while allowing a
+// missing JWT secret in the returned value. Database bootstrap must supply the
+// persisted secret and run full validation again before identity consumers use
+// that configuration.
 func LoadForBootstrap() (*Config, error) {
 	return load(true)
 }
 
-// load reads process configuration using the sources documented below.
+// load builds startup configuration from process Viper state, selected YAML,
+// and environment input, returning only a validated normalized object. Callers
+// serialize the shared Viper configuration; this operation mutates its
+// bindings, defaults, and in-memory compatibility mappings.
+//
+// Only a missing searched configuration file permits continued
+// default/environment loading; explicit file access and parsing errors fail. TZ
+// sets the overriding timezone value, while trusted-proxy and forwarding-header
+// environment presence is decoded separately to retain explicit empty lists.
+// Other fields undergo normalization, compatibility choices, and any configured
+// template file read before Validate.
+//
+// An absent TOTP key is generated for this loaded object and marked
+// unconfigured for deployment-dependent consumers. Bootstrap loading
+// temporarily substitutes valid JWT text during Validate, then restores its
+// absent secret in the returned configuration. The bootstrap caller later
+// supplies persistence-backed signing input; this loader neither writes the
+// mounted YAML nor persists generated TOTP data.
 // @project-doc docs/interfaces/configuration.md#configuration_sources
 func load(allowMissingJWTSecret bool) (*Config, error) {
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
 	configureConfigSource(viper.SetConfigFile, viper.AddConfigPath)
 
-	// Map environment variables to dotted configuration keys.
+	// Register environment lookup before defaults and decoding so registered
+	// dotted keys use their uppercase underscore names. Explicit bindings below
+	// can select a different environment spelling for a current field.
 	viper.AutomaticEnv()
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	if tz, ok := os.LookupEnv("TZ"); ok && strings.TrimSpace(tz) != "" {
-		// TZ overrides the legacy TIMEZONE value so container and application statistics use the same zone.
+		// TZ is the standard container timezone input. Put its nonblank trimmed value
+		// in Viper's override layer so local-day application consumers use it ahead of
+		// legacy TIMEZONE and YAML.
 		viper.Set("timezone", strings.TrimSpace(tz))
 	}
 	if err := viper.BindEnv("server.enable_server_timing", "ENABLE_SERVER_TIMING"); err != nil {
@@ -1495,11 +2231,16 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
 			return nil, fmt.Errorf("read config error: %w", err)
 		}
-		// Continue with defaults and environment variables when no file is found.
+		// A missing searched file still permits environment-only deployments. Continue
+		// with registered defaults and variables; other read errors above retain their
+		// failure result for startup.
 	}
 	if err := applyLegacyConfigCompatibility(); err != nil {
 		return nil, err
 	}
+	// Record list presence separately before Unmarshal so an explicitly empty
+	// environment value can replace a supplied list. Viper's usual empty-value
+	// lookup alone cannot express that distinction.
 	trustedProxiesEnv, trustedProxiesEnvConfigured := os.LookupEnv("SERVER_TRUSTED_PROXIES")
 	forwardedClientIPHeadersEnv, forwardedClientIPHeadersEnvConfigured := os.LookupEnv("SECURITY_FORWARDED_CLIENT_IP_HEADERS")
 	trustedProxiesConfigured := viper.InConfig("server.trusted_proxies") ||
@@ -1521,8 +2262,9 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	}
 	cfg.Server.TrustedProxiesConfigured = trustedProxiesConfigured
 	cfg.Gateway.ConnectionPoolIsolation = normalizeLegacyConnectionPoolIsolation(cfg.Gateway.ConnectionPoolIsolation)
-	// setEnvReachableDefaults normally registers this key as true, making IsSet true.
-	// This guard also supplies the default if that registration is absent.
+	// Normal default registration makes the sticky-escape key present even when
+	// unsupplied. This compatibility guard supplies true only when that
+	// registration is absent, retaining configured false values otherwise.
 	if !cfg.Gateway.AdvancedScheduler.StickyEscapeEnabled && !viper.IsSet("gateway.advanced_scheduler.sticky_escape_enabled") {
 		cfg.Gateway.AdvancedScheduler.StickyEscapeEnabled = true
 	}
@@ -1592,13 +2334,16 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 		cfg.Gateway.ForcedCodexInstructionsTemplate = string(content)
 	}
 
-	// Accept the legacy gateway.openai_ws.sticky_previous_response_ttl_seconds value.
-	// A positive new value takes precedence; nonpositive values use the old key.
+	// A positive current response-ID lifetime wins. Fill a nonpositive current
+	// value from the positive retired lifetime so the WS affinity consumer
+	// receives one effective duration during loading.
 	if cfg.Gateway.OpenAIWS.StickyResponseIDTTLSeconds <= 0 && cfg.Gateway.OpenAIWS.StickyPreviousResponseTTLSeconds > 0 {
 		cfg.Gateway.OpenAIWS.StickyResponseIDTTLSeconds = cfg.Gateway.OpenAIWS.StickyPreviousResponseTTLSeconds
 	}
 
-	// Clear unsupported queue modes and warn once during loading.
+	// Clear an unsupported queue mode before the settings reach message-queue
+	// consumers. The legacy Enabled flag is retained, so GetEffectiveMode can
+	// still select serialization from that flag.
 	if m := cfg.Gateway.UserMessageQueue.Mode; m != "" && m != schedulerpolicy.MessageQueueSerialize && m != schedulerpolicy.MessageQueueThrottle {
 		slog.Warn("invalid user_message_queue mode, disabling",
 			"mode", m,
@@ -1606,7 +2351,9 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 		cfg.Gateway.UserMessageQueue.Mode = ""
 	}
 
-	// Auto-generate TOTP encryption key if not set (32 bytes = 64 hex chars for AES-256)
+	// Generate thirty-two random bytes as hexadecimal text when the trimmed TOTP
+	// key is absent. Mark that key unconfigured so deployment-dependent features
+	// can distinguish ephemeral generation from supplied encryption input.
 	cfg.Totp.EncryptionKey = strings.TrimSpace(cfg.Totp.EncryptionKey)
 	if cfg.Totp.EncryptionKey == "" {
 		key, err := generateJWTSecret(32)
@@ -1622,7 +2369,9 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 
 	originalJWTSecret := cfg.JWT.Secret
 	if allowMissingJWTSecret && originalJWTSecret == "" {
-		// Use a temporary valid secret for validation; bootstrap supplies the persisted secret later.
+		// Supply temporary length-valid text for the missing JWT input so other
+		// startup fields can undergo full Validate. Restore absence after success,
+		// leaving persistent secret selection to database bootstrap.
 		cfg.JWT.Secret = strings.Repeat("0", 32)
 	}
 
@@ -1654,14 +2403,19 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	return &cfg, nil
 }
 
-// configureConfigSource uses CONFIG_FILE when set, otherwise searches config.yaml directories in order.
+// configureConfigSource registers the trimmed CONFIG_FILE path when supplied,
+// otherwise ordered config.yaml search directories. The selected callback must
+// be callable; DATA_DIR precedes container and local paths, and current system
+// paths precede the legacy path.
 func configureConfigSource(setConfigFile, addConfigPath func(string)) {
 	if configFile := strings.TrimSpace(os.Getenv("CONFIG_FILE")); configFile != "" {
 		setConfigFile(configFile)
 		return
 	}
 
-	// DATA_DIR precedes container, working-directory, and system paths.
+	// Register the configured data directory before container, working-directory,
+	// and system paths so file discovery uses that deployment location ahead of
+	// conventional config directories.
 	if dataDir := strings.TrimSpace(os.Getenv("DATA_DIR")); dataDir != "" {
 		addConfigPath(dataDir)
 	}
@@ -1669,10 +2423,18 @@ func configureConfigSource(setConfigFile, addConfigPath func(string)) {
 	addConfigPath(".")
 	addConfigPath("./config")
 	addConfigPath("/etc/tokenrouter")
-	// Legacy installations can use the old path; the new system path takes precedence.
+	// Keep the retired system directory last so its mounted configuration remains
+	// discoverable when current locations have no file. A current system file
+	// takes precedence in discovery order.
 	addConfigPath("/etc/sub2api")
 }
 
+// setDefaults registers process configuration defaults and
+// environment-reachable keys on the Viper singleton. Run it before Unmarshal
+// with global Viper use serialized, because AutomaticEnv resolves values only
+// for keys included in decoding. It supplies process defaults separately from
+// installer-written values and invokes setEnvReachableDefaults for additional
+// fixed keys.
 func setDefaults() {
 	// Server
 	viper.SetDefault("server.host", "0.0.0.0")
@@ -1723,7 +2485,8 @@ func setDefaults() {
 	viper.SetDefault("cors.allowed_origins", []string{})
 	viper.SetDefault("cors.allow_credentials", true)
 
-	// Passkeys are disabled by default; enabling requires a relying-party domain and trusted browser origins.
+	// Passkeys are disabled by default; enabling requires a relying-party domain
+	// and trusted browser origins.
 	viper.SetDefault("webauthn.enabled", false)
 	viper.SetDefault("webauthn.rp_display_name", "TokenRouter")
 	viper.SetDefault("webauthn.rp_id", "")
@@ -1958,7 +2721,10 @@ func setDefaults() {
 	viper.SetDefault("ops.cleanup.hourly_metrics_retention_days", 30)
 	viper.SetDefault("ops.aggregation.enabled", true)
 	viper.SetDefault("ops.metrics_collector_cache.enabled", true)
-	// TTL should be slightly larger than collection interval (1m) to maximize cross-replica cache hits.
+	// Register the accepted collector-cache lifetime copied into ops.Options. The
+	// current MetricsQueries reader does not consume it; sixty-five seconds
+	// exceeds the collector's default/minimum one-minute interval, while runtime
+	// cadence can be longer.
 	viper.SetDefault("ops.metrics_collector_cache.ttl", 65*time.Second)
 
 	// JWT
@@ -1973,7 +2739,8 @@ func setDefaults() {
 
 	// Default
 	// Admin credentials are created via the setup flow (web wizard / CLI / AUTO_SETUP).
-	// Do not ship fixed defaults here to avoid insecure "known credentials" in production.
+	// Do not ship fixed defaults here to avoid insecure "known credentials" in
+	// production.
 	viper.SetDefault("default.admin_email", "")
 	viper.SetDefault("default.admin_password", "")
 	viper.SetDefault("default.user_concurrency", 5)
@@ -1985,7 +2752,8 @@ func setDefaults() {
 	viper.SetDefault("rate_limit.overload_cooldown_minutes", 10)
 	viper.SetDefault("rate_limit.oauth_401_cooldown_minutes", 10)
 
-	// Pricing uses the models.dev catalog and local supplements for additional billing dimensions.
+	// Pricing uses the models.dev catalog and local supplements for additional
+	// billing dimensions.
 	viper.SetDefault("pricing.remote_url", "https://models.dev/catalog.json?type=all")
 	viper.SetDefault("pricing.data_dir", "./data")
 	viper.SetDefault("pricing.fallback_file", "")
@@ -2184,7 +2952,8 @@ func setDefaults() {
 	viper.SetDefault("gateway.usage_record.queue_size", 16384)
 	viper.SetDefault("gateway.usage_record.task_timeout_seconds", 5)
 	// The default sync policy runs overflow tasks inline after the response is written.
-	// sample and drop can discard billing tasks, creating charge and usage_logs reconciliation gaps (issue #3656).
+	// sample and drop can discard billing tasks, creating charge and usage_logs
+	// reconciliation gaps (issue #3656).
 	// Use those policies only when the deployment accepts that loss.
 	viper.SetDefault("gateway.usage_record.overflow_policy", UsageRecordOverflowPolicySync)
 	viper.SetDefault("gateway.usage_record.overflow_sample_percent", 10)
@@ -2214,8 +2983,8 @@ func setDefaults() {
 	// TokenRefresh
 	viper.SetDefault("token_refresh.enabled", true)
 	viper.SetDefault("token_refresh.check_interval_minutes", 5)        // Check every five minutes.
-	viper.SetDefault("token_refresh.refresh_before_expiry_hours", 0.5) // Refresh 30 minutes early for one-hour Google tokens.
-	viper.SetDefault("token_refresh.max_retries", 3)                   // At most three retries.
+	viper.SetDefault("token_refresh.refresh_before_expiry_hours", 0.5) // Half-hour proactive refresh window.
+	viper.SetDefault("token_refresh.max_retries", 3)                   // Three total exchange attempts, including the first.
 	viper.SetDefault("token_refresh.retry_backoff_seconds", 2)         // Two-second base backoff.
 	viper.SetDefault("token_refresh.candidate_page_size", 200)
 	viper.SetDefault("token_refresh.provider_concurrency", 4)
@@ -2224,9 +2993,9 @@ func setDefaults() {
 	viper.SetDefault("token_refresh.attempt_timeout_seconds", 15)
 	viper.SetDefault("token_refresh.cycle_timeout_seconds", 240)
 
-	// Gemini OAuth - configure via environment variables or config file
-	// GEMINI_OAUTH_CLIENT_ID and GEMINI_OAUTH_CLIENT_SECRET
-	// Default: uses Gemini CLI public credentials (set via environment)
+	// Gemini OAuth credential and scope inputs remain empty by default.
+	// Application construction passes them to the OAuth consumer, which selects
+	// its effective client configuration.
 	viper.SetDefault("gemini.oauth.client_id", "")
 	viper.SetDefault("gemini.oauth.client_secret", "")
 	viper.SetDefault("gemini.oauth.scopes", "")
@@ -2235,22 +3004,26 @@ func setDefaults() {
 	setEnvReachableDefaults()
 }
 
-// setEnvReachableDefaults registers configuration keys so environment values reach Unmarshal.
+// setEnvReachableDefaults registers remaining finite configuration keys so
+// environment-only input participates in Viper decoding. Call it before
+// Unmarshal as part of setDefaults, using serialized access to process Viper
+// state.
 //
-// viper.Unmarshal decodes keys from AllKeys: defaults, file keys, and BindEnv keys.
-// AutomaticEnv overrides values for those registered keys. Builds with
-// -tags embed do not enable viper_bind_struct, so keys present only in the example file
-// would otherwise decode to zero values in environment-only deployments.
-//
-// Missing keys decode to zero values; subsystems then apply their own defaults.
+// Trusted-proxy and forwarded-header lists use BindEnv instead of a default,
+// because load needs to distinguish absent policy from an explicitly supplied
+// empty list. Their values are then decoded with LookupEnv. Sticky-escape
+// defaults allow explicit zero error rate to remain configured while a zero
+// TTFT still reaches validation. Other unconfigured scalar fields use
+// registered defaults or downstream interpretation after decoding.
 func setEnvReachableDefaults() {
 	viper.SetDefault("gateway.forced_codex_instructions_template_file", "")
 	viper.SetDefault("gateway.session_idle_timeout_minutes", 0)
 	viper.SetDefault("gateway.user_message_queue.mode", "")
 	viper.SetDefault("update.proxy_url", "")
 
-	// Sticky escape registers effective defaults so an explicit zero error rate is retained
-	// and an explicit zero TTFT reaches validation. Files and environment variables can override these values.
+	// Register sticky-escape defaults as decode keys so supplied zero error rate
+	// stays meaningful and zero TTFT reaches validation. YAML and usable
+	// environment values can replace these defaults.
 	viper.SetDefault("gateway.advanced_scheduler.sticky_escape_enabled", true)
 	viper.SetDefault("gateway.advanced_scheduler.sticky_escape_error_rate", 0.5)
 	viper.SetDefault("gateway.advanced_scheduler.sticky_escape_ttft_ms", 15000)
@@ -2260,7 +3033,8 @@ func setEnvReachableDefaults() {
 	// treats SetDefault entries as configured even when the operator supplies nothing.
 	// load parses these two environment variables through os.LookupEnv.
 	// BindEnv adds the keys to AllKeys for the environment-reachability check,
-	// while leaving IsSet false for absent variables. These complete BindEnv arguments cannot fail.
+	// while leaving IsSet false for absent variables. These complete BindEnv
+	// arguments cannot fail.
 	_ = viper.BindEnv("server.trusted_proxies", "SERVER_TRUSTED_PROXIES")
 	_ = viper.BindEnv("security.forwarded_client_ip_headers", "SECURITY_FORWARDED_CLIENT_IP_HEADERS")
 
@@ -2300,6 +3074,24 @@ func setEnvReachableDefaults() {
 	viper.SetDefault("dingtalk_connect.sync_corp_email_attr_name", "")
 }
 
+// Validate checks deployment constraints and returns the first encountered
+// configuration error. The receiver must be nonnil, and callers serialize this
+// mutating operation before handing configuration to concurrently running
+// consumers.
+//
+// Validation also normalizes known pricing sources, header names, probe
+// targets, and enabled WebAuthn origin text. It republishes the static
+// forwarding trust/header fields, fills an absent Live duration and compatible
+// old response-ID TTL, and can retain those mutations when a later check fails.
+// A runtime policy published earlier can therefore be replaced by the startup
+// policy during another Validate call.
+//
+// Enabled feature flags select additional requirements, while several inactive
+// controls still reject negative values. Coupled checks retain cache freshness
+// inside total lifetime, deduplication retention through raw-record retention,
+// pool minima below capacity, finite scheduler scoring sums, and separated
+// scaling thresholds. This is the startup rule set; downstream runtime settings
+// and subsystem defaults remain their owners' responsibility.
 func (c *Config) Validate() error {
 	if c.RequestLog.RetentionDays < 0 {
 		return fmt.Errorf("request_log.retention_days must be non-negative")
@@ -2310,6 +3102,9 @@ func (c *Config) Validate() error {
 	if err != nil {
 		return fmt.Errorf("security.forwarded_client_ip_headers: %w", err)
 	}
+	// Successful header normalization reaches publication before proxy-probe
+	// checking. Proxy-probe or later validation failures leave the startup
+	// trust/header policy installed in the live cell.
 	c.Security.ForwardedClientIPHeaders = forwardedClientIPHeaders
 	c.SetForwardedClientIPSettings(c.Security.TrustForwardedIPForAPIKeyACL, forwardedClientIPHeaders)
 	proxyProbeURLs, err := normalizeProxyProbeURLs(c.Security.ProxyProbe.URLs)
@@ -2317,9 +3112,13 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("security.proxy_probe.urls: %w", err)
 	}
 	c.Security.ProxyProbe.URLs = proxyProbeURLs
+	// This budget covers ingress header reading before body handling or upstream
+	// stream timing begins.
 	if c.Server.ReadHeaderTimeout < 1 || c.Server.ReadHeaderTimeout > 60 {
 		return fmt.Errorf("server.read_header_timeout must be between 1 and 60 seconds")
 	}
+	// Server construction also uses this ingress limit for the HTTP/2 header-list
+	// size.
 	if c.Server.MaxHeaderBytes < 8*1024 || c.Server.MaxHeaderBytes > 1024*1024 {
 		return fmt.Errorf("server.max_header_bytes must be between 8192 and 1048576 bytes")
 	}
@@ -2329,6 +3128,9 @@ func (c *Config) Validate() error {
 	if c.Server.MaxRequestBodySize < 0 {
 		return fmt.Errorf("server.max_request_body_size must be non-negative")
 	}
+	// HTTP/2 frame payload lengths use a 24-bit value, and connection receive
+	// windows start at 65535 bytes. Check enabled cleartext settings against those
+	// protocol limits before server construction.
 	if c.Server.H2C.Enabled {
 		if c.Server.H2C.MaxConcurrentStreams == 0 {
 			return fmt.Errorf("server.h2c.max_concurrent_streams must be positive")
@@ -2346,16 +3148,27 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("server.h2c.max_upload_buffer_per_stream must be positive")
 		}
 	}
+	// Apply the configured abuse observation limits when tracking is enabled. Its
+	// threshold, observation window, block interval, and capacity determine the
+	// process-local invalid-auth counter behavior.
 	if c.APIKeyAuth.InvalidAbuse.Enabled {
+		// The counter threshold governs repeated invalid credentials from one
+		// observed client address.
 		if c.APIKeyAuth.InvalidAbuse.Threshold < 10 {
 			return fmt.Errorf("api_key_auth_cache.invalid_abuse.threshold must be at least 10")
 		}
+		// Bound the seconds during which invalid-auth observations contribute to that
+		// client counter.
 		if c.APIKeyAuth.InvalidAbuse.WindowSeconds < 1 || c.APIKeyAuth.InvalidAbuse.WindowSeconds > 3600 {
 			return fmt.Errorf("api_key_auth_cache.invalid_abuse.window_seconds must be between 1 and 3600")
 		}
+		// The blocking interval starts after the observation threshold has been
+		// reached.
 		if c.APIKeyAuth.InvalidAbuse.BlockSeconds < 1 || c.APIKeyAuth.InvalidAbuse.BlockSeconds > 3600 {
 			return fmt.Errorf("api_key_auth_cache.invalid_abuse.block_seconds must be between 1 and 3600")
 		}
+		// This entry capacity bounds client-address tracking in the process-local
+		// abuse cache.
 		if c.APIKeyAuth.InvalidAbuse.Capacity < 256 || c.APIKeyAuth.InvalidAbuse.Capacity > 1_000_000 {
 			return fmt.Errorf("api_key_auth_cache.invalid_abuse.capacity must be between 256 and 1000000")
 		}
@@ -2364,8 +3177,9 @@ func (c *Config) Validate() error {
 	if jwtSecret == "" {
 		return fmt.Errorf("jwt.secret is required")
 	}
-	// Measure the JWT secret in UTF-8 bytes.
-	// The minimum is 32 bytes.
+	// The signing input minimum is measured as encoded bytes rather than rune
+	// count. Check the trimmed secret before identity construction so multibyte
+	// text contributes its UTF-8 byte length.
 	if len([]byte(jwtSecret)) < 32 {
 		return fmt.Errorf("jwt.secret must be at least 32 bytes")
 	}
@@ -2418,8 +3232,9 @@ func (c *Config) Validate() error {
 		}
 	}
 
-	// Gemini client_id and client_secret must both be set or both be empty.
-	// Empty selects the built-in Gemini CLI OAuth client, whose secret comes from the environment.
+	// Gemini client selection uses a credential pair. Reject a partial trimmed
+	// pair before consumers select configured credentials or their default client
+	// choice, keeping the two source members together.
 	geminiClientID := strings.TrimSpace(c.Gemini.OAuth.ClientID)
 	geminiClientSecret := strings.TrimSpace(c.Gemini.OAuth.ClientSecret)
 	if (geminiClientID == "") != (geminiClientSecret == "") {
@@ -2442,6 +3257,9 @@ func (c *Config) Validate() error {
 		}
 		warnIfInsecureURL("server.frontend_url", c.Server.FrontendURL)
 	}
+	// Normalize the configured relying-party identity before comparing browser
+	// origins. Accepted origins keep scheme and host spelling after the host has
+	// been checked against the configured relying-party domain.
 	if c.WebAuthn.Enabled {
 		c.WebAuthn.RPDisplayName = strings.TrimSpace(c.WebAuthn.RPDisplayName)
 		c.WebAuthn.RPID = strings.ToLower(strings.TrimSpace(c.WebAuthn.RPID))
@@ -2470,7 +3288,10 @@ func (c *Config) Validate() error {
 			u.Host = strings.ToLower(u.Host)
 			host := strings.ToLower(u.Hostname())
 			localDevelopment := host == "localhost" || host == "127.0.0.1" || host == "::1"
-			// WebAuthn requires HTTPS, except for local loopback origins used in development.
+			// Passkey origins require HTTPS in the deployment rule. Permit HTTP for the
+			// exact localhost and loopback host forms so a local development relying
+			// party
+			// can use a plain HTTP origin.
 			if u.Scheme != "https" && (u.Scheme != "http" || !localDevelopment) {
 				return fmt.Errorf("webauthn.rp_origins entry %q must use HTTPS (HTTP is allowed only for localhost)", origin)
 			}
@@ -2483,22 +3304,28 @@ func (c *Config) Validate() error {
 	if c.JWT.ExpireHour <= 0 {
 		return fmt.Errorf("jwt.expire_hour must be positive")
 	}
+	// Validate the legacy hour value even when a positive minute override will
+	// select access-token expiry.
 	if c.JWT.ExpireHour > 168 {
 		return fmt.Errorf("jwt.expire_hour must be <= 168 (7 days)")
 	}
+	// This shorter warning threshold retains the accepted configured lifetime
+	// unchanged.
 	if c.JWT.ExpireHour > 24 {
 		slog.Warn("jwt.expire_hour is high; consider shorter expiration for security", "expire_hour", c.JWT.ExpireHour)
 	}
-	// Validate token lifetimes and the refresh window.
 	if c.JWT.AccessTokenExpireMinutes < 0 {
 		return fmt.Errorf("jwt.access_token_expire_minutes must be non-negative")
 	}
+	// A positive minute override selects expiry; long overrides produce a warning
+	// and remain accepted.
 	if c.JWT.AccessTokenExpireMinutes > 720 {
 		slog.Warn("jwt.access_token_expire_minutes is high; consider shorter expiration for security", "access_token_expire_minutes", c.JWT.AccessTokenExpireMinutes)
 	}
 	if c.JWT.RefreshTokenExpireDays <= 0 {
 		return fmt.Errorf("jwt.refresh_token_expire_days must be positive")
 	}
+	// Long refresh-token lifetimes remain accepted after this warning is emitted.
 	if c.JWT.RefreshTokenExpireDays > 90 {
 		slog.Warn("jwt.refresh_token_expire_days is high; consider shorter expiration for security", "refresh_token_expire_days", c.JWT.RefreshTokenExpireDays)
 	}
@@ -2626,6 +3453,8 @@ func (c *Config) Validate() error {
 			strings.TrimSpace(c.OIDC.ClientSecret) == "" {
 			return fmt.Errorf("oidc_connect.client_secret is required when oidc_connect.enabled=true and token_auth_method is client_secret_post/client_secret_basic")
 		}
+		// Enabled OIDC bounds this tolerance even when ID-token validation is
+		// disabled.
 		if c.OIDC.ClockSkewSeconds < 0 || c.OIDC.ClockSkewSeconds > 600 {
 			return fmt.Errorf("oidc_connect.clock_skew_seconds must be between 0 and 600")
 		}
@@ -2697,6 +3526,9 @@ func (c *Config) Validate() error {
 	if c.Database.MaxIdleConns < 0 {
 		return fmt.Errorf("database.max_idle_conns must be non-negative")
 	}
+	// Idle connections belong to the open pool. Keep their retained maximum within
+	// its total capacity before configuring the shared SQL pool for application
+	// storage.
 	if c.Database.MaxIdleConns > c.Database.MaxOpenConns {
 		return fmt.Errorf("database.max_idle_conns cannot exceed database.max_open_conns")
 	}
@@ -2721,6 +3553,9 @@ func (c *Config) Validate() error {
 	if c.Redis.MinIdleConns < 0 {
 		return fmt.Errorf("redis.min_idle_conns must be non-negative")
 	}
+	// The ready idle minimum is part of the Redis pool. Bound that minimum by
+	// configured capacity before the client creates or replenishes its idle
+	// connections.
 	if c.Redis.MinIdleConns > c.Redis.PoolSize {
 		return fmt.Errorf("redis.min_idle_conns cannot exceed redis.pool_size")
 	}
@@ -2756,6 +3591,9 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("batch_image.recover_limit must be positive")
 		}
 	}
+	// Managed Vertex objects require a bucket name and a batch-specific prefix.
+	// Validate the per-batch identity placeholder before these settings are passed
+	// to the managed batch adapter.
 	if c.BatchImage.VertexEnabled {
 		if strings.TrimSpace(c.BatchImage.VertexManagedGCSBucket) == "" {
 			return fmt.Errorf("batch_image.vertex_managed_gcs_bucket must not be empty when vertex is enabled")
@@ -2779,7 +3617,9 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("batch_image.vertex_output_retention_hours must be positive")
 		}
 	}
-	// Validate Creative Studio limits and queue settings.
+	// Creative input limits are checked when its API is enabled, while queue
+	// requirements are checked by their separate flag. Keep total input capacity
+	// at least large enough for one allowed asset.
 	if c.Creative.Enabled {
 		if c.Creative.TransientTTLSeconds <= 0 {
 			return fmt.Errorf("creative.transient_ttl_seconds must be positive")
@@ -2837,6 +3677,9 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("creative.max_execute_attempts must be at least 1")
 		}
 	}
+	// Enabled dashboard caching needs positive lifetimes and a refresh budget.
+	// Keep freshness within total Redis lifetime; disabled settings can be zero
+	// but retain nonnegative checks below.
 	if c.Dashboard.Enabled {
 		if c.Dashboard.StatsFreshTTLSeconds <= 0 {
 			return fmt.Errorf("dashboard_cache.stats_fresh_ttl_seconds must be positive")
@@ -2861,6 +3704,9 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("dashboard_cache.stats_refresh_timeout_seconds must be non-negative")
 		}
 	}
+	// Enabled aggregation needs positive retained datasets, and billing
+	// deduplication must survive at least as long as raw usage records. Inactive
+	// settings retain nonnegative and paired-retention checks below.
 	if c.DashboardAgg.Enabled {
 		if c.DashboardAgg.IntervalSeconds <= 0 {
 			return fmt.Errorf("dashboard_aggregation.interval_seconds must be positive")
@@ -2992,17 +3838,28 @@ func (c *Config) Validate() error {
 	if c.Gateway.OpenAIResponseHeaderTimeout < 0 {
 		return fmt.Errorf("gateway.openai_response_header_timeout must be non-negative")
 	}
+	// Grok header timing has its own cap before streaming data-gap handling takes
+	// over.
 	if c.Gateway.GrokResponseHeaderTimeout < 0 || c.Gateway.GrokResponseHeaderTimeout > 1800 {
 		return fmt.Errorf("gateway.grok_response_header_timeout must be between 0-1800 seconds")
 	}
+	// The ordinary OpenAI first-output budget is validated independently of the
+	// high-effort budget below; zero disables its configured first-output
+	// deadline.
 	if c.Gateway.OpenAIFirstOutputTimeoutSeconds < 0 || c.Gateway.OpenAIFirstOutputTimeoutSeconds > 600 ||
 		(c.Gateway.OpenAIFirstOutputTimeoutSeconds > 0 && c.Gateway.OpenAIFirstOutputTimeoutSeconds < 30) {
 		return fmt.Errorf("gateway.openai_first_output_timeout_seconds must be 0 or between 30-600 seconds")
 	}
+	// The high-effort override can exceed the ordinary budget. The consumer
+	// considers it after a positive ordinary budget has enabled first-output
+	// timing.
 	if c.Gateway.OpenAIHighEffortFirstOutputTimeoutSeconds < 0 || c.Gateway.OpenAIHighEffortFirstOutputTimeoutSeconds > 1800 ||
 		(c.Gateway.OpenAIHighEffortFirstOutputTimeoutSeconds > 0 && c.Gateway.OpenAIHighEffortFirstOutputTimeoutSeconds < 30) {
 		return fmt.Errorf("gateway.openai_high_effort_first_output_timeout_seconds must be 0 or between 30-1800 seconds")
 	}
+	// A missing or nonpositive Live session duration has no usable cap. Supply the
+	// one-hour process default before downstream Live session construction reads
+	// this field.
 	if c.Gateway.Live.MaxSessionDurationSeconds <= 0 {
 		c.Gateway.Live.MaxSessionDurationSeconds = 3600
 	}
@@ -3041,6 +3898,8 @@ func (c *Config) Validate() error {
 	if c.Gateway.IdleConnTimeoutSeconds <= 0 {
 		return fmt.Errorf("gateway.idle_conn_timeout_seconds must be positive")
 	}
+	// This transport-idle threshold warns while retaining the supplied connection
+	// lifetime.
 	if c.Gateway.IdleConnTimeoutSeconds > 180 {
 		slog.Warn("gateway.idle_conn_timeout_seconds is high; consider 60-120 seconds for better connection reuse", "idle_conn_timeout_seconds", c.Gateway.IdleConnTimeoutSeconds)
 	}
@@ -3056,6 +3915,8 @@ func (c *Config) Validate() error {
 	if c.Gateway.StreamDataIntervalTimeout < 0 {
 		return fmt.Errorf("gateway.stream_data_interval_timeout must be non-negative")
 	}
+	// Bound ordinary stream inactivity independently of the keepalive interval;
+	// zero disables this deadline.
 	if c.Gateway.StreamDataIntervalTimeout != 0 &&
 		(c.Gateway.StreamDataIntervalTimeout < 30 || c.Gateway.StreamDataIntervalTimeout > 300) {
 		return fmt.Errorf("gateway.stream_data_interval_timeout must be 0 or between 30-300 seconds")
@@ -3063,6 +3924,8 @@ func (c *Config) Validate() error {
 	if c.Gateway.StreamKeepaliveInterval < 0 {
 		return fmt.Errorf("gateway.stream_keepalive_interval must be non-negative")
 	}
+	// These downstream keepalives have their own interval, independent of upstream
+	// data arrival.
 	if c.Gateway.StreamKeepaliveInterval != 0 &&
 		(c.Gateway.StreamKeepaliveInterval < 5 || c.Gateway.StreamKeepaliveInterval > 30) {
 		return fmt.Errorf("gateway.stream_keepalive_interval must be 0 or between 5-30 seconds")
@@ -3070,6 +3933,7 @@ func (c *Config) Validate() error {
 	if c.Gateway.ImageStreamDataIntervalTimeout < 0 {
 		return fmt.Errorf("gateway.image_stream_data_interval_timeout must be non-negative")
 	}
+	// Image data gaps allow a wider budget than ordinary text streams.
 	if c.Gateway.ImageStreamDataIntervalTimeout != 0 &&
 		(c.Gateway.ImageStreamDataIntervalTimeout < 60 || c.Gateway.ImageStreamDataIntervalTimeout > 1800) {
 		return fmt.Errorf("gateway.image_stream_data_interval_timeout must be 0 or between 60-1800 seconds")
@@ -3077,6 +3941,8 @@ func (c *Config) Validate() error {
 	if c.Gateway.ImageStreamKeepaliveInterval < 0 {
 		return fmt.Errorf("gateway.image_stream_keepalive_interval must be non-negative")
 	}
+	// Image streaming keepalives use the image-specific interval while awaiting
+	// generation output.
 	if c.Gateway.ImageStreamKeepaliveInterval != 0 &&
 		(c.Gateway.ImageStreamKeepaliveInterval < 5 || c.Gateway.ImageStreamKeepaliveInterval > 60) {
 		return fmt.Errorf("gateway.image_stream_keepalive_interval must be 0 or between 5-60 seconds")
@@ -3084,11 +3950,15 @@ func (c *Config) Validate() error {
 	if c.Gateway.ImageNonstreamKeepaliveInterval < 0 {
 		return fmt.Errorf("gateway.image_nonstream_keepalive_interval must be non-negative")
 	}
+	// Nonstream image JSON responses have their own keepalive cadence, separate
+	// from image SSE.
 	if c.Gateway.ImageNonstreamKeepaliveInterval != 0 &&
 		(c.Gateway.ImageNonstreamKeepaliveInterval < 5 || c.Gateway.ImageNonstreamKeepaliveInterval > 60) {
 		return fmt.Errorf("gateway.image_nonstream_keepalive_interval must be 0 or between 5-60 seconds")
 	}
-	// Accept the legacy sticky_previous_response_ttl_seconds key.
+	// Resolve a positive retired response affinity lifetime when the current
+	// lifetime is nonpositive. Validate the effective value afterward so
+	// compatibility still respects the active WS lifetime requirement.
 	if c.Gateway.OpenAIWS.StickyResponseIDTTLSeconds <= 0 && c.Gateway.OpenAIWS.StickyPreviousResponseTTLSeconds > 0 {
 		c.Gateway.OpenAIWS.StickyResponseIDTTLSeconds = c.Gateway.OpenAIWS.StickyPreviousResponseTTLSeconds
 	}
@@ -3110,6 +3980,9 @@ func (c *Config) Validate() error {
 	if c.Gateway.OpenAIWS.MaxIdlePerProvider < 0 {
 		return fmt.Errorf("gateway.openai_ws.max_idle_per_provider must be non-negative")
 	}
+	// Provider pool minima and retained-idle maxima share the total connection
+	// capacity. Reject inverted or oversized idle limits before constructing pools
+	// that maintain and reclaim those connections.
 	if c.Gateway.OpenAIWS.MinIdlePerProvider > c.Gateway.OpenAIWS.MaxIdlePerProvider {
 		return fmt.Errorf("gateway.openai_ws.min_idle_per_provider must be <= max_idle_per_provider")
 	}
@@ -3131,6 +4004,8 @@ func (c *Config) Validate() error {
 	if c.Gateway.OpenAIWS.WriteTimeoutSeconds <= 0 {
 		return fmt.Errorf("gateway.openai_ws.write_timeout_seconds must be positive")
 	}
+	// Pool sizing consumes this value as a target fraction of connection
+	// utilization.
 	if c.Gateway.OpenAIWS.PoolTargetUtilization <= 0 || c.Gateway.OpenAIWS.PoolTargetUtilization > 1 {
 		return fmt.Errorf("gateway.openai_ws.pool_target_utilization must be within (0,1]")
 	}
@@ -3149,6 +4024,9 @@ func (c *Config) Validate() error {
 	if c.Gateway.AdvancedScheduler.LBTopK <= 0 {
 		return fmt.Errorf("gateway.advanced_scheduler.lb_top_k must be positive")
 	}
+	// Both EWMA coefficients weight the latest observation against retained
+	// error-rate or TTFT history. Reject nonfinite coefficients before those
+	// scheduler updates can consume them.
 	if c.Gateway.AdvancedScheduler.EWMAErrorRateAlpha <= 0 || c.Gateway.AdvancedScheduler.EWMAErrorRateAlpha > 1 ||
 		math.IsNaN(c.Gateway.AdvancedScheduler.EWMAErrorRateAlpha) || math.IsInf(c.Gateway.AdvancedScheduler.EWMAErrorRateAlpha, 0) {
 		return fmt.Errorf("gateway.advanced_scheduler.ewma_error_rate_alpha must be between 0 and 1")
@@ -3184,6 +4062,9 @@ func (c *Config) Validate() error {
 	if c.Gateway.OpenAIProxyStreamCircuit.TTLSeconds < 0 {
 		return fmt.Errorf("gateway.openai_proxy_stream_circuit.ttl_seconds must be non-negative")
 	}
+	// Scoring consumes each finite nonnegative weight and their combined totals.
+	// Check individual values before summing so an invalid component cannot enter
+	// candidate score calculations.
 	weights := c.Gateway.AdvancedScheduler.ScoreWeights
 	for _, weight := range []float64{
 		weights.Priority, weights.Load, weights.Queue, weights.ErrorRate, weights.TTFT,
@@ -3194,6 +4075,9 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("gateway.advanced_scheduler.score_weights.* must be non-negative and finite")
 		}
 	}
+	// BaseWeightSum omits affinity bonus weights, so a positive bonus cannot make
+	// an otherwise zero base score valid. Check sums for overflow as well as
+	// component validity before scheduler construction.
 	weightSum := weights.BaseWeightSum()
 	if weightSum <= 0 {
 		return fmt.Errorf("gateway.advanced_scheduler.score_weights must not all be zero")
@@ -3207,12 +4091,16 @@ func (c *Config) Validate() error {
 	if c.Gateway.AdvancedScheduler.StickyEscapeTTFTMs <= 0 {
 		return fmt.Errorf("gateway.advanced_scheduler.sticky_escape_ttft_ms must be positive")
 	}
+	// This fraction sets the error-rate condition for leaving sticky provider
+	// affinity.
 	if c.Gateway.AdvancedScheduler.StickyEscapeErrorRate < 0 || c.Gateway.AdvancedScheduler.StickyEscapeErrorRate > 1 {
 		return fmt.Errorf("gateway.advanced_scheduler.sticky_escape_error_rate must be between 0 and 1")
 	}
 	if c.Gateway.MaxLineSize < 0 {
 		return fmt.Errorf("gateway.max_line_size must be non-negative")
 	}
+	// The nonzero limit applies to one scanned SSE line; zero selects downstream
+	// scanner defaults.
 	if c.Gateway.MaxLineSize != 0 && c.Gateway.MaxLineSize < 1024*1024 {
 		return fmt.Errorf("gateway.max_line_size must be at least 1MB")
 	}
@@ -3231,6 +4119,9 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("gateway.usage_record.overflow_policy must be one of: %s/%s/%s",
 			UsageRecordOverflowPolicyDrop, UsageRecordOverflowPolicySample, UsageRecordOverflowPolicySync)
 	}
+	// Validate the percentage for every overflow policy. Sample mode additionally
+	// requires positive admission, while the other policies can retain a zero
+	// percentage.
 	if c.Gateway.UsageRecord.OverflowSamplePercent < 0 || c.Gateway.UsageRecord.OverflowSamplePercent > 100 {
 		return fmt.Errorf("gateway.usage_record.overflow_sample_percent must be between 0-100")
 	}
@@ -3238,6 +4129,9 @@ func (c *Config) Validate() error {
 		c.Gateway.UsageRecord.OverflowSamplePercent <= 0 {
 		return fmt.Errorf("gateway.usage_record.overflow_sample_percent must be positive when overflow_policy=sample")
 	}
+	// Worker growth and shrinkage use separated queue thresholds inside a
+	// configured worker range. Validate the initial count and both adjustment
+	// steps with that range before the completion pool can scale.
 	if c.Gateway.UsageRecord.AutoScaleEnabled {
 		if c.Gateway.UsageRecord.AutoScaleMinWorkers <= 0 {
 			return fmt.Errorf("gateway.usage_record.auto_scale_min_workers must be positive")
@@ -3277,6 +4171,8 @@ func (c *Config) Validate() error {
 	if c.Gateway.UserGroupRateCacheTTLSeconds <= 0 {
 		return fmt.Errorf("gateway.user_group_rate_cache_ttl_seconds must be positive")
 	}
+	// The retired catalog-cache key remains range-validated even though current
+	// model lookup does not read it.
 	if c.Gateway.ModelsListCacheTTLSeconds < 10 || c.Gateway.ModelsListCacheTTLSeconds > 30 {
 		return fmt.Errorf("gateway.models_list_cache_ttl_seconds must be between 10-30")
 	}
@@ -3328,6 +4224,9 @@ func (c *Config) Validate() error {
 	if c.Gateway.Scheduling.FullRebuildIntervalSeconds < 0 {
 		return fmt.Errorf("gateway.scheduling.full_rebuild_interval_seconds must be non-negative")
 	}
+	// Positive outbox thresholds should warn before forced rebuild. Check their
+	// relative order when both mechanisms are configured, allowing zero to retain
+	// each consumer's disabled-threshold behavior.
 	if c.Gateway.Scheduling.OutboxLagWarnSeconds > 0 &&
 		c.Gateway.Scheduling.OutboxLagRebuildSeconds > 0 &&
 		c.Gateway.Scheduling.OutboxLagRebuildSeconds < c.Gateway.Scheduling.OutboxLagWarnSeconds {
@@ -3351,12 +4250,18 @@ func (c *Config) Validate() error {
 	if c.Ops.Cleanup.Enabled && strings.TrimSpace(c.Ops.Cleanup.Schedule) == "" {
 		return fmt.Errorf("ops.cleanup.schedule is required when ops.cleanup.enabled=true")
 	}
+	// Ops cleanup deletes bounded row batches when a dataset has a positive
+	// retention window.
 	if c.Ops.Cleanup.BatchSize < 100 || c.Ops.Cleanup.BatchSize > 5000 {
 		return fmt.Errorf("ops.cleanup.batch_size must be between 100 and 5000")
 	}
+	// The pause paces successive deletion batches in milliseconds during
+	// retained-data cleanup.
 	if c.Ops.Cleanup.BatchPauseMS < 1 || c.Ops.Cleanup.BatchPauseMS > 2000 {
 		return fmt.Errorf("ops.cleanup.batch_pause_ms must be between 1 and 2000")
 	}
+	// Concurrency waiting sends SSE keepalives at this cadence before a request
+	// obtains its slot.
 	if c.Concurrency.PingInterval < 5 || c.Concurrency.PingInterval > 30 {
 		return fmt.Errorf("concurrency.ping_interval must be between 5-30 seconds")
 	}
@@ -3364,6 +4269,8 @@ func (c *Config) Validate() error {
 		if c.Gateway.Grok.FreeQuotaTokenLimit <= 0 {
 			return fmt.Errorf("gateway.grok.free_quota_token_limit must be positive")
 		}
+		// The soft gate compares rolling free-tier token usage with this fraction of
+		// the configured token limit.
 		if c.Gateway.Grok.FreeQuotaSoftGatePercent < 1 || c.Gateway.Grok.FreeQuotaSoftGatePercent > 100 {
 			return fmt.Errorf("gateway.grok.free_quota_soft_gate_percent must be between 1 and 100")
 		}
@@ -3380,6 +4287,9 @@ func (c *Config) Validate() error {
 	return nil
 }
 
+// normalizeStringSlice returns trimmed nonblank entries in their supplied
+// order. Empty input retains its nil or allocated-empty shape; nonempty input
+// gets new outer storage and can return an allocated empty result.
 func normalizeStringSlice(values []string) []string {
 	if len(values) == 0 {
 		return values
@@ -3395,6 +4305,9 @@ func normalizeStringSlice(values []string) []string {
 	return normalized
 }
 
+// isWeakJWTSecret reports blank or known weak-secret spellings after trimming
+// and lowercasing. It is a warning-list comparison rather than an entropy or
+// cryptographic strength measurement; other text returns false.
 func isWeakJWTSecret(secret string) bool {
 	lower := strings.ToLower(strings.TrimSpace(secret))
 	if lower == "" {
@@ -3414,6 +4327,10 @@ func isWeakJWTSecret(secret string) bool {
 	return exists
 }
 
+// generateJWTSecret returns lowercase hexadecimal text from byteLength random
+// bytes, selecting thirty-two bytes for nonpositive input. Random-read failures
+// are returned, and encoded text contains twice the selected byte count for
+// config consumers.
 func generateJWTSecret(byteLength int) (string, error) {
 	if byteLength <= 0 {
 		byteLength = 32
@@ -3425,8 +4342,11 @@ func generateJWTSecret(byteLength int) (string, error) {
 	return hex.EncodeToString(buf), nil
 }
 
-// GetServerAddress reads the listen address before full validation, for startup and setup.
-// Environment variables take precedence over the file, then defaults.
+// GetServerAddress reads the listener through a separate Viper instance before
+// complete startup validation. Environment values precede selected YAML and
+// defaults, and configuration-file read errors are discarded here so full
+// loading can report them later. Host formatting performs no validation or IPv6
+// bracketing.
 func GetServerAddress() string {
 	v := viper.New()
 	v.SetConfigName("config")
@@ -3439,7 +4359,9 @@ func GetServerAddress() string {
 	v.SetDefault("server.host", "0.0.0.0")
 	v.SetDefault("server.port", 8080)
 
-	// This lightweight read ignores file errors; Load reports missing or unreadable explicit files.
+	// Startup needs a listener address before complete setup is available. Discard
+	// file-read errors in this lightweight lookup; the full loader reports invalid
+	// explicit files when startup reaches configuration validation.
 	_ = v.ReadInConfig()
 
 	host := v.GetString("server.host")
@@ -3447,20 +4369,35 @@ func GetServerAddress() string {
 	return fmt.Sprintf("%s:%d", host, port)
 }
 
-// ValidateAbsoluteHTTPURL checks an absolute HTTP(S) URL.
+// ValidateAbsoluteHTTPURL delegates trimmed HTTP(S) endpoint-shape checking to
+// identity authconfig. It requires an absolute URL with a host and no fragment;
+// callers retain input and separately decide allowed userinfo, ports, paths, or
+// reachability.
 func ValidateAbsoluteHTTPURL(raw string) error { return authconfig.ValidateAbsoluteHTTPURL(raw) }
 
-// ValidateFrontendRedirectURL checks an absolute URL or relative frontend redirect path.
+// ValidateFrontendRedirectURL delegates callback-shape checking to identity
+// authconfig. It accepts a trimmed single-slash path or absolute HTTP(S)
+// endpoint, rejects remaining line breaks and protocol-relative prefixes, and
+// leaves the caller's input unchanged.
 func ValidateFrontendRedirectURL(raw string) error {
 	return authconfig.ValidateFrontendRedirectURL(raw)
 }
 
+// scopeContainsOpenID reports whether lowercased whitespace-separated scope
+// text contains the exact openid token.
 func scopeContainsOpenID(scopes string) bool {
 	return slices.Contains(strings.Fields(strings.ToLower(strings.TrimSpace(scopes))), "openid")
 }
 
+// warnIfInsecureURL logs a field-name warning for parsed HTTP URLs, ignoring
+// case in the scheme. Parse failures return silently and non-HTTP schemes
+// produce no warning; this helper does not validate or reject the configured
+// value.
 func warnIfInsecureURL(field, raw string) {
 	u, err := url.Parse(strings.TrimSpace(raw))
+	// A malformed URL supplies no reliable scheme for this warning helper. Leave
+	// rejection to the caller's validator and return without emitting a misleading
+	// transport warning.
 	if err != nil {
 		return
 	}
@@ -3469,12 +4406,28 @@ func warnIfInsecureURL(field, raw string) {
 	}
 }
 
-// normalizePricingCatalogSource updates known legacy sources and missing packaged paths in memory.
+// normalizePricingCatalogSource rewrites recognized catalog URLs and absent
+// known packaged supplement paths in the receiver. Custom inputs remain as
+// supplied, and the mounted configuration and filesystem contents are not
+// rewritten.
+//
+// The exact unqualified models.dev URL gains type=all. Recognized GitHub legacy
+// repository paths select that catalog and add its host once to pricing
+// admission settings. Only known packaged supplement paths migrate when Stat
+// reports nonexistence; existing paths and other stat errors retain their
+// supplied text. The next catalog loader owns missing-file behavior after this
+// in-memory selection.
 func (c *Config) normalizePricingCatalogSource() {
+	// The exact older official catalog URL omits the all-model query selection.
+	// Add that selection in memory while keeping URLs with existing query choices
+	// under their configured source spelling.
 	if strings.TrimSpace(c.Pricing.RemoteURL) == "https://models.dev/catalog.json" {
 		c.Pricing.RemoteURL = "https://models.dev/catalog.json?type=all"
 	}
 
+	// Recognize known public legacy repositories by host, scheme, absent userinfo,
+	// and normalized path. Custom source identities stay available for the
+	// configured catalog downloader.
 	source, err := url.Parse(c.Pricing.RemoteURL)
 	if err == nil && strings.EqualFold(source.Host, "raw.githubusercontent.com") && source.User == nil && (source.Scheme == "https" || source.Scheme == "http") {
 		sourcePath := strings.ToLower(path.Clean(source.Path))
@@ -3487,15 +4440,24 @@ func (c *Config) normalizePricingCatalogSource() {
 		}
 	}
 	fallback := filepath.Clean(c.Pricing.FallbackFile)
+	// Recognized packaged supplement filenames can move to the current sibling
+	// name when the old file is absent. Other paths remain owned by the deployment
+	// and keep their configured spelling.
 	if fallback != "resources/model-pricing/model_prices_and_context_window.json" && fallback != "/app/resources/model-pricing/model_prices_and_context_window.json" {
 		return
 	}
+	// Use confirmed nonexistence of the old filename as the migration signal.
+	// Supplement loading later checks the replacement and can use embedded data
+	// when that file is also absent.
 	if _, err := os.Stat(fallback); os.IsNotExist(err) {
 		c.Pricing.FallbackFile = filepath.Join(filepath.Dir(fallback), "model_pricing_supplements.json")
 	}
 }
 
-// ValidateDingTalkConfig validates DingTalk login settings using identity configuration rules.
+// ValidateDingTalkConfig delegates DingTalk deployment rule checking to
+// identity authconfig. Disabled settings are accepted, and recognized mode/type
+// failures retain shared sentinel identity for callers using errors.Is across
+// this facade.
 func ValidateDingTalkConfig(value DingTalkConnectConfig) error {
 	return authconfig.ValidateDingTalkConfig(value)
 }

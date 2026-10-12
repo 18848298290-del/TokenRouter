@@ -6,10 +6,20 @@ import (
 	"strings"
 )
 
-// staticAssetsCacheControl caches fingerprinted frontend assets for one year.
+// Bundle assets whose filenames contain an eight-character fingerprint can be
+// reused under a long immutable cache lifetime. The recognizer checks the
+// assets path and suffix spelling, and callers apply this policy after disk
+// overrides so replaceable local files keep their ordinary caching behavior.
+
+// staticAssetsCacheControl supplies the one-year immutable browser policy for
+// recognized embedded fingerprints, applied after serving decisions have
+// excluded replaceable local override files.
 const staticAssetsCacheControl = "public, max-age=31536000, immutable"
 
-// isFingerprintedEmbeddedAssetPath recognizes assets with Vite's eight-character filename fingerprint.
+// isFingerprintedEmbeddedAssetPath reports whether cleanPath has the expected
+// assets prefix and filename suffix. It accepts a nonempty extension after a
+// hyphen and eight URL-safe characters; this spelling check does not establish
+// file existence.
 func isFingerprintedEmbeddedAssetPath(cleanPath string) bool {
 	cleanPath = strings.TrimPrefix(cleanPath, "/")
 	if !strings.HasPrefix(cleanPath, "assets/") {
@@ -19,13 +29,15 @@ func isFingerprintedEmbeddedAssetPath(cleanPath string) bool {
 	filename := path.Base(cleanPath)
 	extension := path.Ext(filename)
 	stem := strings.TrimSuffix(filename, extension)
+	// Vite bundle names use eight fingerprint characters before the extension.
 	const fingerprintLength = 8
 	delimiterIndex := len(stem) - fingerprintLength - 1
 	if extension == "" || delimiterIndex < 1 || stem[delimiterIndex] != '-' {
 		return false
 	}
 
-	// Accept the URL-safe alphabet used by Vite fingerprints.
+	// Match the bundle's URL-safe fingerprint alphabet rather than interpreting its
+	// characters as hexadecimal; generated asset names can contain letters, underscores, and hyphens.
 	fingerprint := stem[delimiterIndex+1:]
 	for _, char := range fingerprint {
 		if (char >= 'a' && char <= 'z') ||
@@ -39,8 +51,10 @@ func isFingerprintedEmbeddedAssetPath(cleanPath string) bool {
 	return true
 }
 
-// applyStaticAssetCacheHeaders sets immutable caching for fingerprinted embedded asset paths.
-// Callers serve local overrides separately because those files may change under the same name.
+// applyStaticAssetCacheHeaders sets the immutable policy for a recognized
+// embedded fingerprint path. Nil headers and other path spellings remain
+// unchanged; callers finish local override selection first because overrides
+// can change under the same name.
 func applyStaticAssetCacheHeaders(header http.Header, cleanPath string) {
 	if header == nil || !isFingerprintedEmbeddedAssetPath(cleanPath) {
 		return

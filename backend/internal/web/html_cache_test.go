@@ -10,7 +10,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestHTMLCache checks language entry publication, invalidation, and ETag changes after settings updates.
+// TestHTMLCache starts with an empty cache, publishes a language page,
+// invalidates it, and changes serialized settings. Lookups must reflect storage
+// and invalidation, while changed settings must produce a different quoted
+// ETag.
 func TestHTMLCache(t *testing.T) {
 	t.Run("empty", func(t *testing.T) {
 		cache := NewHTMLCache()
@@ -46,7 +49,10 @@ func TestHTMLCache(t *testing.T) {
 	})
 }
 
-// TestHTMLLanguageIsolation checks distinct language entries and ETags, copied snapshots, and shared invalidation.
+// TestHTMLLanguageIsolation publishes English and Chinese pages with identical
+// settings, mutates a snapshot, and invalidates both. Tags and stored content
+// must stay language-specific, and stale publication must leave the new cache
+// empty.
 func TestHTMLLanguageIsolation(t *testing.T) {
 	cache := NewHTMLCache()
 	cache.SetBaseHTML([]byte("<html></html>"))
@@ -60,6 +66,8 @@ func TestHTMLLanguageIsolation(t *testing.T) {
 	saved, _ = cache.Snapshot("en")
 	require.Equal(t, "English", string(saved.Content))
 	cache.Invalidate()
+	// Reuse the pre-invalidation generation to model an earlier render returning
+	// late. Its attempted publication must leave both invalidated language entries absent.
 	cache.Publish("en", version, []byte("Late"), []byte(`{}`))
 	saved, _ = cache.Snapshot("en")
 	require.Nil(t, saved)

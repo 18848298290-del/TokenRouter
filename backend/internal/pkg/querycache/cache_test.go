@@ -8,12 +8,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestQueryCacheSnapshotIsolation checks independent values on cache writes and hits.
+// TestQueryCacheSnapshotIsolation stores a payload with nested maps, pointers,
+// a nil slice, and a time value. Source and returned-pointer mutations must
+// leave later hits unchanged while nil and time values remain equivalent.
 func TestQueryCacheSnapshotIsolation(t *testing.T) {
+	// payload models the nested reference positions exercised by snapshot copying.
 	type payload struct {
-		Items []map[string]*int
-		Empty []string
-		At    time.Time
+		Items []map[string]*int // nested fixture map and pointer values
+		Empty []string          // nil slice fixture field
+		At    time.Time         // time value fixture field
 	}
 	value := 3
 	original := &payload{Items: []map[string]*int{{"value": &value}}, At: time.Now()}
@@ -34,6 +37,9 @@ func TestQueryCacheSnapshotIsolation(t *testing.T) {
 	require.Equal(t, 3, *secondPayload.Items[0]["value"])
 }
 
+// TestQueryCacheConcurrentLoadReturnsIndependentValues starts same-key calls
+// while a loader waits on a release channel. Mutating one returned nested slice
+// must leave other results and the stored snapshot unchanged.
 func TestQueryCacheConcurrentLoadReturnsIndependentValues(t *testing.T) {
 	c := NewCache(time.Minute)
 	start := make(chan struct{})
@@ -41,6 +47,8 @@ func TestQueryCacheConcurrentLoadReturnsIndependentValues(t *testing.T) {
 	var once sync.Once
 	var wg sync.WaitGroup
 	results := make([]map[string][]int, 8)
+	// Each goroutine owns one result slot. Wait for all stores to finish before
+	// mutating the first result and checking independence across the other slices.
 	for i := range results {
 		wg.Add(1)
 		go func(i int) {
@@ -56,6 +64,8 @@ func TestQueryCacheConcurrentLoadReturnsIndependentValues(t *testing.T) {
 			results[i] = payload
 		}(i)
 	}
+	// The first loader announces entry once and waits for release. Open its
+	// result path before joining all callers, including any later cache hits.
 	<-start
 	close(release)
 	wg.Wait()

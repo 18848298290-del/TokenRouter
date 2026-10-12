@@ -4,6 +4,13 @@ import (
 	"strings"
 )
 
+// Pagination consumers need the same effective size when computing offsets and
+// page counts. Limit supplies a default for nonpositive sizes and caps large
+// sizes, while slice pagination returns a view into the caller's existing
+// storage.
+
+// SortOrderAsc and SortOrderDesc are the normalized direction strings accepted
+// by sorting consumers after NormalizeSortOrder resolves input and default text.
 const (
 	// SortOrderAsc selects ascending order.
 	SortOrderAsc = "asc"
@@ -12,23 +19,27 @@ const (
 	SortOrderDesc = "desc"
 )
 
-// PaginationParams contains page, size, and sorting options.
+// PaginationParams carries the requested page, size, and storage-facing sort
+// choices.
 type PaginationParams struct {
-	Page      int
-	PageSize  int
-	SortBy    string
-	SortOrder string
+	Page      int    // requested one-based page number
+	PageSize  int    // requested rows per page
+	SortBy    string // storage-facing sort field
+	SortOrder string // requested sort direction text
 }
 
-// PaginationResult contains total rows and page metadata.
+// PaginationResult describes total rows and the effective page size returned to
+// consumers.
 type PaginationResult struct {
-	Total    int64
-	Page     int
-	PageSize int
-	Pages    int
+	Total    int64 // total matching row count
+	Page     int   // requested one-based page number
+	PageSize int   // effective rows per page
+	Pages    int   // computed page count
 }
 
-// Offset returns the zero-based offset, treating pages below one as the first page.
+// Offset returns the row offset using the effective limit and a minimum page of
+// one. Normalization occurs on the receiver copy, so the caller's Page field
+// retains its supplied value.
 func (p PaginationParams) Offset() int {
 	if p.Page < 1 {
 		p.Page = 1
@@ -36,19 +47,23 @@ func (p PaginationParams) Offset() int {
 	return (p.Page - 1) * p.Limit()
 }
 
-// Limit returns the page size, defaulting to 20 and capping it at 1000.
+// Limit returns a positive effective size, defaulting to twenty and capping at
+// one thousand. The receiver remains unchanged, allowing callers to retain the
+// supplied PageSize separately from the query limit.
 func (p PaginationParams) Limit() int {
 	if p.PageSize < 1 {
 		return 20
 	}
 	if p.PageSize > 1000 {
+		// Bound each page to limit query and response size.
 		return 1000
 	}
 	return p.PageSize
 }
 
-// NormalizeSortOrder returns asc or desc, using defaultOrder for invalid input.
-// An invalid defaultOrder selects desc.
+// NormalizeSortOrder trims and lowercases order and returns an accepted
+// direction. Invalid order uses the normalized defaultOrder; any default other
+// than asc selects desc before requested-order handling.
 func NormalizeSortOrder(order string, defaultOrder string) string {
 	switch strings.ToLower(strings.TrimSpace(defaultOrder)) {
 	case SortOrderAsc:
@@ -67,13 +82,18 @@ func NormalizeSortOrder(order string, defaultOrder string) string {
 	}
 }
 
-// NormalizedSortOrder normalizes the requested order with the supplied default.
+// NormalizedSortOrder resolves this request's sorting direction through
+// NormalizeSortOrder and the supplied default. It uses the same whitespace,
+// case, and invalid-default rules as the standalone helper.
 func (p PaginationParams) NormalizedSortOrder(defaultOrder string) string {
 	return NormalizeSortOrder(p.SortOrder, defaultOrder)
 }
 
-// ResultFromTotal computes page metadata using the normalized limit.
+// ResultFromTotal computes page metadata from total and the effective limit.
+// Page remains params.Page, even when Offset would normalize it; callers supply
+// nonnegative totals representable as int for page arithmetic.
 func ResultFromTotal(total int64, params PaginationParams) *PaginationResult {
+	// Integer division counts full pages; a remainder requires one additional page.
 	pages := int(total) / params.Limit()
 	if int(total)%params.Limit() > 0 {
 		pages++
@@ -86,7 +106,9 @@ func ResultFromTotal(total int64, params PaginationParams) *PaginationResult {
 	}
 }
 
-// Slice returns the requested page, sharing the input's backing array.
+// Slice returns the requested page as a view of items' backing array. Empty
+// input or an offset beyond the available items returns a nonnil empty slice;
+// callers control mutations to shared elements.
 func Slice[T any](items []T, params PaginationParams) []T {
 	if len(items) == 0 {
 		return []T{}
