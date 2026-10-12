@@ -7,31 +7,47 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// singleCountProbe checks that counting failures stop after one attempt without generation or billing work.
+// singleCountProbe supplies one selection/count result and records callback
+// ordering for auxiliary counting.
 type singleCountProbe struct {
-	available             bool
-	selectErr, forwardErr error
-	events                []string
+	available             bool     // configured counting target availability
+	selectErr, forwardErr error    // injected selection error and injected forwarding error
+	events                []string // expected or observed callback event order
 }
 
+// Select records selection and returns the configured availability/error pair.
 func (p *singleCountProbe) Select() (bool, error) {
 	p.events = append(p.events, "select")
 	return p.available, p.selectErr
 }
-func (p *singleCountProbe) Selected()             { p.events = append(p.events, "latency") }
+
+// Selected records the selection-latency callback regardless of target
+// availability.
+func (p *singleCountProbe) Selected() { p.events = append(p.events, "latency") }
+
+// SelectionFailed records terminal selection handling in the ordered fixture
+// events.
 func (p *singleCountProbe) SelectionFailed(error) { p.events = append(p.events, "selection-failed") }
 
+// Forward records one auxiliary execution and returns its configured error.
 func (p *singleCountProbe) Forward() error {
 	p.events = append(p.events, "forward")
 	return p.forwardErr
 }
+
+// ForwardFailed records terminal execution-error notification in fixture event
+// order.
 func (p *singleCountProbe) ForwardFailed(error) { p.events = append(p.events, "forward-failed") }
+
+// TestRunSingleCountTokens supplies successful, failed, unavailable and
+// forwarding-error fixtures to one-count execution. The ordered callbacks must
+// record selection latency on every branch and forward at most once.
 func TestRunSingleCountTokens(t *testing.T) {
 	for _, tc := range []struct {
-		name                  string
-		available             bool
-		selectErr, forwardErr error
-		events                []string
+		name                  string   // case label for diagnostics
+		available             bool     // configured target availability
+		selectErr, forwardErr error    // injected selection error and injected forwarding error
+		events                []string // expected callback event order
 	}{
 		{name: "success", available: true, events: []string{"select", "latency", "forward"}},
 		{name: "selection error", selectErr: errors.New("unavailable"), events: []string{"select", "latency", "selection-failed"}},

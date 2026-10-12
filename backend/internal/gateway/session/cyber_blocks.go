@@ -22,8 +22,12 @@ type CyberLookup struct {
 	APIKeyID int64 // authenticated API Key identifier
 	// Body retains request bytes during this synchronous lookup; callers keep
 	// the storage stable while transcript derivation reads its visible history.
-	Body                []byte
-	ClientIP, UserAgent string // source address and client identity
+	Body []byte
+	// ClientIP and UserAgent combine with APIKeyID for transcript scope lookup
+	// after no explicit block is found. CyberSessionScopeKey trims the IP and
+	// normalizes User-Agent; Find checks scope activity before deriving
+	// transcript keys.
+	ClientIP, UserAgent string // resolved source IP address and supplied User-Agent header
 	// ExplicitKey is invoked after runtime and store checks; nil supplies no
 	// explicit candidate, allowing scope-gated transcript matching to continue.
 	ExplicitKey func() string
@@ -139,9 +143,9 @@ func (s *CyberBlocks) Find(ctx context.Context, input CyberLookup) string {
 	}
 	transcript := deriveOpenAICyberTranscriptBlockKeys(apiKeyID, body)
 	if transcript.lookupKeysTruncated {
-		// An active scope has previous block evidence. Reject overflow before
-		// store lookup because appended items can evict an earlier blocked prefix
-		// from the bounded candidate set and otherwise turn truncation into permission.
+		// An active scope enables conservative overflow rejection. Appended items
+		// can evict an earlier blocked prefix from the bounded candidate set, so
+		// reject before lookup instead of treating the truncated set as permission.
 		return cyberSessionTranscriptLookupOverflowBlockKey
 	}
 	keys := transcript.lookupKeys

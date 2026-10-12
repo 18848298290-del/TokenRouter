@@ -10,6 +10,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// TestOpenAIReasoningEffortPolicyContext compares absent policy, captured
+// mapping isolation, and a deny ceiling. Context application must retain
+// unbound bytes, ignore later caller mapping mutation, and return the typed
+// over-limit evidence.
 func TestOpenAIReasoningEffortPolicyContext(t *testing.T) {
 	body := []byte(`{"reasoning":{"effort":"max"}}`)
 
@@ -35,17 +39,23 @@ func TestOpenAIReasoningEffortPolicyContext(t *testing.T) {
 	require.Equal(t, "medium", overLimit.Max)
 }
 
+// TestApplyOpenAIReasoningEffortPolicy combines explicit field shapes, mapped
+// levels, scoped model matches and ceiling actions. The result must match the
+// expected chosen value or return unchanged original bytes with typed denial
+// evidence.
 func TestApplyOpenAIReasoningEffortPolicy(t *testing.T) {
 	tests := []struct {
-		name      string
-		body      string
-		max       string
-		overLimit string
-		mappings  []routing.ReasoningEffortMapping
-		path      string
-		want      string
-		changed   bool
-		deny      bool
+		name      string                           // case label for diagnostics
+		body      string                           // JSON request fixture text
+		max       string                           // configured group effort ceiling
+		overLimit string                           // configured ceiling overflow action
+		mappings  []routing.ReasoningEffortMapping // model-scoped effort mapping fixtures
+		// path selects a field-value assertion when nonempty. An empty path skips
+		// that comparison after the case's error and changed-result checks complete.
+		path    string // JSON path asserted when nonempty
+		want    string // expected selected effort spelling
+		changed bool   // expected adopted rewrite presence
+		deny    bool   // typed rejection expected flag
 	}{
 		{name: "nested caps high", body: `{"reasoning":{"effort":"xhigh"}}`, max: "medium", path: "reasoning.effort", want: "medium", changed: true},
 		{name: "flat caps high", body: `{"reasoning_effort":"high"}`, max: "low", path: "reasoning_effort", want: "low", changed: true},
@@ -213,6 +223,9 @@ func TestApplyOpenAIReasoningEffortPolicy(t *testing.T) {
 	}
 }
 
+// TestRequestedReasoningEffortContext captures a padded client choice before
+// rewriting. Reading must return its trimmed max label and nil for a separate
+// context with no captured evidence.
 func TestRequestedReasoningEffortContext(t *testing.T) {
 	ctx := WithRequestedReasoningEffort(context.Background(), " max ")
 	got := RequestedReasoningEffortFromContext(ctx)

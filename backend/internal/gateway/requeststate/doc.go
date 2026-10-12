@@ -1,4 +1,14 @@
-// Package requeststate parses gateway requests and holds execution state shared across attempts.
+// Package requeststate parses gateway payloads and captures execution evidence
+// shared across provider attempts. Request-body views retain raw bytes
+// alongside scalar fields, while context snapshots keep entry identity,
+// selection hints, and admitted routing decisions available to later execution.
+//
+// A body rewrite requires refreshed parsed ranges, and group replacement can
+// leave a saved plan that attempt resolution rechecks against the current
+// group. Tool state separates active output from future WebSocket declarations
+// and publishes retained maps with caller immutability requirements. Presence
+// flags keep omitted hints and uninitialized tool state distinct from
+// explicitly supplied zero or empty values.
 //
 // Reading entry points:
 //   - body.go: request fields, messages, and session identifiers.

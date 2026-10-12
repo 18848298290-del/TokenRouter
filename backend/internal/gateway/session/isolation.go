@@ -52,11 +52,13 @@ type OwnerStore interface {
 
 // IsolationInput supplies the requester identity and target group's isolation policy.
 type IsolationInput struct {
-	// UserID, Source, and Hash identify the first-owner record. EnsureIsolation
-	// trims Source and Hash, skipping checking for a nonpositive UserID or either
-	// blank result; GroupID names the target and passes to storage as supplied.
-	UserID, GroupID int64  // requester user and target group
-	Source, Hash    string // ownership source and session hash
+	// UserID, Source and Hash select the first-owner record together. EnsureIsolation
+	// trims Source and Hash before lookup; a nonpositive UserID or either trimmed
+	// blank value skips storage because the session identity is incomplete.
+	// GroupID names the requested target and is passed to storage as supplied,
+	// including zero when the WebSocket caller has no selected group.
+	UserID, GroupID int64  // requester user identifier and target group identifier
+	Source, Hash    string // session ownership source and captured session hash
 	// Enabled applies to the target group; a false value permits another group's existing session owner.
 	Enabled bool
 	// TTL renews matching ownership; nonpositive values select one hour before

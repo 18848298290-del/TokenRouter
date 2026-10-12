@@ -7,6 +7,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestAuxiliaryCompletionRules exercises audio units, text-field
+// precedence, Alpha status policy and image completion eligibility. It
+// checks blank-first-string behavior, null/nonstring fallback, optional
+// model trimming and operation-specific completion decisions.
 func TestAuxiliaryCompletionRules(t *testing.T) {
 	require.Nil(t, RealtimeAudioUsage(time.Minute, false))
 	require.Nil(t, RealtimeAudioUsage(0, true))

@@ -9,16 +9,21 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// These bootstrap text and delegation envelope fixtures provide supported
+// injected-user input for candidate conversion and malformed-shape comparisons.
 const (
 	automationBootstrapPrompt = "Review the project and report any important changes."
 	delegationEnvelope        = `<codex_delegation><source_thread_id>thread-1</source_thread_id><input>do the work</input></codex_delegation>`
 )
 
+// TestNormalizeCodexAutomationBootstrapSupportedLastRunValues supplies never,
+// matching timestamp/epoch, and CRLF header forms. Conversion must retain exact
+// output text in a user message and remove the tool-output call-ID field.
 func TestNormalizeCodexAutomationBootstrapSupportedLastRunValues(t *testing.T) {
 	tests := []struct {
-		name    string
-		lastRun string
-		crlf    bool
+		name    string // case label for diagnostics
+		lastRun string // last-run header fixture text
+		crlf    bool   // use CRLF header framing
 	}{
 		{name: "never", lastRun: "never"},
 		{name: "timestamp", lastRun: "2026-09-01T02:06:34.536Z (1788228394536)"},
@@ -40,6 +45,10 @@ func TestNormalizeCodexAutomationBootstrapSupportedLastRunValues(t *testing.T) {
 	}
 }
 
+// TestNormalizeCodexAutomationBootstrapHeartbeat converts one supported
+// heartbeat envelope and processes the result again. The first conversion must
+// retain user text, while the already normalized message must remain unchanged
+// on the second pass.
 func TestNormalizeCodexAutomationBootstrapHeartbeat(t *testing.T) {
 	output := `<heartbeat><automation_id>wiki</automation_id></heartbeat>`
 	got, changed := NormalizeCodexAutomationBootstrap(codexAutomationBootstrapBody(t, output, ""))
@@ -54,11 +63,15 @@ func TestNormalizeCodexAutomationBootstrapHeartbeat(t *testing.T) {
 	require.Equal(t, got, again)
 }
 
+// TestNormalizeCodexAutomationBootstrapRejectsUnsafeShapes mixes wrong tool
+// metadata, historical call context, malformed headers and mismatched
+// identities. Every rejected fixture must retain its original bytes and false
+// conversion flag.
 func TestNormalizeCodexAutomationBootstrapRejectsUnsafeShapes(t *testing.T) {
 	validOutput := codexAutomationBootstrap("wiki", "never", automationBootstrapPrompt)
 	tests := []struct {
-		name string
-		body []byte
+		name string // case label for diagnostics
+		body []byte // JSON request fixture bytes
 	}{
 		{
 			name: "ordinary missing call id",
@@ -118,10 +131,14 @@ func TestNormalizeCodexAutomationBootstrapRejectsUnsafeShapes(t *testing.T) {
 	}
 }
 
+// TestNormalizeCodexAutomationBootstrapRejectsUnsafeHeartbeatShapes supplies
+// extra, nested, attributed, namespaced and malformed heartbeat envelopes.
+// Bootstrap conversion must decline each shape and return the exact supplied
+// body.
 func TestNormalizeCodexAutomationBootstrapRejectsUnsafeHeartbeatShapes(t *testing.T) {
 	tests := []struct {
-		name   string
-		output string
+		name   string // case label for diagnostics
+		output string // tool output envelope fixture text
 	}{
 		{name: "arbitrary tool output", output: `<result><automation_id>wiki</automation_id></result>`},
 		{name: "root attribute", output: `<heartbeat status="ok"><automation_id>wiki</automation_id></heartbeat>`},
@@ -143,6 +160,10 @@ func TestNormalizeCodexAutomationBootstrapRejectsUnsafeHeartbeatShapes(t *testin
 	}
 }
 
+// TestNormalizeCodexAutomationBootstrapPreservesOrderAndIsIdempotent surrounds
+// a candidate with ordinary user messages. Conversion must retain their
+// positions and text, then leave the normalized request unchanged on another
+// pass.
 func TestNormalizeCodexAutomationBootstrapPreservesOrderAndIsIdempotent(t *testing.T) {
 	output := codexAutomationBootstrap("wiki", "never", automationBootstrapPrompt)
 	body := []byte(`{"model":"gpt-5","input":[{"type":"message","role":"user","content":"before"},{"type":"function_call_output","namespace":"codex_app","name":"automation_update","output":` + mustJSON(t, output) + `},{"type":"message","role":"user","content":"after"}]}`)
@@ -158,12 +179,16 @@ func TestNormalizeCodexAutomationBootstrapPreservesOrderAndIsIdempotent(t *testi
 	require.Equal(t, got, again)
 }
 
+// TestNormalizeCodexDelegationBootstrapSupportedTools supplies both supported
+// namespaces and tools with missing, empty or padded-blank call IDs. Conversion
+// must produce a user message retaining the envelope text and removing call-ID
+// metadata.
 func TestNormalizeCodexDelegationBootstrapSupportedTools(t *testing.T) {
 	tests := []struct {
-		name      string
-		namespace string
-		tool      string
-		callID    string
+		name      string // case label for diagnostics
+		namespace string // exact tool namespace fixture
+		tool      string // exact tool-name fixture spelling
+		callID    string // raw candidate call-ID member fragment
 	}{
 		{name: "app create missing call id", namespace: "codex_app", tool: "create_thread"},
 		{name: "app send empty call id", namespace: "codex_app", tool: "send_message_to_thread", callID: `,"call_id":""`},
@@ -183,11 +208,15 @@ func TestNormalizeCodexDelegationBootstrapSupportedTools(t *testing.T) {
 	}
 }
 
+// TestNormalizeCodexDelegationBootstrapRejectsUnsafeShapes combines conflicting
+// call identity, ambiguous sibling context and padded discriminator fields.
+// Conversion must decline every represented case and retain its exact original
+// byte payload.
 func TestNormalizeCodexDelegationBootstrapRejectsUnsafeShapes(t *testing.T) {
 	tests := []struct {
-		name  string
-		item  string
-		extra string
+		name  string // case label for diagnostics
+		item  string // raw input-item JSON fragment
+		extra string // raw request-level member fragment
 	}{
 		{name: "ordinary missing call id", item: `{"type":"function_call_output","name":"other","namespace":"codex_app","output":"` + delegationEnvelope + `"}`},
 		{name: "valid call id", item: `{"type":"function_call_output","call_id":"call-1","name":"create_thread","namespace":"codex_app","output":"` + delegationEnvelope + `"}`},
@@ -211,6 +240,10 @@ func TestNormalizeCodexDelegationBootstrapRejectsUnsafeShapes(t *testing.T) {
 	}
 }
 
+// TestNormalizeCodexDelegationBootstrapWithHistoricalContext mixes an injected
+// candidate with identified call outputs and item references. Conversion must
+// retain previous-response and historical identifiers while reclassifying the
+// candidate at its original position.
 func TestNormalizeCodexDelegationBootstrapWithHistoricalContext(t *testing.T) {
 	body := []byte(`{"model":"gpt-5","previous_response_id":"resp-1","input":[{"type":"function_call_output","namespace":"codex_app","name":"send_message_to_thread","output":"` + delegationEnvelope + `"},{"type":"function_call","call_id":"call-1"},{"type":"function_call_output","call_id":"call-1","output":"done"},{"type":"item_reference","id":"item-1"},{"type":"computer_call","call_id":"call-2"}]}`)
 
@@ -223,11 +256,15 @@ func TestNormalizeCodexDelegationBootstrapWithHistoricalContext(t *testing.T) {
 	require.Equal(t, "item-1", gjson.GetBytes(got, "input.3.id").String())
 }
 
+// TestNormalizeCodexDelegationBootstrapPreviousResponseID supplies omitted,
+// blank, nonblank and nonstring continuation evidence. Delegation conversion
+// must accept the string/omitted forms and retain original bytes for
+// incompatible field types.
 func TestNormalizeCodexDelegationBootstrapPreviousResponseID(t *testing.T) {
 	tests := []struct {
-		name    string
-		value   string
-		changed bool
+		name    string // case label for diagnostics
+		value   string // raw previous-response member fragment
+		changed bool   // expected bootstrap conversion flag
 	}{
 		{name: "absent", changed: true},
 		{name: "blank string", value: `,"previous_response_id":"  "`, changed: true},
@@ -248,10 +285,14 @@ func TestNormalizeCodexDelegationBootstrapPreviousResponseID(t *testing.T) {
 	}
 }
 
+// TestNormalizeCodexDelegationBootstrapRejectsDuplicateMembers supplies
+// duplicate continuation, discriminator, call-ID and output members. The
+// uniqueness guard must decline conversion before object rewriting can select
+// one conflicting value.
 func TestNormalizeCodexDelegationBootstrapRejectsDuplicateMembers(t *testing.T) {
 	tests := []struct {
-		name string
-		body string
+		name string // case label for diagnostics
+		body string // JSON request fixture bytes
 	}{
 		{
 			name: "top-level previous response id",
@@ -280,6 +321,10 @@ func TestNormalizeCodexDelegationBootstrapRejectsDuplicateMembers(t *testing.T) 
 	}
 }
 
+// TestNormalizeCodexDelegationBootstrapPreservesExactNumbers converts a
+// supported candidate beside an integer exceeding exact float64 precision. The
+// reencoded request must retain that integer's source numeric spelling through
+// json.Number decoding.
 func TestNormalizeCodexDelegationBootstrapPreservesExactNumbers(t *testing.T) {
 	body := []byte(`{"model":"gpt-5","metadata":{"integer":9007199254740993},"input":[{"type":"function_call_output","namespace":"codex_app","name":"create_thread","output":"` + delegationEnvelope + `"}]}`)
 	got, changed := NormalizeCodexDelegationBootstrap(body)
@@ -287,6 +332,10 @@ func TestNormalizeCodexDelegationBootstrapPreservesExactNumbers(t *testing.T) {
 	require.Equal(t, "9007199254740993", gjson.GetBytes(got, "metadata.integer").Raw)
 }
 
+// TestNormalizeCodexDelegationBootstrapRequiresCompleteEnvelope supplies
+// missing/empty children, outside text, extra elements and namespace variants.
+// Every incomplete or adorned delegation shape must remain unchanged with
+// conversion declined.
 func TestNormalizeCodexDelegationBootstrapRequiresCompleteEnvelope(t *testing.T) {
 	malformed := []string{
 		`<codex_delegation><source_thread_id>thread-1</source_thread_id></codex_delegation>`,
@@ -311,6 +360,10 @@ func TestNormalizeCodexDelegationBootstrapRequiresCompleteEnvelope(t *testing.T)
 	}
 }
 
+// TestNormalizeCodexDelegationBootstrapPreservesOrderAndIsIdempotent surrounds
+// a delegation candidate with ordinary messages. Their ordering and text must
+// survive conversion, and a second normalization must retain the already
+// converted bytes.
 func TestNormalizeCodexDelegationBootstrapPreservesOrderAndIsIdempotent(t *testing.T) {
 	body := []byte(`{"model":"gpt-5","input":[{"type":"message","role":"user","content":"before"},{"type":"function_call_output","namespace":"codex_tui","name":"send_message_to_thread","output":"` + delegationEnvelope + `"},{"type":"message","role":"user","content":"after"}]}`)
 	got, changed := NormalizeCodexDelegationBootstrap(body)
@@ -324,6 +377,9 @@ func TestNormalizeCodexDelegationBootstrapPreservesOrderAndIsIdempotent(t *testi
 	require.Equal(t, got, again)
 }
 
+// codexAutomationBootstrap builds header text using the supplied ID, last-run
+// value, and prompt. It validates none of them, allowing tests to construct
+// both supported headers and deliberate identity/date framing failures.
 func codexAutomationBootstrap(automationID, lastRun, prompt string) string {
 	return "Automation: Scheduled project review\n" +
 		"Automation ID: " + automationID + "\n" +
@@ -331,12 +387,18 @@ func codexAutomationBootstrap(automationID, lastRun, prompt string) string {
 		"Last run: " + lastRun + "\n\n" + prompt
 }
 
+// codexAutomationBootstrapBody builds a function-call-output request around
+// JSON-encoded output text and a caller-supplied raw call-ID fragment. It marks
+// itself as a helper and relies on mustJSON to encode the text safely.
 func codexAutomationBootstrapBody(t *testing.T, output, callID string) []byte {
 	t.Helper()
 	return []byte(`{"model":"gpt-5","input":[{"type":"function_call_output","namespace":"codex_app","name":"automation_update","output":` +
 		mustJSON(t, output) + callID + `}]}`)
 }
 
+// mustJSON serializes a fixture string and fails the test when encoding fails.
+// It marks itself as a helper and returns the quoted JSON spelling for
+// insertion into raw request fixtures.
 func mustJSON(t *testing.T, value string) string {
 	t.Helper()
 	encoded, err := json.Marshal(value)

@@ -12,7 +12,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestCapturedCandidatePlanDoesNotResolveMissingOrChangedCandidate checks missing plans and value-copy isolation.
+// TestCapturedCandidatePlanDoesNotResolveMissingOrChangedCandidate reads an
+// absent plan and captures a provided candidate before resetting its owner. The
+// captured value must retain its group and provider identifiers after later
+// state changes.
 func TestCapturedCandidatePlanDoesNotResolveMissingOrChangedCandidate(t *testing.T) {
 	var attempt AttemptRoute
 	_, ok := attempt.Candidate()
@@ -28,7 +31,11 @@ func TestCapturedCandidatePlanDoesNotResolveMissingOrChangedCandidate(t *testing
 	require.Equal(t, int64(3), captured.ProviderID)
 }
 
-// TestAttemptRouteRechecksCapabilitiesAndReadsCurrentMapping checks refreshed capabilities and late-bound model mappings.
+// TestAttemptRouteRechecksCapabilitiesAndReadsCurrentMapping refreshes provider
+// capabilities while supplying different model mappings to one captured
+// attempt. Resolution must use each current mapping, reject the changed
+// capability, and retain a previous attempt when request routing state is
+// absent.
 func TestAttemptRouteRechecksCapabilitiesAndReadsCurrentMapping(t *testing.T) {
 	group := &routing.Group{ID: 7, ProtocolFallbacks: map[protocol.ProtocolID][]protocol.ProtocolID{protocol.ProtocolAnthropicMessages: {protocol.ProtocolOpenAIResponses}}}
 	ctx := WithClientProtocol(WithGroup(context.Background(), group), protocol.ProtocolAnthropicMessages)

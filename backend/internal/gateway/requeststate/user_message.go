@@ -2,8 +2,20 @@ package requeststate
 
 import "github.com/tidwall/gjson"
 
-// IsRealUserMessage reports whether the last message is user input:
-// its role is user and its content array contains no tool_result or tool_use_result blocks.
+// The Anthropic serial queue distinguishes a new user turn from a tool-result
+// reply. The final message supplies this content classification; earlier tool
+// results leave a later ordinary user turn eligible for that content check.
+
+// IsRealUserMessage reports whether the final captured message is an exact
+// user-role object suitable for ordinary serial-queue input. Missing requests,
+// unavailable message arrays, empty arrays, and nonobject final entries return
+// false.
+//
+// Missing or nonarray content counts as ordinary user input. Array content is
+// rejected when any block has exact type tool_result or tool_use_result,
+// regardless of accompanying text. Earlier messages do not participate in that
+// decision, so the entry can admit a later user turn after historical tool
+// replies.
 func IsRealUserMessage(parsed *ParsedRequest) bool {
 	if parsed == nil {
 		return false

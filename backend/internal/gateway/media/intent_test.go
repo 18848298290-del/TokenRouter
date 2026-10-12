@@ -7,7 +7,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// imagePolicyFixture supplies tool-rule stubs to test delegation and explicit image intent.
+// imagePolicyFixture binds narrow image type/name matching and scripted map
+// qualification. HasTool always returns true and ToolChoice false, so map
+// tests isolate delegation from real tool parsing; FirstString returns the
+// first nonblank supplied string.
 func imagePolicyFixture() ImageIntentPolicy {
 	return NewImageIntentPolicy(ImageToolRules{
 		IsImageType:     func(s string) bool { return strings.TrimSpace(s) == "image_generation" },
@@ -25,17 +28,28 @@ func imagePolicyFixture() ImageIntentPolicy {
 	})
 }
 
+// TestImagePolicyExplicitModeAndDuplicateFields compares passive namespace
+// declarations with explicit mode, then supplies duplicate model/tools
+// members. It checks first-member precedence and explicit imagegen
+// function-choice recognition on valid Responses JSON.
 func TestImagePolicyExplicitModeAndDuplicateFields(t *testing.T) {
 	p := imagePolicyFixture()
 	passive := []byte(`{"model":"text","tools":[{"type":"namespace","name":"image_gen"}]}`)
 	require.True(t, p.IsImageGenerationIntentForPlatform("/v1/responses", "text", passive, false))
 	require.False(t, p.IsImageGenerationIntentForPlatform("/v1/responses", "text", passive, true))
+	// An empty tools member or null model appears before a qualifying
+	// duplicate, protecting first-member handling rather than accepting a
+	// later conflicting declaration.
 	for _, body := range []string{`{"tools":[],"tools":[{"type":"image_generation"}]}`, `{"model":null,"model":"gpt-image-2"}`} {
 		require.False(t, p.IsImageGenerationIntent("/v1/responses", "text", []byte(body)))
 	}
 	require.True(t, p.IsExplicitImageGenerationIntent("/v1/responses", "text", []byte(`{"tool_choice":{"type":"function","namespace":"image_gen","name":"imagegen"}}`)))
 }
 
+// TestImagePolicyUsesExistingModelAndSizeRules supplies GPT and Grok image
+// models, a normalized edit URL and image billing hints. It checks
+// native-tool default model, selected size evidence and retention of
+// unknown input-size spelling.
 func TestImagePolicyUsesExistingModelAndSizeRules(t *testing.T) {
 	p := imagePolicyFixture()
 	for _, model := range []string{"gpt-image-2", "grok-imagine"} {
@@ -53,6 +67,10 @@ func TestImagePolicyUsesExistingModelAndSizeRules(t *testing.T) {
 	require.Equal(t, "future-size", cfg.InputSize)
 }
 
+// TestImagePolicyDelegatesMapToolQualification uses a fixture whose
+// ordinary map tool predicate always succeeds. It checks ordinary versus
+// explicit empty-map results and the no-group/present-group permission
+// decisions.
 func TestImagePolicyDelegatesMapToolQualification(t *testing.T) {
 	p := imagePolicyFixture()
 	require.True(t, p.IsImageGenerationIntentMap("/v1/responses", "text", map[string]any{}))

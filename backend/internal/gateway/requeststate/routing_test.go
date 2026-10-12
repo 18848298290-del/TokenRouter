@@ -10,6 +10,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
+// TestRoutingStateIsolatesRequestAndAttempt mutates caller and retrieved group
+// collections around derived request state. Group snapshots must remain
+// isolated, while a changed child group retains the saved plan identity and
+// client protocol for later resolution.
 func TestRoutingStateIsolatesRequestAndAttempt(t *testing.T) {
 	group := &routing.Group{ID: 7, Hydrated: true, ModelRouting: map[string][]int64{"model": {1, 2}}}
 	ctx := WithGroup(context.Background(), group)
@@ -29,7 +33,8 @@ func TestRoutingStateIsolatesRequestAndAttempt(t *testing.T) {
 	childGroup, _ := GroupFromContext(child)
 	require.Equal(t, int64(7), parentGroup.ID)
 	require.Equal(t, int64(8), childGroup.ID)
-	// Changing groups retains the resolved plan; execution checks that their group IDs match.
+	// The child keeps the parent plan until attempt resolution checks group identity.
+	// This assertion protects the caller-visible interval before that revalidation occurs.
 	plan, ok := RoutePlanFromContext(child)
 	require.True(t, ok)
 	require.Equal(t, int64(7), plan.GroupID())

@@ -10,7 +10,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestImageRequestRoutingAndMultipart checks alias parsing and image capability validation after routing.
+// TestImageRequestRoutingAndMultipart parses an alias before mapped-model
+// validation, then parses multipart editing with an upload. It checks
+// capability changes without model replacement, moderation/seed delegation
+// and BodyHash omission from serialized request output.
 func TestImageRequestRoutingAndMultipart(t *testing.T) {
 	request, err := ParseImageRequest("/v1/images/generations", "application/json", []byte(`{"model":"my-alias","prompt":"draw"}`), false)
 	require.NoError(t, err)
@@ -29,6 +32,9 @@ func TestImageRequestRoutingAndMultipart(t *testing.T) {
 	require.NoError(t, err)
 	_, err = part.Write([]byte("source-image"))
 	require.NoError(t, err)
+	// Finish the multipart body before parsing its bytes, so the edit fixture
+	// includes its terminal boundary along with the supplied prompt, size and
+	// image upload.
 	require.NoError(t, writer.Close())
 	parsed, err := ParseImageRequest("/v1/images/edits", writer.FormDataContentType(), buf.Bytes(), true)
 	require.NoError(t, err)
@@ -43,15 +49,22 @@ func TestImageRequestRoutingAndMultipart(t *testing.T) {
 	require.NotContains(t, string(encoded), "BodyHash")
 }
 
+// TestImageOutcomePreservesPartialAndTransportBoundaries combines failed
+// partial streams with successful OAuth, API-key JSON and API-key SSE
+// outcomes. It checks count and retention separately, including a retained
+// SSE success with zero observed images.
 func TestImageOutcomePreservesPartialAndTransportBoundaries(t *testing.T) {
 	failure := errors.New("read failure")
 	cases := []struct {
-		name               string
-		stream, oauth, sse bool
-		observed           int
-		err                error
-		count              int
-		retain             bool
+		name string // case scenario label
+		// stream, oauth and sse jointly select the retention and fallback path
+		// under test. The table varies those flags independently while a
+		// requested count of three remains fixed.
+		stream, oauth, sse bool  // request uses streaming, transport uses OAuth and response uses SSE
+		observed           int   // observed completed image count
+		err                error // injected response read failure
+		count              int   // expected retained image count
+		retain             bool  // expected result retention decision
 	}{
 		{"nonstream error", false, false, false, 1, failure, 0, false},
 		{"stream partial", true, false, true, 2, failure, 2, true},
@@ -69,12 +82,19 @@ func TestImageOutcomePreservesPartialAndTransportBoundaries(t *testing.T) {
 	}
 }
 
+// TestIsGrokImageGenerationModel supplies supported Grok image names,
+// case/whitespace variants and neighboring video/text families. It checks
+// the accepted family spellings and rejection of the supplied nonimage
+// model names.
 func TestIsGrokImageGenerationModel(t *testing.T) {
+	// Allow this model-family table to run concurrently with other tests; its
+	// cases and recognition inputs are local and share no mutable fixture
+	// state.
 	t.Parallel()
 
 	tests := []struct {
-		model string
-		want  bool
+		model string // supplied Grok model spelling
+		want  bool   // expected image-family recognition result
 	}{
 		{"grok-imagine", true},
 		{"grok-imagine-image-quality", true},

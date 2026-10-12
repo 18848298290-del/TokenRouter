@@ -6,12 +6,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestGrokVideoRequestStateSeparatesStatusFromBilling checks that terminal state alone does not establish billable output.
+// TestGrokVideoRequestStateSeparatesStatusFromBilling supplies active,
+// terminal, unknown and malformed status bodies. It checks summary state
+// independently of billability, including done with a URL versus done
+// without output evidence.
 func TestGrokVideoRequestStateSeparatesStatusFromBilling(t *testing.T) {
 	for _, test := range []struct {
-		body     string
-		state    string
-		billable bool
+		body     string // supplied task status JSON
+		state    string // expected normalized request-summary state
+		billable bool   // expected completed-output billing eligibility
 	}{
 		{`{"status":"pending"}`, "running", false},
 		{`{"status":"done","video":{"url":"https://example.test/video.mp4"}}`, "completed", true},

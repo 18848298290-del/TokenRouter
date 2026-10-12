@@ -6,6 +6,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestExtractGrokResponsesReasoningEffortSupportsOpenAICompatibleField supplies
+// a Grok body with the flat OpenAI effort spelling. Extraction must retain high
+// as reporting evidence independent of that request's model family.
 func TestExtractGrokResponsesReasoningEffortSupportsOpenAICompatibleField(t *testing.T) {
 	t.Parallel()
 
@@ -15,15 +18,19 @@ func TestExtractGrokResponsesReasoningEffortSupportsOpenAICompatibleField(t *tes
 	require.Equal(t, "high", *effort)
 }
 
+// TestExtractOpenAIReasoningEffortFromBodyModelCandidates reads repeated
+// absent-effort bodies and an explicit max body. The asserted reporting results
+// come from body fields; candidate-model lists remain unused fixture metadata
+// in this test.
 func TestExtractOpenAIReasoningEffortFromBodyModelCandidates(t *testing.T) {
 	bodyWithoutEffort := []byte(`{"model":"whatever","input":"hello"}`)
 	bodyWithMax := []byte(`{"model":"sol","reasoning":{"effort":"max"},"input":"hello"}`)
 
 	tests := []struct {
-		name       string
-		body       []byte
-		candidates []string
-		want       string // Empty means nil is expected.
+		name       string   // case label for diagnostics
+		body       []byte   // request bytes supplied by this fixture
+		candidates []string // unused candidate model fixture metadata
+		want       string   // expected effort; empty expects nil
 	}{
 		{
 			name:       "原始模型后缀不生成档位",
@@ -76,6 +83,9 @@ func TestExtractOpenAIReasoningEffortFromBodyModelCandidates(t *testing.T) {
 	}
 }
 
+// TestExtractOpenAIReasoningEffortModelCandidates decodes a model with a high
+// suffix and no effort field. Reporting extraction must return nil rather than
+// synthesizing effort from the supplied model spelling.
 func TestExtractOpenAIReasoningEffortModelCandidates(t *testing.T) {
 	reqBody := map[string]any{"model": "gpt-5.3-codex-high", "input": "hello"}
 
@@ -84,6 +94,10 @@ func TestExtractOpenAIReasoningEffortModelCandidates(t *testing.T) {
 	require.Nil(t, got)
 }
 
+// TestExtractOpenAIReasoningEffortMapPreservesExplicitThirdPartyMax supplies
+// padded uppercase nested effort beside a DeepSeek model. Map reporting must
+// normalize the explicit max value independently of model-capability
+// qualification.
 func TestExtractOpenAIReasoningEffortMapPreservesExplicitThirdPartyMax(t *testing.T) {
 	reqBody := map[string]any{
 		"model": "deepseek-v4-flash",
@@ -98,6 +112,9 @@ func TestExtractOpenAIReasoningEffortMapPreservesExplicitThirdPartyMax(t *testin
 	require.Equal(t, "max", *got)
 }
 
+// TestExtractEffectiveOpenAIReasoningEffortFromBody reads an explicit outgoing
+// max field and repeated omitted-effort bodies. Reporting must retain max and
+// return nil for the actual bodies used, including its hardcoded omission loop.
 func TestExtractEffectiveOpenAIReasoningEffortFromBody(t *testing.T) {
 	t.Run("记录最终上游改写值", func(t *testing.T) {
 		got := ExtractOpenAIReasoningEffortFromBody(
@@ -123,8 +140,8 @@ func TestExtractEffectiveOpenAIReasoningEffortFromBody(t *testing.T) {
 
 	t.Run("空值按未提供处理", func(t *testing.T) {
 		tests := []struct {
-			name string
-			body []byte
+			name string // case label for diagnostics
+			body []byte // unused declared request fixture bytes
 		}{
 			{name: "空字符串", body: []byte(`{"model":"gpt-5.6-max","reasoning_effort":""}`)},
 			{name: "空白字符串", body: []byte(`{"model":"gpt-5.6-max","reasoning_effort":"   "}`)},
@@ -133,6 +150,8 @@ func TestExtractEffectiveOpenAIReasoningEffortFromBody(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
+				// The table declares variant bodies, but this call supplies one omitted-effort
+				// body for every row. These assertions exercise omission for that actual input.
 				got := ExtractOpenAIReasoningEffortFromBody(
 					[]byte(`{"model":"gpt-5.6"}`))
 
@@ -142,13 +161,17 @@ func TestExtractEffectiveOpenAIReasoningEffortFromBody(t *testing.T) {
 	})
 }
 
+// TestExtractOpenAIReasoningEffortFromBody supplies nested and flat explicit
+// values, aliases, unsupported values, and omitted effort. Reporting must
+// normalize supported body evidence or return nil; the model column is unused
+// fixture context.
 func TestExtractOpenAIReasoningEffortFromBody(t *testing.T) {
 	tests := []struct {
-		name      string
-		body      []byte
-		model     string
-		wantNil   bool
-		wantValue string
+		name      string // case label for diagnostics
+		body      []byte // request bytes supplied by this fixture
+		model     string // unused model fixture metadata
+		wantNil   bool   // nil effort pointer expected
+		wantValue string // expected normalized reporting effort
 	}{
 		{
 			name:      "优先读取 reasoning.effort",
@@ -248,12 +271,16 @@ func TestExtractOpenAIReasoningEffortFromBody(t *testing.T) {
 	}
 }
 
+// TestValidateOpenAIReasoningEffort places ultra in HTTP, response and session
+// effort paths, alongside model-suffix fixtures. The narrow validator must
+// reject the explicit effort spelling and leave suffix-only model names
+// admitted.
 func TestValidateOpenAIReasoningEffort(t *testing.T) {
 	tests := []struct {
-		name    string
-		body    []byte
-		model   string
-		wantErr bool
+		name    string // case label for diagnostics
+		body    []byte // request bytes supplied by this fixture
+		model   string // unused model fixture metadata
+		wantErr bool   // explicit ultra rejection expected
 	}{
 		{name: "max 档位通过", body: []byte(`{"reasoning":{"effort":"max"}}`), model: "gpt-5.6-sol"},
 		{name: "拒绝 Responses ultra", body: []byte(`{"reasoning":{"effort":"ultra"}}`), model: "gpt-5.6-sol", wantErr: true},
@@ -279,12 +306,16 @@ func TestValidateOpenAIReasoningEffort(t *testing.T) {
 	}
 }
 
+// TestCanonicalRequestedReasoningEffort supplies nested, flat and Anthropic
+// explicit choices, plus omission and a body model suffix. Capture must retain
+// recognized choices including none and return nil when the actual body has no
+// choice.
 func TestCanonicalRequestedReasoningEffort(t *testing.T) {
 	tests := []struct {
-		name       string
-		body       string
-		candidates []string
-		want       string
+		name       string   // case label for diagnostics
+		body       string   // request bytes supplied by this fixture
+		candidates []string // unused candidate model fixture metadata
+		want       string   // expected effort; empty expects nil
 	}{
 		{name: "nested explicit", body: `{"model":"gpt-5.4","reasoning":{"effort":"MAX"}}`, want: "max"},
 		{name: "flat explicit", body: `{"model":"gpt-5.4","reasoning_effort":"x-high"}`, want: "xhigh"},
@@ -306,6 +337,10 @@ func TestCanonicalRequestedReasoningEffort(t *testing.T) {
 	}
 }
 
+// TestCanonicalRequestedReasoningEffortFromReqBodyPreservesNone supplies padded
+// none in a decoded nested effort field. Pre-policy capture must return a
+// nonnil canonical none pointer even though effective reporting drops that
+// label.
 func TestCanonicalRequestedReasoningEffortFromReqBodyPreservesNone(t *testing.T) {
 	got := CanonicalRequestedReasoningEffortFromReqBody(map[string]any{
 		"reasoning": map[string]any{"effort": " none "},
@@ -314,6 +349,9 @@ func TestCanonicalRequestedReasoningEffortFromReqBodyPreservesNone(t *testing.T)
 	require.Equal(t, "none", *got)
 }
 
+// TestExtractOpenAIServiceTier supplies recognized map tiers, a fast alias, a
+// numeric field, and a nil map. Extraction must normalize the alias, retain
+// supported labels, and return nil for unsupported input types.
 func TestExtractOpenAIServiceTier(t *testing.T) {
 	require.Equal(t, "priority", *ExtractOpenAIServiceTier(map[string]any{"service_tier": "fast"}))
 	require.Equal(t, "flex", *ExtractOpenAIServiceTier(map[string]any{"service_tier": "flex"}))
@@ -325,6 +363,9 @@ func TestExtractOpenAIServiceTier(t *testing.T) {
 	require.Nil(t, ExtractOpenAIServiceTier(nil))
 }
 
+// TestExtractOpenAIServiceTierFromBody supplies each supported byte-field tier
+// and empty input. Extraction must normalize fast, retain the known tier
+// labels, and return nil when no usable body evidence exists.
 func TestExtractOpenAIServiceTierFromBody(t *testing.T) {
 	require.Equal(t, "priority", *ExtractOpenAIServiceTierFromBody([]byte(`{"service_tier":"fast"}`)))
 	require.Equal(t, "flex", *ExtractOpenAIServiceTierFromBody([]byte(`{"service_tier":"flex"}`)))

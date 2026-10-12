@@ -7,11 +7,14 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestOpenAIBodyHasThinkingEnabled supplies enabled/adaptive case variants,
+// missing values, invalid JSON and empty input. The byte predicate must retain
+// its stated lenient classification for each actual body fixture.
 func TestOpenAIBodyHasThinkingEnabled(t *testing.T) {
 	tests := []struct {
-		name string
-		body string
-		want bool
+		name string // case label for diagnostics
+		body string // JSON request fixture text
+		want bool   // expected enabled-thinking classification
 	}{
 		{name: "enabled", body: `{"thinking":{"type":"enabled"}}`, want: true},
 		{name: "adaptive", body: `{"thinking":{"type":"adaptive"}}`, want: true},
@@ -29,6 +32,10 @@ func TestOpenAIBodyHasThinkingEnabled(t *testing.T) {
 	}
 }
 
+// TestThinkingPolicyPreservesExcludedPayload keeps signed-history filtering
+// gates disabled, then enables prefiltering on missing-signature history.
+// Disabled gates must return supplied content, while the selected protocol
+// filter changes that history.
 func TestThinkingPolicyPreservesExcludedPayload(t *testing.T) {
 	body := []byte(`{"thinking":{"type":"enabled"},"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"history"}]}]}`)
 	require.Equal(t, body, FilterThinkingBlocks(body, ThinkingRequestOptions{}))
@@ -38,6 +45,10 @@ func TestThinkingPolicyPreservesExcludedPayload(t *testing.T) {
 	require.NotEqual(t, body, filtered)
 }
 
+// TestThinkingPolicyExplicitEffortAndNativeFallback combines explicit pointer
+// evidence, adaptive thinking and native-effort flags. A supplied pointer must
+// be retained, native support must omit the reporting default, and selected
+// passback must report high.
 func TestThinkingPolicyExplicitEffortAndNativeFallback(t *testing.T) {
 	body := []byte(`{"thinking":{"type":"adaptive"}}`)
 	effort := "max"
@@ -46,11 +57,14 @@ func TestThinkingPolicyExplicitEffortAndNativeFallback(t *testing.T) {
 	require.Equal(t, "high", *ApplyThinkingEnabledFallback(nil, body, ThinkingRequestOptions{PassbackRequired: true}))
 }
 
+// TestThinkingPolicyGLMVariants compares the generic GLM low mapping with GLM53
+// and normalizes Anthropic/ MiniMax thinking fields. Assertions must retain the
+// variant-specific levels and successful enabled/adaptive wire transformations.
 func TestThinkingPolicyGLMVariants(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		options ThinkingRequestOptions
-		value   string
+		name    string                 // case label for diagnostics
+		options ThinkingRequestOptions // mapped-model thinking policy fixture
+		value   string                 // expected family-normalized effort spelling
 	}{
 		{"legacy", ThinkingRequestOptions{GLM: true}, "high"},
 		{"53", ThinkingRequestOptions{GLM: true, GLM53: true}, "low"},

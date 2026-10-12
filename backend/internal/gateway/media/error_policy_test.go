@@ -7,7 +7,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestMediaErrorPoliciesPreserveLazySideEffectsAndPriority injects early
+// invalid-input, content, Alpha authentication and image-recovery
+// decisions. Each case checks that its selected result bypasses later
+// callbacks, including health effects or ordinary failover classification.
 func TestMediaErrorPoliciesPreserveLazySideEffectsAndPriority(t *testing.T) {
+	// Leave unreachable callbacks unbound or make them fail the case, so each
+	// early decision protects its ordering before later effects can run.
 	t.Run("embedding invalid input", func(t *testing.T) {
 		var order []string
 		err := ResolveEmbeddingFailure(400, EmbeddingFailurePorts{InvalidRequest: func() bool { return true }, Forward: func() { order = append(order, "forward") }, ApplyPolicy: func() { t.Fatal("invalid request must not write provider health") }})

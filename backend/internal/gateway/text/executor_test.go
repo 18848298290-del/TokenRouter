@@ -12,13 +12,25 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// fixedMessageRuntimeTest creates independent state for each execution.
+// fixedMessageRuntimeTest opens separate fixture cursors/counters around the
+// shared outcome script. Captured request values and scripted outcome
+// references are retained for serial assertions rather than deeply cloned.
 type fixedMessageRuntimeTest struct {
-	inputs   []execution.Request
-	sessions []*messageFixture
-	outcomes []Outcome
+	// inputs retains each request value passed to Open. Nested request references
+	// stay shared with the caller, while tests inspect the captured scalar model
+	// after serial execution.
+	inputs   []execution.Request // retained requests passed to Open
+	sessions []*messageFixture   // opened request-local fixture instances
+	// outcomes is shared read-only across sessions opened by this test runtime.
+	// Each fixture advances its own counters while retaining any mutable
+	// references inside outcome values.
+	outcomes []Outcome // shared read-only scripted outcome values
 }
 
+// Open appends the supplied request value and creates a separate messageFixture
+// around the retained outcome slice. Tests call this runtime serially; fixture
+// counters/cursors are separate while input references and scripted result
+// contents remain shared.
 func (r *fixedMessageRuntimeTest) Open(_ context.Context, in execution.Request, _ upstream.OutputSink) (MessagePorts, error) {
 	r.inputs = append(r.inputs, in)
 	p := &messageFixture{outcomes: r.outcomes}
@@ -26,6 +38,10 @@ func (r *fixedMessageRuntimeTest) Open(_ context.Context, in execution.Request, 
 	return p, nil
 }
 
+// TestFixedMessagesExecutorReturnsLastAttemptAndOwnsOnlyLoop executes two
+// requests with a transient attempt and final usage result. Each execution must
+// open a separate fixture cursor, report two invocations, retain final
+// provider/result evidence, and complete once.
 func TestFixedMessagesExecutorReturnsLastAttemptAndOwnsOnlyLoop(t *testing.T) {
 	err := errors.New("temporary")
 	r := &fixedMessageRuntimeTest{outcomes: []Outcome{{Err: err, Failure: &AttemptFailure{Cause: err, Policy: &failover.FailureInfo{StatusCode: 503, RetryNext: true}}}, {HasResult: true, Attempt: upstream.AttemptResult{Model: "final", HasUsage: true, Usage: upstream.TokenUsage{OutputTokens: 7}}}}}
@@ -50,6 +66,10 @@ func TestFixedMessagesExecutorReturnsLastAttemptAndOwnsOnlyLoop(t *testing.T) {
 	}
 }
 
+// TestFixedMessagesExecutorKeepsGeminiPartialCompletionDifference returns the
+// same partial-error usage under Messages and Gemini kinds. Both results must
+// retain observed tokens, while the selected entry option changes whether
+// completion is captured.
 func TestFixedMessagesExecutorKeepsGeminiPartialCompletionDifference(t *testing.T) {
 	err := errors.New("partial output")
 	for _, kind := range []execution.TextKind{execution.TextMessages, execution.TextGeminiMessages} {

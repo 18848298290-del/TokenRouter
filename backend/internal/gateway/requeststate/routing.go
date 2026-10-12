@@ -7,16 +7,37 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing"
 )
 
-// RoutingState holds the group snapshot, protocol, and model plan for an entry or attempt.
+// A group fallback changes the group used by later attempts while earlier
+// request snapshots remain usable. Group storage and retrieval clone its
+// mutable policy collections, and the context carries the client protocol
+// alongside the selected model route.
+//
+// The saved RoutePlan is retained by value when a derived context replaces its
+// group. That plan still identifies the group for which it was built, so
+// ResolveAttempt checks group identity before using it and can rebuild
+// capability policy for the new group. Storing state is separate from
+// admission: the HTTP caller validates identity, group eligibility, and funding
+// before executing a route.
+
+// RoutingState holds a captured group, entry protocol, and model plan for
+// request execution.
 type RoutingState struct {
-	group          *routing.Group
-	plan           routing.RoutePlan
-	planSet        bool
-	clientProtocol protocol.ProtocolID
+	// group is cloned by WithGroup and GroupFromContext. plan retains its own
+	// group identity, and planSet distinguishes explicit zero plans from absence;
+	// clientProtocol determines subsequent candidate capability resolution.
+	group          *routing.Group      // captured admitted group policy
+	plan           routing.RoutePlan   // captured model route plan
+	planSet        bool                // route plan presence flag
+	clientProtocol protocol.ProtocolID // entry protocol for candidate resolution
 }
 
+// routingStateKey distinguishes prepared routing state from other context
+// values.
 type routingStateKey struct{}
 
+// RoutingStateFromContext returns the routing value stored in ctx or an empty
+// state. Nil contexts and unrelated value types are tolerated; the returned
+// value retains its internally captured group pointer.
 func RoutingStateFromContext(ctx context.Context) RoutingState {
 	if ctx == nil {
 		return RoutingState{}
@@ -25,39 +46,59 @@ func RoutingStateFromContext(ctx context.Context) RoutingState {
 	return state
 }
 
-// WithRoutingState stores prepared routing state. Admission checks identity and funding eligibility.
+// WithRoutingState stores prepared state in a derived context with a nonnil
+// parent. It retains the state's captured references; admission and
+// construction of any group snapshot remain caller responsibilities.
 func WithRoutingState(ctx context.Context, state RoutingState) context.Context {
 	return context.WithValue(ctx, routingStateKey{}, state)
 }
 
+// WithGroup derives state containing a cloned group, retaining its existing
+// plan and client protocol. A nil group clears group presence; callers supply a
+// nonnil context and replan or let ResolveAttempt detect a group mismatch.
 func WithGroup(ctx context.Context, group *routing.Group) context.Context {
 	state := RoutingStateFromContext(ctx)
 	state.group = routing.CloneGroup(group)
 	return WithRoutingState(ctx, state)
 }
 
+// GroupFromContext returns a new clone of the captured group and its presence
+// flag. Missing state yields nil and false, and mutations to the returned group
+// leave the captured context group unchanged.
 func GroupFromContext(ctx context.Context) (*routing.Group, bool) {
 	state := RoutingStateFromContext(ctx)
 	return routing.CloneGroup(state.group), state.group != nil
 }
 
+// WithRoutePlan records a supplied plan by value and marks it present in a
+// derived context. Callers provide a nonnil parent and a plan built for their
+// admitted group; existing group/protocol values are retained.
 func WithRoutePlan(ctx context.Context, plan routing.RoutePlan) context.Context {
 	state := RoutingStateFromContext(ctx)
 	state.plan, state.planSet = plan, true
 	return WithRoutingState(ctx, state)
 }
 
+// RoutePlanFromContext returns the saved plan and its separate presence flag. A
+// zero plan may still be present when explicitly stored, and reading a nil
+// context produces an absent zero value.
 func RoutePlanFromContext(ctx context.Context) (routing.RoutePlan, bool) {
 	state := RoutingStateFromContext(ctx)
 	return state.plan, state.planSet
 }
 
+// WithClientProtocol stores the entry protocol in a derived routing context.
+// Empty source clears protocol presence while retaining group and plan, and
+// callers provide a nonnil parent context.
 func WithClientProtocol(ctx context.Context, source protocol.ProtocolID) context.Context {
 	state := RoutingStateFromContext(ctx)
 	state.clientProtocol = source
 	return WithRoutingState(ctx, state)
 }
 
+// ClientProtocolFromContext returns the stored client protocol and reports
+// whether it is nonempty. Empty or missing state, including nil ctx, yields an
+// empty protocol with false presence.
 func ClientProtocolFromContext(ctx context.Context) (protocol.ProtocolID, bool) {
 	state := RoutingStateFromContext(ctx)
 	return state.clientProtocol, state.clientProtocol != ""

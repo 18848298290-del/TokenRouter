@@ -6,12 +6,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestIsRealUserMessage distinguishes user input from tool results for serial queue eligibility.
+// TestIsRealUserMessage supplies absent, malformed-shape, assistant, text, and
+// tool-result histories to serial-queue classification. The final user message
+// must decide eligibility, including cases where only earlier history contains
+// tool output.
 func TestIsRealUserMessage(t *testing.T) {
 	require.False(t, IsRealUserMessage(nil))
 	for _, tc := range []struct {
-		name, messages string
-		want           bool
+		name, messages string // subtest diagnostic label and supplied history JSON
+		want           bool   // expected serial-queue user classification
 	}{
 		{"empty", `[]`, false},
 		{"object", `{}`, false},

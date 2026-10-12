@@ -16,16 +16,30 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
+// fixedResponseRuntime retains a scripted outcome and optional mutable
+// candidate for serial executor tests.
 type fixedResponseRuntime struct {
-	sessions []*plannedResponseSession
-	plan     *routing.CandidatePlan
-	outcome  ResponseOutcome
-}
-type plannedResponseSession struct {
-	*responseFixture
-	plan *routing.CandidatePlan
+	sessions []*plannedResponseSession // opened request-local response fixture sessions
+	// plan is retained for deliberate mutation during Forward. A nil pointer
+	// supplies no candidate; a present pointer is copied into selection before
+	// its group is changed.
+	plan    *routing.CandidatePlan // shared candidate pointer for fixture mutation
+	outcome ResponseOutcome        // retained scripted response outcome
 }
 
+// plannedResponseSession wraps the response fixture with an optionally supplied
+// candidate plan.
+type plannedResponseSession struct {
+	*responseFixture // delegated serial response-loop observations
+	// plan is retained for deliberate mutation during Forward. A nil pointer
+	// supplies no candidate; a present pointer is copied into selection before
+	// its group is changed.
+	plan *routing.CandidatePlan // shared candidate pointer for fixture mutation
+}
+
+// Select delegates fixture selection and copies the supplied plan into the
+// returned candidate when present. The copy captures scalar plan identity
+// before Forward mutates the shared source pointer for the test.
 func (p *plannedResponseSession) Select(excluded map[int64]struct{}) (ResponseSelection, error) {
 	s, e := p.responseFixture.Select(excluded)
 	if p.plan != nil {
@@ -35,19 +49,31 @@ func (p *plannedResponseSession) Select(excluded map[int64]struct{}) (ResponseSe
 	return s, e
 }
 
+// Forward mutates the shared candidate group ID before returning the scripted
+// outcome. That deliberate change tests whether selection capture retains its
+// earlier scalar value rather than rereading the source pointer.
 func (p *plannedResponseSession) Forward() ResponseOutcome {
 	if p.plan != nil {
+		// Mutate the source after Select copied its scalar plan. The executor must
+		// retain the captured group identity when this forwarding result is observed.
 		p.plan.GroupID = 999
 	}
 	return p.responseFixture.Forward()
 }
 
+// Open creates a separate responseFixture cursor around one retained outcome
+// and shared plan pointer. Calls are serial in these tests, and the opened
+// sessions are retained for completion/counter assertions after Execute.
 func (r *fixedResponseRuntime) Open(context.Context, execution.Request, upstream.OutputSink) (ResponsePorts, error) {
 	p := &plannedResponseSession{responseFixture: &responseFixture{outcomes: []ResponseOutcome{r.outcome}}, plan: r.plan}
 	r.sessions = append(r.sessions, p)
 	return p, nil
 }
 
+// TestFixedResponsesCapturesOnlyProvidedCandidate supplies absent and present
+// candidate plans and mutates the source during Forward. Execution must retain
+// the selection-time scalar plan identity and its presence flag alongside one
+// completion.
 func TestFixedResponsesCapturesOnlyProvidedCandidate(t *testing.T) {
 	for _, provided := range []bool{false, true} {
 		runtime := &fixedResponseRuntime{outcome: ResponseOutcome{Outcome: Outcome{HasResult: true, Attempt: upstream.AttemptResult{Model: "observed"}}}}
@@ -69,6 +95,10 @@ func TestFixedResponsesCapturesOnlyProvidedCandidate(t *testing.T) {
 	}
 }
 
+// TestFixedResponsesRetainsPartialFailureAcrossIndependentRequests executes a
+// shared partial-image script twice. Each request must open a separate fixture
+// cursor, retain the error/image observation, and complete once without
+// switching providers.
 func TestFixedResponsesRetainsPartialFailureAcrossIndependentRequests(t *testing.T) {
 	cause := errors.New("partial image")
 	runtime := &fixedResponseRuntime{outcome: ResponseOutcome{Images: true, Outcome: Outcome{Err: cause, HasResult: true, Attempt: upstream.AttemptResult{ObservedImages: 1}}}}
@@ -87,15 +117,18 @@ func TestFixedResponsesRetainsPartialFailureAcrossIndependentRequests(t *testing
 	}
 }
 
-// TestPricingRejectionStopsTextAttempts checks pricing rejection across all three shared text entry kinds.
+// TestPricingRejectionStopsTextAttempts returns a wrapped local pricing
+// rejection for Responses, Chat and Messages entry kinds. Each executor call
+// must end after one Forward invocation and leave retry, success and completion
+// callbacks unused.
 func TestPricingRejectionStopsTextAttempts(t *testing.T) {
 	prices := &admission.ModelPricing{Resolver: billing.NewPriceResolver(nil, billing.NewCalculator(nil, billing.CalculatorOptions{}), nil, nil)}
 	rejected := prices.Check(context.Background(), nil, "codex-auto-review")
 	require.ErrorIs(t, rejected, admission.ErrModelPricingRejected)
 	require.ErrorIs(t, rejected, pricing.ErrModelPricingUnavailable)
 	for _, tc := range []struct {
-		name string
-		kind execution.TextKind
+		name string             // case label for diagnostics
+		kind execution.TextKind // selected shared text entry kind
 	}{
 		{name: "responses", kind: execution.TextOpenAIResponses},
 		{name: "chat", kind: execution.TextOpenAIChat},
@@ -121,7 +154,10 @@ func TestPricingRejectionStopsTextAttempts(t *testing.T) {
 	}
 }
 
-// TestUsagePricingFailureKeepsCompletion checks that settlement-stage pricing errors still complete served output.
+// TestUsagePricingFailureKeepsCompletion supplies measured usage with a
+// native-partial result and a pricing error. Execution must retain the
+// error/tokens while invoking the partial completion and ordinary-failure
+// observation callbacks.
 func TestUsagePricingFailureKeepsCompletion(t *testing.T) {
 	runtime := &fixedResponseRuntime{outcome: ResponseOutcome{NativePartial: true, Outcome: Outcome{
 		Err: pricing.ErrModelPricingUnavailable, HasResult: true,

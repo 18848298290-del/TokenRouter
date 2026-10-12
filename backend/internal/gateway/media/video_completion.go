@@ -10,29 +10,70 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 )
 
-// VideoCompletion holds observations needed to bill a completed video.
+// Grok status extraction requires done state and nonblank video.url
+// evidence before returning video billing units. PrepareCompletion accepts
+// already classified observations, then uses creation snapshots to fill
+// missing model, resolution or duration while a cache claim gates that
+// polling observation.
+//
+// Preparation loads the snapshot before claiming and skips a claim when
+// both creation evidence and observed duration are insufficient. It copies
+// scalar status observations, prefers creation resolution, preserves
+// separate model identities and replaces poll request IDs with a billing
+// identity derived from ResponseID or task ID. The caller keeps that
+// identity associated with one task and handles recording or claim release;
+// obtaining a claim does not establish settlement. A saved creation origin
+// can replace one-poll duration with positive end-to-end elapsed time.
+
+// VideoCompletion carries scalar completed-video observations into claim
+// preparation and recording.
 type VideoCompletion struct {
-	RequestID, ResponseID, Model, BillingModel, UpstreamModel, VideoResolution string
-	ImageCount, VideoCount, VideoDurationSeconds                               int
-	Duration                                                                   time.Duration
+	// RequestID becomes the billing correlation ID while ResponseID supplies
+	// task/response evidence. Model, BillingModel and UpstreamModel remain
+	// separate, and VideoResolution selects the video price tier rather than
+	// an image size.
+	RequestID, ResponseID, Model, BillingModel, UpstreamModel, VideoResolution string // billing request identifier, observed task identifier, response model name, billing model name, provider model name and video pricing resolution
+	// ImageCount and VideoCount distinguish media units before preparation.
+	// PrepareCompletion normalizes video count to one and clears image units;
+	// VideoDurationSeconds supplies the shared per-video duration selection.
+	ImageCount, VideoCount, VideoDurationSeconds int // observed image count, observed video count and video duration seconds
+	// Duration initially retains forwarding elapsed time. PrepareCompletion
+	// replaces it only when a saved creation origin produces positive
+	// end-to-end duration, leaving polling evidence otherwise.
+	Duration time.Duration // poll or end-to-end elapsed time
 }
 
-// VideoNotice supplies event fields for entry-layer logging.
+// VideoNotice carries video-cache decisions and available task evidence to
+// observers.
 type VideoNotice struct {
-	ProviderID      int64
-	Kind            string
-	TaskID          string
-	DurationSeconds int
-	Err             error
+	ProviderID      int64  // associated upstream provider identifier
+	Kind            string // video handling event label
+	TaskID          string // associated video task identifier
+	DurationSeconds int    // observed video duration seconds
+	Err             error  // optional cache operation error
 }
-type VideoObserver interface{ ObserveVideo(VideoNotice) }
 
+// VideoObserver receives synchronous video task/cache decisions for
+// entry-layer observation.
+type VideoObserver interface {
+	// ObserveVideo handles a decision notice synchronously during video task
+	// work. The notice carries only available fields for its Kind; the
+	// observer owns logging or any later retention of error evidence.
+	ObserveVideo(VideoNotice)
+}
+
+// videoNotice delivers a notice when the observer is nonnil and otherwise
+// does nothing. Observation is synchronous and returns no error or
+// acceptance signal, leaving task decisions with the caller.
 func videoNotice(o VideoObserver, n VideoNotice) {
 	if o != nil {
 		o.ObserveVideo(n)
 	}
 }
 
+// firstNonEmpty returns the first trimmed nonblank string in supplied
+// order. An entirely blank or empty sequence returns empty, allowing
+// callers to keep field-precedence and later default decisions separate.
 func firstNonEmpty(values ...string) string {
 	for _, v := range values {
 		if s := strings.TrimSpace(v); s != "" {
@@ -42,7 +83,20 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-// PrepareCompletion loads the creation snapshot before claiming billing and skips claims when observations are insufficient.
+// PrepareCompletion obtains a cache claim and returns merged scalar
+// observations for later video recording. It accepts already classified
+// statusResult with positive VideoCount and nonblank task identity; now
+// defaults to time.Now and nil observer skips notices.
+//
+// Creation state is loaded before claiming. Missing snapshot, including a
+// failed load, requires positive observed duration before claiming. The
+// copied result prefers creation resolution and fills missing
+// model/duration; a missing Model uses grok-imagine-video and missing
+// BillingModel follows Model. Resolution and duration use shared pricing
+// defaults, and units become one video with no images. Billing RequestID
+// prefers ResponseID over task ID, so callers keep ResponseID associated
+// with the same task across polls. The recording adapter releases claims on
+// Record error; this method performs no settlement or rollback.
 func (s *VideoTasks) PrepareCompletion(ctx context.Context, userID, keyID int64, taskRequestID string, statusResult *VideoCompletion, now func() time.Time, observer VideoObserver) *VideoCompletion {
 	if now == nil {
 		now = time.Now
@@ -54,6 +108,9 @@ func (s *VideoTasks) PrepareCompletion(ctx context.Context, userID, keyID int64,
 	if taskRequestID == "" {
 		return nil
 	}
+	// Load creation evidence before consuming a claim; cache load failure is
+	// observed and then follows the same measured-duration requirement as a
+	// missing snapshot.
 	pending, err := s.LoadGrokVideoPendingBilling(ctx, taskRequestID, userID, keyID)
 	if err != nil {
 		videoNotice(observer, VideoNotice{Kind: "load_failed", TaskID: taskRequestID, Err: err})
@@ -65,6 +122,9 @@ func (s *VideoTasks) PrepareCompletion(ctx context.Context, userID, keyID int64,
 		}
 		videoNotice(observer, VideoNotice{Kind: "without_pending", TaskID: taskRequestID, DurationSeconds: statusResult.VideoDurationSeconds})
 	}
+	// Claim only after required task observations are available, skipping
+	// recording on claim error or false while leaving persistent billing
+	// deduplication to the recorder.
 	claimed, err := s.ClaimGrokVideoBilling(ctx, taskRequestID, userID, keyID)
 	if err != nil {
 		videoNotice(observer, VideoNotice{Kind: "claim_failed", TaskID: taskRequestID, Err: err})
@@ -74,7 +134,9 @@ func (s *VideoTasks) PrepareCompletion(ctx context.Context, userID, keyID int64,
 		videoNotice(observer, VideoNotice{Kind: "already_claimed", TaskID: taskRequestID})
 		return nil
 	}
-	// Merge the creation snapshot: prefer its resolution and fill missing models and duration.
+	// Merge into a scalar copy after successful claiming, preferring saved
+	// creation resolution and filling missing model/duration fields without
+	// mutating the polling observation.
 	merged := *statusResult
 	if pending != nil {
 		if strings.TrimSpace(merged.Model) == "" {
@@ -86,7 +148,9 @@ func (s *VideoTasks) PrepareCompletion(ctx context.Context, userID, keyID int64,
 		if strings.TrimSpace(merged.UpstreamModel) == "" {
 			merged.UpstreamModel = pending.UpstreamModel
 		}
-		// Use the creation request's resolution when available; the status response omits it.
+		// A saved nonblank creation resolution takes precedence over status
+		// resolution, retaining the request's pricing choice when the status
+		// protocol omits that field.
 		if strings.TrimSpace(pending.VideoResolution) != "" {
 			merged.VideoResolution = pending.VideoResolution
 		}
@@ -103,17 +167,25 @@ func (s *VideoTasks) PrepareCompletion(ctx context.Context, userID, keyID int64,
 	if strings.TrimSpace(merged.BillingModel) == "" {
 		merged.BillingModel = merged.Model
 	}
-	// Use a task-stable ID so usage_billing_dedup covers repeated polls with different request IDs.
+	// Derive billing identity from nonblank ResponseID before task ID; callers
+	// keep that response identity associated with this task across polls for
+	// persistent deduplication.
 	merged.RequestID = StableGrokVideoBillingRequestID(firstNonEmpty(merged.ResponseID, taskRequestID))
 	merged.ResponseID = firstNonEmpty(merged.ResponseID, taskRequestID)
 	merged.VideoCount = 1
-	// Clear image units so this completion is billed as video.
+	// Clear image units after selecting one video completion, keeping its
+	// media-unit classification separate from any image observations carried
+	// by the status result.
 	merged.ImageCount = 0
-	// Default an omitted resolution to 480p.
+	// Normalize resolution to the shared video tier; unresolved input uses
+	// 480p.
 	merged.VideoResolution = pricing.NormalizeVideoBillingResolutionOrDefault(merged.VideoResolution)
-	// Default duration to 8 seconds when neither status nor creation supplies it.
+	// Use eight seconds for missing duration and cap positive duration at
+	// fifteen seconds.
 	merged.VideoDurationSeconds = pricing.NormalizeVideoBillingDurationSecondsOrDefault(merged.VideoDurationSeconds)
-	// Measure from creation acceptance to observed completion, rather than the duration of one poll.
+	// Prefer positive creation-to-discovery elapsed time from the saved
+	// creation timestamp, retaining polling duration when the timestamp is
+	// absent, invalid or after discovery.
 	if pending != nil {
 		if e2e := GrokVideoE2EDuration(pending.CreatedAt, now()); e2e > 0 {
 			merged.Duration = e2e
@@ -123,7 +195,10 @@ func (s *VideoTasks) PrepareCompletion(ctx context.Context, userID, keyID int64,
 	return &merged
 }
 
-// GrokVideoRequestState normalizes upstream task status for the request summary.
+// GrokVideoRequestState maps trimmed, case-insensitive done,
+// failure/expiry, cancellation and active statuses to request-summary
+// states. Invalid JSON or unrecognized status returns empty; this display
+// state does not establish billable video output.
 func GrokVideoRequestState(statusBody []byte) string {
 	if !gjson.ValidBytes(statusBody) {
 		return ""
@@ -142,8 +217,10 @@ func GrokVideoRequestState(statusBody []byte) string {
 	}
 }
 
-// IsGrokVideoStatusBillable requires done status and a nonempty video.url.
-// Pending, expired, failed, and done responses lacking a URL are not billable.
+// IsGrokVideoStatusBillable requires valid JSON with trimmed,
+// case-insensitive done status and nonblank video.url extraction. It checks
+// presence evidence rather than URL validity; terminal status without that
+// evidence returns false.
 func IsGrokVideoStatusBillable(statusBody []byte) bool {
 	if len(statusBody) == 0 || !gjson.ValidBytes(statusBody) {
 		return false
@@ -154,9 +231,20 @@ func IsGrokVideoStatusBillable(statusBody []byte) bool {
 	return strings.TrimSpace(gjson.GetBytes(statusBody, "video.url").String()) != ""
 }
 
-// ExtractGrokVideoBillingFromStatusBody builds video units from a billable done response.
-// It reads seconds from video.duration and the model from the top-level model field.
-// Resolution comes from the creation snapshot; PrepareCompletion supplies the default when absent.
+// ExtractGrokVideoBillingFromStatusBody returns one video unit only for
+// status satisfying IsGrokVideoStatusBillable. Status model wins for Model;
+// pending BillingModel/Model fill billing identity, pending UpstreamModel
+// stays separate, and pending resolution supplies creation evidence.
+//
+// Duration uses gjson.Int followed by Go int conversion. Representable positive
+// fractions truncate toward zero, and subsecond values leave zero before pending
+// fallback. Numeric range is not validated before those conversions, so pricing
+// bounds apply to their result rather than validating the source number.
+// Positive duration and nonempty resolution are normalized, while missing
+// values remain for PrepareCompletion defaults. Missing model uses
+// grok-imagine-video and missing billing model follows Model. Nonempty
+// observedResponseID is retained as supplied; otherwise trimmed requestID
+// supplies ResponseID, whose task association remains a caller obligation.
 func ExtractGrokVideoBillingFromStatusBody(statusBody []byte, pending *GrokVideoPendingBilling, requestID, observedResponseID string) *VideoCompletion {
 	if !IsGrokVideoStatusBillable(statusBody) {
 		return nil
@@ -170,7 +258,9 @@ func ExtractGrokVideoBillingFromStatusBody(statusBody []byte, pending *GrokVideo
 	if gjson.ValidBytes(statusBody) {
 		// The model is a top-level status field.
 		model = strings.TrimSpace(gjson.GetBytes(statusBody, "model").String())
-		// video.duration is measured in seconds.
+		// Read integer seconds before pricing normalization; fractional
+		// extraction truncates positive subsecond values to zero, allowing
+		// creation duration or later defaults to supply missing units.
 		if v := gjson.GetBytes(statusBody, "video.duration"); v.Exists() && v.Type == gjson.Number {
 			durationSeconds = int(v.Int())
 			if durationSeconds == 0 && v.Float() > 0 {
@@ -189,20 +279,26 @@ func ExtractGrokVideoBillingFromStatusBody(statusBody []byte, pending *GrokVideo
 		if upstreamModel == "" {
 			upstreamModel = pending.UpstreamModel
 		}
-		// Resolution is supplied by the creation snapshot because the status response omits it.
+		// Retain creation resolution with pending model/duration evidence because
+		// this status extraction does not read a response resolution field into
+		// billing observations.
 		resolution = pending.VideoResolution
 		if durationSeconds <= 0 {
 			durationSeconds = pending.VideoDurationSeconds
 		}
 	}
 	if model == "" {
-		// Use the default video model family when the status omits its model.
+		// Use grok-imagine-video only after status and pending model candidates
+		// are empty, retaining a video-family model for the completion resolver's
+		// later billing decisions.
 		model = "grok-imagine-video"
 	}
 	if billingModel == "" {
 		billingModel = model
 	}
-	// Leave missing resolution empty for PrepareCompletion to default to 480p.
+	// Keep missing resolution unresolved here so PrepareCompletion can apply
+	// its shared default after merging; normalize only a supplied creation
+	// resolution at extraction time.
 	if resolution != "" {
 		resolution = pricing.NormalizeVideoBillingResolutionOrDefault(resolution)
 	}

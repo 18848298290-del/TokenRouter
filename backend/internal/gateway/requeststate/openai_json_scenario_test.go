@@ -1,8 +1,5 @@
 package requeststate
 
-// These JSON scenarios check gjson field reads and types, and sjson field writes.
-// body.go, openai_view.go, and codex_bootstrap.go use these operations on requests.
-
 import (
 	"strings"
 	"testing"
@@ -12,13 +9,21 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-// TestOpenAIHandler_GjsonExtraction checks model and stream field extraction.
+// Request parsing depends on gjson distinguishing field type and presence and
+// on sjson inserting instruction values. Direct dependency scenarios isolate
+// those observations, while higher-level parsing and bootstrap tests exercise
+// their consumers.
+
+// TestOpenAIHandler_GjsonExtraction directly reads model and stream from
+// several simple request fixtures. String model detection and gjson boolean
+// extraction must produce the asserted defaults when optional fields are
+// absent.
 func TestOpenAIHandler_GjsonExtraction(t *testing.T) {
 	tests := []struct {
-		name       string
-		body       string
-		wantModel  string
-		wantStream bool
+		name       string // case label for diagnostics
+		body       string // JSON request fixture text
+		wantModel  string // expected extracted model spelling
+		wantStream bool   // expected boolean stream result
 	}{
 		{"正常提取", `{"model":"gpt-4","stream":true,"input":"hello"}`, "gpt-4", true},
 		{"stream false", `{"model":"gpt-4","stream":false}`, "gpt-4", false},
@@ -40,7 +45,9 @@ func TestOpenAIHandler_GjsonExtraction(t *testing.T) {
 	}
 }
 
-// TestOpenAIHandler_GjsonValidation checks JSON validity and model/stream types.
+// TestOpenAIHandler_GjsonValidation examines malformed JSON and present
+// numeric, null, or string fields directly through gjson. The assertions
+// protect the dependency observations used by request field-type validation.
 func TestOpenAIHandler_GjsonValidation(t *testing.T) {
 	// Malformed JSON fails validation.
 	require.False(t, gjson.ValidBytes([]byte(`{invalid json`)))
@@ -72,7 +79,10 @@ func TestOpenAIHandler_GjsonValidation(t *testing.T) {
 	require.NotEqual(t, gjson.False, streamResult2.Type)
 }
 
-// TestOpenAIHandler_InstructionsInjection checks instructions reads and writes.
+// TestOpenAIHandler_InstructionsInjection reads omitted, existing, and padded
+// instruction values and inserts strings through sjson. The dependency
+// operations must preserve valid JSON and expose the requested instruction
+// content.
 func TestOpenAIHandler_InstructionsInjection(t *testing.T) {
 	// Insert instructions when the field is absent.
 	body := []byte(`{"model":"gpt-4"}`)

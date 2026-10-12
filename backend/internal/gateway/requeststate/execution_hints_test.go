@@ -7,11 +7,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestIsForceCacheBilling supplies absent, true, false, and wrong-type context
+// markers. The reader must return the stored boolean when valid and false for
+// unavailable billing evidence.
 func TestIsForceCacheBilling(t *testing.T) {
 	tests := []struct {
-		name     string
-		ctx      context.Context
-		expected bool
+		name     string          // case label for diagnostics
+		ctx      context.Context // context holding billing marker
+		expected bool            // expected forced-cache billing value
 	}{
 		{
 			name:     "context without force cache billing",
@@ -45,6 +48,9 @@ func TestIsForceCacheBilling(t *testing.T) {
 	}
 }
 
+// TestWithForceCacheBilling derives a marked context from an unmarked parent.
+// Reads must enable forced billing on the child while preserving the parent's
+// preceding false value.
 func TestWithForceCacheBilling(t *testing.T) {
 	ctx := context.Background()
 
@@ -65,6 +71,9 @@ func TestWithForceCacheBilling(t *testing.T) {
 	}
 }
 
+// TestIsClaudeCodeClient_Context reads default classification and then stores
+// true followed by false. The hint reader must expose each derived value for
+// client-specific execution decisions.
 func TestIsClaudeCodeClient_Context(t *testing.T) {
 	ctx := context.Background()
 
@@ -77,6 +86,9 @@ func TestIsClaudeCodeClient_Context(t *testing.T) {
 	require.False(t, IsClaudeCodeClient(ctx))
 }
 
+// TestSetGetClaudeCodeVersion reads a missing version and then stores a
+// supplied version string. The getter must return empty initially and the exact
+// captured spelling after derivation.
 func TestSetGetClaudeCodeVersion(t *testing.T) {
 	ctx := context.Background()
 	require.Equal(t, "", GetClaudeCodeVersion(ctx), "empty context should return empty string")
@@ -85,6 +97,9 @@ func TestSetGetClaudeCodeVersion(t *testing.T) {
 	require.Equal(t, "2.1.63", GetClaudeCodeVersion(ctx))
 }
 
+// TestRequestMetadataWriteAndRead_NoBridge records probe, thinking, sticky,
+// retry and switch observations through context helpers. Each reader must
+// return the matching value and true presence from the stored snapshot.
 func TestRequestMetadataWriteAndRead_NoBridge(t *testing.T) {
 	ctx := WithIsMaxTokensOneHaikuRequest(context.Background(), true)
 	ctx = WithThinkingEnabled(ctx, true)
@@ -111,6 +126,10 @@ func TestRequestMetadataWriteAndRead_NoBridge(t *testing.T) {
 	require.True(t, present)
 }
 
+// TestExecutionHintsSnapshotIsolation derives different thinking values and
+// mutates a returned snapshot. Context reads must retain their captured
+// parent/child values, while a new explicit snapshot stores the later mutation
+// independently.
 func TestExecutionHintsSnapshotIsolation(t *testing.T) {
 	parent := WithThinkingEnabled(context.Background(), true)
 	child := WithThinkingEnabled(parent, false)
@@ -120,13 +139,17 @@ func TestExecutionHintsSnapshotIsolation(t *testing.T) {
 	value, present = ThinkingEnabledFromContext(parent)
 	require.True(t, value)
 	require.True(t, present)
-	// Mutating a returned snapshot leaves existing contexts and later derived attempts unchanged.
+	// Mutate a returned value to expose accidental snapshot aliasing; parent reads
+	// must retain their earlier thinking decision before this value is published elsewhere.
 	snapshot := ExecutionHintsFromContext(parent)
 	snapshot.ThinkingEnabled.Value = false
 	require.True(t, ExecutionHintsFromContext(parent).ThinkingEnabled.Value)
 	require.False(t, ExecutionHintsFromContext(WithExecutionHints(parent, snapshot)).ThinkingEnabled.Value)
 }
 
+// TestExecutionHintsMissingAndExplicitZero compares absent evidence with stored
+// zero switch/sticky identifiers and nil contexts. Presence must survive
+// explicit zero, while unsupported nil derivation remains nil.
 func TestExecutionHintsMissingAndExplicitZero(t *testing.T) {
 	value, present := ThinkingEnabledFromContext(context.Background())
 	require.False(t, value)
@@ -145,25 +168,37 @@ func TestExecutionHintsMissingAndExplicitZero(t *testing.T) {
 	require.Nil(t, WithThinkingEnabled(missing, true))
 }
 
+// TestIsSingleProviderRetry_True stores a true retry-state hint in a derived
+// context. The reader must expose true for the attempt while its separate
+// presence result is outside this assertion.
 func TestIsSingleProviderRetry_True(t *testing.T) {
 	ctx := WithSingleProviderRetry(context.Background(), true)
 	value, _ := SingleProviderRetryFromContext(ctx)
 	require.True(t, value)
 }
 
+// TestIsSingleProviderRetry_False_NoValue reads an unmarked context through the
+// retry-state helper. The value must default to false when this request has no
+// captured retry observation.
 func TestIsSingleProviderRetry_False_NoValue(t *testing.T) {
 	value, _ := SingleProviderRetryFromContext(context.Background())
 	require.False(t, value)
 }
 
+// TestIsSingleProviderRetry_False_ExplicitFalse records a false retry-state
+// hint through the setter. The reader must return false; this assertion
+// protects value reading separately from the presence checks elsewhere.
 func TestIsSingleProviderRetry_False_ExplicitFalse(t *testing.T) {
 	ctx := WithSingleProviderRetry(context.Background(), false)
 	value, _ := SingleProviderRetryFromContext(ctx)
 	require.False(t, value)
 }
 
+// TestIsSingleProviderRetry_False_WrongType stores a string under an unrelated
+// private context key. The retry reader must return its missing-evidence false
+// value because that key does not supply an ExecutionHints snapshot.
 func TestIsSingleProviderRetry_False_WrongType(t *testing.T) {
-	// An unrelated context key does not supply ExecutionHints.
+	// unrelatedKey represents fixture data outside the execution-hints context key.
 	type unrelatedKey struct{}
 	ctx := context.WithValue(context.Background(), unrelatedKey{}, "true")
 	value, _ := SingleProviderRetryFromContext(ctx)

@@ -9,23 +9,38 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/search/contract"
 )
 
+// Search declaration checks select a request containing one recognized search
+// tool as an emulation candidate. The final user message supplies its query
+// through a string or the first nonempty text block, and results become
+// protocol blocks plus a readable
+// text summary for the client.
+
 const (
-	toolTypeWebSearchPrefix = "web_search"
-	toolTypeGoogleSearch    = "google_search"
-	toolNameWebSearch       = "web_search"
-	toolNameGoogleSearch    = "google_search"
-	toolNameWebSearch2025   = "web_search_20250305"
+	// Search tool types and names identify emulation candidates before a provider
+	// request is executed; exact names supplement the supported type prefixes.
+	toolTypeWebSearchPrefix = "web_search"          // accepted search type prefix
+	toolTypeGoogleSearch    = "google_search"       // exact Google search type
+	toolNameWebSearch       = "web_search"          // accepted web search tool name
+	toolNameGoogleSearch    = "google_search"       // accepted Google search tool name
+	toolNameWebSearch2025   = "web_search_20250305" // accepted dated search tool name
 
-	webSearchDefaultMaxResults = 5
-	defaultWebSearchModel      = "claude-sonnet-4-6"
-	webSearchMsgIDPrefix       = "msg_ws_"
-	ToolUseIDPrefix            = "srvtoolu_ws_"
-	tokenEstimateDivisor       = 4
+	// Synthetic search uses a bounded result request, a model fallback and
+	// reserved IDs. Output builders estimate summary tokens for display while
+	// returning zero TokenUsage in the structured execution result.
+	webSearchDefaultMaxResults = 5                   // default external search result limit
+	defaultWebSearchModel      = "claude-sonnet-4-6" // empty-model synthetic response label
+	webSearchMsgIDPrefix       = "msg_ws_"           // synthetic message identifier prefix
+	ToolUseIDPrefix            = "srvtoolu_ws_"      // synthetic tool identifier prefix
+	tokenEstimateDivisor       = 4                   // summary byte-to-token estimate divisor
 
-	// FeatureKey is the key used in Provider.Extra and PricingConfig.FeaturesConfig.
+	// FeatureKey identifies provider mode and pricing feature configuration used
+	// by emulation policy; its callers interpret those two configuration sources.
 	FeatureKey = "web_search_emulation"
 )
 
+// IsOnlyWebSearchToolInBody reports whether tools is an array with exactly one
+// recognized search declaration. Missing, empty, nonarray and multi-tool inputs
+// return false; full JSON validity is checked by the owning request parser.
 func IsOnlyWebSearchToolInBody(body []byte) bool {
 	tools := gjson.GetBytes(body, "tools")
 	if !tools.IsArray() {
@@ -38,6 +53,9 @@ func IsOnlyWebSearchToolInBody(body []byte) bool {
 	return IsWebSearchToolJSON(arr[0])
 }
 
+// IsWebSearchToolJSON recognizes case-sensitive web_search type prefixes, exact
+// google_search type, or supported exact names. A recognized name can qualify
+// independently of type; the caller checks how many tools the request declares.
 func IsWebSearchToolJSON(tool gjson.Result) bool {
 	toolType := tool.Get("type").String()
 	if strings.HasPrefix(toolType, toolTypeWebSearchPrefix) || toolType == toolTypeGoogleSearch {
@@ -50,6 +68,10 @@ func IsWebSearchToolJSON(tool gjson.Result) bool {
 	return false
 }
 
+// ExtractSearchQueryFromBody returns query text from the final exact user-role
+// message. Missing/nonarray or empty messages and a different final role return
+// empty; earlier user messages do not supply a query when the final entry is
+// unsuitable.
 func ExtractSearchQueryFromBody(body []byte) string {
 	messages := gjson.GetBytes(body, "messages")
 	if !messages.IsArray() {
@@ -66,6 +88,9 @@ func ExtractSearchQueryFromBody(body []byte) string {
 	return ExtractWebSearchTextFromContent(lastMsg.Get("content"))
 }
 
+// ExtractWebSearchTextFromContent returns string content or the first nonempty
+// text block in an array. It keeps the supplied text spelling, including
+// whitespace, and returns empty when no supported text representation is found.
 func ExtractWebSearchTextFromContent(content gjson.Result) string {
 	if content.Type == gjson.String {
 		return content.String()
@@ -82,6 +107,9 @@ func ExtractWebSearchTextFromContent(content gjson.Result) string {
 	return ""
 }
 
+// BuildSearchResultBlocks converts ordered search results to web_search_result
+// string maps. Snippet and PageAge fields are omitted when empty, while an
+// empty result slice yields an allocated empty block list.
 func BuildSearchResultBlocks(results []contract.SearchResult) []map[string]string {
 	blocks := make([]map[string]string, 0, len(results))
 	for _, r := range results {
@@ -101,6 +129,10 @@ func BuildSearchResultBlocks(results []contract.SearchResult) []map[string]strin
 	return blocks
 }
 
+// BuildTextSummary formats the query and ordered result titles, URLs and
+// snippets as readable search text. Empty results produce the no-results
+// message; values are inserted as supplied and are not Markdown-escaped by this
+// helper.
 func BuildTextSummary(query string, results []contract.SearchResult) string {
 	if len(results) == 0 {
 		return "No search results found for: " + query

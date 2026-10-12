@@ -9,6 +9,9 @@ import (
 	openaiprotocol "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// TestOpenAIModelMappedBody maps one request to a different upstream model
+// through the OpenAI byte rewriter. The callback runs once, and the returned
+// body changes while the supplied client model remains intact.
 func TestOpenAIModelMappedBody(t *testing.T) {
 	body := []byte(`{"model":"alias","input":"hello"}`)
 	calls := 0
@@ -23,6 +26,10 @@ func TestOpenAIModelMappedBody(t *testing.T) {
 	require.Equal(t, "alias", gjson.GetBytes(body, "model").String())
 }
 
+// TestOpenAIModelMappedBodyCache requests one target twice, another target
+// once, and an unmapped payload. The cache must reuse byte storage for the
+// repeated target, encode each distinct target once, and return the source for
+// the unmapped call.
 func TestOpenAIModelMappedBodyCache(t *testing.T) {
 	body := []byte(`{"model":"alias","input":"hello"}`)
 	calls := 0
