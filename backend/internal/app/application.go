@@ -12,35 +12,68 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
+// Application construction can acquire resources before a later dependency
+// fails. Initialize supplies one lifecycle manager and background-task tracker
+// to the generated graph, registering the log backend before construction
+// begins. Its named error result lets deferred rollback join cleanup failures
+// with the original construction error under a fresh thirty-second budget.
+//
+// Run chooses normal stop after it receives successful lifecycle startup;
+// failure or cancellation while awaiting startup selects rollback. Startup uses a
+// buffered result channel so cancellation can initiate cleanup while the start
+// callback is still returning. HTTP serving has its separate shutdown phase,
+// followed by application cleanup. First-attempt lifecycle results govern
+// later Cleanup calls and can report unfinished callbacks instead of complete
+// resource release.
+
 // BuildInfo carries build metadata from the process entry point to application modules.
 type BuildInfo struct {
-	Version   string
-	BuildType string
+	Version   string // displayed build version
+	BuildType string // release distribution type
 }
 
 // Application owns the HTTP server and the lifecycle of its dependencies.
 type Application struct {
-	Server    *http.Server
-	lifecycle *lifecycle.Manager
+	// Server and lifecycle are assembled before Run. Request tracking registers
+	// Server's shutdown work with lifecycle before startup seals further hook
+	// registration, so both share the constructed application's resource ordering.
+	Server    *http.Server       // application HTTP server
+	lifecycle *lifecycle.Manager // ordered resource lifecycle
 }
 
-// Initialize constructs application dependencies and releases acquired resources on failure. Run starts the
-// workers.
+// Initialize constructs the application graph using cfg, build metadata, and
+// the supplied restarter. Workers start later through Run. A construction
+// error invokes rollback with a separate thirty-second background context and
+// joins its failure with the original error.
+//
+// The manager owns acquired-resource registrations, including the log backend
+// registered before generated construction. Cleanup therefore includes
+// resources acquired before a later constructor fails. The background tracker
+// is shared by graph consumers so their asynchronous effects have an
+// application owner. A rollback timeout remains an incomplete-cleanup error;
+// it does not guarantee every registered callback has finished.
 // @project-doc docs/architecture/system_architecture.md#dependency_layers
 func Initialize(ctx context.Context, cfg *config.Config, buildInfo BuildInfo, restarter *lifecycle.Restarter) (_ *Application, err error) {
 	manager := lifecycle.New(func(name, event string, err error) {
+		// LogBackend has closed the files used by this reporter. Skip its
+		// successful completion message so reporting does not write after file release.
 		if name == "LogBackend" && event == "stopped" {
 			return
 		}
-		// Use the operation result for severity; task names are log data.
+		// Operation errors determine severity. Component names remain log values,
+		// allowing ordinary hook completion and failed cleanup to share this reporter.
 		if err != nil {
 			logging.S().Errorf("[Lifecycle] %s %s err=%v", event, name, err)
 		} else {
 			logging.S().Infof("[Lifecycle] %s %s err=<nil>", event, name)
 		}
 	})
+	// Flush buffered logs before closing owned files at the last cleanup level.
+	// The reporter suppresses this hook's successful completion after file closure.
 	manager.Register(lifecycle.Hook{Name: "LogBackend", StartOrder: -2000, StopOrder: 1000, Stop: func(context.Context) error { logging.Sync(); return logging.CloseFiles() }})
 	tasks := installBackgroundTasks(manager)
+	// Generated construction may fail after acquiring resources. Roll back the
+	// manager registrations with a fresh budget and retain both failure causes.
 	defer func() {
 		if err != nil {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -51,7 +84,10 @@ func Initialize(ctx context.Context, cfg *config.Config, buildInfo BuildInfo, re
 	return initializeApplication(ctx, cfg, buildInfo, manager, restarter, tasks)
 }
 
-// provideApplication registers shutdown hooks for HTTP requests and Ops WebSockets.
+// provideApplication attaches HTTP request tracking and registers Ops
+// WebSocket shutdown using the supplied manager. Its runtimeReady dependency
+// makes Wire resolve prior registrations first. Call before manager startup or
+// shutdown and before HTTP serving.
 func provideApplication(
 	server *http.Server,
 	manager *lifecycle.Manager,
@@ -72,7 +108,10 @@ func provideApplication(
 	return &Application{Server: server, lifecycle: manager}
 }
 
-// installBackgroundTasks registers the task tracker shared by application modules.
+// installBackgroundTasks constructs the tracker shared by application effects
+// and registers final Stop at its chosen lifecycle level. Call before manager
+// startup or shutdown; earlier reusable barriers leave task admission
+// available for later producers.
 func installBackgroundTasks(manager *lifecycle.Manager) *lifecycle.Tasks {
 	tasks := lifecycle.NewTasks()
 	manager.Register(lifecycle.Hook{
@@ -84,10 +123,23 @@ func installBackgroundTasks(manager *lifecycle.Manager) *lifecycle.Tasks {
 	return tasks
 }
 
-// Run starts background tasks before serving HTTP and bounds resource cleanup before returning.
+// Run starts registered lifecycle hooks, then serves the application HTTP
+// server after startup succeeds. A startup failure or cancellation before
+// success returns its cause and selects rollback; normal serving completion
+// selects ordered Stop.
+//
+// Startup publishes one result through a buffered channel, allowing
+// cancellation to leave that receive path while cleanup waits on the lifecycle
+// startup signal. The deferred cleanup uses a fresh thirty-second context
+// independent of ctx and joins its error into the named result. HTTP shutdown
+// is handled separately by lifecycle.Serve. The started flag reflects the
+// selected startup result, so cancellation racing successful startup can still
+// choose rollback.
 // @project-doc docs/architecture/system_architecture.md#startup_and_shutdown
 func (a *Application) Run(ctx context.Context) (err error) {
 	started := false
+	// Cleanup runs even when startup or serving fails. Use a fresh context so
+	// application cancellation does not skip the selected drain or rollback phase.
 	defer func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -97,6 +149,8 @@ func (a *Application) Run(ctx context.Context) (err error) {
 			err = errors.Join(err, a.lifecycle.Rollback(cleanupCtx))
 		}
 	}()
+	// Cancellation can leave the startup receive path before Start returns.
+	// Buffer its one result so that goroutine can finish publishing without this receiver.
 	result := make(chan error, 1)
 	go func() { result <- a.lifecycle.Start(ctx) }()
 	select {
@@ -111,5 +165,8 @@ func (a *Application) Run(ctx context.Context) (err error) {
 	return lifecycle.Serve(ctx, a.Server)
 }
 
-// Cleanup releases resources for applications that have not run and for external tests.
+// Cleanup requests the lifecycle manager's normal stop for constructed
+// applications and external fixtures. It reuses any prior Stop or Rollback
+// attempt, including that attempt's context and result; its own ctx controls
+// only a first cleanup attempt.
 func (a *Application) Cleanup(ctx context.Context) error { return a.lifecycle.Stop(ctx) }

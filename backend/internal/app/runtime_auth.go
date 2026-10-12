@@ -11,8 +11,22 @@ import (
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 )
 
+// Authentication caches and platform authorization maintenance start before
+// HTTP serving and stop before shared storage. Qoder credential builds have an
+// earlier stop phase than authorization-store maintenance, letting managed
+// session work finish before completion queues and connection resources are
+// closed.
+
+// authRuntimeReady marks registration of authentication, authorization, and
+// TLS subscription lifecycle hooks.
 type authRuntimeReady struct{}
 
+// provideAuthRuntime registers authentication caches, authorization
+// maintenance, TLS subscriptions, and credential-session cleanup. Call before
+// manager startup or shutdown. Most callbacks skip service calls when their
+// dependency is nil; all hooks remain registered. Qoder credential and
+// error-rule callbacks are bound directly and retain
+// their implementations' nil and stop behavior.
 func provideAuthRuntime(
 	apiKeyService *apikey.APIKeyService,
 	errorPassthrough *errorpolicy.ErrorPassthroughService,
@@ -84,7 +98,9 @@ func provideAuthRuntime(
 		}
 		return nil
 	}})
-	// Cancel and wait for credential builds after producers stop, before completion queues and shared connections close.
+	// Credential builds are managed operations started on demand. Cancel and
+	// wait for them after earlier request barriers and before completion consumers
+	// or shared connections enter their stop phases.
 	manager.Register(lifecycle.Hook{Name: "QoderCredentialSessions", StopOrder: 30, Stop: qoderTokens.StopContext})
 	manager.Register(lifecycle.Hook{Name: "QoderOAuthService", StartOrder: 190, StopOrder: 810, Start: func(ctx context.Context) error {
 		if qoderOAuth != nil {

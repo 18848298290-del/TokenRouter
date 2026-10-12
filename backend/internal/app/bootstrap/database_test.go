@@ -12,13 +12,22 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/postgres"
 )
 
+// Database pool age settings need normalization before they become SQL
+// durations. Fixtures compare zero, negative, accepted, and over-limit minute
+// values, then inspect a constructed pool to check that its configured
+// open-connection maximum reaches database/sql.
+
+// TestPostgresPoolOptionsResolveSettings passes several minute-based age
+// settings through bootstrap options and PostgreSQL normalization. Each case
+// must retain connection counts and resolve the expected lifetime and idle-age
+// durations.
 func TestPostgresPoolOptionsResolveSettings(t *testing.T) {
 	tests := []struct {
-		name                string
-		connMaxLifetime     int
-		connMaxIdleTime     int
-		wantMaxLifetime     time.Duration
-		wantConnMaxIdleTime time.Duration
+		name                string        // displayed age-setting case
+		connMaxLifetime     int           // configured lifetime minutes
+		connMaxIdleTime     int           // configured idle minutes
+		wantMaxLifetime     time.Duration // expected connection lifetime
+		wantConnMaxIdleTime time.Duration // expected connection idle age
 	}{
 		{
 			name:                "zero values fall back to safe defaults",
@@ -41,6 +50,7 @@ func TestPostgresPoolOptionsResolveSettings(t *testing.T) {
 			wantMaxLifetime:     15 * time.Minute,
 			wantConnMaxIdleTime: 3 * time.Minute,
 		},
+		// One minute beyond twenty-four hours triggers the pool normalizer's defaults.
 		{
 			name:                "values over twenty four hours fall back to safe defaults",
 			connMaxLifetime:     24*60 + 1,
@@ -70,6 +80,9 @@ func TestPostgresPoolOptionsResolveSettings(t *testing.T) {
 	}
 }
 
+// TestApplyDBPoolSettings constructs a SQL pool and applies bootstrap
+// connection settings. The pool statistics must expose the configured maximum
+// open-connection count after the configuration helper runs.
 func TestApplyDBPoolSettings(t *testing.T) {
 	cfg := &config.Config{
 		Database: config.DatabaseConfig{
@@ -82,6 +95,8 @@ func TestApplyDBPoolSettings(t *testing.T) {
 
 	db, err := sql.Open("postgres", "host=127.0.0.1 port=5432 user=postgres sslmode=disable")
 	require.NoError(t, err)
+	// The fixture owns this unopened SQL pool. Attempt closure at cleanup and
+	// discard its close result after inspecting the applied pool configuration.
 	t.Cleanup(func() {
 		_ = db.Close()
 	})

@@ -14,8 +14,22 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site"
 )
 
+// Provider refresh, expiry scans, availability probes, and admission cleanup
+// run as periodic producers. Their hooks share stop level 20 after request
+// draining, while configured concurrency-slot and user-message cleanup
+// intervals are passed to their own worker start methods.
+
+// maintenanceRuntimeReady marks registration of periodic provider, expiry,
+// probe, and admission maintenance.
 type maintenanceRuntimeReady struct{}
 
+// provideMaintenanceRuntime registers periodic producer hooks and admission
+// cleanup workers before manager startup or shutdown. Hooks remain registered
+// for nil services; callbacks skip those service calls. Configured intervals
+// are read when their start callbacks run. Each
+// component retains its own Start/StopContext behavior, including callbacks
+// that use context-free Stop. Supply cfg when concurrency or messageQueue is
+// present because those callbacks read its configured cleanup intervals.
 func provideMaintenanceRuntime(
 	tokenRefresh *provider.BackgroundRefreshService,
 	providerExpiry *provider.ExpiryService,
@@ -121,6 +135,8 @@ func provideMaintenanceRuntime(
 	}})
 	manager.Register(lifecycle.Hook{Name: "UserMessageQueueService", StartOrder: 980, StopOrder: 20, Start: func(ctx context.Context) error {
 		if messageQueue != nil {
+			// The message-queue worker accepts a duration, while its deployment field
+			// stores seconds; use that unit for the lifecycle-start interval.
 			messageQueue.StartCleanupWorker(time.Duration(cfg.Gateway.UserMessageQueue.CleanupIntervalSeconds) * time.Second)
 		}
 		return nil

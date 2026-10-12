@@ -18,27 +18,42 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/app/bootstrap"
 )
 
+// PostgreSQL integration fixtures share one pool between direct SQL and Ent
+// access. A container-backed fixture applies the embedded migrations before
+// exposing that pool, while constructor aliases let external integration
+// packages use the application bindings under the integration build tag.
+
 var (
-	// NewProviderTestsForTest exposes the application's provider test constructor to integration tests.
+	// NewProviderTestsForTest exposes provider probe construction with application
+	// dependencies for integration packages that exercise the assembled test service.
 	NewProviderTestsForTest = provideProviderTests
 
-	// Health integration tests use the application constructor.
+	// These health aliases expose the application's runtime and upstream-health
+	// constructors so integration consumers resolve the production observation bindings.
 	NewProviderHealthRuntimeForTest = provideProviderHealthRuntime
 	NewUpstreamHealthForTest        = provideUpstreamHealth
 
-	// NewProviderStoreForTest binds provider store configuration and event writes for integration tests.
+	// NewProviderStoreForTest exposes application store configuration and event-write
+	// construction to integration packages that need the assembled provider persistence.
 	NewProviderStoreForTest = provideProviderStore
 )
 
+// databaseFixture exposes one migrated PostgreSQL container through SQL and Ent.
 type databaseFixture struct {
-	db     *sql.DB
-	client *dbent.Client
-	dsn    string
-	host   string
-	port   int
+	// db and client share the same pool through Ent's SQL driver. Test cleanup
+	// closes the client before terminating the container; callers keep the fixture
+	// available until their database operations finish.
+	db     *sql.DB       // direct fixture queries
+	client *dbent.Client // fixture entity operations
+	dsn    string        // fixture connection string
+	host   string        // mapped container hostname
+	port   int           // mapped PostgreSQL port
 }
 
-// newDatabaseFixture constructs the test database.
+// newDatabaseFixture starts a PostgreSQL container, opens its shared SQL/Ent
+// pool, and applies migrations within a two-minute setup context. Failures
+// stop the test. Test cleanup closes Ent before terminating the container, so
+// callers need no separate pool owner.
 func newDatabaseFixture(t *testing.T) *databaseFixture {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -50,9 +65,12 @@ func newDatabaseFixture(t *testing.T) *databaseFixture {
 	require.NoError(t, err)
 	db, err := sql.Open("postgres", dsn)
 	require.NoError(t, err)
+	// Bound fixture connections while Ent and SQL consumers share this pool.
 	db.SetMaxOpenConns(16)
 	client := dbent.NewClient(dbent.Driver(entsql.OpenDB(dialect.Postgres, db)))
 	t.Cleanup(func() { require.NoError(t, client.Close()) })
+	// Apply the production schema before returning fixture access so downstream
+	// constructors and direct SQL assertions operate on the migrated database.
 	require.NoError(t, bootstrap.ApplyMigrations(ctx, db))
 	host, err := pg.Host(ctx)
 	require.NoError(t, err)

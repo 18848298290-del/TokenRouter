@@ -12,8 +12,21 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
+// Completion recording, billing-cache updates, moderation, deferred writes,
+// email, and audit each have distinct stop levels. This keeps request-produced
+// side effects ahead of the queues or stores they use; quota-operation
+// shutdown is registered separately from those background consumer loops.
+
+// queuesRuntimeReady marks registration of asynchronous consumers and platform
+// quota-operation shutdown.
 type queuesRuntimeReady struct{}
 
+// provideQueuesRuntime registers queue consumers and quota stop callbacks
+// before manager startup or shutdown. All hooks remain registered; optional
+// background callbacks skip nil services, while quota callbacks are bound
+// directly. Stop ordering separates
+// completion, moderation, cache, deferred, email, and audit work while their
+// implementations determine drain outcomes.
 func provideQueuesRuntime(
 	emailQueue *notification.EmailQueueService,
 	billingCache *billing.Eligibility,
@@ -107,7 +120,9 @@ func provideQueuesRuntime(
 		return nil
 	}})
 	manager.Register(lifecycle.Hook{Name: "GrokQuotaProbes", StopOrder: 25, Stop: grokQuota.StopContext})
-	// Cancel and wait for admin queries and platform quota operations before shared dependencies close.
+	// Administrative and platform quota calls can retain shared dependencies
+	// after request work ends. Cancel and wait for those operations before later
+	// consumers and shared storage enter their own stop phases.
 	manager.Register(lifecycle.Hook{Name: "OpenAIQuotaService", StopOrder: 35, Stop: openaiQuota.StopContext})
 	return &queuesRuntimeReady{}
 }
