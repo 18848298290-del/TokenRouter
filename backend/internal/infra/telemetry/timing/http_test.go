@@ -9,25 +9,42 @@ import (
 	"time"
 )
 
+// HTTP timing tests use callbacks returning controlled responses so
+// instrumentation can be checked without remote requests. The body tracks
+// whether it was read, context labels protect hostname privacy, and
+// pointer/type assertions establish shallow client copying and wrapper reuse.
+
+// roundTripFunc adapts a test-owned callback to the outbound HTTP transport surface.
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
+// trackingBody records whether response instrumentation attempted a body read.
 type trackingBody struct {
-	read bool
+	read bool // body read was attempted
 }
 
+// RoundTrip delegates the test request to its configured fixture callback.
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
+// Read marks the fixture body as accessed and immediately returns EOF with no
+// bytes. Tests inspect the flag after response-header instrumentation to
+// detect an unwanted attempt to consume the body.
 func (b *trackingBody) Read(_ []byte) (int, error) {
 	b.read = true
 	return 0, io.EOF
 }
 
+// Close completes fixture body cleanup successfully without changing its read
+// flag.
 func (b *trackingBody) Close() error {
 	return nil
 }
 
+// TestWrapRoundTripperRecordsResponseHeaderLatency returns a body that
+// records attempted reads from a fake transport. It requires dependency
+// metrics, delegation, and an unread body when the timing wrapper returns
+// response headers.
 func TestWrapRoundTripperRecordsResponseHeaderLatency(t *testing.T) {
 	startedAt := time.Now()
 	collector := New(startedAt)
@@ -66,6 +83,9 @@ func TestWrapRoundTripperRecordsResponseHeaderLatency(t *testing.T) {
 	}
 }
 
+// TestWrapRoundTripperUsesContextModuleOverride supplies a context module for
+// a private-host request. It requires the sanitized override metric and
+// absence of the raw hostname in the header text.
 func TestWrapRoundTripperUsesContextModuleOverride(t *testing.T) {
 	collector := New(time.Now())
 	ctx := WithDependencyModule(WithCollector(context.Background(), collector), "data-managementd")
@@ -89,6 +109,9 @@ func TestWrapRoundTripperUsesContextModuleOverride(t *testing.T) {
 	}
 }
 
+// TestWrapRoundTripperSkipsInactiveContext sends a request with no collector
+// through the wrapper. It requires the supplied base callback to run
+// normally, protecting HTTP execution when timing is inactive.
 func TestWrapRoundTripperSkipsInactiveContext(t *testing.T) {
 	called := false
 	base := roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -107,6 +130,9 @@ func TestWrapRoundTripperSkipsInactiveContext(t *testing.T) {
 	}
 }
 
+// TestDoRecordsWithoutChangingTransportType invokes Do around a client with a
+// callback transport. It requires the original concrete transport type and an
+// OpenAI dependency metric after the response returns.
 func TestDoRecordsWithoutChangingTransportType(t *testing.T) {
 	base := roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Header: make(http.Header), Request: req}, nil
@@ -128,6 +154,10 @@ func TestDoRecordsWithoutChangingTransportType(t *testing.T) {
 	}
 }
 
+// TestDependencyModuleClassification supplies representative service
+// hostnames and an unknown host in request URLs. It requires the
+// corresponding fixed dependency labels, protecting the ordered hostname
+// classification used for timing metrics.
 func TestDependencyModuleClassification(t *testing.T) {
 	tests := map[string]string{
 		"https://api.github.com/repos/a/b":                    "github",
@@ -151,6 +181,10 @@ func TestDependencyModuleClassification(t *testing.T) {
 	}
 }
 
+// TestClientInstrumentationDoesNotMutateOriginal instruments a client with a
+// fixed timeout and callback transport. It requires a distinct client,
+// retained original transport type and timeout, and reuse of an already
+// installed timing wrapper.
 func TestClientInstrumentationDoesNotMutateOriginal(t *testing.T) {
 	base := roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Header: make(http.Header), Request: req}, nil

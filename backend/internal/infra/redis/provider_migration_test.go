@@ -10,7 +10,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestProviderMigrationPreservesStateAndTTL checks values, types, TTLs, and unrelated keys.
+// Provider migration fixtures combine string and sorted-set state with expiry
+// and unrelated namespaces. Collision recovery checks that completed earlier
+// prefix work survives and conflicting values remain until a caller removes
+// the target, after which retry migrates the retained source.
+
+// TestProviderMigrationPreservesStateAndTTL supplies expiring string and
+// sorted-set account keys alongside unrelated state. It requires renamed
+// values, scores, and TTLs, retained unrelated keys, the removed string source, and a
+// successful repeated migration.
 func TestProviderMigrationPreservesStateAndTTL(t *testing.T) {
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
@@ -32,8 +40,10 @@ func TestProviderMigrationPreservesStateAndTTL(t *testing.T) {
 	require.NoError(t, MigrateProviderNames(ctx, client))
 }
 
-// TestProviderMigrationResumesWithoutOverwritingConflict checks that both conflicting values
-// survive and completed batches remain valid when the migration resumes.
+// TestProviderMigrationResumesWithoutOverwritingConflict creates a target
+// collision after an earlier prefix can migrate. It requires both conflicting
+// values and the earlier renamed value to survive, then verifies retry and retained
+// expiry after target removal.
 func TestProviderMigrationResumesWithoutOverwritingConflict(t *testing.T) {
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})

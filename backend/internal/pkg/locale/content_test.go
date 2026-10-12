@@ -42,7 +42,10 @@ func TestContentReview(t *testing.T) {
 // supported language or the normalized fallback and default.
 func TestLanguageNegotiation(t *testing.T) {
 	for _, tc := range []struct {
-		header, fallback, want string // requested header, configured fallback, expected locale
+		// header is the supplied Accept-Language text.
+		// fallback is the supplied default-language preference.
+		// want is the expected canonical locale asserted after negotiation.
+		header, fallback, want string
 	}{
 		{"zh", "en", "zh-Hans"},
 		{"en-US;q=0.2,zh-CN;q=0.9", "en", "zh-Hans"},
@@ -92,8 +95,9 @@ func TestTranslationDeletionRequiresOperation(t *testing.T) {
 }
 
 // TestClientCannotForgeReview supplies fabricated source revision numbers with
-// a new unreviewed translation. Preparation must ignore those client versions,
-// and resolution must return the source as a fallback.
+// a new unreviewed translation. Resolution must return the source as a
+// fallback after that submission, keeping the submitted translation from
+// appearing as reviewed content.
 func TestClientCannotForgeReview(t *testing.T) {
 	en := "en"
 	current := Content[string]{SourceLocale: &en, Source: "Source", Revision: 2, SourceRevision: 2}

@@ -10,6 +10,15 @@ import (
 	"testing"
 )
 
+// Logger fixtures replace process stdout and stderr serially, routing
+// accepted messages into pipes and optional temporary files. They close pipe
+// writers before reading so reads can reach EOF, then inspect severity
+// routing, legacy markers, component attributes, and caller metadata rather
+// than flushing a still-open pipe.
+
+// TestInit_DualOutput initializes JSON logging with standard streams and a
+// temporary rotating file. It requires info on stdout, warning on stderr, and
+// both messages in the file after closing captured pipe writers.
 func TestInit_DualOutput(t *testing.T) {
 	// Use best-effort directory cleanup because lumberjack may retain an open handle on Windows.
 	tmpDir, err := os.MkdirTemp("", "logger-test-*")
@@ -21,6 +30,9 @@ func TestInit_DualOutput(t *testing.T) {
 	})
 	logPath := filepath.Join(tmpDir, "logs", "tokenrouter.log")
 
+	// This serial fixture owns the process stream replacement until cleanup
+	// restores stdout and stderr. Its logger core retains the pipe writer
+	// selected during Init.
 	origStdout := os.Stdout
 	origStderr := os.Stderr
 	stdoutR, stdoutW, err := os.Pipe()
@@ -66,7 +78,9 @@ func TestInit_DualOutput(t *testing.T) {
 	L().Info("dual-output-info")
 	L().Warn("dual-output-warn")
 
-	// Close the pipe writers before reading; Sync can block in Windows FlushFileBuffers.
+	// Close both pipe writers so captured reads can reach EOF. The logger keeps
+	// the handles selected during Init, and Windows Sync can wait inside
+	// FlushFileBuffers until a pipe consumer reads its buffered bytes.
 
 	_ = stdoutW.Close()
 	_ = stderrW.Close()
@@ -92,7 +106,14 @@ func TestInit_DualOutput(t *testing.T) {
 	}
 }
 
+// TestInit_FileOutputFailureDowngrade uses an impossible directory beneath
+// os.DevNull for file output. It requires successful logger initialization
+// and a direct stderr setup warning, protecting availability when the file
+// core cannot be built.
 func TestInit_FileOutputFailureDowngrade(t *testing.T) {
+	// This serial fixture owns the process stream replacement until cleanup
+	// restores stdout and stderr. Its logger core retains the pipe writer
+	// selected during Init.
 	origStdout := os.Stdout
 	origStderr := os.Stderr
 	_, stdoutW, err := os.Pipe()
@@ -131,6 +152,9 @@ func TestInit_FileOutputFailureDowngrade(t *testing.T) {
 		t.Fatalf("Init() should downgrade instead of failing, got: %v", err)
 	}
 
+	// Finish the captured stderr stream before reading its setup warning, so
+	// the assertion can reach EOF even while the process logger still retains
+	// its selected output handle.
 	_ = stderrW.Close()
 	stderrBytes, _ := io.ReadAll(stderrR)
 	if !strings.Contains(string(stderrBytes), "日志文件输出初始化失败") {
@@ -138,7 +162,13 @@ func TestInit_FileOutputFailureDowngrade(t *testing.T) {
 	}
 }
 
+// TestInit_CallerShouldPointToCallsite writes one JSON entry with caller
+// metadata enabled. It requires the logged caller to reference this test file
+// after captured stdout is closed and decoded.
 func TestInit_CallerShouldPointToCallsite(t *testing.T) {
+	// This serial fixture owns the process stream replacement until cleanup
+	// restores stdout and stderr. Its logger core retains the pipe writer
+	// selected during Init.
 	origStdout := os.Stdout
 	origStderr := os.Stderr
 	stdoutR, stdoutW, err := os.Pipe()
@@ -175,7 +205,9 @@ func TestInit_CallerShouldPointToCallsite(t *testing.T) {
 	}
 
 	L().Info("caller-check")
-	// Close the pipe writer before reading; Sync can block in Windows FlushFileBuffers.
+	// Close the captured writer so its reader can reach EOF. Windows Sync can
+	// wait inside FlushFileBuffers for a pipe consumer, so the assertions inspect
+	// completed writes after closing the captured handle.
 	os.Stdout = origStdout
 	os.Stderr = origStderr
 	_ = stdoutW.Close()
@@ -202,7 +234,9 @@ func TestInit_CallerShouldPointToCallsite(t *testing.T) {
 	}
 }
 
-// TestLegacyPrintfCaller checks that caller metadata identifies the logging call site.
+// TestLegacyPrintfCaller writes a compatibility message to a temporary JSON
+// log with caller capture enabled. It requires the stored caller text to
+// identify this test file after a synchronization attempt.
 func TestLegacyPrintfCaller(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "caller.json")
 	err := Init(InitOptions{
@@ -225,10 +259,14 @@ func TestLegacyPrintfCaller(t *testing.T) {
 	}
 }
 
+// TestInferStdLogLevel supplies ordinary, debug-prefixed, warning, failure,
+// and retry messages to severity inference. It requires the selected zap
+// levels, including info for a reconnect log containing numeric retry
+// metadata.
 func TestInferStdLogLevel(t *testing.T) {
 	cases := []struct {
-		msg  string
-		want Level
+		msg  string // supplied legacy message text
+		want Level  // expected inferred zap severity
 	}{
 		{msg: "Warning: queue full", want: LevelWarn},
 		{msg: "Forward request failed: timeout", want: LevelError},
@@ -246,6 +284,10 @@ func TestInferStdLogLevel(t *testing.T) {
 	}
 }
 
+// TestNormalizeStdLogMessage supplies multiline legacy text with repeated
+// surrounding and internal whitespace. It requires one trimmed line with
+// single separators, protecting the message spelling used by compatibility
+// logging.
 func TestNormalizeStdLogMessage(t *testing.T) {
 	raw := "  [TokenRefresh]  cycle complete \n total=1   failed=0 \n"
 	got := normalizeStdLogMessage(raw)
@@ -255,7 +297,14 @@ func TestNormalizeStdLogMessage(t *testing.T) {
 	}
 }
 
+// TestStdLogBridgeRoutesLevels sends ordinary, warning, and failed
+// standard-log messages after Init. It requires severity-specific captured
+// streams and the legacy_stdlog marker on warning/error output after pipe
+// writers close.
 func TestStdLogBridgeRoutesLevels(t *testing.T) {
+	// This serial fixture owns the process stream replacement until cleanup
+	// restores stdout and stderr. Its logger core retains the pipe writer
+	// selected during Init.
 	origStdout := os.Stdout
 	origStderr := os.Stderr
 	stdoutR, stdoutW, err := os.Pipe()
@@ -294,7 +343,9 @@ func TestStdLogBridgeRoutesLevels(t *testing.T) {
 	log.Printf("service started")
 	log.Printf("Warning: queue full")
 	log.Printf("Forward request failed: timeout")
-	// Close the pipe writers before reading; Sync can block in Windows FlushFileBuffers.
+	// Close both pipe writers so captured reads can reach EOF. The logger keeps
+	// the handles selected during Init, and Windows Sync can wait inside
+	// FlushFileBuffers until a pipe consumer reads its buffered bytes.
 
 	_ = stdoutW.Close()
 	_ = stderrW.Close()
@@ -317,7 +368,14 @@ func TestStdLogBridgeRoutesLevels(t *testing.T) {
 	}
 }
 
+// TestLegacyPrintfRoutesLevels sends ordinary, warning, and failed printf
+// messages through one component label. It requires severity routing,
+// legacy_printf markers, and that component attribute in captured
+// warning/error output.
 func TestLegacyPrintfRoutesLevels(t *testing.T) {
+	// This serial fixture owns the process stream replacement until cleanup
+	// restores stdout and stderr. Its logger core retains the pipe writer
+	// selected during Init.
 	origStdout := os.Stdout
 	origStderr := os.Stderr
 	stdoutR, stdoutW, err := os.Pipe()
@@ -356,7 +414,9 @@ func TestLegacyPrintfRoutesLevels(t *testing.T) {
 	LegacyPrintf("service.test", "request started")
 	LegacyPrintf("service.test", "Warning: queue full")
 	LegacyPrintf("service.test", "forward failed: timeout")
-	// Close the pipe writers before reading; Sync can block in Windows FlushFileBuffers.
+	// Close both pipe writers so captured reads can reach EOF. The logger keeps
+	// the handles selected during Init, and Windows Sync can wait inside
+	// FlushFileBuffers until a pipe consumer reads its buffered bytes.
 
 	_ = stdoutW.Close()
 	_ = stderrW.Close()

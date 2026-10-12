@@ -7,6 +7,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Proxy parsing fixtures distinguish direct blank input, accepted authority
+// and credentials, the SOCKS alias, and invalid URL forms. Password checks
+// cover the missing-host diagnostic separately from credential retention on
+// valid URLs; these tests make no network or authentication requests.
+
+// TestParse_空字符串直连 supplies empty proxy text to Parse. It requires no error,
+// empty normalized text, and a nil parsed URL, protecting the direct-access
+// result for absent configuration.
 func TestParse_空字符串直连(t *testing.T) {
 	trimmed, parsed, err := Parse("")
 	if err != nil {
@@ -20,6 +28,9 @@ func TestParse_空字符串直连(t *testing.T) {
 	}
 }
 
+// TestParse_空白字符串直连 supplies whitespace-only proxy text to Parse. It requires
+// the same empty and nil result as absent configuration, protecting trimming
+// before direct-access selection.
 func TestParse_空白字符串直连(t *testing.T) {
 	trimmed, parsed, err := Parse("   ")
 	if err != nil {
@@ -33,6 +44,9 @@ func TestParse_空白字符串直连(t *testing.T) {
 	}
 }
 
+// TestParse_有效HTTP代理 supplies a valid HTTP authority with an explicit port.
+// It requires successful parsing, exact returned text, and the same host
+// authority on the parsed URL.
 func TestParse_有效HTTP代理(t *testing.T) {
 	trimmed, parsed, err := Parse("http://proxy.example.com:8080")
 	if err != nil {
@@ -47,6 +61,9 @@ func TestParse_有效HTTP代理(t *testing.T) {
 	}
 }
 
+// TestParse_有效HTTPS代理 supplies a valid HTTPS authority with its port. It
+// requires successful parsing and the retained HTTPS scheme, protecting
+// acceptance of encrypted proxy transport selection.
 func TestParse_有效HTTPS代理(t *testing.T) {
 	_, parsed, err := Parse("https://proxy.example.com:443")
 	if err != nil {
@@ -57,6 +74,9 @@ func TestParse_有效HTTPS代理(t *testing.T) {
 	}
 }
 
+// TestParse_有效SOCKS5代理_自动升级为SOCKS5H supplies the SOCKS5 alias to Parse. It
+// requires both returned text and parsed scheme to use SOCKS5H, protecting
+// alias conversion for routing consumers.
 func TestParse_有效SOCKS5代理_自动升级为SOCKS5H(t *testing.T) {
 	trimmed, parsed, err := Parse("socks5://127.0.0.1:1080")
 	if err != nil {
@@ -71,6 +91,9 @@ func TestParse_有效SOCKS5代理_自动升级为SOCKS5H(t *testing.T) {
 	}
 }
 
+// TestParse_无效URL supplies malformed URL syntax to Parse. It requires a
+// returned error containing the invalid-proxy diagnostic, protecting parser
+// failure before any routing value is accepted.
 func TestParse_无效URL(t *testing.T) {
 	_, _, err := Parse("://invalid")
 	if err == nil {
@@ -81,6 +104,9 @@ func TestParse_无效URL(t *testing.T) {
 	}
 }
 
+// TestParse_缺少Host supplies HTTP proxy text with no authority host. It
+// requires an error identifying missing host, protecting rejection of
+// configuration that cannot identify a proxy server.
 func TestParse_缺少Host(t *testing.T) {
 	_, _, err := Parse("http://")
 	if err == nil {
@@ -91,6 +117,9 @@ func TestParse_缺少Host(t *testing.T) {
 	}
 }
 
+// TestParse_不支持的Scheme supplies an FTP proxy URL with an otherwise present
+// authority. It requires an unsupported-scheme diagnostic, protecting the
+// supported proxy protocol allowlist.
 func TestParse_不支持的Scheme(t *testing.T) {
 	_, _, err := Parse("ftp://proxy.example.com:21")
 	if err == nil {
@@ -101,6 +130,9 @@ func TestParse_不支持的Scheme(t *testing.T) {
 	}
 }
 
+// TestParse_含密码URL脱敏 supplies valid SOCKS credentials and a separate
+// missing-host URL carrying a password. It requires userinfo retention on
+// valid normalization and password omission from the missing-host error.
 func TestParse_含密码URL脱敏(t *testing.T) {
 	// Normalization must retain credentials on a valid SOCKS URL.
 	trimmed, parsed, err := Parse("socks5://user:secret_password@proxy.local:1080")
@@ -133,6 +165,9 @@ func TestParse_含密码URL脱敏(t *testing.T) {
 	}
 }
 
+// TestParse_带空白的有效URL supplies a valid HTTP proxy surrounded by spaces. It
+// requires trimmed returned text and a non-nil parsed URL, protecting
+// construction from harmless surrounding whitespace.
 func TestParse_带空白的有效URL(t *testing.T) {
 	trimmed, parsed, err := Parse("  http://proxy.example.com:8080  ")
 	if err != nil {
@@ -146,6 +181,9 @@ func TestParse_带空白的有效URL(t *testing.T) {
 	}
 }
 
+// TestParse_Scheme大小写不敏感 supplies uppercase SOCKS5 and HTTP spellings through
+// URL parsing. It requires SOCKS5H normalized text and acceptance of HTTP,
+// protecting the supported mixed-case input examples.
 func TestParse_Scheme大小写不敏感(t *testing.T) {
 	// Uppercase SOCKS5 also normalizes to SOCKS5H.
 	trimmed, parsed, err := Parse("SOCKS5://proxy.example.com:1080")
@@ -166,6 +204,9 @@ func TestParse_Scheme大小写不敏感(t *testing.T) {
 	}
 }
 
+// TestParse_带认证的有效代理 supplies HTTP userinfo with username and password. It
+// requires a parsed userinfo value and exact returned URL text, protecting
+// credential retention for the routing consumer.
 func TestParse_带认证的有效代理(t *testing.T) {
 	trimmed, parsed, err := Parse("http://user:pass@proxy.example.com:8080")
 	if err != nil {
@@ -179,6 +220,9 @@ func TestParse_带认证的有效代理(t *testing.T) {
 	}
 }
 
+// TestParse_IPv6地址 supplies a bracketed IPv6 HTTP authority with an explicit
+// port. It requires the IPv6 hostname and retained returned spelling,
+// protecting accepted authority parsing before pool normalization.
 func TestParse_IPv6地址(t *testing.T) {
 	trimmed, parsed, err := Parse("http://[::1]:8080")
 	if err != nil {
@@ -192,6 +236,9 @@ func TestParse_IPv6地址(t *testing.T) {
 	}
 }
 
+// TestParse_SOCKS5H保持不变 supplies an already normalized SOCKS5H URL. It
+// requires identical returned text and scheme, protecting acceptance without
+// another alias transformation of that scheme.
 func TestParse_SOCKS5H保持不变(t *testing.T) {
 	trimmed, parsed, err := Parse("socks5h://proxy.local:1080")
 	if err != nil {
@@ -206,6 +253,9 @@ func TestParse_SOCKS5H保持不变(t *testing.T) {
 	}
 }
 
+// TestParse_无Scheme裸地址 supplies a bare host-and-port string with no URL
+// authority syntax. It requires an error, protecting callers from treating an
+// unqualified address as an accepted proxy URL.
 func TestParse_无Scheme裸地址(t *testing.T) {
 	// A bare address lacks URL authority, so Host is empty.
 	_, _, err := Parse("proxy.example.com:8080")

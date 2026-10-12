@@ -10,27 +10,44 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+// The slog adapter is checked with a capture core retaining accepted zap
+// fields in serial test-owned storage. It observes a component attribute and
+// rejects an extra time field, demonstrating that zap's entry metadata
+// remains separate from slog.Record attributes.
+
+// captureState retains accepted fixture writes for a serial assertion pass.
 type captureState struct {
-	writes []capturedWrite
+	writes []capturedWrite // serially appended accepted entries
 }
 
+// capturedWrite stores one accepted fixture entry's copied field slice.
 type capturedWrite struct {
-	fields []zapcore.Field
+	fields []zapcore.Field // captured bound and entry fields
 }
 
+// captureCore shares serial write state while deriving independently extended bound fields.
 type captureCore struct {
+	// state remains shared across With-derived cores; the fixture's callers
+	// serialize Write and inspection because this shared slice has no mutex.
 	state      *captureState
-	withFields []zapcore.Field
+	withFields []zapcore.Field // fixture-bound structured entry fields
 }
 
+// newCaptureCore constructs an empty serial capture core with shared write
+// state.
 func newCaptureCore() *captureCore {
 	return &captureCore{state: &captureState{}}
 }
 
+// Enabled accepts every severity so this fixture can observe all checked
+// records.
 func (c *captureCore) Enabled(zapcore.Level) bool {
 	return true
 }
 
+// With derives a fixture core with copied bound-field slice storage and
+// shared write state. Callers use the fixture serially; writes from all
+// derived cores append to that same unsynchronized state.
 func (c *captureCore) With(fields []zapcore.Field) zapcore.Core {
 	nextFields := make([]zapcore.Field, 0, len(c.withFields)+len(fields))
 	nextFields = append(nextFields, c.withFields...)
@@ -41,10 +58,16 @@ func (c *captureCore) With(fields []zapcore.Field) zapcore.Core {
 	}
 }
 
+// Check registers this fixture core so zap executes its accepted record
+// writes.
 func (c *captureCore) Check(entry zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.CheckedEntry {
 	return ce.AddCore(entry, c)
 }
 
+// Write copies bound and entry field slices into one retained fixture
+// observation. It appends to serial test-owned state and returns success;
+// mutable values inside captured fields remain shared with their supplied
+// values.
 func (c *captureCore) Write(entry zapcore.Entry, fields []zapcore.Field) error {
 	allFields := make([]zapcore.Field, 0, len(c.withFields)+len(fields))
 	allFields = append(allFields, c.withFields...)
@@ -55,10 +78,16 @@ func (c *captureCore) Write(entry zapcore.Entry, fields []zapcore.Field) error {
 	return nil
 }
 
+// Sync reports successful fixture synchronization because captured writes use
+// memory only.
 func (c *captureCore) Sync() error {
 	return nil
 }
 
+// TestSlogZapHandler_Handle_DoesNotAppendTimeField handles a record
+// containing a component attribute and supplied event time. It requires one
+// captured write with that component and no extra time attribute from the
+// adapter.
 func TestSlogZapHandler_Handle_DoesNotAppendTimeField(t *testing.T) {
 	core := newCaptureCore()
 	handler := newSlogZapHandler(zap.New(core))

@@ -7,6 +7,14 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 )
 
+// Maintenance lock tests model admission and release through SQL expectations
+// on a reserved session. Busy locks return no cleanup function; an acquired
+// lock produces an unlock statement carrying the same hashed maintenance
+// identity before the fixture database is closed.
+
+// TestDatabaseHeavyMaintenanceLockRejectsConcurrentTask supplies a busy
+// maintenance advisory lock through SQLMock. It requires false admission and
+// no release function, then checks the expected lock query was used.
 func TestDatabaseHeavyMaintenanceLockRejectsConcurrentTask(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -30,6 +38,10 @@ func TestDatabaseHeavyMaintenanceLockRejectsConcurrentTask(t *testing.T) {
 	}
 }
 
+// TestDatabaseHeavyMaintenanceLockReleasesSession models successful
+// maintenance lock admission followed by release. It requires a release
+// function and checks the unlock statement uses the same hashed identifier as
+// acquisition.
 func TestDatabaseHeavyMaintenanceLockReleasesSession(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

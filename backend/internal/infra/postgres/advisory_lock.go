@@ -8,22 +8,39 @@ import (
 	"time"
 )
 
+// Periodic maintenance needs a database-wide admission decision when Redis
+// locking is unavailable. PostgreSQL session advisory locks require holding
+// one reserved SQL connection through the work; a successful caller receives
+// cleanup that attempts unlock before returning that connection to its pool.
+
+// HashAdvisoryLockID derives a stable signed FNV-1a identifier from key.
 func HashAdvisoryLockID(key string) int64 {
 	h := fnv.New64a()
+	// FNV Write consumes every supplied byte and returns a nil error, so
+	// discarding its result still hashes the complete caller-supplied maintenance identity.
 	_, _ = h.Write([]byte(key))
 	return int64(h.Sum64())
 }
 
-// TryAcquireDBAdvisoryLock attempts a session lock and treats database errors
-// as failure to acquire. On success, the caller must invoke release.
+// TryAcquireDBAdvisoryLock attempts a session advisory lock, treating
+// database errors as failure to acquire. A successful caller invokes release
+// once after its work; callers needing diagnostics use
+// TryAcquireDBAdvisoryLockWithError.
 func TryAcquireDBAdvisoryLock(ctx context.Context, db *sql.DB, lockID int64) (func(), bool) {
+	// This convenience API exposes admission as a boolean. Discard acquisition
+	// diagnostics here; maintenance callers needing the failure reason use the
+	// error-returning variant.
 	release, acquired, _ := TryAcquireDBAdvisoryLockWithError(ctx, db, lockID)
 	return release, acquired
 }
 
-// TryAcquireDBAdvisoryLockWithError reserves a connection for a session advisory lock.
-// On success, call release once to attempt unlocking and return the connection.
-// A nil database or a busy lock returns false without an error.
+// TryAcquireDBAdvisoryLockWithError reserves a SQL connection and attempts
+// lockID on that session. Nil db or a busy lock returns no acquisition; nil
+// ctx selects a background context. Acquisition errors return diagnostics.
+//
+// On success, call release once after the protected work. Cleanup uses an
+// independent two-second budget, discards unlock errors, and returns the
+// connection to its pool; a failed unlock can leave the session lock held.
 func TryAcquireDBAdvisoryLockWithError(ctx context.Context, db *sql.DB, lockID int64) (func(), bool, error) {
 	if db == nil {
 		return nil, false, nil
@@ -32,6 +49,8 @@ func TryAcquireDBAdvisoryLockWithError(ctx context.Context, db *sql.DB, lockID i
 		ctx = context.Background()
 	}
 
+	// Keep the reserved session until release: PostgreSQL session locks follow
+	// that connection, so returning it before protected work ends permits reuse.
 	conn, err := db.Conn(ctx)
 	if err != nil {
 		return nil, false, fmt.Errorf("open advisory-lock connection: %w", err)
@@ -48,6 +67,8 @@ func TryAcquireDBAdvisoryLockWithError(ctx context.Context, db *sql.DB, lockID i
 	}
 
 	release := func() {
+		// Work cancellation must not skip the unlock attempt. Its separate budget
+		// bounds cleanup before returning the reserved session; failures are discarded.
 		unlockCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		_, _ = conn.ExecContext(unlockCtx, "SELECT pg_advisory_unlock($1)", lockID)

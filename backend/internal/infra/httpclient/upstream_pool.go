@@ -27,6 +27,23 @@ import (
 	servertiming "github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 )
 
+// An upstream client's connection identity depends on provider/proxy
+// isolation, pool settings, the caller's protocol variant, and any raw TLS
+// profile identity. Acquisition reserves an entry while its request is in
+// flight; successful responses keep that reservation until body Close
+// releases it once, while request failure releases after the result observer
+// has run. Callers close bodies even after abandoning response processing.
+//
+// Cache hits reserve under the read lock, and misses recheck under the write
+// lock before construction or eviction. Expired and oldest-entry eviction
+// skip reservations, while incompatible configuration replacement can remove
+// an active entry from the cache and close only its idle connections. Request
+// callbacks are installed on a copied client rather than cached. Fingerprint
+// HTTP/2 uses a separate timeout wrapper whose timer includes underlying
+// RoundTrip and requires that transport to honor cancellation.
+
+// Upstream phase and HTTP/2 PING defaults bound connection setup and idle
+// health checks independently of each request's body-processing lifetime.
 const (
 	defaultUpstreamDialTimeout         = 10 * time.Second
 	defaultUpstreamDialKeepAlive       = 30 * time.Second
@@ -35,103 +52,176 @@ const (
 	http2PingTimeout                   = 15 * time.Second
 )
 
+// Transport errors distinguish cache admission failure from the synthetic
+// response-return timeout so request observers and callers can classify either result.
 var (
 	// ErrUpstreamClientLimitReached reports that the cache is full and every entry is in use.
 	ErrUpstreamClientLimitReached = errors.New("upstream client cache limit reached")
 
+	// errResponseHeaderTimeout shares the synthetic net.Error value returned when
+	// its timer wins the response-return race before a body reaches the caller.
 	errResponseHeaderTimeout = &responseHeaderTimeoutError{}
 )
 
 // TransportProtocol selects HTTP negotiation and the caller-defined cache variant.
 type TransportProtocol struct {
-	CacheVariant string
-	HTTP2        bool
-	DisableHTTP2 bool
+	// CacheVariant identifies protocol construction choices in cache keys.
+	// Callers distinguish incompatible HTTP2 and DisableHTTP2 choices because
+	// those flags are not independently hashed.
+	CacheVariant string // caller protocol cache identity
+	// HTTP2 wins over DisableHTTP2 on ordinary transports. Fingerprint
+	// selection also requires profile ALPN eligibility, while HTTPS proxy
+	// selection uses ordinary construction with default protocol options.
+	HTTP2        bool // enable HTTP/2 transport selection
+	DisableHTTP2 bool // disable ordinary HTTP/2 negotiation
 }
 
 // UpstreamRequestOptions configures one outbound request and its connection pool.
 type UpstreamRequestOptions struct {
-	ProxyURL   string
-	ProviderID int64
-	Isolation  string
-	MaxClients int
-	IdleTTL    time.Duration
-	Settings   UpstreamSettings
-	Protocol   TransportProtocol
-	TLSProfile *tlsfingerprint.Profile
-	// CheckRedirect applies to this request; nil uses the net/http default.
+	ProxyURL   string // selected proxy URL text
+	ProviderID int64  // selected provider database identity
+	// Isolation selects proxy, provider, or provider_proxy cache identity;
+	// unrecognized values use proxy identity. Provider-only reuse additionally
+	// compares the stored normalized proxy key.
+	Isolation string // client cache isolation mode
+	// MaxClients bounds cached entries when positive, with idle eviction making
+	// room. Nonpositive values disable the cap, and configuration replacement
+	// can remove an active entry from membership.
+	MaxClients int // positive cache entry limit
+	// IdleTTL expires unreserved entries on acquisition when positive.
+	// Nonpositive values disable expiry, and an active reservation prevents this
+	// time-based eviction path.
+	IdleTTL  time.Duration     // cache entry idle lifetime
+	Settings UpstreamSettings  // configured transport pool values
+	Protocol TransportProtocol // protocol and cache identity choices
+	// TLSProfile contributes its raw CacheKey and is retained by custom dialers.
+	// Keep profile values stable and copy or serialize GREASE SupportedVersions
+	// storage before concurrent handshakes.
+	TLSProfile *tlsfingerprint.Profile // optional fingerprint profile pointer
+	// CheckRedirect belongs to this request's client copy; nil selects
+	// net/http's default redirect policy. It is installed before PrepareClient
+	// can adapt or replace the copy.
 	CheckRedirect func(*http.Request, []*http.Request) error
-	// PrepareClient receives a client copy with CheckRedirect set. It may replace
-	// callbacks or wrap the shared transport, but must not mutate that transport.
+	// PrepareClient receives a shallow client copy and can change callbacks or
+	// wrap the shared transport. Keep that transport immutable; return a non-nil
+	// configured client to retain selected routing, because nil makes timing.Do
+	// use http.DefaultClient.
 	PrepareClient func(*http.Client) *http.Client
-	// ObserveResult runs after response headers or failure, before release or body processing.
+	// ObserveResult runs before decompression and reservation release after
+	// headers or failure. It must return normally so Do can install body
+	// tracking or release a failed attempt.
 	ObserveResult func(error)
 }
 
 // UpstreamPool caches ordinary and fingerprinted clients and tracks in-flight requests.
 type UpstreamPool struct {
-	mu      sync.RWMutex
-	clients map[string]*upstreamClientEntry
+	// mu protects clients membership and reservation admission. Counters are
+	// atomic, but acquisition increments while holding the membership lock so
+	// idle eviction cannot remove a just-admitted entry.
+	mu      sync.RWMutex                    // cache membership and admission mutex
+	clients map[string]*upstreamClientEntry // cached clients by construction identity
 }
 
-// UpstreamSettings configures connection limits and timeouts.
+// UpstreamSettings selects connection counts and phase budgets for cached transports.
 type UpstreamSettings struct {
-	MaxIdleConns          int           // Maximum idle connections across hosts.
-	MaxIdleConnsPerHost   int           // Maximum idle connections per host.
-	MaxConnsPerHost       int           // Maximum connections per host, including active connections.
-	IdleConnTimeout       time.Duration // Maximum idle connection age.
+	// MaxIdleConns, MaxIdleConnsPerHost, and MaxConnsPerHost configure ordinary
+	// http.Transport paths. Fingerprint HTTP/2 constructs an x/net transport
+	// without these connection-count fields; its retained pool has its own
+	// connection management.
+	MaxIdleConns        int           // Maximum idle connections across hosts.
+	MaxIdleConnsPerHost int           // Maximum idle connections per host.
+	MaxConnsPerHost     int           // Maximum connections per host, including active connections.
+	IdleConnTimeout     time.Duration // Maximum idle connection age.
+	// ResponseHeaderTimeout starts after request writing on an ordinary
+	// transport. Fingerprint HTTP/2 instead wraps the whole RoundTrip call,
+	// including connection setup; nonpositive values disable that synthetic timer.
 	ResponseHeaderTimeout time.Duration // Maximum wait for response headers.
 }
 
 // upstreamClientEntry tracks a cached client and the metadata used for reuse and eviction.
 type upstreamClientEntry struct {
-	client       *http.Client
-	proxyKey     string // Detects proxy changes under provider isolation.
-	poolKey      string // Detects connection pool configuration changes.
-	protocolMode string // Caller-defined protocol cache variant.
-	lastUsed     int64  // Unix nanoseconds; used for LRU eviction.
-	inFlight     int64  // Outstanding requests; positive counts prevent idle eviction.
+	client       *http.Client // cached construction-time HTTP client
+	proxyKey     string       // normalized proxy identity text
+	poolKey      string       // connection settings identity text
+	protocolMode string       // caller protocol variant text
+	// lastUsed and inFlight use separate atomic accesses. Acquisition increments
+	// while membership is locked; response cleanup releases and timestamps the
+	// entry independently. Reservations prevent idle eviction, while incompatible
+	// configuration can still remove an active entry from cache membership.
+	lastUsed int64 // last reservation/release Unix nanoseconds
+	inFlight int64 // outstanding request reservation count
 }
 
+// responseHeaderTimeoutError identifies synthetic response-return timeout
+// errors for net.Error callers.
 type responseHeaderTimeoutError struct{}
 
 // responseHeaderTimeoutRoundTripper bounds RoundTrip for an http2.Transport.
 // The timer stops at response headers so it does not cancel a long-lived SSE body.
 type responseHeaderTimeoutRoundTripper struct {
-	base    http.RoundTripper
-	timeout time.Duration
+	// base must honor cancellation for a timed-out RoundTrip to return promptly.
+	// The wrapper waits for that call after requesting cancellation rather than
+	// abandoning its work.
+	base    http.RoundTripper // wrapped HTTP/2 request transport
+	timeout time.Duration     // positive underlying call budget
 }
 
+// cancelOnCloseReadCloser retains a request context until its successful body
+// closes.
 type cancelOnCloseReadCloser struct {
-	io.ReadCloser
-	cancel context.CancelFunc
+	// ReadCloser and cancel retain the successful request's body and child
+	// context together. Close attempts body cleanup first and cancels afterward,
+	// including body errors.
+	io.ReadCloser                    // retained successful response body
+	cancel        context.CancelFunc // child request cancellation function
 }
 
 // trackedBody runs its release callback once when the body is closed.
 type trackedBody struct {
-	io.ReadCloser
-	once    sync.Once
-	onClose func()
+	io.ReadCloser           // retained decoded response body
+	once          sync.Once // reservation release completion guard
+	// onClose follows underlying Close and is guarded by once so successful
+	// response cleanup returns a reservation once even when callers close
+	// repeatedly.
+	onClose func() // request reservation release callback
 }
 
+// zstdResponseReader reports decoder reads while warning once about non-EOF
+// failures.
 type zstdResponseReader struct {
-	io.ReadCloser
-	warnOnce sync.Once
+	// ReadCloser supplies decoded bytes while warnOnce limits non-EOF failure
+	// logging to this reader instance. Underlying decoder read and close
+	// requirements remain applicable.
+	io.ReadCloser           // retained zstd decoder reader
+	warnOnce      sync.Once // decoder failure warning guard
 }
 
 // decompressedBody closes the decoder and the underlying response body.
 type decompressedBody struct {
-	reader io.Reader
-	closer io.Closer
+	// reader produces decoded or buffered bytes while closer retains the
+	// original network body. Close attempts reader cleanup first, discards its
+	// error, then returns the original body's close result.
+	reader io.Reader // decoded or buffered response bytes
+	closer io.Closer // retained original response body
 }
 
-// NewUpstreamPool creates a pool with its own client cache.
+// NewUpstreamPool constructs an initialized upstream cache with its own entry
+// mutex.
 func NewUpstreamPool() *UpstreamPool {
 	return &UpstreamPool{clients: make(map[string]*upstreamClientEntry)}
 }
 
-// Do acquires a client, sends the request, and decodes supported response encodings.
-// The caller must close the response body to release the in-flight count.
+// Do reserves an upstream client, executes req with per-request callbacks,
+// and installs supported response decoding. Close the successful response
+// body to release its reservation; failure releases after ObserveResult runs,
+// and callbacks must return normally to reach cleanup.
+//
+// CheckRedirect is set on a shallow client copy before PrepareClient, whose
+// returned client must retain usable transport ownership. ObserveResult sees
+// request error before decompression or release. The body release callback
+// runs once, while the underlying Close can still run repeatedly. Pool
+// construction and callback configuration remain separate from provider retry
+// policy.
 // @project-doc docs/operations/upstream_transport_security.md#upstream_client_pool
 func (s *UpstreamPool) Do(req *http.Request, opts UpstreamRequestOptions) (*http.Response, error) {
 	entry, err := s.acquire(opts)
@@ -142,7 +232,8 @@ func (s *UpstreamPool) Do(req *http.Request, opts UpstreamRequestOptions) (*http
 		atomic.AddInt64(&entry.inFlight, -1)
 		atomic.StoreInt64(&entry.lastUsed, time.Now().UnixNano())
 	}
-	// Copy callbacks per request so concurrent requests cannot overwrite each other's policies.
+	// Per-request callbacks change policy while transport resources remain shared.
+	// Copy the client before assignment so another request keeps its own redirect decision.
 	requestClient := *entry.client
 	requestClient.CheckRedirect = opts.CheckRedirect
 	client := &requestClient
@@ -165,7 +256,19 @@ func (s *UpstreamPool) Do(req *http.Request, opts UpstreamRequestOptions) (*http
 	return resp, nil
 }
 
-// acquire reuses compatible clients and increments their in-flight count.
+// acquire returns a compatible entry after incrementing its in-flight
+// reservation, or a construction/capacity error. Callers balance successful
+// acquisition through Do's failure or body-close path; NewUpstreamPool
+// initializes the map required by this operation.
+//
+// Hits reserve under a read lock, and misses recheck under the write lock
+// before constructing a transport. Changed pool settings or a provider-mode
+// proxy mismatch remove the existing cache entry even while its responses
+// remain active. A changed TLS profile hash chooses another cache key, so
+// that older profile entry can remain until ordinary eviction removes it.
+// Capacity and expiry remove idle entries only; when no idle entry can make
+// space, acquisition returns ErrUpstreamClientLimitReached. Protocol booleans
+// require an appropriately distinguishing caller CacheVariant.
 func (s *UpstreamPool) acquire(opts UpstreamRequestOptions) (*upstreamClientEntry, error) {
 	isolation := opts.Isolation
 	proxyKey, parsedProxy, err := proxy.NormalizePoolKey(opts.ProxyURL)
@@ -184,7 +287,8 @@ func (s *UpstreamPool) acquire(opts UpstreamRequestOptions) (*upstreamClientEntr
 	now := time.Now()
 	nowUnix := now.UnixNano()
 
-	// Use a read lock for cache hits.
+	// Reserve a compatible hit while membership stays read-locked; idle eviction
+	// needs the write lock and cannot remove this entry before its count increases.
 	s.mu.RLock()
 	if entry, ok := s.clients[cacheKey]; ok && s.shouldReuseEntry(entry, isolation, proxyKey, poolKey) {
 		atomic.StoreInt64(&entry.lastUsed, nowUnix)
@@ -196,7 +300,8 @@ func (s *UpstreamPool) acquire(opts UpstreamRequestOptions) (*upstreamClientEntr
 	}
 	s.mu.RUnlock()
 
-	// Recheck under the write lock before creating or replacing a client.
+	// Another miss may have published while the read lock was released. Recheck
+	// under exclusive ownership before constructing or replacing this cache identity.
 	s.mu.Lock()
 	if entry, ok := s.clients[cacheKey]; ok {
 		if s.shouldReuseEntry(entry, isolation, proxyKey, poolKey) {
@@ -210,7 +315,8 @@ func (s *UpstreamPool) acquire(opts UpstreamRequestOptions) (*upstreamClientEntr
 		s.removeClientLocked(cacheKey, entry)
 	}
 
-	// At capacity, reject acquisition when no idle entry can be evicted.
+	// Keep active reservations during capacity eviction. If every cached entry
+	// is in flight, report a capacity error rather than evicting an active request.
 	if opts.MaxClients > 0 {
 		s.evictIdleLocked(now, opts.IdleTTL)
 		if len(s.clients) >= opts.MaxClients {
@@ -254,7 +360,10 @@ func (s *UpstreamPool) acquire(opts UpstreamRequestOptions) (*upstreamClientEntr
 	return entry, nil
 }
 
-// shouldReuseEntry reports whether the proxy and pool configuration still match.
+// shouldReuseEntry reports whether a non-nil entry's pool key and
+// provider-isolated proxy identity still match. Other isolation modes already
+// include proxy identity in the cache key; active-count checks are left to
+// eviction callers.
 func (s *UpstreamPool) shouldReuseEntry(entry *upstreamClientEntry, isolation, proxyKey, poolKey string) bool {
 	if entry == nil {
 		return false
@@ -268,14 +377,17 @@ func (s *UpstreamPool) shouldReuseEntry(entry *upstreamClientEntry, isolation, p
 	return true
 }
 
-// removeClientLocked deletes the entry and closes idle connections.
-// The caller must hold s.mu for writing.
+// removeClientLocked deletes key and asks its cached transport to close idle
+// connections. The caller holds s.mu for writing; active bodies can still use
+// the removed entry and release its independent counters after completion.
 func (s *UpstreamPool) removeClientLocked(key string, entry *upstreamClientEntry) {
 	delete(s.clients, key)
 	if entry != nil && entry.client != nil {
-		// Active connections remain open.
+		// Remove membership before requesting idle cleanup, so later acquisitions
+		// cannot reuse this incompatible entry while existing body holders finish independently.
 		entry.client.CloseIdleConnections()
 		if closer, ok := entry.client.Transport.(interface {
+			// CloseIdleConnections asks the cached transport to release idle connection resources.
 			CloseIdleConnections()
 		}); ok {
 			closer.CloseIdleConnections()
@@ -283,13 +395,22 @@ func (s *UpstreamPool) removeClientLocked(key string, entry *upstreamClientEntry
 	}
 }
 
-// evictIdleLocked removes expired entries with no in-flight requests.
-// The caller must hold s.mu for writing; a nonpositive TTL disables expiration.
+// evictIdleLocked removes entries whose sampled reservation count is zero
+// and whose last-use time is at or before now minus ttl. The caller holds
+// s.mu for writing; nonpositive ttl disables expiry.
+//
+// The write lock excludes a new acquisition while each entry is checked and
+// removed. Response cleanup can still update its two atomic fields
+// independently. Expiry deletes cache membership and asks the transport to
+// close idle connections, while a nonzero reservation keeps the entry
+// regardless of the sampled age.
 func (s *UpstreamPool) evictIdleLocked(now time.Time, ttl time.Duration) {
 	if ttl <= 0 {
 		return
 	}
 	cutoff := now.Add(-ttl).UnixNano()
+	// Admission is excluded by the write lock. Skip reservations before the age
+	// test so a stale last-use observation alone cannot remove an in-flight client.
 	for key, entry := range s.clients {
 		if atomic.LoadInt64(&entry.inFlight) != 0 {
 			continue
@@ -300,14 +421,22 @@ func (s *UpstreamPool) evictIdleLocked(now time.Time, ttl time.Duration) {
 	}
 }
 
-// evictOldestIdleLocked removes the least recently used idle entry.
-// The caller must hold s.mu for writing. It returns false when every entry is active.
+// evictOldestIdleLocked removes one entry with a sampled zero reservation
+// count and the oldest sampled last-use time. It reports false when no such
+// entry is found, allowing acquisition to return a capacity error.
+//
+// The caller holds s.mu for writing to exclude new admission during selection
+// and removal. Response releases can still update the atomic observations.
+// Equal oldest timestamps follow map iteration order; removing the selected
+// entry asks its transport to close idle connections.
 func (s *UpstreamPool) evictOldestIdleLocked() bool {
 	var (
 		oldestKey   string
 		oldestEntry *upstreamClientEntry
 		oldestTime  int64
 	)
+	// Choose among unreserved entries before comparing last use. This keeps the
+	// capacity recovery decision separate from timestamps on clients still serving requests.
 	for key, entry := range s.clients {
 		if atomic.LoadInt64(&entry.inFlight) != 0 {
 			continue
@@ -326,8 +455,11 @@ func (s *UpstreamPool) evictOldestIdleLocked() bool {
 	return true
 }
 
-// evictOverLimitLocked removes idle entries in LRU order until the limit is met
-// or no idle entries remain. The caller must hold s.mu for writing.
+// evictOverLimitLocked repeatedly removes oldest idle entries while cache
+// size exceeds positive maxClients and reports whether any entry was removed.
+// The caller holds s.mu for writing;
+// disabled limits return false, and remaining active entries can prevent
+// reaching the supplied limit.
 func (s *UpstreamPool) evictOverLimitLocked(maxClients int) bool {
 	if maxClients <= 0 {
 		return false
@@ -342,7 +474,10 @@ func (s *UpstreamPool) evictOverLimitLocked(maxClients int) bool {
 	return evicted
 }
 
-// buildPoolKey identifies connection settings and the protocol cache variant.
+// buildPoolKey identifies configured connection counts, lifetimes, header
+// timeout, and nondefault protocol variant. Empty and default variant values
+// share the base spelling; protocol booleans participate only through the
+// caller-selected variant.
 func buildPoolKey(settings UpstreamSettings, protocolMode string) string {
 	base := fmt.Sprintf(
 		"idle:%d|idle_host:%d|max:%d|idle_timeout:%s|header_timeout:%s",
@@ -358,8 +493,10 @@ func buildPoolKey(settings UpstreamSettings, protocolMode string) string {
 	return base + "|proto:" + protocolMode
 }
 
-// buildCacheKey selects proxy, provider, or combined isolation and appends
-// the protocol variant. Unknown isolation values use proxy isolation.
+// buildCacheKey chooses provider, provider/proxy, or proxy isolation and
+// appends a nondefault protocol variant. Unrecognized isolation uses proxy
+// identity; empty and default variants share spelling, so callers distinguish
+// incompatible protocol choices themselves.
 func buildCacheKey(isolation, proxyKey string, providerID int64, protocolMode string) string {
 	var base string
 	switch isolation {
@@ -376,8 +513,10 @@ func buildCacheKey(isolation, proxyKey string, providerID int64, protocolMode st
 	return base
 }
 
-// newUpstreamDialer bounds DNS resolution and TCP connection establishment.
-// A nil Transport.DialContext uses a zero-value dialer with no dial timeout.
+// newUpstreamDialer supplies the upstream network setup budget and TCP
+// keepalive interval. Its ten-second limit covers DNS and connection
+// establishment when used as DialContext; custom SOCKS routing installs its
+// own bounded forward connector.
 func newUpstreamDialer() *net.Dialer {
 	return &net.Dialer{
 		Timeout:   defaultUpstreamDialTimeout,
@@ -385,8 +524,10 @@ func newUpstreamDialer() *net.Dialer {
 	}
 }
 
-// buildUpstreamTransport applies pool settings, HTTP negotiation, and proxy routing.
-// A nil proxyURL selects a direct connection. Proxy configuration errors are returned.
+// buildUpstreamTransport applies settings and proxy routing to an ordinary
+// certificate-verifying transport. HTTP2 takes precedence when both protocol
+// flags are true; otherwise DisableHTTP2 removes TLS-next-protocol
+// negotiation, and selected HTTP2 adds idle PING settings.
 func buildUpstreamTransport(settings UpstreamSettings, proxyURL *url.URL, protocol TransportProtocol) (*http.Transport, error) {
 	transport := &http.Transport{
 		DialContext:           newUpstreamDialer().DialContext,
@@ -400,7 +541,8 @@ func buildUpstreamTransport(settings UpstreamSettings, proxyURL *url.URL, protoc
 	switch {
 	case protocol.HTTP2:
 		transport.ForceAttemptHTTP2 = true
-		// Idle PINGs detect connections silently dropped by a proxy or NAT.
+		// HTTP/2 idle PINGs request a response after a quiet connection, letting the
+		// transport detect a connection whose peer or intermediary has stopped responding.
 		enableHTTP2KeepAlive(transport)
 	case protocol.DisableHTTP2:
 		transport.ForceAttemptHTTP2 = false
@@ -412,7 +554,10 @@ func buildUpstreamTransport(settings UpstreamSettings, proxyURL *url.URL, protoc
 	return transport, nil
 }
 
-// enableHTTP2KeepAlive configures HTTP/2 negotiation and idle PINGs.
+// enableHTTP2KeepAlive enables HTTP/2 alongside HTTP/1 on a caller-owned
+// transport and configures idle PING budgets. Configure before concurrent
+// requests; existing protocol selections are retained except HTTP/2 is
+// enabled, while new protocol storage starts with HTTP/1 enabled.
 func enableHTTP2KeepAlive(transport *http.Transport) {
 	if transport.TLSClientConfig == nil {
 		transport.TLSClientConfig = new(tls.Config)
@@ -429,9 +574,17 @@ func enableHTTP2KeepAlive(transport *http.Transport) {
 	transport.HTTP2.PingTimeout = http2PingTimeout
 }
 
-// buildUpstreamTransportWithTLSFingerprint uses the selected ClientHello profile
-// for direct, HTTP CONNECT, and SOCKS connections. HTTPS proxies use the ordinary
-// transport. HTTP/2 requires both protocol.HTTP2 and h2 support in the profile.
+// buildUpstreamTransportWithTLSFingerprint selects direct, SOCKS, or CONNECT
+// target dialing from profile and proxy. HTTPS proxies return an ordinary
+// transport with default protocol options, preserving proxy routing while
+// bypassing fingerprinted target dialing.
+//
+// HTTP/2 requires protocol.HTTP2 and profile eligibility, then actual
+// negotiated ALPN equal to h2; mismatch closes the connection. Its x/net
+// transport uses fixed PING budgets and the optional cancellation-based
+// RoundTrip timeout wrapper. The ordinary fingerprint path returns its
+// configured http.Transport, with target handshake timing owned by the custom
+// dialer.
 func buildUpstreamTransportWithTLSFingerprint(settings UpstreamSettings, proxyURL *url.URL, profile *tlsfingerprint.Profile, protocol TransportProtocol) (http.RoundTripper, error) {
 	useHTTP2 := protocol.HTTP2 && tlsfingerprint.SupportsHTTP2(profile)
 	transport := &http.Transport{
@@ -457,14 +610,16 @@ func buildUpstreamTransportWithTLSFingerprint(settings UpstreamSettings, proxyUR
 			socks5Dialer := tlsfingerprint.NewSOCKS5ProxyDialer(profile, proxyURL)
 			dialTLSContext = socks5Dialer.DialTLSContext
 		case "https":
-			// Route HTTPS proxies through the ordinary transport.
+			// HTTPS proxies select the ordinary connector here, retaining proxy TLS and
+			// routing while this path omits target fingerprint dialing and custom protocol flags.
 			return buildUpstreamTransport(settings, proxyURL, TransportProtocol{CacheVariant: "default"})
 		case "http":
 			slog.Debug("tls_fingerprint_transport_http_connect", "proxy", proxyURL.Host)
 			httpDialer := tlsfingerprint.NewHTTPProxyDialer(profile, proxyURL)
 			dialTLSContext = httpDialer.DialTLSContext
 		default:
-			// Let the ordinary proxy configuration validate other schemes.
+			// This branch delegates unsupported scheme handling to ordinary proxy setup,
+			// so its validation error remains the result instead of selecting a direct route.
 			slog.Debug("tls_fingerprint_transport_unknown_scheme_fallback", "scheme", scheme)
 			if err := proxy.ConfigureTransportProxy(transport, proxyURL); err != nil {
 				return nil, err
@@ -485,6 +640,9 @@ func buildUpstreamTransportWithTLSFingerprint(settings UpstreamSettings, proxyUR
 					return nil, err
 				}
 				negotiatedProtocol := tlsfingerprint.NegotiatedProtocol(conn)
+				// The HTTP/2 transport needs actual h2 negotiation before it sends frames.
+				// Close a differently negotiated connection instead of treating profile
+				// eligibility as negotiation success.
 				if negotiatedProtocol != "h2" {
 					_ = conn.Close()
 					return nil, fmt.Errorf("http2: unexpected ALPN protocol %q; want %q", negotiatedProtocol, "h2")
@@ -505,19 +663,32 @@ func buildUpstreamTransportWithTLSFingerprint(settings UpstreamSettings, proxyUR
 	return transport, nil
 }
 
+// Error supplies the response-header timeout's compatible net/http diagnostic
+// text.
 func (e *responseHeaderTimeoutError) Error() string {
 	return "net/http: timeout awaiting response headers"
 }
 
+// Timeout reports this synthetic header error as a network timeout.
 func (e *responseHeaderTimeoutError) Timeout() bool {
 	return true
 }
 
+// Temporary reports this synthetic header timeout as a retry-classifiable
+// temporary error.
 func (e *responseHeaderTimeoutError) Temporary() bool {
 	return true
 }
 
-// RoundTrip cancels on timeout and stops the timer when response headers arrive.
+// RoundTrip delegates with a cancellable context and starts a timeout before
+// the underlying call, including its connection setup. Nonpositive timeout or
+// nil req delegates directly; a missing base returns an error. The base must
+// honor cancellation for the wait to end promptly.
+//
+// If timer firing races with completion, this method waits for timer
+// publication and timeout wins, closing any returned body. Otherwise failure
+// cancels immediately and success keeps the child context until body Close.
+// Long-lived body reads therefore continue after the header timer is stopped.
 func (r *responseHeaderTimeoutRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	if r == nil || r.base == nil {
 		return nil, errors.New("response header timeout round tripper missing base")
@@ -528,12 +699,17 @@ func (r *responseHeaderTimeoutRoundTripper) RoundTrip(req *http.Request) (*http.
 	ctx, cancel := context.WithCancel(req.Context())
 	timeoutCh := make(chan struct{})
 	timedOut := atomic.Bool{}
+	// Publish timeout before cancellation can make the base return a context
+	// error. The completion path waits for this publication before choosing its
+	// caller-visible result when timer execution overlaps response return.
 	timer := time.AfterFunc(r.timeout, func() {
 		timedOut.Store(true)
 		close(timeoutCh)
 		cancel()
 	})
 	resp, err := r.base.RoundTrip(req.WithContext(ctx))
+	// A firing timer can overlap response return. Wait for its published
+	// timeout decision before selecting success so expiry cannot be lost in that race.
 	if !timer.Stop() {
 		<-timeoutCh
 	}
@@ -552,6 +728,8 @@ func (r *responseHeaderTimeoutRoundTripper) RoundTrip(req *http.Request) (*http.
 		cancel()
 		return resp, nil
 	}
+	// Header timing is finished, but the body may stream for much longer.
+	// Keep its child context live until body Close releases the request lifetime.
 	resp.Body = &cancelOnCloseReadCloser{
 		ReadCloser: resp.Body,
 		cancel:     cancel,
@@ -559,19 +737,26 @@ func (r *responseHeaderTimeoutRoundTripper) RoundTrip(req *http.Request) (*http.
 	return resp, nil
 }
 
-// CloseIdleConnections closes idle connections in the underlying transport.
+// CloseIdleConnections delegates an idle-close request when the wrapped
+// transport exposes that operation. Missing receiver/base or an unsupported
+// operation is ignored; active response bodies retain their normal cleanup
+// and request cancellation obligations.
 func (r *responseHeaderTimeoutRoundTripper) CloseIdleConnections() {
 	if r == nil || r.base == nil {
 		return
 	}
 	if closer, ok := r.base.(interface {
+		// CloseIdleConnections releases idle resources while active response
+		// bodies remain caller-owned.
 		CloseIdleConnections()
 	}); ok {
 		closer.CloseIdleConnections()
 	}
 }
 
-// Close closes the body and cancels its request context.
+// Close invokes the wrapped body's cleanup and then cancels its request
+// context when present. It returns the body's error unchanged; repeated calls
+// invoke underlying Close and the cancellation function again.
 func (r *cancelOnCloseReadCloser) Close() error {
 	err := r.ReadCloser.Close()
 	if r.cancel != nil {
@@ -580,7 +765,10 @@ func (r *cancelOnCloseReadCloser) Close() error {
 	return err
 }
 
-// Close closes the body and invokes the release callback at most once.
+// Close invokes the underlying body's cleanup and then runs the release
+// callback at most once, including when cleanup returns an error. Repeated
+// calls still invoke underlying Close; callers retain that body's concurrency
+// obligations.
 func (b *trackedBody) Close() error {
 	err := b.ReadCloser.Close()
 	if b.onClose != nil {
@@ -589,8 +777,9 @@ func (b *trackedBody) Close() error {
 	return err
 }
 
-// wrapTrackedBody attaches an at-most-once release callback to body.Close.
-// A nil body is returned unchanged.
+// wrapTrackedBody binds onClose to body cleanup through sync.Once, returning
+// nil bodies unchanged. Callers still close the returned body; repeat closes
+// rerun underlying cleanup but invoke the release callback at most once.
 func wrapTrackedBody(body io.ReadCloser, onClose func()) io.ReadCloser {
 	if body == nil {
 		return body
@@ -598,9 +787,17 @@ func wrapTrackedBody(body io.ReadCloser, onClose func()) io.ReadCloser {
 	return &trackedBody{ReadCloser: body, onClose: onClose}
 }
 
-// decompressResponseBody decodes supported Content-Encoding values.
-// The transport does not decode responses when the request supplies Accept-Encoding.
-// After installing a decoder, this function removes encoding and length headers.
+// decompressResponseBody installs one decoder for supported Content-Encoding
+// on a non-nil response body. Supported names are gzip, br, deflate, and
+// zstd; unsupported or combined encodings retain the body. Setup failure
+// retains encoding metadata, while gzip header reads may already have
+// consumed original bytes.
+//
+// Zstd peeks through a buffered reader before decoder setup so a failed setup
+// keeps peeked bytes readable. Installed decoders remove encoding/length
+// headers and set unknown length. Closing the wrapper attempts decoder
+// cleanup before closing the original body; decoder-close errors are
+// discarded while original body errors remain caller-visible.
 func decompressResponseBody(resp *http.Response) {
 	if resp == nil || resp.Body == nil {
 		return
@@ -616,7 +813,9 @@ func decompressResponseBody(resp *http.Response) {
 	case "gzip":
 		gr, err := gzip.NewReader(resp.Body)
 		if err != nil {
-			return // Leave the encoded body unchanged if decoder initialization fails.
+			// Gzip setup can already have consumed header bytes. Retain encoding
+			// metadata and the remaining original body when initialization cannot supply a decoder.
+			return
 		}
 		reader = gr
 	case "br":
@@ -627,6 +826,8 @@ func decompressResponseBody(resp *http.Response) {
 		bufferedBody := bufio.NewReader(resp.Body)
 		resp.Body = &decompressedBody{reader: bufferedBody, closer: originalBody}
 
+		// Peek retains bytes in this reader. Setup failure can then leave the
+		// encoded response readable through the buffered body instead of losing consumed input.
 		headerBytes, _ := bufferedBody.Peek(zstd.HeaderMaxSize)
 		var header zstd.Header
 		if err := header.Decode(headerBytes); err != nil {
@@ -650,6 +851,9 @@ func decompressResponseBody(resp *http.Response) {
 	resp.ContentLength = -1
 }
 
+// Read delegates to the zstd decoder and emits one warning for the first
+// non-EOF error. It returns the decoder's count and error unchanged, while
+// later failures reuse the completed warning guard.
 func (r *zstdResponseReader) Read(p []byte) (int, error) {
 	n, err := r.ReadCloser.Read(p)
 	if err != nil && !errors.Is(err, io.EOF) {
@@ -660,20 +864,27 @@ func (r *zstdResponseReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
+// Read delegates response bytes to the installed decoder or buffered reader.
 func (d *decompressedBody) Read(p []byte) (int, error) {
 	return d.reader.Read(p)
 }
 
+// Close attempts decoder cleanup when it implements io.Closer, then closes
+// the retained original response body. Decoder-close errors are discarded;
+// the returned error comes from the original body, and callers retain its
+// repeat/concurrent-close rules.
 func (d *decompressedBody) Close() error {
-	// Close decoder resources before the underlying body.
+	// Decoder cleanup can own buffers or workers. Attempt it first, then close
+	// the original network body and expose that body's cleanup result to its caller.
 	if rc, ok := d.reader.(io.Closer); ok {
 		_ = rc.Close()
 	}
 	return d.closer.Close()
 }
 
-// CloseIdleConnections releases idle connections while retaining cached clients.
-// Callers must still close active response bodies.
+// CloseIdleConnections asks every cached client to close idle connections
+// under the pool read lock. It retains cache entries and active bodies;
+// callers still close responses to release their reservations.
 func (s *UpstreamPool) CloseIdleConnections() {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

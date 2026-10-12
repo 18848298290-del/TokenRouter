@@ -9,6 +9,15 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+// Logger option tests isolate DATA_DIR through test-scoped environment
+// replacement and compare explicit, data-directory, and container paths.
+// Normalization checks numeric/output defaults while retaining a nonblank
+// invalid level, and an impossible file directory demonstrates the builder's
+// setup error separately from logger-level recovery.
+
+// TestResolveLogFilePath_Default clears DATA_DIR and supplies no explicit
+// path. It requires the container default filename, protecting the final
+// path-selection result when configuration provides neither earlier choice.
 func TestResolveLogFilePath_Default(t *testing.T) {
 	t.Setenv("DATA_DIR", "")
 	got := resolveLogFilePath("")
@@ -17,6 +26,9 @@ func TestResolveLogFilePath_Default(t *testing.T) {
 	}
 }
 
+// TestResolveLogFilePath_WithDataDir supplies DATA_DIR and no explicit file
+// path. It requires the logs directory and fixed filename beneath that
+// directory, protecting environment-based path selection.
 func TestResolveLogFilePath_WithDataDir(t *testing.T) {
 	t.Setenv("DATA_DIR", "/tmp/tokenrouter-data")
 	got := resolveLogFilePath("")
@@ -26,6 +38,9 @@ func TestResolveLogFilePath_WithDataDir(t *testing.T) {
 	}
 }
 
+// TestResolveLogFilePath_ExplicitPath supplies both DATA_DIR and an explicit
+// log filename. It requires the explicit path unchanged, protecting its
+// precedence over the environment-selected log directory.
 func TestResolveLogFilePath_ExplicitPath(t *testing.T) {
 	t.Setenv("DATA_DIR", "/tmp/ignore")
 	got := resolveLogFilePath("/var/log/custom.log")
@@ -34,6 +49,10 @@ func TestResolveLogFilePath_ExplicitPath(t *testing.T) {
 	}
 }
 
+// TestNormalizedOptions_InvalidFallback supplies nonblank invalid text and
+// invalid numeric/output settings. It requires lowercase retained level text,
+// stdout and path defaults, bounded rotation defaults, and positive enabled
+// sampling counts.
 func TestNormalizedOptions_InvalidFallback(t *testing.T) {
 	t.Setenv("DATA_DIR", "")
 	opts := InitOptions{
@@ -82,6 +101,10 @@ func TestNormalizedOptions_InvalidFallback(t *testing.T) {
 	}
 }
 
+// TestBuildFileCore_InvalidPathFallback asks the file-core builder to create
+// a directory beneath os.DevNull. It requires a setup error from that
+// builder, keeping directory failure observable before logger-level recovery
+// selects other outputs.
 func TestBuildFileCore_InvalidPathFallback(t *testing.T) {
 	t.Setenv("DATA_DIR", "")
 	opts := bootstrapOptions()

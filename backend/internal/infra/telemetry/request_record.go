@@ -14,57 +14,97 @@ import (
 	"unicode/utf8"
 )
 
+// One logical request can outlive its HTTP handler while upstream attempts
+// and detached completion work add diagnostics. Its capture serializes
+// mutations and ordinary observer publication under one mutex, assigning a
+// later update timestamp to each changed record. Request IDs identify the
+// logical record; external IDs, billing references, and related requests
+// remain labeled aliases.
+//
+// Saved snapshots merge by update time so later sparse metadata can fill an
+// existing record while retained failure or cancellation state survives later
+// completion work. Collection cloning protects aliases, attempts, and timing
+// maps, while the FinishedAt pointer remains shared. Related-record
+// publication occurs outside the parent lock before adding the parent alias,
+// and normalization prepares bounded diagnostic text for PostgreSQL storage.
+
+// requestCaptureKey names the context slot for a shared logical recorder,
+// allowing detached completion work to update the same request snapshot.
 const requestCaptureKey ContextKey = "request_capture"
 
 // RequestAlias labels an external identifier, billing key, or related request ID.
 type RequestAlias struct {
-	Kind  string `json:"kind"`
-	Value string `json:"value"`
+	Kind string `json:"kind"` // alias category text
+	// Value is trimmed during normalization; values above 255 bytes or containing
+	// CR, LF, or NUL are rejected before aliases enter diagnostic storage.
+	Value string `json:"value"` // external or related identifier
 }
 
-// RequestAttempt holds diagnostics for one upstream attempt.
+// RequestAttempt holds bounded diagnostics describing one observed upstream attempt.
 type RequestAttempt struct {
-	Number     int    `json:"number"`
-	ProviderID int64  `json:"provider_id,omitempty"`
-	RequestID  string `json:"upstream_request_id,omitempty"`
-	Status     int    `json:"status_code,omitempty"`
-	DurationMs int64  `json:"duration_ms,omitempty"`
-	Outcome    string `json:"outcome,omitempty"`
+	Number     int    `json:"number"`                        // upstream attempt ordinal
+	ProviderID int64  `json:"provider_id,omitempty"`         // attempted provider database ID
+	RequestID  string `json:"upstream_request_id,omitempty"` // external upstream request ID
+	Status     int    `json:"status_code,omitempty"`         // observed HTTP status code
+	DurationMs int64  `json:"duration_ms,omitempty"`         // attempt duration in milliseconds
+	Outcome    string `json:"outcome,omitempty"`             // observed attempt outcome text
 }
 
 // RequestRecord summarizes a request independently of monitoring sampling.
 // Keep request bodies and credentials out of its fields.
 type RequestRecord struct {
-	ErrorCode       string           `json:"error_code,omitempty"`
-	RequestID       string           `json:"request_id"`
-	ParentRequestID string           `json:"parent_request_id,omitempty"`
-	StartedAt       time.Time        `json:"started_at"`
-	UpdatedAt       time.Time        `json:"updated_at"`
-	FinishedAt      *time.Time       `json:"finished_at,omitempty"`
-	Method          string           `json:"method,omitempty"`
-	Path            string           `json:"path,omitempty"`
-	State           string           `json:"state"`
-	Status          int              `json:"status_code,omitempty"`
-	DurationMs      int64            `json:"duration_ms,omitempty"`
-	UserID          int64            `json:"user_id,omitempty"`
-	TeamID          int64            `json:"team_id,omitempty"`
-	APIKeyID        int64            `json:"api_key_id,omitempty"`
-	ProviderID      int64            `json:"provider_id,omitempty"`
-	Platform        string           `json:"platform,omitempty"`
-	Model           string           `json:"model,omitempty"`
-	Aliases         []RequestAlias   `json:"aliases,omitempty"`
-	Attempts        []RequestAttempt `json:"attempts,omitempty"`
-	Timings         map[string]int64 `json:"timings,omitempty"`
+	ErrorCode       string `json:"error_code,omitempty"`        // diagnostic error category text
+	RequestID       string `json:"request_id"`                  // internal logical request ID
+	ParentRequestID string `json:"parent_request_id,omitempty"` // parent logical request ID
+	// StartedAt is retained from the saved snapshot during MergeRequestRecord,
+	// keeping one request window while later observations fill its metadata.
+	StartedAt time.Time `json:"started_at"` // logical request start time
+	// UpdatedAt orders snapshot merging. Capture mutations leave this value to
+	// UpdateRequest, which assigns a later value relative to the post-mutation
+	// record.
+	UpdatedAt time.Time `json:"updated_at"` // snapshot update ordering time
+	// FinishedAt remains shared across collection clones and merged records.
+	// Callers replace the pointer for a new observation and treat any published
+	// timestamp as immutable.
+	FinishedAt *time.Time `json:"finished_at,omitempty"` // optional terminal observation time
+	Method     string     `json:"method,omitempty"`      // request HTTP method text
+	Path       string     `json:"path,omitempty"`        // request URL path text
+	// State retains saved failed or canceled outcomes during merging; a running
+	// update also retains saved state when the saved request has a finish time.
+	State      string `json:"state"`                 // logical request lifecycle state
+	Status     int    `json:"status_code,omitempty"` // final HTTP status code
+	DurationMs int64  `json:"duration_ms,omitempty"` // request duration in milliseconds
+	UserID     int64  `json:"user_id,omitempty"`     // acting user database ID
+	TeamID     int64  `json:"team_id,omitempty"`     // owning team database ID
+	APIKeyID   int64  `json:"api_key_id,omitempty"`  // authenticated key database ID
+	ProviderID int64  `json:"provider_id,omitempty"` // observed provider database ID
+	Platform   string `json:"platform,omitempty"`    // observed upstream platform text
+	Model      string `json:"model,omitempty"`       // requested display model text
+	// Aliases, Attempts, and Timings are copied by CloneRequestRecord and
+	// NormalizeRequestRecord. WithRequestCapture retains the supplied
+	// collections, and MergeRequestRecord can reuse absent collections from the
+	// saved record.
+	Aliases  []RequestAlias   `json:"aliases,omitempty"`  // labeled correlated identifier values
+	Attempts []RequestAttempt `json:"attempts,omitempty"` // retained upstream attempt diagnostics
+	Timings  map[string]int64 `json:"timings,omitempty"`  // stage elapsed milliseconds by name
 }
 
 // RequestCapture serializes record updates and their observer notifications.
 type RequestCapture struct {
-	mu      sync.Mutex
-	record  RequestRecord
-	observe func(RequestRecord)
+	// mu protects record mutations and ordinary observe callbacks together.
+	// Callbacks cannot reenter capture operations; RecordRelatedRequest samples
+	// its observer here and publishes after unlocking.
+	mu sync.Mutex // record and observer mutex
+	// record retains the supplied snapshot and its mutable values at creation.
+	// Callers transfer collection use to locked capture updates after attaching it.
+	record  RequestRecord       // current logical request snapshot
+	observe func(RequestRecord) // optional record publication callback
 }
 
-// NewRequestID generates a random version 4 UUID.
+// NewRequestID returns a randomly generated UUID with version-four and RFC
+// variant bits. The selected Go crypto/rand.Read fills all sixteen bytes or
+// terminates the process on entropy-reader failure, so this API has no
+// recoverable error result.
 func NewRequestID() string {
 	var b [16]byte
 	_, _ = rand.Read(b[:])
@@ -73,7 +113,10 @@ func NewRequestID() string {
 	return formatRequestID(b[:])
 }
 
-// StableRequestID derives a deterministic request ID from a background task key.
+// StableRequestID derives a repeatable UUID-shaped version-eight identifier
+// from the exact task key. A fixed TokenRouter namespace is hashed with
+// SHA-256 before formatting sixteen bytes, so callers reuse the same key for
+// replay identity.
 func StableRequestID(key string) string {
 	b := sha256.Sum256([]byte("TokenRouter/request/" + key))
 	b[6] = b[6]&0x0f | 0x80
@@ -81,11 +124,16 @@ func StableRequestID(key string) string {
 	return formatRequestID(b[:16])
 }
 
+// formatRequestID formats a sixteen-byte UUID as lowercase hyphenated text.
+// Callers supply exactly sixteen bytes and set version and variant bits first;
+// shorter input panics, while longer input extends the final hex segment.
 func formatRequestID(b []byte) string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
-// RequestIDValue returns the trimmed internal request ID from context.
+// RequestIDValue returns the trimmed string stored under the internal
+// RequestID key. Nil contexts, absent values, and differently typed values
+// return empty text for callers choosing or creating an identity.
 func RequestIDValue(ctx context.Context) string {
 	if ctx == nil {
 		return ""
@@ -94,7 +142,11 @@ func RequestIDValue(ctx context.Context) string {
 	return strings.TrimSpace(id)
 }
 
-// WithRequestCapture attaches a record and observer, then publishes its initial snapshot.
+// WithRequestCapture attaches a new capture to non-nil ctx and delegates an
+// initial no-op mutation to UpdateRequest. Zero UpdatedAt forces initial
+// publication; an existing version with an equal cloned comparison can skip
+// it. Supplied mutable values remain retained, so callers transfer collection
+// use to capture updates and leave shared FinishedAt immutable.
 func WithRequestCapture(ctx context.Context, record RequestRecord, observe func(RequestRecord)) context.Context {
 	capture := &RequestCapture{record: record, observe: observe}
 	ctx = context.WithValue(ctx, requestCaptureKey, capture)
@@ -102,8 +154,16 @@ func WithRequestCapture(ctx context.Context, record RequestRecord, observe func(
 	return ctx
 }
 
-// UpdateRequest serializes a mutation and publishes a changed snapshot with an increasing timestamp.
-// The update and observer callbacks run under the capture lock and must not reenter it.
+// UpdateRequest invokes a mutation under the capture mutex and publishes a
+// changed snapshot before unlocking. Nil contexts or absent captures are
+// ignored. A non-nil update and any observer run under the same lock and must
+// not reenter capture operations or retain mutable record storage.
+//
+// Mutators leave UpdatedAt versioning to this function. Except for initial
+// zero-version publication, an equal cloned record skips notification;
+// changed records receive now or one nanosecond after their post-mutation
+// UpdatedAt. Collection copies isolate observer snapshots while FinishedAt
+// remains shared and immutable by caller obligation.
 func UpdateRequest(ctx context.Context, update func(*RequestRecord)) {
 	if ctx == nil {
 		return
@@ -120,6 +180,8 @@ func UpdateRequest(ctx context.Context, update func(*RequestRecord)) {
 		return
 	}
 	now := time.Now().UTC()
+	// Clock precision or a supplied future timestamp can otherwise repeat a
+	// snapshot version. Advance from the post-mutation record before observer publication.
 	if !now.After(capture.record.UpdatedAt) {
 		now = capture.record.UpdatedAt.Add(time.Nanosecond)
 	}
@@ -129,7 +191,10 @@ func UpdateRequest(ctx context.Context, update func(*RequestRecord)) {
 	}
 }
 
-// UpdateRequestForID applies update when the captured request ID matches and reports the match.
+// UpdateRequestForID invokes update when the captured RequestID exactly
+// equals id and reports that match. Missing captures and mismatched IDs
+// return false; matched callbacks follow UpdateRequest's lock, non-reentry,
+// and versioning rules even when they make no change.
 func UpdateRequestForID(ctx context.Context, id string, update func(*RequestRecord)) bool {
 	matched := false
 	UpdateRequest(ctx, func(record *RequestRecord) {
@@ -141,7 +206,10 @@ func UpdateRequestForID(ctx context.Context, id string, update func(*RequestReco
 	return matched
 }
 
-// AddRequestAlias registers a unique alias, ignoring invalid values and entries beyond the limit.
+// AddRequestAlias adds kind with its trimmed value when that value is valid
+// and the capture has room. Empty, over-255-byte, or CR/LF/NUL values are
+// ignored; duplicate pairs and aliases past the 128-entry cap add no record
+// change. kind is normalized later during storage preparation.
 func AddRequestAlias(ctx context.Context, kind, value string) {
 	value = strings.TrimSpace(value)
 	if value == "" || len(value) > 255 || strings.ContainsAny(value, "\r\n\x00") {
@@ -152,13 +220,18 @@ func AddRequestAlias(ctx context.Context, kind, value string) {
 		if slices.Contains(record.Aliases, alias) {
 			return
 		}
+		// Retain a bounded alias history so repeated upstream attempts cannot
+		// grow one diagnostic request without limit; valid existing aliases stay available.
 		if len(record.Aliases) < 128 {
 			record.Aliases = append(record.Aliases, alias)
 		}
 	})
 }
 
-// CopyRequestCapture shares the recorder with a context used by detached completion work.
+// CopyRequestCapture attaches source's shared recorder to destination when
+// present. A nil or uncaptured source returns destination unchanged;
+// destination must be non-nil when a capture is attached, and both contexts
+// then synchronize through the same recorder.
 func CopyRequestCapture(destination, source context.Context) context.Context {
 	if source == nil {
 		return destination
@@ -169,8 +242,16 @@ func CopyRequestCapture(destination, source context.Context) context.Context {
 	return destination
 }
 
-// RecordRelatedRequest publishes a child record with inherited request metadata
-// and adds its ID to the parent's aliases.
+// RecordRelatedRequest prepares a supplied child and calls the sampled parent
+// observer when present, filling absent identity, method, and path from the
+// parent. Missing captures are ignored. It assigns update time and supplies
+// finish time for completed, failed, or canceled children when absent.
+//
+// The parent and observer are sampled under lock, then child publication runs
+// after unlocking. The related alias is added afterward through ordinary
+// parent mutation, so concurrent publication can interleave and the two
+// notifications are not atomic. Supplied child mutable values are passed
+// directly to the observer.
 func RecordRelatedRequest(ctx context.Context, record RequestRecord) {
 	if ctx == nil {
 		return
@@ -207,12 +288,17 @@ func RecordRelatedRequest(ctx context.Context, record RequestRecord) {
 		finished := record.UpdatedAt
 		record.FinishedAt = &finished
 	}
+	// Publish the sampled child first, then update the parent alias through
+	// its lock. These separately ordered notifications may interleave with other captures.
 	if observe != nil {
 		observe(record)
 	}
 	AddRequestAlias(ctx, "related", record.RequestID)
 }
 
+// cloneRequestRecord copies alias and attempt slices and clones the timing
+// map for separate collection mutation. FinishedAt remains the same pointer;
+// callers treat that timestamp as immutable when records are shared.
 func cloneRequestRecord(record RequestRecord) RequestRecord {
 	record.Aliases = append([]RequestAlias(nil), record.Aliases...)
 	record.Attempts = append([]RequestAttempt(nil), record.Attempts...)
@@ -220,8 +306,17 @@ func cloneRequestRecord(record RequestRecord) RequestRecord {
 	return record
 }
 
-// MergeRequestRecord merges a newer snapshot with saved metadata and aliases.
-// Older or equal timestamps return previous; saved failure and cancellation states take precedence.
+// MergeRequestRecord combines snapshots for the same logical ID, which
+// callers verify before invoking it. Older or equal UpdatedAt returns
+// previous directly. A newer snapshot keeps the saved start and nonempty
+// parent identity, and fills missing metadata, terminal time, timings, or
+// attempts from previous.
+//
+// Saved failed or canceled state wins; a running next state also retains a
+// previous state when the saved record has a finish time. Aliases are
+// deduplicated in previous-then-next order up to 128. Other retained
+// collections and FinishedAt can share either input's storage, so callers
+// clone before independent mutation.
 func MergeRequestRecord(previous, next RequestRecord) RequestRecord {
 	if !next.UpdatedAt.After(previous.UpdatedAt) {
 		return previous
@@ -272,9 +367,13 @@ func MergeRequestRecord(previous, next RequestRecord) RequestRecord {
 	if len(next.Attempts) == 0 {
 		next.Attempts = previous.Attempts
 	}
+	// Accept newer metadata while retaining a saved failure or cancellation. A
+	// running update also cannot reopen a record that already has a finish timestamp.
 	if previous.State == "failed" || previous.State == "canceled" || next.State == "running" && previous.FinishedAt != nil {
 		next.State = previous.State
 	}
+	// Preserve previous aliases before newer aliases while deduplicating pairs
+	// and retaining the earliest 128, so sparse updates keep known correlations.
 	seen := make(map[RequestAlias]bool)
 	aliases := append(append([]RequestAlias(nil), previous.Aliases...), next.Aliases...)
 	next.Aliases = nil
@@ -287,11 +386,21 @@ func MergeRequestRecord(previous, next RequestRecord) RequestRecord {
 	return next
 }
 
-// CloneRequestRecord copies slices and the timings map for independent mutation.
-// The FinishedAt pointer remains shared and should be treated as immutable.
+// CloneRequestRecord copies aliases, attempts, and the timings map for
+// independent collection mutation. FinishedAt remains shared and must be
+// treated as immutable; scalar values are copied with the record.
 func CloneRequestRecord(record RequestRecord) RequestRecord { return cloneRequestRecord(record) }
 
-// WithChildRequest creates a separate capture for a logical request on the same connection.
+// WithChildRequest creates a separate logical capture on non-nil ctx and sets
+// its RequestID to the supplied child's ID. An existing parent capture
+// supplies its observer and overwrites the child's user, team, key, method,
+// and path metadata.
+//
+// Without a parent capture, context identity supplies ParentRequestID and an
+// absent identity is generated. The parent receives a related alias before
+// the child's initial publication. The new capture has its own lock but can
+// share the same observer, so observers must support separate concurrent
+// logical captures.
 func WithChildRequest(ctx context.Context, record RequestRecord) context.Context {
 	var observe func(RequestRecord)
 	if capture, ok := ctx.Value(requestCaptureKey).(*RequestCapture); ok {
@@ -311,12 +420,16 @@ func WithChildRequest(ctx context.Context, record RequestRecord) context.Context
 			record.ParentRequestID = NewRequestID()
 		}
 	}
+	// Publish the parent relationship before the child capture can notify its
+	// observer, while keeping the two captures on separate locks for later updates.
 	AddRequestAlias(ctx, "related", record.RequestID)
 	ctx = context.WithValue(ctx, RequestID, record.RequestID)
 	return WithRequestCapture(ctx, record, observe)
 }
 
-// IsChildRequest reports whether the captured record has a parent request ID.
+// IsChildRequest reports whether the captured record has a nonempty parent
+// request ID. Nil contexts or absent captures return false; the parent field
+// is read while the capture mutex excludes updates.
 func IsChildRequest(ctx context.Context) bool {
 	if ctx == nil {
 		return false
@@ -330,7 +443,15 @@ func IsChildRequest(ctx context.Context) bool {
 	return capture.record.ParentRequestID != ""
 }
 
-// NormalizeRequestRecord bounds diagnostic text and collections, discarding invalid external IDs.
+// NormalizeRequestRecord copies collections and prepares bounded text and IDs
+// for diagnostic storage. Text fields remove invalid UTF-8 and NULs before
+// byte limits retain complete characters. Alias values are trimmed, rejected
+// for length or CR/LF/NUL, and deduplicated after kind normalization.
+//
+// Only the first 128 accepted aliases and first 256 attempts remain. Attempt
+// outcomes are normalized, while invalid attempt IDs are cleared and valid ID
+// spelling remains as supplied. FinishedAt stays shared; request identity and
+// timing-map entries are retained without additional validation.
 func NormalizeRequestRecord(record RequestRecord) RequestRecord {
 	record = cloneRequestRecord(record)
 	record.Model = requestText(record.Model, 200)
@@ -341,6 +462,9 @@ func NormalizeRequestRecord(record RequestRecord) RequestRecord {
 	aliases := record.Aliases
 	record.Aliases = nil
 	seen := make(map[RequestAlias]bool)
+	// Normalize alias kinds before deduplication because distinct supplied text
+	// can become the same stored pair. Keep accepted pairs in input order until
+	// the diagnostic storage cap is reached.
 	for _, alias := range aliases {
 		alias.Value = strings.TrimSpace(alias.Value)
 		alias.Kind = requestText(alias.Kind, 32)
@@ -353,6 +477,8 @@ func NormalizeRequestRecord(record RequestRecord) RequestRecord {
 			break
 		}
 	}
+	// Retain the earliest attempt diagnostics within the storage cap; metadata
+	// and timings still describe the request even when later attempt details are omitted.
 	if len(record.Attempts) > 256 {
 		record.Attempts = record.Attempts[:256]
 	}
@@ -365,13 +491,19 @@ func NormalizeRequestRecord(record RequestRecord) RequestRecord {
 	return record
 }
 
+// requestText removes invalid UTF-8 and NULs, then fits text to a nonnegative
+// byte limit. It backs off a cut multibyte suffix until valid UTF-8 remains;
+// callers supply a nonnegative limit because negative slicing panics.
 func requestText(value string, limit int) string {
 	value = strings.ToValidUTF8(value, "")
-	// PostgreSQL text and JSONB reject NUL characters, which decoded paths may contain.
+	// PostgreSQL text and JSONB reject NUL characters. Remove them before
+	// applying text byte budgets so decoded paths and diagnostics can be stored.
 	value = strings.ReplaceAll(value, "\x00", "")
 	if len(value) <= limit {
 		return value
 	}
+	// Cut to the byte budget, then back off an incomplete multibyte suffix
+	// so diagnostic text remains storable as valid UTF-8 after truncation.
 	value = value[:limit]
 	for !utf8.ValidString(value) {
 		value = value[:len(value)-1]

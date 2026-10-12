@@ -9,6 +9,16 @@ import (
 	"time"
 )
 
+// Synthetic intervals establish exact timing totals for overlapping
+// dependencies and database or Redis work. Other cases exercise cache-status
+// precedence, sanitized labels, bounded detail emission, and concurrent
+// counts beyond stored-span capacity, separating additive operation counts
+// from elapsed coverage.
+
+// TestCollectorHeaderValueAggregatesIntervals supplies overlapping database,
+// Redis, and dependency intervals within a fixed request window. It requires
+// exact union durations, additive counts, application time, and sorted
+// dependency details in the complete header.
 func TestCollectorHeaderValueAggregatesIntervals(t *testing.T) {
 	startedAt := time.Unix(100, 0)
 	collector := New(startedAt)
@@ -24,6 +34,9 @@ func TestCollectorHeaderValueAggregatesIntervals(t *testing.T) {
 	}
 }
 
+// TestRecordIntervalDoesNotIncrementCount adds one counted database call and
+// a separate blocking interval. It requires their combined duration with one
+// query and subtraction of both spans from application elapsed time.
 func TestRecordIntervalDoesNotIncrementCount(t *testing.T) {
 	startedAt := time.Unix(200, 0)
 	collector := New(startedAt)
@@ -41,6 +54,9 @@ func TestRecordIntervalDoesNotIncrementCount(t *testing.T) {
 	}
 }
 
+// TestCollectorCacheStatusFallback stores a normalized hit status and
+// supplies an invalid header argument. It requires the stored hit to win,
+// while another collector with no recognized status selects bypass.
 func TestCollectorCacheStatusFallback(t *testing.T) {
 	startedAt := time.Unix(300, 0)
 	collector := New(startedAt)
@@ -57,6 +73,9 @@ func TestCollectorCacheStatusFallback(t *testing.T) {
 	}
 }
 
+// TestCollectorSanitizesDependencyMetric records a module containing newlines
+// and header-like punctuation. It requires sanitized dependency text and no
+// injected newline or duration fragment in the emitted header.
 func TestCollectorSanitizesDependencyMetric(t *testing.T) {
 	startedAt := time.Unix(400, 0)
 	collector := New(startedAt)
@@ -72,6 +91,10 @@ func TestCollectorSanitizesDependencyMetric(t *testing.T) {
 	}
 }
 
+// TestCollectorBoundsHeaderLength records three hundred distinct long
+// dependency names. It requires a header within the detail budget while total
+// timing and aggregate dependency duration remain present after details are
+// omitted.
 func TestCollectorBoundsHeaderLength(t *testing.T) {
 	startedAt := time.Unix(500, 0)
 	collector := New(startedAt)
@@ -93,13 +116,21 @@ func TestCollectorBoundsHeaderLength(t *testing.T) {
 	}
 }
 
+// TestCollectorConcurrentRecording records twenty-five hundred database
+// operations across twenty-five workers, exceeding retained-span capacity. It
+// requires the complete additive query count after all workers finish,
+// protecting counts independently of stored duration evidence.
 func TestCollectorConcurrentRecording(t *testing.T) {
 	startedAt := time.Now()
 	collector := New(startedAt)
 	ctx := WithCollector(context.Background(), collector)
 
+	// workers and recordsPerWorker create more observations than the stored-span
+	// cap so the final assertion protects continued operation counting after truncation.
 	const workers = 25
 	const recordsPerWorker = 100
+	// Wait for every writer before reading the final count, separating lost
+	// concurrent updates from an incomplete snapshot taken while workers still run.
 	var wg sync.WaitGroup
 	wg.Add(workers)
 	for range workers {
@@ -119,6 +150,9 @@ func TestCollectorConcurrentRecording(t *testing.T) {
 	}
 }
 
+// TestContextHelpersHandleMissingCollector supplies a context with no timing
+// collector to the helpers. It requires inactive detection and empty header
+// text, protecting optional timing behavior for ordinary requests.
 func TestContextHelpersHandleMissingCollector(t *testing.T) {
 	if Active(context.Background()) {
 		t.Fatal("context without collector reported active")

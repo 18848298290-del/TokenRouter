@@ -10,6 +10,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// A loopback listener captures the first ClientHello emitted by uTLS and
+// closes the connection before completing a server handshake. The dial
+// therefore fails as expected while copied record bytes remain available for
+// checking profile extraction, GREASE normalization, and fingerprint text.
+
+// TestParseCapturedClientHelloFromUTLSDialer captures a configured uTLS hello
+// without completing the peer handshake. It requires dial failure, extracted
+// ordered profile fields, normalized GREASE, and nonempty JA3 text with a
+// thirty-two-character hash.
 func TestParseCapturedClientHelloFromUTLSDialer(t *testing.T) {
 	profile := &Profile{
 		Name:                "capture test",
@@ -31,6 +40,8 @@ func TestParseCapturedClientHelloFromUTLSDialer(t *testing.T) {
 		_ = ln.Close()
 	}()
 
+	// Capture one record independently of the client handshake, then close the
+	// accepted connection so dialing fails after its hello bytes have been delivered.
 	go func() {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -49,6 +60,8 @@ func TestParseCapturedClientHelloFromUTLSDialer(t *testing.T) {
 		if err != nil {
 			return
 		}
+		// Peek returns reader-owned storage. Copy before publishing to the test so
+		// the record remains valid after this connection and its reader are released.
 		copied := make([]byte, len(record))
 		copy(copied, record)
 		recordCh <- copied

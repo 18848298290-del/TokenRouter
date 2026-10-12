@@ -15,31 +15,35 @@ import (
 	utls "github.com/refraction-networking/utls" //nolint:revive // The package is named tls; the alias distinguishes it from crypto/tls.
 )
 
-// CapturedFingerprint holds the JSON returned by tls-fingerprint-web.
+// The external capture server reports profile fields observed on real TLS
+// handshakes for comparison with configured effective values. Integration
+// cases substitute the dialer's defaults before checking ordered lists and
+// omit variable GREASE IDs from extension-order comparison; recognized
+// external availability failures skip these observations.
+
+// CapturedFingerprint decodes profile observations returned by the external capture server.
 type CapturedFingerprint struct {
-	JA3Raw              string   `json:"ja3_raw"`
-	JA3Hash             string   `json:"ja3_hash"`
-	JA4                 string   `json:"ja4"`
-	HTTP2               string   `json:"http2"`
-	CipherSuites        []int    `json:"cipher_suites"`
-	Curves              []int    `json:"curves"`
-	PointFormats        []int    `json:"point_formats"`
-	Extensions          []int    `json:"extensions"`
-	SignatureAlgorithms []int    `json:"signature_algorithms"`
-	ALPNProtocols       []string `json:"alpn_protocols"`
-	SupportedVersions   []int    `json:"supported_versions"`
-	KeyShareGroups      []int    `json:"key_share_groups"`
-	PSKModes            []int    `json:"psk_modes"`
-	CompressCertAlgos   []int    `json:"compress_cert_algos"`
-	EnableGREASE        bool     `json:"enable_grease"`
+	JA3Raw              string   `json:"ja3_raw"`              // remote comma-separated JA3 text
+	JA3Hash             string   `json:"ja3_hash"`             // remote hexadecimal JA3 MD5
+	JA4                 string   `json:"ja4"`                  // remote structured JA4 text
+	HTTP2               string   `json:"http2"`                // remote HTTP/2 observation text
+	CipherSuites        []int    `json:"cipher_suites"`        // remote ordered cipher suite IDs
+	Curves              []int    `json:"curves"`               // remote ordered supported group IDs
+	PointFormats        []int    `json:"point_formats"`        // remote ordered point format IDs
+	Extensions          []int    `json:"extensions"`           // remote ordered extension type IDs
+	SignatureAlgorithms []int    `json:"signature_algorithms"` // remote ordered signature scheme IDs
+	ALPNProtocols       []string `json:"alpn_protocols"`       // remote ordered application protocol names
+	SupportedVersions   []int    `json:"supported_versions"`   // remote ordered TLS version IDs
+	KeyShareGroups      []int    `json:"key_share_groups"`     // remote ordered key share group IDs
+	PSKModes            []int    `json:"psk_modes"`            // remote ordered PSK mode IDs
+	CompressCertAlgos   []int    `json:"compress_cert_algos"`  // remote certificate compression algorithm IDs
+	EnableGREASE        bool     `json:"enable_grease"`        // remote recognized GREASE presence
 }
 
-// TestDialerAgainstCaptureServer compares captured fingerprints with profile settings.
-//
-// Default capture server: https://tls.sub2api.org:8090
-// Override with TLSFINGERPRINT_CAPTURE_URL=https://localhost:8443
-//
-// Run: go test -tags=integration -v -run TestDialerAgainstCaptureServer ./internal/infra/httpclient/tlsfingerprint/...
+// TestDialerAgainstCaptureServer sends configured profiles to the selected
+// capture endpoint, using the environment override or its default URL. It
+// requires effective profile list values, GREASE presence, and non-GREASE
+// extension order; unavailable remote samples can skip through the helper.
 func TestDialerAgainstCaptureServer(t *testing.T) {
 	captureURL := os.Getenv("TLSFINGERPRINT_CAPTURE_URL")
 	if captureURL == "" {
@@ -47,8 +51,8 @@ func TestDialerAgainstCaptureServer(t *testing.T) {
 	}
 
 	tests := []struct {
-		name    string
-		profile *Profile
+		name    string   // case display name
+		profile *Profile // supplied TLS capture profile
 	}{
 		{
 			name: "default_profile",
@@ -201,7 +205,8 @@ func TestDialerAgainstCaptureServer(t *testing.T) {
 			t.Logf("JA3 Hash: %s", captured.JA3Hash)
 			t.Logf("JA4:      %s", captured.JA4)
 
-			// Apply the same defaults as the dialer before comparing the capture.
+			// Resolve omitted lists using the dialer's defaults before comparison, so
+			// an empty configured list is compared with its effective wire values.
 			effectiveCipherSuites := tc.profile.CipherSuites
 			if len(effectiveCipherSuites) == 0 {
 				effectiveCipherSuites = defaultCipherSuites
@@ -256,12 +261,13 @@ func TestDialerAgainstCaptureServer(t *testing.T) {
 				t.Logf("  enable_grease: %v OK", captured.EnableGREASE)
 			}
 
-			// An empty Extensions field uses the Node.js 24.x default order.
+			// Empty Extensions selects the same built-in order used during dialing.
 			expectedExtOrder := uint16sToInts(defaultExtensionOrder)
 			if len(tc.profile.Extensions) > 0 {
 				expectedExtOrder = uint16sToInts(tc.profile.Extensions)
 			}
-			// Exclude variable GREASE values from both sides of the comparison.
+			// GREASE IDs vary per handshake. Compare the remaining ordered extension
+			// identities so per-connection randomization does not turn into a profile mismatch.
 			var filteredExpected, filteredActual []int
 			for _, e := range expectedExtOrder {
 				if !isGREASEValue(uint16(e)) {
@@ -282,6 +288,10 @@ func TestDialerAgainstCaptureServer(t *testing.T) {
 	}
 }
 
+// fetchCapturedFingerprint posts a fixed capture request using profile and a
+// ten-second request budget. It returns decoded server fields, closes the
+// response, and fails t on read or JSON errors; recognized request
+// availability errors are delegated to the skip helper.
 func fetchCapturedFingerprint(t *testing.T, captureURL string, profile *Profile) *CapturedFingerprint {
 	t.Helper()
 
@@ -332,8 +342,10 @@ func fetchCapturedFingerprint(t *testing.T, captureURL string, profile *Profile)
 	return &fp
 }
 
-// skipIfExternalServiceUnavailable skips known certificate or connectivity failures
-// and fails the test for other non-nil errors.
+// skipIfExternalServiceUnavailable skips t when error text contains one of
+// the listed certificate or connectivity markers. Other non-nil errors fail t
+// and nil input returns normally; matching follows literal case-sensitive
+// substring checks.
 func skipIfExternalServiceUnavailable(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
@@ -354,6 +366,7 @@ func skipIfExternalServiceUnavailable(t *testing.T, err error) {
 	}
 }
 
+// uint16sToInts copies ordered unsigned IDs into fresh integer storage.
 func uint16sToInts(vals []uint16) []int {
 	result := make([]int, len(vals))
 	for i, v := range vals {
@@ -362,10 +375,15 @@ func uint16sToInts(vals []uint16) []int {
 	return result
 }
 
+// assertIntSliceEqual compares ordered integer lists and reports failures
+// through t. Length mismatch returns after optional short-list details;
+// equal-length comparison reports the first five differences and a later
+// summary when more differ.
 func assertIntSliceEqual(t *testing.T, name string, expected, actual []int) {
 	t.Helper()
 	if len(expected) != len(actual) {
 		t.Errorf("%s: length mismatch: got %d, want %d", name, len(actual), len(expected))
+		// Keep length-failure logs bounded; short lists include their full values.
 		if len(actual) < 20 && len(expected) < 20 {
 			t.Errorf("  got:  %v", actual)
 			t.Errorf("  want: %v", expected)
@@ -375,6 +393,7 @@ func assertIntSliceEqual(t *testing.T, name string, expected, actual []int) {
 	mismatches := 0
 	for i := range expected {
 		if expected[i] != actual[i] {
+			// Report only the first five entry differences before a count summary.
 			if mismatches < 5 {
 				t.Errorf("%s[%d]: got %d (0x%04x), want %d (0x%04x)", name, i, actual[i], actual[i], expected[i], expected[i])
 			}
@@ -388,6 +407,9 @@ func assertIntSliceEqual(t *testing.T, name string, expected, actual []int) {
 	}
 }
 
+// assertStringSliceEqual compares ordered string lists and reports length
+// mismatch or the first differing entry through t. Equal lists produce a
+// diagnostic success log; callers retain fixture assertion control.
 func assertStringSliceEqual(t *testing.T, name string, expected, actual []string) {
 	t.Helper()
 	if len(expected) != len(actual) {
@@ -403,7 +425,10 @@ func assertStringSliceEqual(t *testing.T, name string, expected, actual []string
 	t.Logf("  %s: %v OK", name, expected)
 }
 
-// TestBuildClientHelloSpecNewFields checks ALPN, versions, key shares, and PSK modes.
+// TestBuildClientHelloSpecNewFields builds a custom spec and inspects typed
+// extension contents. It requires sampled cipher, ALPN, version, and PSK
+// values, key-share and signature-list lengths, and all five extension types.
+// It then checks selected default extension values from a nil profile.
 func TestBuildClientHelloSpecNewFields(t *testing.T) {
 	profile := &Profile{
 		Name:                "custom_full",

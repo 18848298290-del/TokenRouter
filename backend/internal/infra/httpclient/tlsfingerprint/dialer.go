@@ -18,20 +18,33 @@ import (
 	"golang.org/x/net/proxy"
 )
 
+// TLS fingerprint dialing creates an ordered ClientHello independently of
+// net/http's ordinary TLS connector. Direct and SOCKS paths obtain a network
+// connection before the target uTLS handshake; HTTP proxies establish CONNECT
+// first, and HTTPS proxies add a standard verified TLS connection around that
+// CONNECT exchange. Network dialing and the target handshake have separate
+// ten-second budgets.
+//
+// Profiles select raw ordered IDs and protocol lists, with empty lists
+// choosing built-in defaults. Unknown extension IDs carry empty payloads,
+// while ECH uses uTLS's generated GREASE payload rather than an empty
+// extension. Dialers retain profile and proxy pointers; selected spec slices
+// can remain shared, including SupportedVersions whose GREASE entries uTLS
+// rewrites during ApplyPreset. CONNECT I/O has no installed deadline, so its
+// waiting is distinct from bounded dialing and target handshaking.
+
 const (
-	// Custom TLS dialers need their own dial and target-handshake timeouts.
+	// Fingerprint connectors bypass ordinary transport TLS dialing, so these
+	// phase limits apply to their network setup and separate target handshake.
 	defaultTLSFingerprintDialTimeout      = 10 * time.Second
 	defaultTLSFingerprintDialKeepAlive    = 30 * time.Second
 	defaultTLSFingerprintHandshakeTimeout = 10 * time.Second
 )
 
 var (
-	// Default TLS fingerprint values captured from Claude Code (Node.js 24.x)
-	// Captured via tls-fingerprint-web capture server
-	// JA3 Hash: 44f88fca027f27bab4bb08d4af15f23e
-	// JA4:      t13d1714h1_5b57614c22b0_7baf387fc6ff
-	// defaultCipherSuites contains the 17 cipher suites from Node.js 24.x
-	// Order is critical for JA3 fingerprint matching.
+	// defaultCipherSuites supplies ordered TLS 1.3 and legacy cipher IDs when a
+	// profile omits its cipher list. Their order contributes to the ClientHello
+	// fingerprint compared by the optional network fixtures.
 	defaultCipherSuites = []uint16{
 		// TLS 1.3 cipher suites
 		0x1301, // TLS_AES_128_GCM_SHA256
@@ -63,19 +76,22 @@ var (
 		0x0035, // TLS_RSA_WITH_AES_256_CBC_SHA
 	}
 
-	// defaultCurves contains the 3 supported groups from Node.js 24.x.
+	// defaultCurves advertises X25519, P-256, and P-384 in that order when a
+	// profile leaves its supported-group list empty.
 	defaultCurves = []utls.CurveID{
 		utls.X25519,    // 0x001d
 		utls.CurveP256, // 0x0017 (secp256r1)
 		utls.CurveP384, // 0x0018 (secp384r1)
 	}
 
-	// defaultPointFormats contains point formats from Node.js 24.x.
+	// defaultPointFormats selects the uncompressed point-format byte when a
+	// profile omits the format list consumed by the corresponding TLS extension.
 	defaultPointFormats = []uint16{
 		0, // uncompressed
 	}
 
-	// defaultSignatureAlgorithms contains the 9 signature algorithms from Node.js 24.x.
+	// defaultSignatureAlgorithms supplies the ordered signature-scheme IDs used
+	// by signature extensions when the profile leaves its algorithm list empty.
 	defaultSignatureAlgorithms = []utls.SignatureScheme{
 		0x0403, // ecdsa_secp256r1_sha256
 		0x0804, // rsa_pss_rsae_sha256
@@ -88,8 +104,8 @@ var (
 		0x0201, // rsa_pkcs1_sha1
 	}
 
-	// defaultExtensionOrder is the Node.js 24.x extension order.
-	// Used when Profile.Extensions is empty.
+	// defaultExtensionOrder selects the built-in sequence when Profile.Extensions
+	// is empty; a supplied order replaces it and controls GREASE positioning.
 	defaultExtensionOrder = []uint16{
 		0,     // server_name
 		65037, // encrypted_client_hello
@@ -111,40 +127,73 @@ var (
 // Profile contains TLS fingerprint configuration.
 // All slice fields use built-in defaults when empty.
 type Profile struct {
-	Name                string // Profile name for identification
-	CipherSuites        []uint16
-	Curves              []uint16
-	PointFormats        []uint16
-	EnableGREASE        bool
-	SignatureAlgorithms []uint16 // Empty uses defaultSignatureAlgorithms
-	ALPNProtocols       []string // Empty uses ["http/1.1"]
-	SupportedVersions   []uint16 // Empty uses [TLS1.3, TLS1.2]
-	KeyShareGroups      []uint16 // Empty uses [X25519]
-	PSKModes            []uint16 // Empty uses [psk_dhe_ke]
-	Extensions          []uint16 // Extension type IDs in order; empty uses default Node.js 24.x order
+	Name string // cache identity profile name
+	// CipherSuites, Curves, PointFormats, SignatureAlgorithms, ALPNProtocols,
+	// SupportedVersions, KeyShareGroups, PSKModes, and Extensions use effective
+	// defaults when empty. A nonempty Extensions list decides which resolved
+	// values are advertised by including their extension IDs in that order.
+	CipherSuites []uint16 // ordered cipher suite IDs
+	Curves       []uint16 // ordered supported group IDs
+	PointFormats []uint16 // ordered point format IDs
+	// EnableGREASE adds GREASE bookends when Extensions selects the built-in
+	// order. Explicit GREASE IDs in a custom order remain effective regardless
+	// of this flag.
+	EnableGREASE        bool     // add GREASE for default order
+	SignatureAlgorithms []uint16 // ordered signature scheme IDs
+	ALPNProtocols       []string // ordered application protocol names
+	// SupportedVersions can remain shared with its uTLS extension. ApplyPreset
+	// rewrites GREASE values in place, so callers copy this list or serialize
+	// use when those values appear in a shared profile.
+	SupportedVersions []uint16 // ordered TLS version IDs
+	KeyShareGroups    []uint16 // ordered key share group IDs
+	PSKModes          []uint16 // ordered PSK exchange mode IDs
+	Extensions        []uint16 // ordered TLS extension type IDs
 }
 
-// Dialer creates TLS connections with custom fingerprints.
+// Dialer creates target TLS connections with configured ClientHello fingerprints.
 type Dialer struct {
-	profile    *Profile
-	baseDialer func(ctx context.Context, network, addr string) (net.Conn, error)
+	// profile is retained rather than copied. Keep its values stable during
+	// dialing, and serialize or copy SupportedVersions storage when GREASE
+	// permits uTLS mutation.
+	profile *Profile // retained TLS profile pointer
+	// baseDialer is selected at construction and opens the target connection. A
+	// custom callback owns its network timeout and response to context
+	// cancellation.
+	baseDialer func(ctx context.Context, network, addr string) (net.Conn, error) // network connection setup callback
 }
 
 // HTTPProxyDialer creates TLS connections through HTTP/HTTPS proxies with custom fingerprints.
 // It handles the CONNECT tunnel establishment before performing TLS handshake.
 type HTTPProxyDialer struct {
-	profile        *Profile
-	proxyURL       *url.URL
-	proxyTLSConfig *stdtls.Config
+	// profile is retained rather than copied. Keep its values stable during
+	// dialing, and serialize or copy SupportedVersions storage when GREASE
+	// permits uTLS mutation.
+	profile *Profile // retained TLS profile pointer
+	// proxyURL is retained as supplied for dialing and proxy credentials.
+	// Callers keep its fields and userinfo stable for the dialer's lifetime.
+	proxyURL *url.URL // retained proxy URL pointer
+	// proxyTLSConfig is an optional fixture override cloned before proxy TLS.
+	// Missing ServerName and MinVersion are filled; other supplied settings
+	// remain effective.
+	proxyTLSConfig *stdtls.Config // optional proxy TLS test override
 }
 
 // SOCKS5ProxyDialer creates TLS connections through SOCKS5 proxies with custom fingerprints.
 // It uses golang.org/x/net/proxy to establish the SOCKS5 tunnel.
 type SOCKS5ProxyDialer struct {
-	profile  *Profile
-	proxyURL *url.URL
+	// profile is retained rather than copied. Keep its values stable during
+	// dialing, and serialize or copy SupportedVersions storage when GREASE
+	// permits uTLS mutation.
+	profile *Profile // retained TLS profile pointer
+	// proxyURL is retained as supplied for dialing and proxy credentials.
+	// Callers keep its fields and userinfo stable for the dialer's lifetime.
+	proxyURL *url.URL // retained proxy URL pointer
 }
 
+// newTLSFingerprintNetworkDialer supplies ten-second connection setup and
+// thirty-second TCP keepalive settings. It is used below direct and proxy
+// connections where custom TLS dialing bypasses net/http's original network
+// connector.
 func newTLSFingerprintNetworkDialer() *net.Dialer {
 	return &net.Dialer{
 		Timeout:   defaultTLSFingerprintDialTimeout,
@@ -152,9 +201,10 @@ func newTLSFingerprintNetworkDialer() *net.Dialer {
 	}
 }
 
-// NewDialer creates a new TLS fingerprint dialer.
-// baseDialer is used for TCP connection establishment (supports proxy scenarios).
-// If baseDialer is nil, direct TCP dial is used.
+// NewDialer retains profile and creates a target-TLS dialer using baseDialer
+// for network setup. Nil baseDialer selects the bounded direct connector; a
+// supplied callback owns its network budgets and cancellation behavior, and
+// callers retain stable profile data during use.
 func NewDialer(profile *Profile, baseDialer func(ctx context.Context, network, addr string) (net.Conn, error)) *Dialer {
 	if baseDialer == nil {
 		baseDialer = newTLSFingerprintNetworkDialer().DialContext
@@ -162,20 +212,30 @@ func NewDialer(profile *Profile, baseDialer func(ctx context.Context, network, a
 	return &Dialer{profile: profile, baseDialer: baseDialer}
 }
 
-// NewHTTPProxyDialer creates a new TLS fingerprint dialer that works through HTTP/HTTPS proxies.
-// It establishes a CONNECT tunnel before performing TLS handshake with custom fingerprint.
+// NewHTTPProxyDialer retains profile and proxyURL for CONNECT followed by
+// target uTLS handshaking. Callers provide a proxy URL before dialing and
+// keep referenced data stable; HTTPS proxy TLS configuration uses verified
+// defaults unless its private test override is supplied.
 func NewHTTPProxyDialer(profile *Profile, proxyURL *url.URL) *HTTPProxyDialer {
 	return &HTTPProxyDialer{profile: profile, proxyURL: proxyURL}
 }
 
-// NewSOCKS5ProxyDialer creates a new TLS fingerprint dialer that works through SOCKS5 proxies.
-// It establishes a SOCKS5 tunnel before performing TLS handshake with custom fingerprint.
+// NewSOCKS5ProxyDialer retains profile and proxyURL for SOCKS tunneling
+// before target uTLS handshaking. Callers provide a non-nil proxy URL and
+// keep referenced data stable while the returned dialer is in use.
 func NewSOCKS5ProxyDialer(profile *Profile, proxyURL *url.URL) *SOCKS5ProxyDialer {
 	return &SOCKS5ProxyDialer{profile: profile, proxyURL: proxyURL}
 }
 
-// DialTLSContext establishes a TLS connection through SOCKS5 proxy with the configured fingerprint.
-// Flow: SOCKS5 CONNECT to target -> TLS handshake with utls on the tunnel.
+// DialTLSContext opens the supplied target through the retained SOCKS proxy
+// and returns a fingerprinted TLS connection. Pass a non-nil context and
+// target host:port; the forward connector bounds proxy TCP setup, and an
+// absent proxy port selects 1080.
+//
+// The context-aware SOCKS interface is preferred; its non-context
+// compatibility branch cannot forward cancellation. Target handshaking owns
+// closing the tunnel on preset or handshake failure, while a successful
+// caller closes the returned uTLS connection.
 func (d *SOCKS5ProxyDialer) DialTLSContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	slog.Debug("tls_fingerprint_socks5_connecting", "proxy", d.proxyURL.Host, "target", addr)
 
@@ -202,7 +262,8 @@ func (d *SOCKS5ProxyDialer) DialTLSContext(ctx context.Context, network, addr st
 		return nil, fmt.Errorf("create SOCKS5 dialer: %w", err)
 	}
 
-	// Step 2: Establish SOCKS5 tunnel to target
+	// Prefer the context-aware SOCKS tunnel so the caller's budget reaches its
+	// negotiation; the compatibility Dial branch has no context argument.
 	slog.Debug("tls_fingerprint_socks5_establishing_tunnel", "target", addr)
 	var conn net.Conn
 	if contextDialer, ok := socksDialer.(proxy.ContextDialer); ok {
@@ -220,8 +281,16 @@ func (d *SOCKS5ProxyDialer) DialTLSContext(ctx context.Context, network, addr st
 	return performTLSHandshake(ctx, conn, d.profile, addr)
 }
 
-// DialTLSContext establishes a TLS connection through HTTP proxy with the configured fingerprint.
-// HTTPS proxies add a standard TLS handshake before CONNECT.
+// DialTLSContext establishes proxy TCP, optional verified HTTPS-proxy TLS,
+// CONNECT, then target uTLS. A missing dialer/proxy URL returns an error.
+// Pass non-nil ctx and target host:port; successful callers own closing the
+// returned connection, and explicit failure paths close the proxy connection.
+//
+// Proxy TLS uses the supplied context; target TLS adds a ten-second handshake
+// budget. CONNECT write/read installs no deadline or cancellation watcher, so
+// context cancellation does not itself bound those I/O calls. The successful
+// tunnel is handed directly to target handshaking rather than drained as an
+// HTTP response.
 func (d *HTTPProxyDialer) DialTLSContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	if d == nil || d.proxyURL == nil {
 		return nil, errors.New("HTTP proxy dialer missing proxy URL")
@@ -249,7 +318,8 @@ func (d *HTTPProxyDialer) DialTLSContext(ctx context.Context, network, addr stri
 	}
 	slog.Debug("tls_fingerprint_http_proxy_connected", "proxy_addr", proxyAddr)
 	if strings.EqualFold(d.proxyURL.Scheme, "https") {
-		// Complete TLS with the HTTPS proxy before sending CONNECT inside that connection.
+		// Authenticate the HTTPS proxy before sending CONNECT or proxy credentials
+		// through it. This handshake uses ctx directly, before the target TLS budget.
 		proxyTLSConfig := &stdtls.Config{ServerName: d.proxyURL.Hostname(), MinVersion: stdtls.VersionTLS12}
 		if d.proxyTLSConfig != nil {
 			proxyTLSConfig = d.proxyTLSConfig.Clone()
@@ -270,7 +340,8 @@ func (d *HTTPProxyDialer) DialTLSContext(ctx context.Context, network, addr stri
 		slog.Debug("tls_fingerprint_https_proxy_handshake_success", "proxy_addr", proxyAddr)
 	}
 
-	// Step 2: Send CONNECT request to establish tunnel
+	// CONNECT addresses the target authority directly. Put host:port in Opaque
+	// and Host so request writing names the tunnel destination before target TLS begins.
 	req := &http.Request{
 		Method: http.MethodConnect,
 		URL:    &url.URL{Opaque: addr},
@@ -278,7 +349,9 @@ func (d *HTTPProxyDialer) DialTLSContext(ctx context.Context, network, addr stri
 		Header: make(http.Header),
 	}
 
-	// Add proxy authentication if present
+	// HTTP Basic proxy authentication encodes the retained userinfo as
+	// username:password; send it to the proxy during CONNECT before the target
+	// handshake begins.
 	if d.proxyURL.User != nil {
 		username := d.proxyURL.User.Username()
 		password, _ := d.proxyURL.User.Password()
@@ -301,8 +374,8 @@ func (d *HTTPProxyDialer) DialTLSContext(ctx context.Context, network, addr stri
 		slog.Debug("tls_fingerprint_http_proxy_read_response_failed", "error", err)
 		return nil, fmt.Errorf("read CONNECT response: %w", err)
 	}
-	// A successful CONNECT keeps this connection for the target TLS handshake.
-	// Closing its response body here would close the tunnel.
+	// CONNECT success transfers the connection to target TLS. Leave the HTTP
+	// response body undrained so response handling cannot consume bytes from that tunnel.
 
 	if resp.StatusCode != http.StatusOK {
 		_ = conn.Close()
@@ -315,8 +388,10 @@ func (d *HTTPProxyDialer) DialTLSContext(ctx context.Context, network, addr stri
 	return performTLSHandshake(ctx, conn, d.profile, addr)
 }
 
-// DialTLSContext establishes a TLS connection with the configured fingerprint.
-// This method is designed to be used as http.Transport.DialTLSContext.
+// DialTLSContext opens network/addr through the retained base connector, then
+// applies and completes target uTLS handshaking. Pass a non-nil context and
+// target host:port; custom base connectors own network cancellation and
+// timeouts, and successful callers close the returned connection.
 func (d *Dialer) DialTLSContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	// Establish TCP connection using base dialer (supports proxy)
 	slog.Debug("tls_fingerprint_dialing_tcp", "addr", addr)
@@ -331,11 +406,20 @@ func (d *Dialer) DialTLSContext(ctx context.Context, network, addr string) (net.
 	return performTLSHandshake(ctx, conn, d.profile, addr)
 }
 
-// performTLSHandshake performs the uTLS handshake on an established connection.
-// It builds a ClientHello spec from the profile, applies it, and completes the handshake.
-// On failure, conn is closed and an error is returned.
+// performTLSHandshake applies the profile to an established connection and
+// returns the authenticated uTLS connection after success. addr normally
+// contains the target host and port; failed splitting uses addr as the server
+// name. Preset and handshake failures close conn, and callers own the
+// returned connection.
+//
+// The target handshake gets a separate ten-second context budget bounded by
+// the supplied non-nil parent context. Spec construction can borrow profile
+// slices; pinned uTLS rewrites GREASE SupportedVersions in place, so such
+// profiles need separate storage or serialized use.
 func performTLSHandshake(ctx context.Context, conn net.Conn, profile *Profile, addr string) (net.Conn, error) {
 	host, _, err := net.SplitHostPort(addr)
+	// If a custom target cannot be split, retain its supplied spelling as the
+	// server-name input; uTLS still applies certificate verification using that value.
 	if err != nil {
 		host = addr
 	}
@@ -348,6 +432,8 @@ func performTLSHandshake(ctx context.Context, conn net.Conn, profile *Profile, a
 		return nil, fmt.Errorf("apply TLS preset: %w", err)
 	}
 
+	// Custom TLS dialing bypasses http.Transport's handshake timer. Bound the
+	// target handshake separately after a direct connection or proxy tunnel is ready.
 	handshakeCtx, cancel := context.WithTimeout(ctx, defaultTLSFingerprintHandshakeTimeout)
 	defer cancel()
 	if err := tlsConn.HandshakeContext(handshakeCtx); err != nil {
@@ -365,7 +451,7 @@ func performTLSHandshake(ctx context.Context, conn net.Conn, profile *Profile, a
 	return tlsConn, nil
 }
 
-// toUTLSCurves converts uint16 slice to utls.CurveID slice.
+// toUTLSCurves copies ordered group IDs into fresh uTLS CurveID storage.
 func toUTLSCurves(curves []uint16) []utls.CurveID {
 	result := make([]utls.CurveID, len(curves))
 	for i, c := range curves {
@@ -374,13 +460,23 @@ func toUTLSCurves(curves []uint16) []utls.CurveID {
 	return result
 }
 
-// isGREASEValue checks if a uint16 value matches the TLS GREASE pattern (0x?a?a).
+// isGREASEValue reports whether both bytes match the reserved TLS GREASE
+// pattern.
 func isGREASEValue(v uint16) bool {
 	return v&0x0f0f == 0x0a0a && v>>8 == v&0xff
 }
 
-// buildClientHelloSpecFromProfile constructs ClientHelloSpec from a Profile.
-// Direct and proxy dialers share the same profile defaults and extension ordering.
+// buildClientHelloSpecFromProfile selects configured nonempty lists or
+// built-in defaults and constructs ordered uTLS extensions. It keeps raw
+// extension order, uses generated ECH payloads, and sends unknown IDs with
+// empty payloads; callers choose IDs whose payloads their peer accepts.
+//
+// EnableGREASE adds bookend extensions only with the built-in order. Cipher,
+// ALPN, and version lists can remain borrowed, while converted curves, point
+// formats, signature schemes, key shares, and PSK modes receive newly
+// allocated representations. ApplyPreset rewrites GREASE version entries in
+// the borrowed SupportedVersions slice, so the returned spec is not an
+// independent profile copy.
 func buildClientHelloSpecFromProfile(profile *Profile) *utls.ClientHelloSpec {
 	// Resolve effective values (profile overrides or built-in defaults)
 	cipherSuites := defaultCipherSuites
@@ -477,19 +573,20 @@ func buildClientHelloSpecFromProfile(profile *Profile) *utls.ClientHelloSpec {
 		case 51: // key_share
 			extensions = append(extensions, &utls.KeyShareExtension{KeyShares: keyShares})
 		case 0xfe0d: // encrypted_client_hello (ECH, 65037)
-			// Send GREASE ECH with a random payload matching the expected ECH format.
-			// An empty GenericExtension causes "error decoding message" from servers that validate ECH format.
+			// ECH has structured payload bytes. Let uTLS generate its GREASE encoding
+			// so a peer validating extension framing receives a formed ECH payload.
 			extensions = append(extensions, &utls.GREASEEncryptedClientHelloExtension{})
 		case 0xff01: // renegotiation_info
 			extensions = append(extensions, &utls.RenegotiationInfoExtension{})
 		default:
-			// Unknown IDs are sent with empty data; profiles must only use IDs
-			// whose empty payload is accepted by the peer.
+			// An unknown extension ID has no configured payload implementation here.
+			// Send empty bytes, requiring the profile owner to select peer-accepted IDs.
 			extensions = append(extensions, &utls.GenericExtension{Id: id})
 		}
 	}
 
-	// For default extension order with EnableGREASE, wrap with GREASE bookends
+	// A custom order already determines GREASE positions. Add bookends only to
+	// the built-in order so configured extension ordering remains the profile's choice.
 	if enableGREASE && (profile == nil || len(profile.Extensions) == 0) {
 		extensions = append([]utls.TLSExtension{&utls.UtlsGREASEExtension{}}, extensions...)
 		extensions = append(extensions, &utls.UtlsGREASEExtension{})
@@ -504,9 +601,13 @@ func buildClientHelloSpecFromProfile(profile *Profile) *utls.ClientHelloSpec {
 	}
 }
 
-// toUint8s converts []uint16 to []uint8 (for utls fields that require []uint8).
+// toUint8s copies values into byte storage, retaining each value's low eight
+// bits. Inputs above 255 are truncated by conversion; profile consumers
+// supply byte-sized point formats and PSK modes.
 func toUint8s(vals []uint16) []uint8 {
 	out := make([]uint8, len(vals))
+	// TLS point-format and PSK-mode vectors carry one byte per entry, so
+	// conversion retains the low eight bits of each configured value.
 	for i, v := range vals {
 		out[i] = uint8(v)
 	}

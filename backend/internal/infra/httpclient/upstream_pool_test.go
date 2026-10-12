@@ -28,18 +28,30 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/httpclient/tlsfingerprint"
 )
 
-// httpClientSink retains benchmark results so assignments cannot be optimized away.
+// Upstream pool tests combine fake response transports with local redirect
+// and HTTP/2 servers to inspect reuse, reservation release, and per-request
+// policy. Decoder fixtures compare complete payloads and retained encoded
+// bodies, while timeout fixtures honor request cancellation so the synthetic
+// timer's observable result can be checked.
+
+// httpClientSink retains constructed or cached client pointers so benchmark
+// iterations publish their final client result in package-visible storage.
 var httpClientSink *http.Client
 
+// poolRoundTripFunc adapts controlled fixture responses to the HTTP transport interface.
 type poolRoundTripFunc func(*http.Request) (*http.Response, error)
 
+// responseTestBody pairs a fixture reader with successful in-memory cleanup.
 type responseTestBody struct {
-	io.Reader
+	io.Reader // in-memory fixture payload reader
 }
 
+// blockingHeaderRoundTripper delays response return until request cancellation is observed.
 type blockingHeaderRoundTripper struct{}
 
-// TestUpstreamPoolActiveLimitAndCloseOnce checks in-flight protection and one release per body.
+// TestUpstreamPoolActiveLimitAndCloseOnce holds a response in a one-entry
+// pool before another provider tries admission. It requires capacity
+// rejection, harmless repeated body close, and later admission after release.
 func TestUpstreamPoolActiveLimitAndCloseOnce(t *testing.T) {
 	pool := NewUpstreamPool()
 	one := poolTestOptions(1, nil)
@@ -57,7 +69,9 @@ func TestUpstreamPoolActiveLimitAndCloseOnce(t *testing.T) {
 	require.NoError(t, next.Body.Close())
 }
 
-// TestUpstreamPoolFailureReleasesEntry checks that observation precedes release on failure.
+// TestUpstreamPoolFailureReleasesEntry observes a failed request before its
+// reservation is released. It requires capacity rejection inside the observer
+// and another provider's successful request after the failed attempt returns.
 func TestUpstreamPoolFailureReleasesEntry(t *testing.T) {
 	pool := NewUpstreamPool()
 	opts := poolTestOptions(1, nil)
@@ -71,7 +85,8 @@ func TestUpstreamPoolFailureReleasesEntry(t *testing.T) {
 		})
 		return &clone
 	}
-	// Probe with the same one-entry limit while the failed request still holds its slot.
+	// The result observer runs before failure release. Probe another provider
+	// while this attempt still occupies the only cache entry to expose that ordering.
 	opts.ObserveResult = func(err error) {
 		require.ErrorIs(t, err, failure)
 		observed = true
@@ -90,7 +105,10 @@ func TestUpstreamPoolFailureReleasesEntry(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 }
 
-// TestUpstreamPoolIsolationAndConfigurationChange checks reuse across provider and proxy settings.
+// TestUpstreamPoolIsolationAndConfigurationChange compares reused transport
+// pointers across isolation modes, normalized proxy spelling, provider
+// changes, and header-timeout changes. It requires reuse or replacement
+// according to the cache's configured identity rules.
 func TestUpstreamPoolIsolationAndConfigurationChange(t *testing.T) {
 	for _, isolation := range []string{"proxy", "provider", "provider_proxy"} {
 		t.Run(isolation, func(t *testing.T) {
@@ -131,7 +149,9 @@ func TestUpstreamPoolIsolationAndConfigurationChange(t *testing.T) {
 	require.NotSame(t, first.Transport, second.Transport)
 }
 
-// TestUpstreamPoolEvictsOldestIdle uses fixed timestamps to identify the LRU entry.
+// TestUpstreamPoolEvictsOldestIdle seeds two idle entries with different
+// last-use times before a third acquisition. It requires the oldest entry to
+// disappear while the two-entry limit remains satisfied.
 func TestUpstreamPoolEvictsOldestIdle(t *testing.T) {
 	pool := NewUpstreamPool()
 	a, err := pool.acquire(poolTestOptions(1, nil))
@@ -150,7 +170,9 @@ func TestUpstreamPoolEvictsOldestIdle(t *testing.T) {
 	}
 }
 
-// TestUpstreamPoolIdleTTLDoesNotEvictActive checks that active requests survive idle expiration.
+// TestUpstreamPoolIdleTTLDoesNotEvictActive ages one reserved entry beyond
+// idle TTL before acquiring another. It requires the active entry to remain
+// cached, protecting reservations from time-based idle eviction.
 func TestUpstreamPoolIdleTTLDoesNotEvictActive(t *testing.T) {
 	pool := NewUpstreamPool()
 	opts := poolTestOptions(1, nil)
@@ -170,10 +192,14 @@ func TestUpstreamPoolIdleTTLDoesNotEvictActive(t *testing.T) {
 	require.True(t, found)
 }
 
-// TestUpstreamPoolConcurrentRelease checks repeated body closes during concurrent reuse.
+// TestUpstreamPoolConcurrentRelease reuses one provider entry across
+// concurrent requests that each close twice. It requires all calls to succeed
+// and a later different provider to enter the one-entry pool after release.
 func TestUpstreamPoolConcurrentRelease(t *testing.T) {
 	pool := NewUpstreamPool()
 	var group sync.WaitGroup
+	// Buffer every possible worker error before waiting. Each worker can report
+	// a failed request or two close errors, so producers finish before serial assertions begin.
 	errs := make(chan error, 64)
 	for range 16 {
 		group.Go(func() {
@@ -192,6 +218,8 @@ func TestUpstreamPoolConcurrentRelease(t *testing.T) {
 			}
 		})
 	}
+	// Every worker has completed its response closes before results are consumed
+	// and a replacement provider probes whether any reservation is still held.
 	group.Wait()
 	close(errs)
 	for err := range errs {
@@ -204,6 +232,10 @@ func TestUpstreamPoolConcurrentRelease(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 }
 
+// TestDecompressResponseBodyZstdUsage decodes a zstd-compressed usage payload
+// with known token fields. It requires complete decoded bytes, token values,
+// removed encoding/length headers, unknown decoded length, and successful
+// cleanup.
 func TestDecompressResponseBodyZstdUsage(t *testing.T) {
 	payload := []byte(`{"usage":{"input_tokens":123,"output_tokens":45,"cache_read_input_tokens":67}}`)
 	compressed := compressZstd(t, payload)
@@ -223,12 +255,16 @@ func TestDecompressResponseBodyZstdUsage(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 }
 
+// TestDecompressResponseBodyExistingEncodings decodes the same JSON through
+// gzip, brotli, and raw deflate fixtures. It requires matching bytes, removed
+// encoded metadata, unknown length, and successful body cleanup for each
+// decoder.
 func TestDecompressResponseBodyExistingEncodings(t *testing.T) {
 	payload := []byte(`{"ok":true}`)
 	tests := []struct {
-		name     string
-		encoding string
-		compress func(*testing.T, []byte) []byte
+		name     string                          // case display name
+		encoding string                          // selected response encoding text
+		compress func(*testing.T, []byte) []byte // payload encoding fixture function
 	}{
 		{name: "gzip", encoding: "gzip", compress: compressGzip},
 		{name: "brotli", encoding: "br", compress: compressBrotli},
@@ -252,6 +288,9 @@ func TestDecompressResponseBodyExistingEncodings(t *testing.T) {
 	}
 }
 
+// TestDecompressResponseBodyWithoutEncodingLeavesBodyUntouched supplies a
+// plain body with no encoding header. It requires the same body pointer,
+// length, and bytes, protecting the no-decoder response path.
 func TestDecompressResponseBodyWithoutEncodingLeavesBodyUntouched(t *testing.T) {
 	originalBody := &responseTestBody{Reader: bytes.NewReader([]byte("plain"))}
 	resp := &http.Response{
@@ -270,6 +309,10 @@ func TestDecompressResponseBodyWithoutEncodingLeavesBodyUntouched(t *testing.T) 
 	require.NoError(t, resp.Body.Close())
 }
 
+// TestDecompressResponseBodyInvalidZstdWarnsAndPreservesBody captures slog
+// while decoding invalid zstd input. It requires a warning, readable encoded
+// bytes, retained encoding and length, and normal cleanup rather than a setup
+// panic.
 func TestDecompressResponseBodyInvalidZstdWarnsAndPreservesBody(t *testing.T) {
 	previousLogger := slog.Default()
 	var logOutput bytes.Buffer
@@ -294,6 +337,10 @@ func TestDecompressResponseBodyInvalidZstdWarnsAndPreservesBody(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 }
 
+// TestDecompressResponseBodyEmptyZstdWarnsAndPreservesBody supplies empty
+// zstd-tagged input with captured slog output. It requires a warning, empty
+// readable bytes, retained encoding/zero length, and normal cleanup after
+// setup rejection.
 func TestDecompressResponseBodyEmptyZstdWarnsAndPreservesBody(t *testing.T) {
 	previousLogger := slog.Default()
 	var logOutput bytes.Buffer
@@ -317,9 +364,10 @@ func TestDecompressResponseBodyEmptyZstdWarnsAndPreservesBody(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 }
 
-// TestBuildUpstreamTransportSetsDialTimeout checks dial and TLS handshake configuration.
-// A nil DialContext would use a zero-value net.Dialer with no dial timeout.
-// ResponseHeaderTimeout starts after the request is written, so it cannot bound connection setup.
+// TestBuildUpstreamTransportSetsDialTimeout constructs an ordinary upstream
+// transport with fixed settings. It requires a configured network callback
+// and the selected TLS handshake timeout, protecting phase setup outside the
+// response-header wait.
 func TestBuildUpstreamTransportSetsDialTimeout(t *testing.T) {
 	settings := upstreamTestSettings()
 
@@ -329,6 +377,9 @@ func TestBuildUpstreamTransportSetsDialTimeout(t *testing.T) {
 	require.Equal(t, defaultUpstreamTLSHandshakeTimeout, transport.TLSHandshakeTimeout)
 }
 
+// TestNewUpstreamDialerHasBoundedTimeout inspects the default upstream
+// net.Dialer. It requires its positive configured timeout and keepalive
+// values, protecting network setup before header or body handling can begin.
 func TestNewUpstreamDialerHasBoundedTimeout(t *testing.T) {
 	dialer := newUpstreamDialer()
 
@@ -337,7 +388,10 @@ func TestNewUpstreamDialerHasBoundedTimeout(t *testing.T) {
 	require.Equal(t, defaultUpstreamDialKeepAlive, dialer.KeepAlive)
 }
 
-// TestBuildUpstreamTransportKeepsDialTimeoutWithHTTPProxy checks the configured dialer is retained.
+// TestBuildUpstreamTransportKeepsDialTimeoutWithHTTPProxy constructs an
+// ordinary transport with HTTP proxy routing. It requires both Proxy and
+// DialContext fields to remain configured, protecting network-budget
+// availability after proxy selection.
 func TestBuildUpstreamTransportKeepsDialTimeoutWithHTTPProxy(t *testing.T) {
 	proxyURL, err := url.Parse("http://127.0.0.1:1080")
 	require.NoError(t, err)
@@ -348,7 +402,10 @@ func TestBuildUpstreamTransportKeepsDialTimeoutWithHTTPProxy(t *testing.T) {
 	require.NotNil(t, transport.DialContext)
 }
 
-// TestBuildUpstreamTransportKeepsDialContextWithSOCKS5Proxy checks SOCKS dialer installation.
+// TestBuildUpstreamTransportKeepsDialContextWithSOCKS5Proxy constructs an
+// ordinary transport with SOCKS5H routing. It requires an installed
+// DialContext field, protecting SOCKS setup while its bounded forward
+// connector owns network dialing.
 func TestBuildUpstreamTransportKeepsDialContextWithSOCKS5Proxy(t *testing.T) {
 	proxyURL, err := url.Parse("socks5h://127.0.0.1:1080")
 	require.NoError(t, err)
@@ -358,8 +415,10 @@ func TestBuildUpstreamTransportKeepsDialContextWithSOCKS5Proxy(t *testing.T) {
 	require.NotNil(t, transport.DialContext)
 }
 
-// TestUpstreamDialerRespectsContextCancellation checks that canceled requests fail to dial.
-// Use a closed local listener address.
+// TestUpstreamDialerRespectsContextCancellation cancels a context before
+// dialing a closed loopback listener. It requires a dialing error for that
+// canceled context and unavailable local address, without classifying the
+// returned error's identity.
 func TestUpstreamDialerRespectsContextCancellation(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -376,8 +435,10 @@ func TestUpstreamDialerRespectsContextCancellation(t *testing.T) {
 	require.Error(t, err, "已取消的 context 必须立即中止拨号")
 }
 
-// TestEnableOpenAIHTTP2KeepAlive_EnablesPingHealthCheck checks idle PING timing.
-// PINGs detect connections silently dropped by a proxy or NAT.
+// TestEnableOpenAIHTTP2KeepAlive_EnablesPingHealthCheck applies HTTP/2
+// keepalive to an empty transport. It requires both protocol choices and the
+// configured idle PING/send timeout fields, protecting construction of
+// connection health checks.
 func TestEnableOpenAIHTTP2KeepAlive_EnablesPingHealthCheck(t *testing.T) {
 	tr := &http.Transport{}
 
@@ -388,6 +449,10 @@ func TestEnableOpenAIHTTP2KeepAlive_EnablesPingHealthCheck(t *testing.T) {
 	requireHTTP2Configured(t, tr, "http2 必须已挂到底层 http.Transport 上")
 }
 
+// TestBuildUpstreamTransport_OpenAIH2_EnablesPingHealthCheck constructs the
+// selected HTTP/2 protocol variant. It requires attempted HTTP/2 and both
+// protocol choices, protecting eager negotiation configuration for that
+// variant.
 func TestBuildUpstreamTransport_OpenAIH2_EnablesPingHealthCheck(t *testing.T) {
 	tr, err := buildUpstreamTransport(http2KeepAliveTestPoolSettings(), nil, TransportProtocol{CacheVariant: "openai_h2", HTTP2: true})
 	require.NoError(t, err)
@@ -395,7 +460,10 @@ func TestBuildUpstreamTransport_OpenAIH2_EnablesPingHealthCheck(t *testing.T) {
 	requireHTTP2Configured(t, tr, "openai_h2 必须显式配置 http2 以启用 ReadIdleTimeout")
 }
 
-// TestBuildUpstreamTransport_NonOpenAIH2_NotEagerlyConfigured checks lazy default HTTP/2 setup.
+// TestBuildUpstreamTransport_NonOpenAIH2_NotEagerlyConfigured constructs the
+// default variant without an HTTP/2 request flag. It requires nil explicit
+// protocol and h2 callback fields, protecting the ordinary transport's
+// construction state.
 func TestBuildUpstreamTransport_NonOpenAIH2_NotEagerlyConfigured(t *testing.T) {
 	tr, err := buildUpstreamTransport(http2KeepAliveTestPoolSettings(), nil, TransportProtocol{CacheVariant: "default"})
 	require.NoError(t, err)
@@ -403,6 +471,10 @@ func TestBuildUpstreamTransport_NonOpenAIH2_NotEagerlyConfigured(t *testing.T) {
 	require.Nil(t, tr.TLSNextProto["h2"], "default 模式不应在构建期主动配置 http2 keepalive")
 }
 
+// TestBuildUpstreamTransport_OpenAIH2_NegotiatesHTTP2 trusts a local TLS
+// server advertising HTTP/2 and sends one request. It requires success,
+// closed response cleanup, and protocol major two, protecting actual
+// negotiation for the selected variant.
 func TestBuildUpstreamTransport_OpenAIH2_NegotiatesHTTP2(t *testing.T) {
 	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -428,6 +500,10 @@ func TestBuildUpstreamTransport_OpenAIH2_NegotiatesHTTP2(t *testing.T) {
 	require.Equal(t, 2, resp.ProtoMajor, "openai_h2 必须协商到 HTTP/2")
 }
 
+// TestBuildUpstreamTransport_OpenAIH2_WithHTTPProxy_EnablesKeepAlive
+// constructs HTTP/2 selection together with an HTTP proxy. It requires
+// attempted HTTP/2, configured protocol choices, and retained proxy routing
+// before any real network exchange.
 func TestBuildUpstreamTransport_OpenAIH2_WithHTTPProxy_EnablesKeepAlive(t *testing.T) {
 	proxyURL, err := url.Parse("http://127.0.0.1:8080")
 	require.NoError(t, err)
@@ -439,7 +515,10 @@ func TestBuildUpstreamTransport_OpenAIH2_WithHTTPProxy_EnablesKeepAlive(t *testi
 	require.NotNil(t, tr.Proxy, "HTTP 代理仍须通过 Transport.Proxy 生效")
 }
 
-// BenchmarkHTTPUpstreamProxyClient measures construction versus cached-client assignment.
+// BenchmarkHTTPUpstreamProxyClient compares repeated transport construction
+// with assignments of an already cached client pointer. The reuse case
+// excludes warmup and pool lookup, so its reported work describes pointer
+// assignment rather than acquisition performance.
 func BenchmarkHTTPUpstreamProxyClient(b *testing.B) {
 	svc := NewUpstreamPool()
 	settings := UpstreamSettings{
@@ -492,15 +571,18 @@ func BenchmarkHTTPUpstreamProxyClient(b *testing.B) {
 	})
 }
 
-// TestUpstreamPoolRedirectPolicyIsPerRequest checks policy replacement, clearing, and failure release.
+// TestUpstreamPoolRedirectPolicyIsPerRequest alternates allowed and blocked
+// redirects while reusing one transport. It requires independent client
+// copies, expected target hits, retained transport identity, and released
+// failure occupancy for another provider.
 func TestUpstreamPoolRedirectPolicyIsPerRequest(t *testing.T) {
 	target, hits := redirectTestServer(t)
 	pool := NewUpstreamPool()
 	blocked := errors.New("redirect blocked for this request")
 	var previous *http.Client
 	for _, step := range []struct {
-		name  string
-		block bool
+		name  string // case display name
+		block bool   // reject this step redirect
 	}{
 		{name: "default"},
 		{name: "block_after_default", block: true},
@@ -550,7 +632,10 @@ func TestUpstreamPoolRedirectPolicyIsPerRequest(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 }
 
-// TestUpstreamPoolPrepareClientOverridesRequestPolicy checks overrides stay local to one request.
+// TestUpstreamPoolPrepareClientOverridesRequestPolicy replaces a request
+// redirect policy in PrepareClient with last-response behavior. It requires
+// the initial redirect response, zero target hits, then default redirect
+// success on a later request.
 func TestUpstreamPoolPrepareClientOverridesRequestPolicy(t *testing.T) {
 	target, hits := redirectTestServer(t)
 	pool := NewUpstreamPool()
@@ -584,13 +669,19 @@ func TestUpstreamPoolPrepareClientOverridesRequestPolicy(t *testing.T) {
 	require.Equal(t, int64(1), hits.Load())
 }
 
-// TestUpstreamPoolConcurrentRedirectPolicies checks policy isolation with a shared transport.
+// TestUpstreamPoolConcurrentRedirectPolicies starts twenty-four requests
+// sharing transport storage with alternating redirect rules. It requires
+// successful allowed requests, matching blocked errors, and twelve target
+// hits after all workers finish.
 func TestUpstreamPoolConcurrentRedirectPolicies(t *testing.T) {
 	target, hits := redirectTestServer(t)
 	pool := NewUpstreamPool()
 	blocked := errors.New("redirect blocked")
 	const requests = 24
 	var group sync.WaitGroup
+	// Hold workers behind one start gate and buffer one possible error per
+	// worker. After releasing the gate, join every worker before closing the
+	// results channel and counting target hits.
 	errs := make(chan error, requests)
 	start := make(chan struct{})
 	for i := range requests {
@@ -632,6 +723,10 @@ func TestUpstreamPoolConcurrentRedirectPolicies(t *testing.T) {
 	require.Equal(t, int64(requests/2), hits.Load())
 }
 
+// TestTLSFingerprintHTTPSProxyFallsBackWithoutBypassingProxy constructs
+// fingerprint selection with an HTTPS proxy carrying credentials. It requires
+// an ordinary transport, retained exact proxy URL, and absent custom
+// DialTLSContext, protecting proxy retention during that selection.
 func TestTLSFingerprintHTTPSProxyFallsBackWithoutBypassingProxy(t *testing.T) {
 	proxyURL, err := url.Parse("https://user:pass@proxy.example:8443")
 	require.NoError(t, err)
@@ -652,6 +747,10 @@ func TestTLSFingerprintHTTPSProxyFallsBackWithoutBypassingProxy(t *testing.T) {
 	require.Equal(t, "https://user:pass@proxy.example:8443", resolved.String())
 }
 
+// TestResponseHeaderTimeoutRoundTripperTimesOut uses a fake base that waits
+// for context cancellation before returning. It requires the synthetic
+// timeout error and completion within one second, checking the base's
+// cooperation with the timer.
 func TestResponseHeaderTimeoutRoundTripperTimesOut(t *testing.T) {
 	transport := &responseHeaderTimeoutRoundTripper{
 		base:    blockingHeaderRoundTripper{},
@@ -671,7 +770,8 @@ func TestResponseHeaderTimeoutRoundTripperTimesOut(t *testing.T) {
 	require.Less(t, time.Since(startedAt), time.Second)
 }
 
-// upstreamTestSettings supplies fixed connection limits and timeouts for pool tests.
+// upstreamTestSettings supplies fixed upstream connection counts and phase
+// durations for fixtures.
 func upstreamTestSettings() UpstreamSettings {
 	return UpstreamSettings{
 		MaxIdleConns:          240,
@@ -682,11 +782,16 @@ func upstreamTestSettings() UpstreamSettings {
 	}
 }
 
+// RoundTrip delegates one pool-fixture request to its test-supplied transport
+// callback.
 func (f poolRoundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
 	return f(r)
 }
 
-// poolTestOptions supplies a fake response while exercising acquisition, observation, and release.
+// poolTestOptions supplies fixed pool configuration and a fake successful
+// response transport. An optional captured pointer receives the preadaptation
+// client copy so tests can compare shared transport identity while each
+// returned adapted client owns its fake wrapper.
 func poolTestOptions(id int64, captured **http.Client) UpstreamRequestOptions {
 	return UpstreamRequestOptions{ProviderID: id, Isolation: "provider_proxy", MaxClients: 2, IdleTTL: 15 * time.Minute, Settings: upstreamTestSettings(), PrepareClient: func(client *http.Client) *http.Client {
 		if captured != nil {
@@ -705,6 +810,9 @@ func poolTestOptions(id int64, captured **http.Client) UpstreamRequestOptions {
 	}}
 }
 
+// poolTestRequest creates a fixture GET using t's context and fails t on
+// construction error. The fixed example target is replaced by
+// poolTestOptions' fake transport before these pool behavior checks execute.
 func poolTestRequest(t *testing.T) *http.Request {
 	t.Helper()
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://example.com/", nil)
@@ -712,10 +820,15 @@ func poolTestRequest(t *testing.T) *http.Request {
 	return req
 }
 
+// Close reports successful cleanup for the in-memory response fixture body.
 func (b *responseTestBody) Close() error {
 	return nil
 }
 
+// newEncodedResponse builds a response with supplied encoded bytes and
+// encoding metadata. Its body uses an in-memory reader, the Header length is
+// a sentinel, and ContentLength tracks actual supplied payload bytes for
+// fixture comparisons.
 func newEncodedResponse(encoding string, body []byte) *http.Response {
 	header := make(http.Header)
 	header.Set("Content-Encoding", encoding)
@@ -727,6 +840,9 @@ func newEncodedResponse(encoding string, body []byte) *http.Response {
 	}
 }
 
+// compressZstd returns an encoded fixture payload and fails t on writer
+// creation, write, or close errors. Closing finishes the buffered zstd frame
+// before its bytes are returned for response decoding.
 func compressZstd(t *testing.T, payload []byte) []byte {
 	t.Helper()
 	var buf bytes.Buffer
@@ -738,6 +854,9 @@ func compressZstd(t *testing.T, payload []byte) []byte {
 	return buf.Bytes()
 }
 
+// compressGzip returns encoded fixture bytes after writing payload and
+// closing the gzip writer. Write and close failures stop t; closing finalizes
+// frame data before the decoder fixture uses the buffer.
 func compressGzip(t *testing.T, payload []byte) []byte {
 	t.Helper()
 	var buf bytes.Buffer
@@ -748,6 +867,9 @@ func compressGzip(t *testing.T, payload []byte) []byte {
 	return buf.Bytes()
 }
 
+// compressBrotli returns encoded fixture bytes after writing payload and
+// closing the brotli writer. Write and close failures stop t; writer cleanup
+// completes output before the response fixture reads the retained buffer.
 func compressBrotli(t *testing.T, payload []byte) []byte {
 	t.Helper()
 	var buf bytes.Buffer
@@ -758,6 +880,9 @@ func compressBrotli(t *testing.T, payload []byte) []byte {
 	return buf.Bytes()
 }
 
+// compressDeflate returns a raw deflate fixture after creating, writing, and
+// closing its compressor. Any stage failure stops t, and successful close
+// completes the bytes needed by the response decoder.
 func compressDeflate(t *testing.T, payload []byte) []byte {
 	t.Helper()
 	var buf bytes.Buffer
@@ -769,6 +894,8 @@ func compressDeflate(t *testing.T, payload []byte) []byte {
 	return buf.Bytes()
 }
 
+// http2KeepAliveTestPoolSettings supplies fixed pooling and header timing for
+// HTTP/2 fixtures.
 func http2KeepAliveTestPoolSettings() UpstreamSettings {
 	return UpstreamSettings{
 		MaxIdleConns:          10,
@@ -779,7 +906,9 @@ func http2KeepAliveTestPoolSettings() UpstreamSettings {
 	}
 }
 
-// requireHTTP2Configured checks that both HTTP/1.1 and HTTP/2 are enabled.
+// requireHTTP2Configured requires non-nil protocol choices with HTTP/1 and
+// HTTP/2 enabled. It reports failures through t using msg so transport tests
+// can identify the construction context for the assertion.
 func requireHTTP2Configured(t *testing.T, tr *http.Transport, msg string) {
 	t.Helper()
 	require.NotNil(t, tr.Protocols, msg)
@@ -787,7 +916,9 @@ func requireHTTP2Configured(t *testing.T, tr *http.Transport, msg string) {
 	require.True(t, tr.Protocols.HTTP2(), msg)
 }
 
-// redirectTestServer redirects locally and counts requests reaching the target.
+// redirectTestServer starts a local redirect-to-target fixture and registers
+// its cleanup with t. It returns the start URL and an atomic counter
+// incremented only after a request reaches the target path.
 func redirectTestServer(t *testing.T) (string, *atomic.Int64) {
 	t.Helper()
 	hits := new(atomic.Int64)
@@ -803,8 +934,12 @@ func redirectTestServer(t *testing.T) (string, *atomic.Int64) {
 	return server.URL + "/start", hits
 }
 
+// RoundTrip waits for req's context cancellation and returns that context
+// error with no response. Tests use it to make timeout completion depend on
+// the wrapper's cancellation signal rather than remote I/O.
 func (blockingHeaderRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	// Hold response headers until the request context is canceled.
+	// Keep this base call outstanding until it observes cancellation, so the
+	// timeout wrapper must release the waiting call before it can return its synthetic error.
 	<-req.Context().Done()
 	return nil, req.Context().Err()
 }

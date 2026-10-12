@@ -2,9 +2,6 @@
 
 package redis
 
-// Session scenarios exercise JSON storage and single consumption against the
-// Redis container created by helpers_integration_test.go.
-
 import (
 	"sync"
 	"testing"
@@ -15,7 +12,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/redis/session"
 )
 
-// TestRedisSessionConcurrentConsumption checks shared key formatting and one successful claimant.
+// Two stores with equivalent prefix spellings share session data and a
+// consumption marker in a real Redis container. Concurrent callers compete
+// for that marker; after their results are collected, Delete is checked
+// against both the normalized data and marker keys.
+
+// TestRedisSessionConcurrentConsumption writes a spaced ID through one prefix
+// spelling and reads through another. It requires matching JSON, exactly one
+// of sixteen concurrent claimants, and removal of both data and marker after
+// Delete.
 func TestRedisSessionConcurrentConsumption(t *testing.T) {
 	client := startRedis(t, t.Context())
 	first := session.New(client, "test:session", time.Minute)
@@ -27,10 +32,13 @@ func TestRedisSessionConcurrentConsumption(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, expected, decoded)
+	// result carries one consumer's marker claim into the serial winner count.
 	type result struct {
-		claimed bool
-		err     error
+		claimed bool  // observed successful claim
+		err     error // observed consume error
 	}
+	// Hold one result per consumer before waiting, then close after their
+	// sends finish so winner counting observes every claim without blocking producers.
 	results := make(chan result, 16)
 	var group sync.WaitGroup
 	for range 16 {

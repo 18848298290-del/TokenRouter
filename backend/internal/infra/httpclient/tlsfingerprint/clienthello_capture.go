@@ -10,6 +10,21 @@ import (
 	"strings"
 )
 
+// A captured TLS record contains handshake fields in ordered, length-prefixed
+// byte vectors rather than the profile representation used for dialing.
+// Capture parsing requires a complete ClientHello inside the first record,
+// extracts supported lists, and leaves unknown extensions represented by
+// their IDs. It does not assemble a ClientHello split across records.
+//
+// GREASE values vary between handshakes, so profile lists normalize
+// recognized GREASE entries to a fixed marker while JA3 excludes those
+// entries. The retained legacy version and original list order determine the
+// JA3 text before MD5 supplies its conventional fingerprint spelling.
+// Optional extension parsers can omit malformed vectors or retain a valid
+// prefix, allowing outer framing success to produce a partial capture.
+
+// Record and handshake tags identify the single ClientHello framing accepted
+// before capture parsers inspect its declared body and optional extension vectors.
 const (
 	tlsRecordTypeHandshake  = 22
 	tlsHandshakeClientHello = 1
@@ -17,21 +32,28 @@ const (
 
 // CapturedClientHello holds profile fields extracted from a raw ClientHello.
 type CapturedClientHello struct {
-	CipherSuites        []uint16
-	Curves              []uint16
-	PointFormats        []uint16
-	SignatureAlgorithms []uint16
-	ALPNProtocols       []string
-	SupportedVersions   []uint16
-	KeyShareGroups      []uint16
-	PSKModes            []uint16
-	Extensions          []uint16
-	EnableGREASE        bool
-	JA3Raw              string
-	JA3Hash             string
+	// CipherSuites, Curves, SupportedVersions, KeyShareGroups, and Extensions
+	// retain order while replacing recognized GREASE values with 0x0a0a.
+	// EnableGREASE records whether those original lists contained GREASE.
+	CipherSuites        []uint16 // ordered normalized cipher suite IDs
+	Curves              []uint16 // ordered normalized supported group IDs
+	PointFormats        []uint16 // ordered advertised point format IDs
+	SignatureAlgorithms []uint16 // ordered advertised signature scheme IDs
+	ALPNProtocols       []string // ordered advertised application protocol names
+	SupportedVersions   []uint16 // ordered normalized TLS version IDs
+	KeyShareGroups      []uint16 // ordered normalized key share group IDs
+	PSKModes            []uint16 // ordered advertised PSK mode IDs
+	Extensions          []uint16 // ordered normalized extension type IDs
+	EnableGREASE        bool     // recognized GREASE presence flag
+	JA3Raw              string   // conventional comma-separated JA3 text
+	JA3Hash             string   // hex MD5 of JA3 text
 }
 
-// ParseCapturedClientHello parses a ClientHello contained in a single TLS record.
+// ParseCapturedClientHello extracts a ClientHello from one complete handshake
+// record and returns its captured profile fields. It validates outer record
+// and handshake lengths and types, then passes only the declared hello bytes
+// to body parsing. Trailing input is ignored; split records are not assembled
+// and malformed optional vectors can produce partial captured lists.
 func ParseCapturedClientHello(record []byte) (*CapturedClientHello, error) {
 	if len(record) < 9 {
 		return nil, errors.New("client hello record too short")
@@ -54,6 +76,16 @@ func ParseCapturedClientHello(record []byte) (*CapturedClientHello, error) {
 	return parseClientHelloBody(body[4 : 4+helloLen])
 }
 
+// parseClientHelloBody reads required ClientHello framing and ordered
+// extension IDs before building captured profile lists. Invalid required
+// lengths return errors; known optional extension payloads use their own
+// parsers and can yield nil or partial lists.
+//
+// Cipher, extension, group, version, and key-share lists are inspected for
+// GREASE before normalization. Profile lists keep a fixed GREASE placeholder,
+// while JA3 uses the legacy version and filters GREASE from its participating
+// original lists. Returned list storage is newly allocated and does not
+// retain the input byte buffer.
 func parseClientHelloBody(data []byte) (*CapturedClientHello, error) {
 	offset := 0
 	legacyVersion, ok := readUint16(data, &offset)
@@ -126,6 +158,8 @@ func parseClientHelloBody(data []byte) (*CapturedClientHello, error) {
 		}
 	}
 
+	// Inspect raw lists before replacing variable GREASE values; the profile
+	// presence flag and GREASE-free JA3 then describe the same captured hello.
 	enableGREASE := containsGREASE(cipherSuitesRaw) ||
 		containsGREASE(extensionIDsRaw) ||
 		containsGREASE(curvesRaw) ||
@@ -149,10 +183,16 @@ func parseClientHelloBody(data []byte) (*CapturedClientHello, error) {
 	return captured, nil
 }
 
+// parseSupportedGroups decodes the extension's two-byte-length vector of
+// group IDs through parseUint16Vector. Missing, oversized, or odd framing
+// returns nil; valid declared bytes keep their order in fresh list storage.
 func parseSupportedGroups(data []byte) []uint16 {
 	return parseUint16Vector(data)
 }
 
+// parsePointFormats decodes the declared one-byte-count point-format vector
+// into uint16 values. Missing or oversized framing returns nil; bytes after
+// the declared vector are ignored rather than added to the captured list.
 func parsePointFormats(data []byte) []uint16 {
 	if len(data) < 1 {
 		return nil
@@ -168,6 +208,15 @@ func parsePointFormats(data []byte) []uint16 {
 	return out
 }
 
+// parseALPN decodes length-prefixed protocol names within the declared ALPN
+// vector. An invalid outer length returns nil, and bytes after that vector
+// are ignored. Protocol bytes are copied into strings without character-set
+// validation.
+//
+// An empty or overlong name stops parsing and returns names already accepted
+// from this vector. Retaining that prefix lets a framed ClientHello expose
+// the protocol information preceding a malformed entry instead of discarding
+// all optional ALPN observations.
 func parseALPN(data []byte) []string {
 	if len(data) < 2 {
 		return nil
@@ -182,6 +231,8 @@ func parseALPN(data []byte) []string {
 	for offset < end {
 		nameLen := int(data[offset])
 		offset++
+		// Keep already decoded ALPN names when the next name is malformed,
+		// allowing a framed capture to expose available preceding protocol information.
 		if nameLen == 0 || offset+nameLen > end {
 			return out
 		}
@@ -191,6 +242,9 @@ func parseALPN(data []byte) []string {
 	return out
 }
 
+// parseSupportedVersions decodes a one-byte-length vector of two-byte TLS
+// version IDs. Missing, oversized, or odd framing returns nil; successfully
+// declared bytes retain their order and trailing bytes are ignored.
 func parseSupportedVersions(data []byte) []uint16 {
 	if len(data) < 1 {
 		return nil
@@ -202,6 +256,9 @@ func parseSupportedVersions(data []byte) []uint16 {
 	return readUint16List(data[1 : 1+vecLen])
 }
 
+// parsePSKModes decodes the one-byte-count PSK mode vector into uint16
+// values. Missing or oversized framing returns nil, while a valid vector
+// keeps its order and ignores later payload bytes.
 func parsePSKModes(data []byte) []uint16 {
 	if len(data) < 1 {
 		return nil
@@ -217,6 +274,15 @@ func parsePSKModes(data []byte) []uint16 {
 	return out
 }
 
+// parseKeyShareGroups extracts group IDs in declared key-share order while
+// skipping each entry's key material. An invalid outer length returns nil,
+// and returned groups use separate list storage. Bytes after the declared
+// vector do not add another accepted share.
+//
+// A group is appended after its length and complete key payload have passed
+// the vector bound check. If an entry is incomplete, preceding accepted
+// groups remain available to the outer capture, while the incomplete current
+// group is omitted.
 func parseKeyShareGroups(data []byte) []uint16 {
 	if len(data) < 2 {
 		return nil
@@ -231,9 +297,13 @@ func parseKeyShareGroups(data []byte) []uint16 {
 	for offset < end {
 		group, ok := readUint16(data, &offset)
 		if !ok {
+			// An incomplete key-share entry ends this optional vector while retaining
+			// preceding accepted group IDs for the outer captured profile.
 			return out
 		}
 		keyLen, ok := readUint16(data, &offset)
+		// Discard the incomplete current key share and retain its preceding
+		// groups, because the outer ClientHello framing can still be a valid capture.
 		if !ok || offset+int(keyLen) > end {
 			return out
 		}
@@ -243,6 +313,9 @@ func parseKeyShareGroups(data []byte) []uint16 {
 	return out
 }
 
+// parseUint16Vector decodes a two-byte-length vector of uint16 values in wire
+// order. Missing, oversized, or odd framing returns nil; valid declared bytes
+// are decoded into fresh storage and trailing bytes are ignored.
 func parseUint16Vector(data []byte) []uint16 {
 	if len(data) < 2 {
 		return nil
@@ -254,6 +327,9 @@ func parseUint16Vector(data []byte) []uint16 {
 	return readUint16List(data[2 : 2+vecLen])
 }
 
+// readUint16List copies complete big-endian uint16 pairs into fresh storage.
+// A final unmatched byte is ignored; callers validate declared vector parity
+// before using this helper for a complete TLS vector.
 func readUint16List(data []byte) []uint16 {
 	out := make([]uint16, 0, len(data)/2)
 	for i := 0; i+1 < len(data); i += 2 {
@@ -262,6 +338,10 @@ func readUint16List(data []byte) []uint16 {
 	return out
 }
 
+// buildJA3Raw joins the legacy version and ordered cipher, extension, group,
+// and point-format lists into JA3 text. Each participating list uses
+// joinJA3Values to omit GREASE, while other capture fields remain outside
+// this fingerprint.
 func buildJA3Raw(version uint16, cipherSuites, extensions, curves, pointFormats []uint16) string {
 	return strings.Join([]string{
 		strconv.Itoa(int(version)),
@@ -272,12 +352,17 @@ func buildJA3Raw(version uint16, cipherSuites, extensions, curves, pointFormats 
 	}, ",")
 }
 
+// joinJA3Values renders ordered non-GREASE IDs as decimal values joined with
+// hyphens. Empty input or a list containing only GREASE produces empty text
+// for its JA3 component.
 func joinJA3Values(values []uint16) string {
 	if len(values) == 0 {
 		return ""
 	}
 	parts := make([]string, 0, len(values))
 	for _, v := range values {
+		// GREASE is deliberately variable across handshakes. Omit it from the
+		// conventional JA3 component while keeping ordered stable IDs for comparison.
 		if isGREASEValue(v) {
 			continue
 		}
@@ -286,12 +371,22 @@ func joinJA3Values(values []uint16) string {
 	return strings.Join(parts, "-")
 }
 
+// normalizeGREASEList copies values in order and replaces recognized GREASE
+// IDs with 0x0a0a, returning nil for empty input. Other numeric IDs retain
+// their values in separately allocated list storage.
+//
+// A GREASE position remains represented while its per-handshake numeric
+// value is removed. The stored profile can therefore reuse that position
+// when uTLS supplies fresh GREASE bytes during dialing, while JA3 filtering
+// separately omits the varying values from fingerprint text.
 func normalizeGREASEList(values []uint16) []uint16 {
 	if len(values) == 0 {
 		return nil
 	}
 	out := make([]uint16, 0, len(values))
 	for _, v := range values {
+		// Profile persistence uses one GREASE marker for varying wire values,
+		// retaining their positions so dialing can generate its own GREASE bytes.
 		if isGREASEValue(v) {
 			out = append(out, 0x0a0a)
 			continue
@@ -301,10 +396,15 @@ func normalizeGREASEList(values []uint16) []uint16 {
 	return out
 }
 
+// containsGREASE reports whether any supplied ID matches the TLS GREASE
+// pattern.
 func containsGREASE(values []uint16) bool {
 	return slices.ContainsFunc(values, isGREASEValue)
 }
 
+// readUint8 reads one byte at the caller's nonnegative offset and advances it
+// on success. Insufficient input returns false without advancing; callers
+// retain offset ownership while parsing one buffer.
 func readUint8(data []byte, offset *int) (uint8, bool) {
 	if *offset >= len(data) {
 		return 0, false
@@ -314,6 +414,9 @@ func readUint8(data []byte, offset *int) (uint8, bool) {
 	return v, true
 }
 
+// readUint16 reads a big-endian pair at the caller's nonnegative offset and
+// advances it on success. Insufficient input returns false without advancing;
+// callers validate enclosing vector limits separately.
 func readUint16(data []byte, offset *int) (uint16, bool) {
 	if *offset+2 > len(data) {
 		return 0, false
@@ -323,6 +426,9 @@ func readUint16(data []byte, offset *int) (uint16, bool) {
 	return v, true
 }
 
+// skip advances the caller's nonnegative offset over n available bytes and
+// reports success. Negative n or insufficient input returns false without
+// advancing; enclosing-vector limits remain with the parser caller.
 func skip(data []byte, offset *int, n int) bool {
 	if n < 0 || *offset+n > len(data) {
 		return false

@@ -10,6 +10,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// A miniredis-backed JSON session is read before its separate consumption
+// marker is claimed twice. The fixture observes successful decoding, one
+// successful claim followed by rejection, and a missing result after deleting
+// the session through the same store.
+
+// TestStoreRoundTripAndSingleUse writes and reads a JSON session before
+// claiming it twice. It requires the saved state, one successful claimant,
+// second rejection, and absence after Delete removes the session.
 func TestStoreRoundTripAndSingleUse(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})

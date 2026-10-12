@@ -16,14 +16,25 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/testutil/rediscontainer"
 )
 
-// redisImageTag selects the Redis image for integration tests.
+// Integration fixtures start a dedicated Redis container and register its
+// client for cleanup after tests finish. Docker availability is inferred from
+// configuration or path existence before startup; local absence skips the
+// test, while CI or strict verification treats it as failure.
+
+// redisImageTag pins the Redis container image used by these integration
+// fixtures so their script and session checks run against the selected server.
 const redisImageTag = "redis:8.4-alpine"
 
-// startRedis starts a container and registers client and container cleanup.
+// startRedis launches the selected Redis container, resolves its address, and
+// returns a pinged client. Test cleanup closes the client before terminating
+// the container; the supplied context also governs container operations and
+// its eventual termination attempt.
 func startRedis(t *testing.T, ctx context.Context) *redis.Client {
 	t.Helper()
 	ensureDockerAvailable(t)
 
+	// Register container cleanup before client cleanup so the test's reverse
+	// cleanup order closes the client while its dedicated Redis container still exists.
 	redisContainer, err := rediscontainer.Run(ctx, redisImageTag)
 	require.NoError(t, err)
 	t.Cleanup(func() {
@@ -48,7 +59,9 @@ func startRedis(t *testing.T, ctx context.Context) *redis.Client {
 	return rdb
 }
 
-// ensureDockerAvailable fails in CI or strict mode, and otherwise skips when Docker is absent.
+// ensureDockerAvailable accepts Docker configuration or a detected candidate
+// path. If neither is found, CI or TOKENROUTER_VERIFY_STRICT=1 fails the
+// test; other local runs skip before creating a container.
 func ensureDockerAvailable(t *testing.T) {
 	t.Helper()
 	if dockerAvailable() {
@@ -60,7 +73,9 @@ func ensureDockerAvailable(t *testing.T) {
 	t.Skip("Docker 未启用，跳过依赖 testcontainers 的集成测试")
 }
 
-// dockerAvailable checks DOCKER_HOST and common socket paths; it does not probe the daemon.
+// dockerAvailable reports a nonempty DOCKER_HOST or an existing candidate
+// Docker path. Path checks do not verify a daemon or socket type; failed Stat
+// calls continue through later platform locations.
 func dockerAvailable() bool {
 	if os.Getenv("DOCKER_HOST") != "" {
 		return true
@@ -74,6 +89,9 @@ func dockerAvailable() bool {
 		filepath.Join("/run/user", strconv.Itoa(os.Getuid()), "docker.sock"),
 	}
 
+	// Missing or inaccessible candidates do not establish Docker availability.
+	// Continue through the remaining locations so one absent platform path
+	// cannot prevent detection.
 	for _, socket := range socketCandidates {
 		if socket == "" {
 			continue
@@ -85,10 +103,14 @@ func dockerAvailable() bool {
 	return false
 }
 
-// userHomeDir returns the home directory, or an empty string on error.
+// userHomeDir returns the process home directory for Docker path candidates.
+// A lookup error becomes empty text, allowing callers to continue checking
+// their remaining configured and platform-specific locations.
 func userHomeDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
+		// Home lookup is optional detection evidence. Keep the other Docker
+		// paths available by returning empty text when this lookup cannot contribute.
 		return ""
 	}
 	return home

@@ -11,7 +11,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestNormalizeRequestRecordRemovesUnstorableText covers NULs, invalid UTF-8, and multibyte truncation.
+// Request-record tests exercise storage-safe text, exact capture identity,
+// and related request completion across lifecycle states. Assertions check
+// normalized bytes and retained caller inputs separately, then require child
+// records to inherit parent identity and receive terminal finish times when
+// appropriate.
+
+// TestNormalizeRequestRecordRemovesUnstorableText supplies NULs, invalid
+// UTF-8, oversized multibyte text, and invalid external IDs. It requires
+// storable normalized fields and unchanged selected input fields and attempts
+// after copying.
 func TestNormalizeRequestRecordRemovesUnstorableText(t *testing.T) {
 	input := RequestRecord{
 		RequestID: "local-id", Path: "/invalid\x00path", Model: "模型\x00" + strings.Repeat("模", 100),
@@ -35,7 +44,9 @@ func TestNormalizeRequestRecordRemovesUnstorableText(t *testing.T) {
 	require.Equal(t, "fail\x00ed", input.Attempts[0].Outcome)
 }
 
-// TestUpdateRequestForIDChecksCaptureIdentity checks that a mismatched task ID cannot update the parent.
+// TestUpdateRequestForIDChecksCaptureIdentity attempts updates without a
+// capture and with mismatched and matching IDs. It requires false results and
+// an untouched callback until the exact parent identity matches.
 func TestUpdateRequestForIDChecksCaptureIdentity(t *testing.T) {
 	ctx := WithRequestCapture(t.Context(), RequestRecord{RequestID: "parent"}, nil)
 	called := false
@@ -47,7 +58,10 @@ func TestUpdateRequestForIDChecksCaptureIdentity(t *testing.T) {
 	require.True(t, called)
 }
 
-// TestRecordRelatedRequestFinishesTerminalStates checks completion times for failed and canceled records too.
+// TestRecordRelatedRequestFinishesTerminalStates publishes running,
+// completed, failed, and canceled children through a sampled observer. It
+// requires inherited parent/key identity and a finish time for each terminal
+// state, with running left unfinished.
 func TestRecordRelatedRequestFinishesTerminalStates(t *testing.T) {
 	for _, state := range []string{"running", "completed", "failed", "canceled"} {
 		t.Run(state, func(t *testing.T) {

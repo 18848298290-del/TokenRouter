@@ -18,6 +18,16 @@ import (
 	"github.com/TokenFlux/TokenRouter/migrations"
 )
 
+// Migration fixtures use ordered SQLMock expectations and small filesystem
+// inputs to inspect lock, checksum, execution-mode, and ledger behavior.
+// Compatibility cases test named historical pairs separately from unknown
+// checksums, while targeted concurrent-index cases require duplicate checks
+// and invalid-index removal before standalone retry statements.
+
+// TestIsMigrationChecksumCompatible supplies named historical/current
+// checksum pairs and unlisted or unknown values. It requires accepted
+// compatibility in the exercised directions while rejecting unknown versions
+// and unrelated filenames.
 func TestIsMigrationChecksumCompatible(t *testing.T) {
 	t.Run("054历史checksum可兼容", func(t *testing.T) {
 		ok := isMigrationChecksumCompatible(
@@ -175,12 +185,19 @@ func TestIsMigrationChecksumCompatible(t *testing.T) {
 	})
 }
 
+// TestApplyMigrations_NilDB passes a nil database through the embedded
+// migration entry helper. It requires the nil-database diagnostic, protecting
+// rejection before lock acquisition or any SQL initialization.
 func TestApplyMigrations_NilDB(t *testing.T) {
 	err := applyEmbeddedMigrations(context.Background(), nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "nil sql db")
 }
 
+// TestApplyMigrations_DelegatesToApplyMigrationsFS injects failure on the
+// first advisory-lock query through the embedded migration helper. It
+// requires the lock diagnostic and satisfied SQL expectations, protecting
+// delegation to the filesystem runner.
 func TestApplyMigrations_DelegatesToApplyMigrationsFS(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -196,6 +213,10 @@ func TestApplyMigrations_DelegatesToApplyMigrationsFS(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestLatestMigrationBaseline uses empty, sorted multi-file, and unreadable
+// filesystem fixtures. It requires the default baseline or latest filename
+// identity and hash length, with a read error retained for an unreadable last
+// path.
 func TestLatestMigrationBaseline(t *testing.T) {
 	t.Run("empty_fs_returns_baseline", func(t *testing.T) {
 		version, description, hash, err := latestMigrationBaseline(fstest.MapFS{})
@@ -228,6 +249,10 @@ func TestLatestMigrationBaseline(t *testing.T) {
 	})
 }
 
+// TestIsMigrationChecksumCompatible_AdditionalCases chooses one configured
+// rule and compares unknown, designated, and historical checksums. It
+// requires rejection of unaccepted values and acceptance of a known
+// historical/database-to-designated/file pair.
 func TestIsMigrationChecksumCompatible_AdditionalCases(t *testing.T) {
 	require.False(t, isMigrationChecksumCompatible("unknown.sql", "db", "file"))
 
@@ -254,6 +279,10 @@ func TestIsMigrationChecksumCompatible_AdditionalCases(t *testing.T) {
 	require.True(t, isMigrationChecksumCompatible(name, accepted, rule.fileChecksum))
 }
 
+// TestMigrationChecksumCompatibilityRules_CoverEditedUpgradeCompatibilityMigrations
+// inspects the listed edited migration identities. It requires a configured
+// rule with designated and historical checksums for each, protecting retained
+// upgrade compatibility coverage.
 func TestMigrationChecksumCompatibilityRules_CoverEditedUpgradeCompatibilityMigrations(t *testing.T) {
 	for _, name := range []string{
 		"109_auth_identity_compat_backfill.sql",
@@ -272,6 +301,10 @@ func TestMigrationChecksumCompatibilityRules_CoverEditedUpgradeCompatibilityMigr
 	}
 }
 
+// TestEnsureAtlasBaselineAligned models absent legacy tracking, Atlas
+// creation, and failures at each exercised baseline stage. It requires the
+// ordered queries/statements and contextual errors, protecting the
+// conditional metadata initialization flow.
 func TestEnsureAtlasBaselineAligned(t *testing.T) {
 	t.Run("skip_when_no_legacy_table", func(t *testing.T) {
 		db, mock, err := sqlmock.New()
@@ -397,6 +430,9 @@ func TestEnsureAtlasBaselineAligned(t *testing.T) {
 	})
 }
 
+// TestApplyMigrationsFS_ChecksumMismatchRejected supplies a recorded filename
+// with an unknown checksum. It requires a mismatch error and unlock attempt,
+// protecting rejection before an already recorded file could execute again.
 func TestApplyMigrationsFS_ChecksumMismatchRejected(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -419,6 +455,10 @@ func TestApplyMigrationsFS_ChecksumMismatchRejected(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestApplyMigrationsFS_CheckMigrationQueryError fails the ledger checksum
+// lookup for a migration file. It requires the filename-specific query
+// diagnostic and unlock expectation, protecting propagation of tracking
+// failure before SQL execution.
 func TestApplyMigrationsFS_CheckMigrationQueryError(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -441,6 +481,9 @@ func TestApplyMigrationsFS_CheckMigrationQueryError(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestApplyMigrationsFS_SkipEmptyAndAlreadyApplied combines whitespace-only
+// SQL with a file whose recorded checksum matches. It requires no migration
+// execution expectations and a successful unlock, protecting both skip paths.
 func TestApplyMigrationsFS_SkipEmptyAndAlreadyApplied(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -466,6 +509,9 @@ func TestApplyMigrationsFS_SkipEmptyAndAlreadyApplied(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestApplyMigrationsFS_ReadMigrationError provides a directory under an SQL
+// filename so content reading fails. It requires a named read diagnostic and
+// unlock attempt, protecting cleanup after filesystem failure during startup.
 func TestApplyMigrationsFS_ReadMigrationError(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -485,6 +531,10 @@ func TestApplyMigrationsFS_ReadMigrationError(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestPgAdvisoryLockAndUnlock_ErrorBranches exercises waiting cancellation,
+// an unlock execution error, and acquisition after one busy result. It
+// requires contextual errors or successful delayed admission with the ordered
+// fixed-lock queries.
 func TestPgAdvisoryLockAndUnlock_ErrorBranches(t *testing.T) {
 	t.Run("context_cancelled_while_not_locked", func(t *testing.T) {
 		db, mock, err := sqlmock.New()
@@ -540,6 +590,10 @@ func TestPgAdvisoryLockAndUnlock_ErrorBranches(t *testing.T) {
 	})
 }
 
+// TestValidateMigrationExecutionMode compares ordinary concurrent-index text
+// with invalid and valid _notx inputs. It requires rejection of missing
+// guards, transaction controls, and mixed statements, plus acceptance of
+// guarded concurrent create/drop examples.
 func TestValidateMigrationExecutionMode(t *testing.T) {
 	t.Run("事务迁移包含CONCURRENTLY会被拒绝", func(t *testing.T) {
 		nonTx, err := validateMigrationExecutionMode("001_add_idx.sql", "CREATE INDEX CONCURRENTLY idx_a ON t(a);")
@@ -581,6 +635,10 @@ DROP INDEX CONCURRENTLY IF EXISTS idx_b;
 	})
 }
 
+// TestApplyMigrationsFS_NonTransactionalMigration applies one guarded
+// concurrent-index statement through a filesystem fixture. It requires
+// standalone SQL followed by ledger insertion and unlock, with no transaction
+// expectations for that file.
 func TestApplyMigrationsFS_NonTransactionalMigration(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -610,6 +668,10 @@ func TestApplyMigrationsFS_NonTransactionalMigration(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestApplyMigrationsFS_NonTransactionalMigration_MultiStatements applies two
+// guarded concurrent indexes with SQL line comments. It requires separate
+// ordered execution calls before ledger insertion, protecting the runner from
+// combining them into an implicit transaction.
 func TestApplyMigrationsFS_NonTransactionalMigration_MultiStatements(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -646,6 +708,10 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_t_b ON t(b);
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestApplyMigrationsFS_NonTransactionalMigration_LatestAPIKeyIPIndexDropsInvalidIndexBeforeRetry
+// models an invalid latest-IP index before the named retry migration. It
+// requires invalidity lookup, concurrent drop, concurrent create, ledger
+// record, and unlock in order.
 func TestApplyMigrationsFS_NonTransactionalMigration_LatestAPIKeyIPIndexDropsInvalidIndexBeforeRetry(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -685,6 +751,10 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_usage_logs_api_key_latest_ip
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestApplyMigrationsFS_PaymentOrdersOutTradeNoUniqueMigration_FailsFastOnDuplicatePrecheck
+// supplies a duplicated payment trade number before the unique-index
+// migration. It requires a duplicate diagnostic and unlock while expectations
+// admit no index changes after that precheck fails.
 func TestApplyMigrationsFS_PaymentOrdersOutTradeNoUniqueMigration_FailsFastOnDuplicatePrecheck(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -719,6 +789,10 @@ DROP INDEX CONCURRENTLY IF EXISTS paymentorder_out_trade_no;
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestApplyMigrationsFS_PaymentOrdersOutTradeNoUniqueMigration_DropsInvalidIndexBeforeRetry
+// supplies an empty duplicate sample and invalid payment unique index. It
+// requires precheck, concurrent removal and migration statements, ledger
+// insertion, and unlock in order.
 func TestApplyMigrationsFS_PaymentOrdersOutTradeNoUniqueMigration_DropsInvalidIndexBeforeRetry(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -763,6 +837,10 @@ DROP INDEX CONCURRENTLY IF EXISTS paymentorder_out_trade_no;
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestApplyMigrationsFS_SchedulerOutboxPendingDedupKeyMigration_DropsInvalidIndexBeforeRetry
+// models an invalid scheduler pending-dedup index. It requires concurrent
+// removal before the named creation statement, then ledger recording and
+// unlock, protecting retry recovery ordering.
 func TestApplyMigrationsFS_SchedulerOutboxPendingDedupKeyMigration_DropsInvalidIndexBeforeRetry(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
@@ -801,11 +879,17 @@ CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_scheduler_outbox_pending_dedu
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestApplyMigrationsFS_TransactionalMigration runs an ordinary migration
+// with a one-connection pool. It requires Begin, SQL, ledger insertion,
+// Commit, and unlock in sequence, protecting transaction work on the same
+// reserved lock session.
 func TestApplyMigrationsFS_TransactionalMigration(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer func() { _ = db.Close() }()
-	// The lock and migration share one session, so a one-connection pool must suffice.
+	// A single available connection forces the runner to use its reserved lock
+	// session for BeginTx; taking another pooled connection would prevent this
+	// fixture from completing.
 	db.SetMaxOpenConns(1)
 
 	prepareMigrationsBootstrapExpectations(mock)
@@ -834,16 +918,25 @@ func TestApplyMigrationsFS_TransactionalMigration(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// applyEmbeddedMigrations applies the embedded release migrations in storage tests.
+// applyEmbeddedMigrations supplies the release's embedded SQL filesystem to
+// ApplyMigrations for storage fixtures. It returns the runner's error and
+// retains that runner's connection, session-lock, and per-file execution
+// rules.
 func applyEmbeddedMigrations(ctx context.Context, db *sql.DB) error {
 	return ApplyMigrations(ctx, db, migrations.FS)
 }
 
+// migrationChecksum returns hexadecimal SHA-256 of trimmed fixture SQL for
+// ledger expectations.
 func migrationChecksum(content string) string {
 	sum := sha256.Sum256([]byte(strings.TrimSpace(content)))
 	return hex.EncodeToString(sum[:])
 }
 
+// prepareMigrationsBootstrapExpectations queues successful lock and
+// tracking-storage expectations for later runner fixtures. It models a
+// present nonempty Atlas table so those tests can focus on per-file behavior
+// without baseline insertion.
 func prepareMigrationsBootstrapExpectations(mock sqlmock.Sqlmock) {
 	mock.ExpectQuery("SELECT pg_try_advisory_lock\\(\\$1\\)").
 		WithArgs(migrationsAdvisoryLockID).

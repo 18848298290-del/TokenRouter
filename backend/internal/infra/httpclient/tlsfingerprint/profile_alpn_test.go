@@ -2,13 +2,21 @@ package tlsfingerprint
 
 import "testing"
 
+// ALPN selection tests use independent profile values to check HTTP/1
+// defaults, an explicit h2 list, and a custom extension order lacking ALPN.
+// Variant construction then checks a separate HTTP/1 protocol slice while the
+// supplied h2 profile retains its protocol count.
+
+// TestSupportsHTTP2 compares nil, empty, h2-enabled, and ALPN-omitting
+// profiles in parallel cases. It requires HTTP/2 eligibility only when
+// effective protocol and extension choices support the advertised h2 path.
 func TestSupportsHTTP2(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		profile *Profile
-		want    bool
+		name    string   // case display name
+		profile *Profile // supplied TLS selection profile
+		want    bool     // expected HTTP/2 support decision
 	}{
 		{name: "nil profile uses http1 default", profile: nil, want: false},
 		{name: "empty profile uses http1 default", profile: &Profile{}, want: false},
@@ -30,6 +38,9 @@ func TestSupportsHTTP2(t *testing.T) {
 	}
 }
 
+// TestHTTP1OnlyProfileRemovesH2ALPN derives an HTTP/1 variant from an h2
+// profile. It requires a distinct pointer, a sole HTTP/1.1 protocol, false
+// HTTP/2 support, and retained input protocol length.
 func TestHTTP1OnlyProfileRemovesH2ALPN(t *testing.T) {
 	t.Parallel()
 

@@ -12,6 +12,16 @@ import (
 	servertiming "github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 )
 
+// Redis timing fixtures call hook wrappers directly with a request collector
+// and fake execution functions. A failed command and a successful
+// three-command pipeline contribute four observed commands while their
+// argument text stays out of the header; an inactive context still delegates
+// execution.
+
+// TestServerTimingRedisHookRecordsCommands executes a failed command and a
+// successful three-command pipeline through the hooks. It requires the
+// a returned error, four counted commands, and no command-detail text in the
+// header.
 func TestServerTimingRedisHookRecordsCommands(t *testing.T) {
 	collector := servertiming.New(time.Now())
 	ctx := servertiming.WithCollector(context.Background(), collector)
@@ -47,6 +57,10 @@ func TestServerTimingRedisHookRecordsCommands(t *testing.T) {
 	}
 }
 
+// TestServerTimingRedisHookSkipsInactiveContext invokes the command hook with
+// a context lacking a collector. It requires normal delegation to the
+// supplied next function, protecting command execution when timing is
+// inactive.
 func TestServerTimingRedisHookSkipsInactiveContext(t *testing.T) {
 	called := false
 	hook := TimingHook{}

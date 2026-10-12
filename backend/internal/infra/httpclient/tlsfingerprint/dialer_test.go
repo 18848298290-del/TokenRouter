@@ -19,33 +19,42 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// FingerprintResponse holds fingerprint data returned by tls.peet.ws/api/all.
+// Dialer fixtures separate local profile construction from optional external
+// network observations. Remote tests compare selected JA3/JA4 expectations
+// only when the network flag is enabled; local tests inspect retained
+// constructor pointers, defaults, and an HTTPS proxy receiving CONNECT before
+// expected target-handshake failure.
+
+// FingerprintResponse decodes remote address, TLS fingerprint, and HTTP/2 observations.
 type FingerprintResponse struct {
-	IP    string  `json:"ip"`
-	TLS   TLSInfo `json:"tls"`
-	HTTP2 any     `json:"http2"`
+	IP    string  `json:"ip"`    // remote observed source address
+	TLS   TLSInfo `json:"tls"`   // remote TLS fingerprint details
+	HTTP2 any     `json:"http2"` // remote HTTP/2 observation payload
 }
 
 // TestProfileExpectation describes the expected fingerprint of a profile.
 type TestProfileExpectation struct {
-	Profile       *Profile
-	ExpectedJA3   string // Expected JA3 hash; empty skips this check.
-	ExpectedJA4   string // Expected complete JA4; empty skips this check.
-	JA4CipherHash string // JA4 cipher hash; empty skips this check.
+	Profile       *Profile // profile supplied for remote sample
+	ExpectedJA3   string   // expected hash; empty skips check
+	ExpectedJA4   string   // expected JA4; empty skips check
+	JA4CipherHash string   // expected cipher hash; empty skips
 }
 
-// TLSInfo holds JA3, JA4, and TLS session details.
+// TLSInfo decodes remote JA3, JA4, and TLS session diagnostic fields.
 type TLSInfo struct {
-	JA3           string `json:"ja3"`
-	JA3Hash       string `json:"ja3_hash"`
-	JA4           string `json:"ja4"`
-	PeetPrint     string `json:"peetprint"`
-	PeetPrintHash string `json:"peetprint_hash"`
-	ClientRandom  string `json:"client_random"`
-	SessionID     string `json:"session_id"`
+	JA3           string `json:"ja3"`            // remote comma-separated JA3 text
+	JA3Hash       string `json:"ja3_hash"`       // remote hexadecimal JA3 MD5
+	JA4           string `json:"ja4"`            // remote structured JA4 text
+	PeetPrint     string `json:"peetprint"`      // remote detailed fingerprint text
+	PeetPrintHash string `json:"peetprint_hash"` // remote detailed fingerprint hash
+	ClientRandom  string `json:"client_random"`  // remote TLS random text
+	SessionID     string `json:"session_id"`     // remote TLS session identifier
 }
 
-// TestDialerBasicConnection checks a TLS connection using the default profile.
+// TestDialerBasicConnection sends an optional remote request using the
+// default fingerprint profile. When network testing is enabled, it requires a
+// successful connection and HTTP 200 response, with body cleanup owned by the
+// fixture.
 func TestDialerBasicConnection(t *testing.T) {
 	skipNetworkTest(t)
 
@@ -75,9 +84,10 @@ func TestDialerBasicConnection(t *testing.T) {
 	}
 }
 
-// TestJA3Fingerprint checks the default profile against tls.peet.ws.
-// Expected JA3 hash: 44f88fca027f27bab4bb08d4af15f23e (Node.js 24.x).
-// Expected JA4: t13d1714h1_5b57614c22b0_7baf387fc6ff.
+// TestJA3Fingerprint requests an optional tls.peet.ws sample through the
+// built-in profile. It requires the expected JA3 hash, JA4 cipher component,
+// and one accepted JA4 prefix; cipher and extension-list differences are
+// diagnostic logs rather than failed assertions.
 func TestJA3Fingerprint(t *testing.T) {
 	skipNetworkTest(t)
 
@@ -161,7 +171,8 @@ func TestJA3Fingerprint(t *testing.T) {
 		t.Logf("Warning: JA3 does not contain expected TLS 1.3 cipher suites")
 	}
 
-	// The 14 extensions must retain the Node.js 24.x ordering.
+	// Extension ordering is diagnostic here: list mismatches produce logs. The
+	// hash and accepted JA4 shapes have separate assertions that can fail this test.
 	expectedExtensions := "0-65037-23-65281-10-11-35-16-5-13-18-51-45-43"
 	if strings.Contains(fpResp.TLS.JA3, expectedExtensions) {
 		t.Logf("✓ JA3 contains expected extension list: %s", expectedExtensions)
@@ -170,6 +181,10 @@ func TestJA3Fingerprint(t *testing.T) {
 	}
 }
 
+// skipNetworkTest skips external tests in short mode or unless
+// TLSFINGERPRINT_NETWORK_TESTS equals 1. It leaves local construction tests
+// runnable independently and permits callers to use remote assertions after
+// the gate succeeds.
 func skipNetworkTest(t *testing.T) {
 	if testing.Short() {
 		t.Skip("跳过网络测试（short 模式）")
@@ -179,7 +194,9 @@ func skipNetworkTest(t *testing.T) {
 	}
 }
 
-// TestDialerWithProfile checks that enabling GREASE adds ClientHello extensions.
+// TestDialerWithProfile builds specs from default-order profiles with GREASE
+// disabled and enabled. It requires more extensions in the GREASE spec,
+// protecting conditional bookend insertion for the built-in order.
 func TestDialerWithProfile(t *testing.T) {
 	profile1 := &Profile{
 		Name:         "Profile 1 - No GREASE",
@@ -201,7 +218,9 @@ func TestDialerWithProfile(t *testing.T) {
 	}
 }
 
-// TestHTTPProxyDialerBasic checks that the constructor retains its profile and proxy.
+// TestHTTPProxyDialerBasic constructs an HTTP-proxy dialer from supplied
+// pointers. It requires a non-nil dialer retaining the exact profile and URL
+// pointers, protecting constructor ownership before any network operation.
 func TestHTTPProxyDialerBasic(t *testing.T) {
 	profile := &Profile{
 		Name:         "Test Profile",
@@ -222,6 +241,10 @@ func TestHTTPProxyDialerBasic(t *testing.T) {
 	}
 }
 
+// TestHTTPProxyDialerSupportsHTTPSProxyCONNECT trusts a local HTTPS proxy
+// that receives CONNECT but supplies no target TLS server. It requires
+// observed CONNECT and a target-handshake error, distinguishing proxy TLS
+// success from target completion.
 func TestHTTPProxyDialerSupportsHTTPSProxyCONNECT(t *testing.T) {
 	var connectSeen atomic.Bool
 	proxyServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -236,7 +259,8 @@ func TestHTTPProxyDialerSupportsHTTPSProxyCONNECT(t *testing.T) {
 
 	proxyURL := mustParseURL(proxyServer.URL)
 	dialer := NewHTTPProxyDialer(&Profile{Name: "Test Profile"}, proxyURL)
-	// Trust the local proxy fixture certificate to verify the HTTPS proxy connection.
+	// Trust this local proxy fixture so its verified TLS stage can succeed.
+	// The later target handshake is expected to fail because no target peer exists.
 	roots := x509.NewCertPool()
 	roots.AddCert(proxyServer.Certificate())
 	dialer.proxyTLSConfig = &stdtls.Config{RootCAs: roots}
@@ -256,7 +280,10 @@ func TestHTTPProxyDialerSupportsHTTPSProxyCONNECT(t *testing.T) {
 	}
 }
 
-// TestSOCKS5ProxyDialerBasic checks that the constructor retains its profile and proxy.
+// TestSOCKS5ProxyDialerBasic constructs a SOCKS dialer with a supplied
+// profile and proxy URL. It requires a non-nil result retaining both
+// pointers, protecting constructor ownership without testing a proxy
+// exchange.
 func TestSOCKS5ProxyDialerBasic(t *testing.T) {
 	profile := &Profile{
 		Name:         "Test Profile",
@@ -277,7 +304,9 @@ func TestSOCKS5ProxyDialerBasic(t *testing.T) {
 	}
 }
 
-// TestBuildClientHelloSpec checks defaults and custom cipher suites.
+// TestBuildClientHelloSpec builds a nil-profile spec and a custom cipher-list
+// spec. It requires populated defaults and the corresponding cipher counts,
+// protecting default selection and configured list use.
 func TestBuildClientHelloSpec(t *testing.T) {
 	// A nil profile selects built-in defaults.
 	spec := buildClientHelloSpecFromProfile(nil)
@@ -305,6 +334,9 @@ func TestBuildClientHelloSpec(t *testing.T) {
 	}
 }
 
+// TestToUTLSCurves converts three configured group IDs to uTLS curve values.
+// It requires unchanged length and the same numeric identity at every
+// position, protecting ordered representation conversion.
 func TestToUTLSCurves(t *testing.T) {
 	input := []uint16{0x001d, 0x0017, 0x0018}
 	result := toUTLSCurves(input)
@@ -320,7 +352,9 @@ func TestToUTLSCurves(t *testing.T) {
 	}
 }
 
-// mustParseURL parses a test URL and panics on invalid input.
+// mustParseURL parses a fixture URL and returns its mutable parsed
+// representation. Malformed fixture syntax panics immediately, so callers
+// supply fixed valid URL text before constructing their dialer.
 func mustParseURL(rawURL string) *url.URL {
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -329,14 +363,16 @@ func mustParseURL(rawURL string) *url.URL {
 	return u
 }
 
-// TestAllProfiles compares captured TLS fingerprints for each configured profile.
-// Run: TLSFINGERPRINT_NETWORK_TESTS=1 go test -v -run TestAllProfiles ./internal/infra/httpclient/tlsfingerprint/...
+// TestAllProfiles requests optional remote fingerprints for the listed
+// default and Linux-labeled profiles. It compares each configured nonempty
+// expectation, with the supplied cases checking JA4 cipher hashes while other
+// fingerprint components are logged for diagnosis.
 func TestAllProfiles(t *testing.T) {
 	skipNetworkTest(t)
 
 	profiles := []TestProfileExpectation{
 		{
-			// Default Node.js 24.x profile.
+			// The default-profile fixture uses the dialer's built-in lists.
 			// JA3 hash: 44f88fca027f27bab4bb08d4af15f23e
 			// JA4： t13d1714h1_5b57614c22b0_7baf387fc6ff
 			Profile: &Profile{
@@ -346,7 +382,7 @@ func TestAllProfiles(t *testing.T) {
 			JA4CipherHash: "5b57614c22b0",
 		},
 		{
-			// Linux x64 Node.js v22.17.1 profile.
+			// The Linux-labeled fixture supplies each ordered cipher and group list.
 			Profile: &Profile{
 				Name:         "linux_x64_node_v22171",
 				EnableGREASE: false,
@@ -461,7 +497,10 @@ func TestAllProfiles(t *testing.T) {
 	}
 }
 
-// fetchFingerprint requests a TLS fingerprint from tls.peet.ws.
+// fetchFingerprint requests and decodes one tls.peet.ws sample using profile
+// and a thirty-second request budget. It closes the response body and fails t
+// on request, read, or JSON errors; callers first apply the optional-network
+// gate.
 func fetchFingerprint(t *testing.T, profile *Profile) *TLSInfo {
 	t.Helper()
 
@@ -508,8 +547,10 @@ func fetchFingerprint(t *testing.T, profile *Profile) *TLSInfo {
 	return &fpResp.TLS
 }
 
-// TestTLSFingerprintNetworkDialerHasBoundedTimeout checks dial and target-handshake limits.
-// Fingerprint dialers bypass http.Transport.DialContext.
+// TestTLSFingerprintNetworkDialerHasBoundedTimeout inspects fingerprint
+// network and target-handshake defaults. It requires the configured
+// ten-second phase values and the network dialer's keepalive setting,
+// protecting configuration outside ordinary net/http TLS dialing.
 func TestTLSFingerprintNetworkDialerHasBoundedTimeout(t *testing.T) {
 	dialer := newTLSFingerprintNetworkDialer()
 

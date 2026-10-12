@@ -7,6 +7,16 @@ import (
 	"testing"
 )
 
+// Transport trace fixtures call installed net/http callbacks directly,
+// isolating timestamps and counters from real connections. Repeated
+// installation retains the same context, and a first upstream transition
+// clears preflight observations before one retained upstream attempt is
+// recorded.
+
+// TestWithHTTPTraceRecordsTransportStages invokes connection, write, and
+// response-byte hooks through a fake transport. It requires populated stage
+// timestamps, one counted acquired/write/byte event, and the retained
+// connection-reuse flag.
 func TestWithHTTPTraceRecordsTransportStages(t *testing.T) {
 	ctx := WithHTTPTrace(context.Background())
 	base := roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -43,6 +53,9 @@ func TestWithHTTPTraceRecordsTransportStages(t *testing.T) {
 	}
 }
 
+// TestWithHTTPTraceIsIdempotent installs trace callbacks twice on the same
+// derived context. It requires the second call to return the identical
+// context, protecting shared state from repeated trace installation.
 func TestWithHTTPTraceIsIdempotent(t *testing.T) {
 	first := WithHTTPTrace(context.Background())
 	second := WithHTTPTrace(first)
@@ -51,6 +64,10 @@ func TestWithHTTPTraceIsIdempotent(t *testing.T) {
 	}
 }
 
+// TestBeginHTTPTraceDropsPreflightEvents records preflight connection and
+// write hooks before beginning upstream collection. It requires exactly one
+// event for each later upstream stage, protecting the initial reset of
+// preflight observations.
 func TestBeginHTTPTraceDropsPreflightEvents(t *testing.T) {
 	ctx := WithHTTPTrace(context.Background())
 	trace := httptrace.ContextClientTrace(ctx)

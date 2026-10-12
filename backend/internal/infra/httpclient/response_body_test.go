@@ -8,6 +8,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Buffered-body fixtures use short in-memory payloads to isolate the
+// configured byte budget. An exactly fitting payload is returned intact; a
+// larger payload returns no bytes and an error recognizable through
+// ErrResponseBodyTooLarge before protocol decoding can consume it.
+
+// TestReadUpstreamResponseBodyLimited compares an exactly fitting payload
+// with an oversized payload. It requires complete bytes for the former and no
+// body plus the overflow sentinel for the latter.
 func TestReadUpstreamResponseBodyLimited(t *testing.T) {
 	t.Run("within limit", func(t *testing.T) {
 		body, err := ReadResponseBodyLimited(bytes.NewReader([]byte("ok")), 2)

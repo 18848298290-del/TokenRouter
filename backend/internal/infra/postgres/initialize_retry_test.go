@@ -11,15 +11,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Initialization tests replace waiting with recorded delays so backoff and
+// retry budgets can be checked directly. Typed transient errors, permanent
+// authentication failures, cancellation, and an initializer with an already
+// completed migration distinguish the paths that may safely invoke
+// initialization again.
+
+// transientDatabaseError constructs a pq startup-error fixture using the
+// supplied SQLSTATE.
 func transientDatabaseError(code string) error {
 	return &pq.Error{Code: pq.ErrorCode(code), Message: "database is temporarily unavailable"}
 }
 
+// TestIsTransientDatabaseInitializationError supplies startup, wrapped
+// connection, authentication, and ordinary migration errors. It requires
+// retry eligibility for selected PostgreSQL transient codes and rejection of
+// permanent or untyped failures.
 func TestIsTransientDatabaseInitializationError(t *testing.T) {
 	tests := []struct {
-		name string
-		err  error
-		want bool
+		name string // case display name
+		err  error  // supplied startup error
+		want bool   // expected retry eligibility
 	}{
 		{name: "postgres is starting", err: transientDatabaseError("57P03"), want: true},
 		{name: "connection failure", err: fmt.Errorf("wrapped: %w", transientDatabaseError("08006")), want: true},
@@ -34,6 +46,9 @@ func TestIsTransientDatabaseInitializationError(t *testing.T) {
 	}
 }
 
+// TestInitializeDatabaseWithRetryEventuallySucceeds fails three startup
+// attempts before returning success. It requires four calls and one-, two-,
+// and four-second delays recorded by the injected wait function.
 func TestInitializeDatabaseWithRetryEventuallySucceeds(t *testing.T) {
 	attempts := 0
 	var delays []time.Duration
@@ -53,6 +68,10 @@ func TestInitializeDatabaseWithRetryEventuallySucceeds(t *testing.T) {
 	require.Equal(t, []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}, delays)
 }
 
+// TestInitializeDatabaseWithRetryFailsFastForPermanentError returns a
+// permanent authentication error immediately. It requires the same error, a
+// single initialization call, and no invocation of the injected wait
+// function.
 func TestInitializeDatabaseWithRetryFailsFastForPermanentError(t *testing.T) {
 	attempts := 0
 	waitCalled := false
@@ -70,6 +89,10 @@ func TestInitializeDatabaseWithRetryFailsFastForPermanentError(t *testing.T) {
 	require.False(t, waitCalled)
 }
 
+// TestInitializeDatabaseWithRetryStopsWhenContextIsCanceled cancels the
+// context in its injected wait function. It requires cancellation to end
+// retrying after one failed initialization instead of invoking another
+// attempt.
 func TestInitializeDatabaseWithRetryStopsWhenContextIsCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -86,6 +109,9 @@ func TestInitializeDatabaseWithRetryStopsWhenContextIsCanceled(t *testing.T) {
 	require.Equal(t, 1, attempts)
 }
 
+// TestInitializeDatabaseWithRetryReturnsLastErrorAfterLimit returns a
+// connection failure on every initialization. It requires the last error, all
+// nine attempts, eight waits, and a capped final delay.
 func TestInitializeDatabaseWithRetryReturnsLastErrorAfterLimit(t *testing.T) {
 	attempts := 0
 	lastErr := transientDatabaseError("08006")
@@ -104,6 +130,10 @@ func TestInitializeDatabaseWithRetryReturnsLastErrorAfterLimit(t *testing.T) {
 	require.Equal(t, databaseInitializationRetryMax, delays[len(delays)-1])
 }
 
+// TestInitializeDatabaseWithRetryAllowsIdempotentMigrationRetry records a
+// migration effect before a transient initialization error. It requires the
+// second attempt to succeed using that retained effect and observes two total
+// calls.
 func TestInitializeDatabaseWithRetryAllowsIdempotentMigrationRetry(t *testing.T) {
 	applied := make(map[string]bool)
 	attempts := 0

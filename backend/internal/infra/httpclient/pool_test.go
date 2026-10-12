@@ -12,13 +12,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// DNS-validation fixtures replace the package validator and transport clock
+// to observe cache reuse and expiry without network lookup. These tests run
+// serially because the validator is shared; validation failure is checked
+// before any request reaches the fake base transport.
+
+// roundTripFunc adapts a test-owned callback to the HTTP transport interface.
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
+// RoundTrip delegates the fixture request to its supplied function and
+// returns that function's response and error. Each test owns the callback and
+// any captured counters or response body.
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
+// TestValidatedTransport_CacheHostValidation sends two same-host requests at
+// a fixed clock value through a fake base transport. It requires one
+// validation call and two base calls, protecting successful-host cache reuse.
 func TestValidatedTransport_CacheHostValidation(t *testing.T) {
+	// Restore the shared validator after this serial test so later fixtures
+	// and production-default cases do not inherit the injected DNS decision.
 	originalValidate := validateResolvedIP
 	defer func() {
 		validateResolvedIP = originalValidate
@@ -59,7 +73,13 @@ func TestValidatedTransport_CacheHostValidation(t *testing.T) {
 	require.Equal(t, int32(2), atomic.LoadInt32(&baseCalls))
 }
 
+// TestValidatedTransport_ExpiredCacheTriggersRevalidation advances its
+// injected clock beyond the stored validation lifetime. It requires a second
+// validator call on the next same-host request, protecting lazy expiry
+// revalidation.
 func TestValidatedTransport_ExpiredCacheTriggersRevalidation(t *testing.T) {
+	// This serial fixture owns the package validator until its deferred restore.
+	// The injected clock makes expiry independent of wall-clock scheduling.
 	originalValidate := validateResolvedIP
 	defer func() {
 		validateResolvedIP = originalValidate
@@ -98,7 +118,12 @@ func TestValidatedTransport_ExpiredCacheTriggersRevalidation(t *testing.T) {
 	require.Equal(t, int32(2), atomic.LoadInt32(&validateCalls))
 }
 
+// TestValidatedTransport_ValidationErrorStopsRoundTrip injects a validator
+// failure for an outbound host. It requires the identical error and zero base
+// transport calls, protecting rejection before the request is sent.
 func TestValidatedTransport_ValidationErrorStopsRoundTrip(t *testing.T) {
+	// Hold the injected package validator for this serial failure case and
+	// restore it before later tests can perform their own host checks.
 	originalValidate := validateResolvedIP
 	defer func() {
 		validateResolvedIP = originalValidate

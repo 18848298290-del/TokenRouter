@@ -11,7 +11,20 @@ import (
 	"github.com/zeromicro/go-zero/core/collection"
 )
 
+// Wheel fixtures replace the package constructor serially to use short ticks
+// or force startup failure. Buffered notifications check one-shot and
+// recurring execution; gated callbacks separately establish cancellation
+// waiting, prevention of rearming, and shutdown timeout followed by a later
+// successful wait.
+
+// TestNewTimingWheelService_InitFail_NoPanicAndReturnError replaces
+// construction with a failure before Start. It requires an error and a normal
+// Stop afterward, protecting cleanup when no underlying timer wheel was
+// created.
 func TestNewTimingWheelService_InitFail_NoPanicAndReturnError(t *testing.T) {
+	// This serial fixture replaces the package constructor for its own failure
+	// or timing setup. Cleanup restores the dependency before another test can
+	// start a wheel.
 	original := newTimingWheel
 	t.Cleanup(func() { newTimingWheel = original })
 
@@ -27,6 +40,9 @@ func TestNewTimingWheelService_InitFail_NoPanicAndReturnError(t *testing.T) {
 	svc.Stop() // Cleanup must be safe after initialization fails.
 }
 
+// TestNewTimingWheelService_Success starts a newly constructed wheel and then
+// stops it. It requires a non-nil service and successful Start, protecting
+// ordinary initialization and completion of its cleanup path.
 func TestNewTimingWheelService_Success(t *testing.T) {
 	svc := New()
 	err := svc.Start()
@@ -39,7 +55,13 @@ func TestNewTimingWheelService_Success(t *testing.T) {
 	svc.Stop()
 }
 
+// TestNewTimingWheelService_ExecuteCallbackRunsFunc captures the callback
+// supplied to the underlying constructor. It requires a callable dispatcher
+// and observes it invoking a supplied function before stopping the wheel.
 func TestNewTimingWheelService_ExecuteCallbackRunsFunc(t *testing.T) {
+	// This serial fixture replaces the package constructor for its own failure
+	// or timing setup. Cleanup restores the dependency before another test can
+	// start a wheel.
 	original := newTimingWheel
 	t.Cleanup(func() { newTimingWheel = original })
 
@@ -67,7 +89,14 @@ func TestNewTimingWheelService_ExecuteCallbackRunsFunc(t *testing.T) {
 	svc.Stop()
 }
 
+// TestTimingWheelService_Schedule_ExecutesOnce uses short wheel ticks and a
+// buffered callback notification. It requires a first execution within the
+// observation budget and no second notification during a later waiting
+// interval.
 func TestTimingWheelService_Schedule_ExecutesOnce(t *testing.T) {
+	// This serial fixture replaces the package constructor for its own failure
+	// or timing setup. Cleanup restores the dependency before another test can
+	// start a wheel.
 	original := newTimingWheel
 	t.Cleanup(func() { newTimingWheel = original })
 
@@ -98,7 +127,14 @@ func TestTimingWheelService_Schedule_ExecutesOnce(t *testing.T) {
 	}
 }
 
+// TestTimingWheelService_Cancel_PreventsExecution registers a delayed
+// one-shot and cancels it immediately. It requires no callback notification
+// during a bounded observation window, protecting cancellation before
+// admission.
 func TestTimingWheelService_Cancel_PreventsExecution(t *testing.T) {
+	// This serial fixture replaces the package constructor for its own failure
+	// or timing setup. Cleanup restores the dependency before another test can
+	// start a wheel.
 	original := newTimingWheel
 	t.Cleanup(func() { newTimingWheel = original })
 
@@ -124,6 +160,9 @@ func TestTimingWheelService_Cancel_PreventsExecution(t *testing.T) {
 	}
 }
 
+// TestTimingWheelService_Schedule_AfterStop_LogsError stops the wheel before
+// registering a one-shot callback that would fail the test. It requires the
+// scheduling call to return normally and leave that callback unexecuted.
 func TestTimingWheelService_Schedule_AfterStop_LogsError(t *testing.T) {
 	svc := New()
 	err := svc.Start()
@@ -132,12 +171,15 @@ func TestTimingWheelService_Schedule_AfterStop_LogsError(t *testing.T) {
 	}
 	svc.Stop()
 
-	// Scheduling after Stop should log the failure and return without panicking.
 	svc.Schedule("after-stop", 100*time.Millisecond, func() {
 		t.Fatal("不应被执行")
 	})
 }
 
+// TestTimingWheelService_ScheduleRecurring_AfterStop_LogsError stops the
+// wheel before registering recurring work that would fail the test. It
+// requires registration to return normally and leave the rejected callback
+// unexecuted.
 func TestTimingWheelService_ScheduleRecurring_AfterStop_LogsError(t *testing.T) {
 	svc := New()
 	err := svc.Start()
@@ -146,12 +188,14 @@ func TestTimingWheelService_ScheduleRecurring_AfterStop_LogsError(t *testing.T) 
 	}
 	svc.Stop()
 
-	// Recurring scheduling after Stop should log the failure and return without panicking.
 	svc.ScheduleRecurring("after-stop-rec", 100*time.Millisecond, func() {
 		t.Fatal("不应被执行")
 	})
 }
 
+// TestTimingWheelService_Stop_Idempotent starts a wheel and calls Stop twice
+// in succession. It requires both calls to complete normally, protecting
+// reuse of terminal shutdown state and its shared completion signal.
 func TestTimingWheelService_Stop_Idempotent(t *testing.T) {
 	svc := New()
 	err := svc.Start()
@@ -162,7 +206,14 @@ func TestTimingWheelService_Stop_Idempotent(t *testing.T) {
 	svc.Stop() // Repeated Stop calls are safe.
 }
 
+// TestTimingWheelService_ScheduleRecurring_ExecutesMultipleTimes observes a
+// short-delay recurring callback with an atomic counter. It requires at least
+// two completed observations before the deadline, protecting normal rearming
+// after callback completion.
 func TestTimingWheelService_ScheduleRecurring_ExecutesMultipleTimes(t *testing.T) {
+	// This serial fixture replaces the package constructor for its own failure
+	// or timing setup. Cleanup restores the dependency before another test can
+	// start a wheel.
 	original := newTimingWheel
 	t.Cleanup(func() { newTimingWheel = original })
 
@@ -189,9 +240,14 @@ func TestTimingWheelService_ScheduleRecurring_ExecutesMultipleTimes(t *testing.T
 	}
 }
 
-// TestWheelCancelWaitsAndPreventsRearm checks that cancellation waits for an active callback
-// and prevents the recurring task from being scheduled again.
+// TestWheelCancelWaitsAndPreventsRearm holds a recurring callback behind a
+// gate while launching cancellation. It requires no cancellation completion
+// during the observation window, completion after gate release, and one
+// callback after a further interval for detecting rearm.
 func TestWheelCancelWaitsAndPreventsRearm(t *testing.T) {
+	// This serial fixture replaces the package constructor for its own failure
+	// or timing setup. Cleanup restores the dependency before another test can
+	// start a wheel.
 	original := newTimingWheel
 	newTimingWheel = func(_ time.Duration, _ int, execute collection.Execute) (*collection.TimingWheel, error) {
 		return original(time.Millisecond, 64, execute)
@@ -210,12 +266,16 @@ func TestWheelCancelWaitsAndPreventsRearm(t *testing.T) {
 	})
 	<-entered
 	canceled := make(chan struct{})
+	// Run cancellation independently while the admitted callback is gated, so
+	// its completion signal can establish that waiting lasts until callback release.
 	go func() { wheel.CancelAndWait("flush"); close(canceled) }()
 	select {
 	case <-canceled:
 		t.Fatal("回调仍在执行")
 	case <-time.After(10 * time.Millisecond):
 	}
+	// Release the admitted callback before joining cancellation, then allow a
+	// short further interval to detect any recurring timer that escaped removal.
 	close(release)
 	<-canceled
 	time.Sleep(10 * time.Millisecond)
@@ -223,7 +283,14 @@ func TestWheelCancelWaitsAndPreventsRearm(t *testing.T) {
 	wheel.Stop()
 }
 
+// TestWheelShutdownTimeoutReportsIncompleteCallback holds an admitted
+// callback beyond the shutdown budget. It requires a deadline error,
+// rejection of later scheduling, and successful repeated shutdown after the
+// callback gate is released.
 func TestWheelShutdownTimeoutReportsIncompleteCallback(t *testing.T) {
+	// This serial fixture replaces the package constructor for its own failure
+	// or timing setup. Cleanup restores the dependency before another test can
+	// start a wheel.
 	original := newTimingWheel
 	newTimingWheel = func(_ time.Duration, _ int, execute collection.Execute) (*collection.TimingWheel, error) {
 		return original(time.Millisecond, 64, execute)

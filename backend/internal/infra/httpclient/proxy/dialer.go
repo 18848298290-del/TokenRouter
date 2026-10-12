@@ -12,6 +12,14 @@ import (
 	"golang.org/x/net/proxy"
 )
 
+// SOCKS proxy routing replaces an HTTP transport's DialContext, so a caller's
+// original dial budget no longer governs that route. A shared forward
+// net.Dialer supplies its own ten-second connection limit and keepalive
+// interval beneath SOCKS negotiation; HTTP and HTTPS proxy selection retains
+// the caller's configured network dialer.
+
+// SOCKS forward connection settings bound proxy TCP setup and retain periodic
+// keepalive probes after its replacement DialContext takes over transport dialing.
 const (
 	// socks5DialTimeout bounds TCP connection setup to the SOCKS5 proxy.
 	socks5DialTimeout = 10 * time.Second
@@ -30,19 +38,16 @@ var socks5ForwardDialer = &net.Dialer{
 	KeepAlive: socks5DialKeepAlive,
 }
 
-// ConfigureTransportProxy configures proxy routing on transport.
+// ConfigureTransportProxy mutates the caller-owned transport to use proxyURL,
+// leaving nil proxy selection unchanged. Configure before concurrent
+// requests; HTTP/HTTPS sets Proxy while SOCKS5/SOCKS5H installs a SOCKS
+// DialContext and retains any existing Proxy field.
 //
-// Supported schemes:
-//   - http/https set transport.Proxy and retain the caller's DialContext.
-//   - socks5 sets DialContext through x/net/proxy and sends hostnames to the proxy.
-//   - socks5h uses the same dialer and hostname resolution behavior.
-//
-// Arguments:
-//   - transport is the caller-owned transport to configure.
-//   - proxyURL selects routing; nil leaves the transport unchanged.
-//
-// Errors:
-//   - Unsupported schemes and dialer construction failures return an error.
+// The pinned SOCKS implementation accepts context-aware dialing and forwards
+// hostnames to the proxy. A dialer lacking that interface uses a
+// noncancelable adapter; construction or unsupported-scheme errors are
+// returned for caller policy. This function changes routing fields rather
+// than clearing unrelated previous routing configuration.
 func ConfigureTransportProxy(transport *http.Transport, proxyURL *url.URL) error {
 	if proxyURL == nil {
 		return nil
@@ -59,12 +64,13 @@ func ConfigureTransportProxy(transport *http.Transport, proxyURL *url.URL) error
 		if err != nil {
 			return fmt.Errorf("create socks5 dialer: %w", err)
 		}
-		// Use ContextDialer when available so requests can cancel proxy dialing.
+		// SOCKS replaces the caller's DialContext. Use the dialer's context-aware
+		// path when available so the request budget reaches proxy connection setup.
 		if contextDialer, ok := dialer.(proxy.ContextDialer); ok {
 			transport.DialContext = contextDialer.DialContext
 		} else {
-			// Adapt a dialer that lacks ContextDialer to the transport signature.
-			// This adapter cannot forward request cancellation or deadlines to Dial.
+			// A non-context dialer still fits the transport callback through this
+			// adapter, but Dial receives no request cancellation signal or deadline.
 			transport.DialContext = func(_ context.Context, network, addr string) (net.Conn, error) {
 				return dialer.Dial(network, addr)
 			}

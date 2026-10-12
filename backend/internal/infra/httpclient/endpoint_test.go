@@ -6,13 +6,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Endpoint fixtures exercise complete routes, root and prefixed bases,
+// alternate versions, and parsed URL components. Expected strings show
+// whether the supplied base keeps its selected version, query, and IPv6
+// authority while endpoint composition clears a parsed fragment.
+
+// TestBuildOpenAIChatCompletionsURL supplies complete chat routes, root URLs,
+// prefixed paths, and alternate API versions. It requires the expected
+// endpoint spelling after trimming while parallel cases operate on
+// independent values.
 func TestBuildOpenAIChatCompletionsURL(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name string
-		base string
-		want string
+		name string // case display name
+		base string // supplied upstream base
+		want string // expected complete endpoint
 	}{
 		// Reuse a complete chat/completions endpoint.
 		{"already chat/completions", "https://api.openai.com/v1/chat/completions", "https://api.openai.com/v1/chat/completions"},
@@ -38,11 +47,15 @@ func TestBuildOpenAIChatCompletionsURL(t *testing.T) {
 	}
 }
 
+// TestBuildOpenAIResponsesInputTokensURL supplies root, versioned, Responses,
+// and already complete token-count bases. It requires one complete
+// input_tokens route for each supported construction shape without adding a
+// duplicate suffix.
 func TestBuildOpenAIResponsesInputTokensURL(t *testing.T) {
 	tests := []struct {
-		name string
-		base string
-		want string
+		name string // case display name
+		base string // supplied upstream base
+		want string // expected complete endpoint
 	}{
 		{
 			name: "root base",
@@ -75,12 +88,16 @@ func TestBuildOpenAIResponsesInputTokensURL(t *testing.T) {
 	}
 }
 
+// TestBuildOpenAIEndpointURLPreservesURLComponents supplies root, prefixed,
+// queried, fragmented, and IPv6 bases. It requires parsed queries and
+// authorities to survive route construction while fragments are removed in
+// the expected strings.
 func TestBuildOpenAIEndpointURLPreservesURLComponents(t *testing.T) {
 	tests := []struct {
-		name     string
-		base     string
-		endpoint string
-		want     string
+		name     string // case display name
+		base     string // supplied upstream base
+		endpoint string // route to append
+		want     string // expected complete endpoint
 	}{
 		{name: "root", base: "https://upstream.example", endpoint: "/v1/models", want: "https://upstream.example/v1/models"},
 		{name: "v1", base: "https://upstream.example/v1", endpoint: "/v1/responses", want: "https://upstream.example/v1/responses"},
@@ -99,14 +116,16 @@ func TestBuildOpenAIEndpointURLPreservesURLComponents(t *testing.T) {
 	}
 }
 
-// TestBuildOpenAIResponsesURL_ProbeURL checks response probe paths, retaining a supplied version segment.
+// TestBuildOpenAIResponsesURL_ProbeURL supplies Responses probe bases with
+// root, alternate version, complete endpoint, and absent scheme forms. It
+// requires the configured endpoint spelling in parallel independent cases.
 func TestBuildOpenAIResponsesURL_ProbeURL(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name string
-		base string
-		want string
+		name string // case display name
+		base string // supplied upstream base
+		want string // expected complete endpoint
 	}{
 		{"bare domain", "https://api.openai.com", "https://api.openai.com/v1/responses"},
 		{"domain trailing slash", "https://api.openai.com/", "https://api.openai.com/v1/responses"},
