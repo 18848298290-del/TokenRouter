@@ -22,21 +22,24 @@ import (
 	testassert "github.com/TokenFlux/TokenRouter/internal/testutil/assertion"
 )
 
-// fakeSMTPServer supports implicit TLS, STARTTLS, and plaintext SMTP client tests.
+// fakeSMTPServer records commands and serves controlled TLS/plaintext sessions for transport assertions.
 type fakeSMTPServer struct {
-	listener          net.Listener
-	tlsConfig         *tls.Config
-	advertiseStartTLS bool
+	listener          net.Listener // fixture connection listener
+	tlsConfig         *tls.Config  // fixture TLS certificate
+	advertiseStartTLS bool         // advertised upgrade capability
 
-	mu       sync.Mutex
-	commands []string
-	conns    atomic.Int64
-	wg       sync.WaitGroup
+	// mu protects commands recorded by independently accepted connections, while
+	// conns counts accepted sockets and wg retains the accept loop and its session
+	// goroutines until listener cleanup has waited for their completion.
+	mu       sync.Mutex     // command capture lock
+	commands []string       // recorded protocol commands
+	conns    atomic.Int64   // accepted socket count
+	wg       sync.WaitGroup // fixture goroutine lifetime
 }
 
-// TestSMTPAcknowledgementCancellationBoundary verifies success when cancellation occurs during QUIT after a
-// DATA acknowledgement.
-// Without a DATA acknowledgement, delivery remains uncertain.
+// TestSMTPAcknowledgementCancellationBoundary runs DATA sessions with and without an acceptance reply.
+// It verifies both sessions received message bytes, success after acknowledgement
+// survives cancellation during QUIT, and the unacknowledged session returns an error.
 func TestSMTPAcknowledgementCancellationBoundary(t *testing.T) {
 	for _, ack := range []bool{true, false} {
 		name := "unknown-without-ack"
@@ -46,6 +49,8 @@ func TestSMTPAcknowledgementCancellationBoundary(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			listener, err := net.Listen("tcp", "127.0.0.1:0")
 			require.NoError(t, err)
+			// The fixture listener owns the acknowledgement scenario's admission socket.
+			// Close it on exit so a failed assertion cannot leave its accept endpoint available.
 			defer func() { _ = listener.Close() }()
 			address, ok := listener.Addr().(*net.TCPAddr)
 			require.True(t, ok)
@@ -53,14 +58,20 @@ func TestSMTPAcknowledgementCancellationBoundary(t *testing.T) {
 			defer cancel()
 			var messages atomic.Int64
 			finished := make(chan struct{})
+			// Run the controlled SMTP peer independently of Send so it can cancel ctx
+			// exactly when QUIT arrives or withhold the DATA acknowledgement after receiving the message.
 			go func() {
 				defer close(finished)
 				conn, err := listener.Accept()
 				if err != nil {
 					return
 				}
+				// The peer goroutine owns this accepted socket. Close it before completion
+				// publication so the client receives EOF when the unacknowledged DATA branch returns.
 				defer func() { _ = conn.Close() }()
 				rw := bufio.NewReadWriter(bufio.NewReader(conn), bufio.NewWriter(conn))
+				// Reduce fixture write/flush failures to an unavailable reply. Protocol
+				// branches then return, letting deferred socket cleanup and completion publication end this controlled peer.
 				write := func(value string) bool {
 					if _, err := rw.WriteString(value + "\r\n"); err != nil {
 						return false
@@ -103,12 +114,16 @@ func TestSMTPAcknowledgementCancellationBoundary(t *testing.T) {
 							}
 						}
 						messages.Add(1)
+						// Receiving DATA is distinct from acknowledging acceptance. End this
+						// peer without a success reply to expose the client's uncertain-delivery error path.
 						if !ack {
 							return
 						}
 						if !write("250 accepted") {
 							return
 						}
+					// Cancel after the preceding successful DATA reply, then send an
+					// unusual QUIT outcome to test the transport's already-selected success result.
 					case command == "QUIT":
 						cancel()
 						_ = write("500 nonstandard quit")
@@ -117,6 +132,8 @@ func TestSMTPAcknowledgementCancellationBoundary(t *testing.T) {
 				}
 			}()
 			err = New().Send(ctx, &SMTPConfig{Host: "127.0.0.1", Port: address.Port, Username: "fixture", Password: "fixture", From: "sender@example.com"}, "recipient@example.com", "fixture", "fixture")
+			// Observe peer completion before inspecting receipt count and result. Its
+			// close distinguishes server receipt from the separate acknowledgement that determines client success.
 			<-finished
 			require.Equal(t, int64(1), messages.Load())
 			if ack {
@@ -129,7 +146,9 @@ func TestSMTPAcknowledgementCancellationBoundary(t *testing.T) {
 	}
 }
 
-// TestSMTPConnectionImplicitTLS checks implicit TLS with UseTLS enabled.
+// TestSMTPConnectionImplicitTLS uses an implicit-TLS listener with transport TLS enabled.
+// It verifies connection/authentication testing succeeds and the fixture records
+// EHLO after the encrypted connection is established.
 func TestSMTPConnectionImplicitTLS(t *testing.T) {
 	srv, port := startFakeSMTPServer(t, true, false)
 	svc := &Client{}
@@ -142,8 +161,9 @@ func TestSMTPConnectionImplicitTLS(t *testing.T) {
 	}
 }
 
-// TestSMTPConnectionStartTLSFallbackWhenTLSEnabled checks that a plaintext greeting with UseTLS enabled
-// causes a new connection that requires STARTTLS.
+// TestSMTPConnectionStartTLSFallbackWhenTLSEnabled offers plaintext greeting plus STARTTLS with TLS mode enabled.
+// It verifies readiness succeeds, STARTTLS is issued, and at least two connections
+// were accepted for the implicit attempt and upgraded replacement.
 func TestSMTPConnectionStartTLSFallbackWhenTLSEnabled(t *testing.T) {
 	srv, port := startFakeSMTPServer(t, false, true)
 	svc := &Client{}
@@ -159,8 +179,9 @@ func TestSMTPConnectionStartTLSFallbackWhenTLSEnabled(t *testing.T) {
 	}
 }
 
-// TestSMTPConnectionMandatoryStartTLSRefusesPlaintext checks that UseTLS rejects a server without STARTTLS
-// before credentials are sent.
+// TestSMTPConnectionMandatoryStartTLSRefusesPlaintext offers a plaintext server without the STARTTLS extension.
+// It verifies TLS-enabled readiness returns a STARTTLS error and the fixture
+// records no AUTH command before that required-upgrade rejection.
 func TestSMTPConnectionMandatoryStartTLSRefusesPlaintext(t *testing.T) {
 	srv, port := startFakeSMTPServer(t, false, false)
 	svc := &Client{}
@@ -177,8 +198,9 @@ func TestSMTPConnectionMandatoryStartTLSRefusesPlaintext(t *testing.T) {
 	}
 }
 
-// TestSMTPConnectionOpportunisticStartTLSWhenTLSDisabled checks that advertised STARTTLS is used before
-// authentication.
+// TestSMTPConnectionOpportunisticStartTLSWhenTLSDisabled offers STARTTLS while the configured TLS flag is false.
+// It verifies readiness succeeds and the fixture receives the upgrade command,
+// protecting the transport's advertised-extension path for optional TLS mode.
 func TestSMTPConnectionOpportunisticStartTLSWhenTLSDisabled(t *testing.T) {
 	srv, port := startFakeSMTPServer(t, false, true)
 	svc := &Client{}
@@ -191,8 +213,9 @@ func TestSMTPConnectionOpportunisticStartTLSWhenTLSDisabled(t *testing.T) {
 	}
 }
 
-// TestSMTPConnectionPlainWhenNoStartTLS checks plaintext operation when UseTLS is disabled and STARTTLS is
-// unavailable.
+// TestSMTPConnectionPlainWhenNoStartTLS offers a loopback plaintext server with no upgrade extension.
+// It verifies optional-TLS readiness succeeds and no STARTTLS command is recorded
+// for that local fixture's advertised capability set.
 func TestSMTPConnectionPlainWhenNoStartTLS(t *testing.T) {
 	srv, port := startFakeSMTPServer(t, false, false)
 	svc := &Client{}
@@ -205,7 +228,9 @@ func TestSMTPConnectionPlainWhenNoStartTLS(t *testing.T) {
 	}
 }
 
-// TestSendEmailWithConfigStartTLSFallback checks MAIL, RCPT, and DATA over STARTTLS with UseTLS enabled.
+// TestSendEmailWithConfigStartTLSFallback sends through a plaintext greeting server offering STARTTLS.
+// It verifies the TLS-enabled send succeeds and the fixture records STARTTLS
+// and DATA after the transport's compatibility connection path.
 func TestSendEmailWithConfigStartTLSFallback(t *testing.T) {
 	srv, port := startFakeSMTPServer(t, false, true)
 	svc := &Client{}
@@ -222,7 +247,9 @@ func TestSendEmailWithConfigStartTLSFallback(t *testing.T) {
 	}
 }
 
-// TestSendEmailWithConfigImplicitTLS checks delivery over implicit TLS with UseTLS enabled.
+// TestSendEmailWithConfigImplicitTLS sends HTML through an implicit-TLS loopback fixture.
+// It verifies the send returns success and the fixture records DATA for that
+// configured encrypted connection, exercising message delivery after TLS setup.
 func TestSendEmailWithConfigImplicitTLS(t *testing.T) {
 	srv, port := startFakeSMTPServer(t, true, false)
 	svc := &Client{}
@@ -236,7 +263,9 @@ func TestSendEmailWithConfigImplicitTLS(t *testing.T) {
 	}
 }
 
-// newSMTPTestCert creates a self-signed certificate for 127.0.0.1/localhost and its trust pool.
+// newSMTPTestCert creates a self-signed loopback certificate and trust pool for SMTP fixtures.
+// It accepts both 127.0.0.1 and localhost identities and returns a certificate
+// valid across a two-hour window around generation. Fixture failures fail the owning test.
 func newSMTPTestCert(t *testing.T) (tls.Certificate, *x509.CertPool) {
 	t.Helper()
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -268,9 +297,19 @@ func newSMTPTestCert(t *testing.T) (tls.Certificate, *x509.CertPool) {
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: priv}, pool
 }
 
+// startFakeSMTPServer starts a fixture supporting requested implicit TLS and advertised upgrade choices.
+// It installs the generated trust pool and restores the previous package pool
+// through test cleanup. Returned port identifies the bound loopback listener.
+//
+// The listener loop and each accepted session register with one WaitGroup.
+// Cleanup closes admission and waits for those goroutines; session deadlines bound
+// held fixture I/O, while each session closes its socket on return. Because the
+// trust-pool assignment is global, callers keep these fixture setups sequential.
 func startFakeSMTPServer(t *testing.T, implicitTLS, advertiseStartTLS bool) (*fakeSMTPServer, int) {
 	t.Helper()
 	cert, pool := newSMTPTestCert(t)
+	// TLS validation needs this fixture certificate. Publish its pool for the
+	// sequential client test and restore the previous global value after the fixture is cleaned up.
 	prevPool := smtpTestRootCAs
 	smtpTestRootCAs = pool
 	t.Cleanup(func() { smtpTestRootCAs = prevPool })
@@ -287,11 +326,15 @@ func startFakeSMTPServer(t *testing.T, implicitTLS, advertiseStartTLS bool) (*fa
 	if implicitTLS {
 		srv.listener = tls.NewListener(listener, srv.tlsConfig)
 	}
+	// Closing the listener ends the accept loop; waiting then retains the fixture
+	// until every registered session has returned after its close or installed I/O deadline.
 	t.Cleanup(func() {
 		_ = srv.listener.Close()
 		srv.wg.Wait()
 	})
 
+	// Register the accept loop before exposing the fixture. Each accepted socket
+	// registers a child session so cleanup can wait for connection handling as well as admission.
 	srv.wg.Go(func() {
 		for {
 			conn, err := srv.listener.Accept()
@@ -301,6 +344,8 @@ func startFakeSMTPServer(t *testing.T, implicitTLS, advertiseStartTLS bool) (*fa
 			srv.conns.Add(1)
 			srv.wg.Go(func() {
 				defer func() { _ = conn.Close() }()
+				// A stalled fake session needs a bounded cleanup wait. Ignore deadline
+				// installation errors here and let protocol I/O or listener/session cleanup expose fixture failure.
 				_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
 				srv.serve(conn, srv.advertiseStartTLS)
 			})
@@ -311,12 +356,18 @@ func startFakeSMTPServer(t *testing.T, implicitTLS, advertiseStartTLS bool) (*fa
 	return srv, port
 }
 
+// record records one protocol command under the fixture capture mutex for later assertions.
 func (srv *fakeSMTPServer) record(cmd string) {
+	// Accepted sessions record commands concurrently. Hold the capture lock
+	// through appending so each command becomes available to the locked assertion reader as one complete entry.
 	srv.mu.Lock()
 	defer srv.mu.Unlock()
 	srv.commands = append(srv.commands, cmd)
 }
 
+// sawCommand reports whether a recorded command begins with the supplied uppercase prefix.
+// It reads the capture list under its mutex and uppercases each recorded command;
+// callers supply the prefix in the case used by protocol assertions.
 func (srv *fakeSMTPServer) sawCommand(prefix string) bool {
 	srv.mu.Lock()
 	defer srv.mu.Unlock()
@@ -328,9 +379,20 @@ func (srv *fakeSMTPServer) sawCommand(prefix string) bool {
 	return false
 }
 
+// serve handles a new SMTP connection, optionally advertising and performing STARTTLS.
+// Command recording precedes response handling. Successful upgrade hands the TLS
+// socket to serveUpgraded without another greeting; read, write, and handshake failures
+// end the fixture session for its owning goroutine to close.
+//
+// The fixture consumes DATA through the dot terminator before acknowledging it.
+// AUTH and envelope commands receive deterministic success replies for transport
+// assertions, while the selected upgrade advertisement decides which setup path
+// can proceed. This fixture does not validate credentials or persist mail.
 func (srv *fakeSMTPServer) serve(conn net.Conn, allowStartTLS bool) {
 	reader := bufio.NewReader(conn)
 	writer := bufio.NewWriter(conn)
+	// Replies expose success as a boolean to the fixture loop. A socket write
+	// or flush failure ends that protocol branch so a closed/canceled peer can release its session.
 	writeLine := func(line string) bool {
 		if _, err := writer.WriteString(line + "\r\n"); err != nil {
 			return false
@@ -361,6 +423,8 @@ func (srv *fakeSMTPServer) serve(conn net.Conn, allowStartTLS bool) {
 			if !writeLine("220 2.0.0 ready to start TLS") {
 				return
 			}
+			// Switch this existing socket to TLS after the upgrade reply. The client
+			// sends a new EHLO after handshake, so upgraded handling must omit the original SMTP greeting.
 			tlsConn := tls.Server(conn, srv.tlsConfig)
 			if err := tlsConn.Handshake(); err != nil {
 				return
@@ -392,6 +456,8 @@ func (srv *fakeSMTPServer) serve(conn net.Conn, allowStartTLS bool) {
 				return
 			}
 		case upper == "QUIT":
+			// QUIT already ends this fixture session. Ignore final reply failure
+			// and let the owning goroutine close the socket instead of waiting for another command.
 			_ = writeLine("221 bye")
 			return
 		default:
@@ -402,15 +468,24 @@ func (srv *fakeSMTPServer) serve(conn net.Conn, allowStartTLS bool) {
 	}
 }
 
-// serveUpgraded handles commands after a STARTTLS upgrade.
+// serveUpgraded continues protocol handling after TLS without issuing a second greeting.
+// net/smtp sends EHLO again after StartTLS succeeds, so the upgraded reader and
+// writer pass directly to serveCommands on the already accepted socket.
 func (srv *fakeSMTPServer) serveUpgraded(conn net.Conn) {
 	reader := bufio.NewReader(conn)
 	writer := bufio.NewWriter(conn)
-	// net/smtp sends EHLO again after StartTLS succeeds, so no greeting is needed here.
+	// The plaintext session already emitted its 220 greeting before STARTTLS.
+	// Resume command handling so the client's post-upgrade EHLO receives extension replies instead of another initial greeting.
 	srv.serveCommands(reader, writer)
 }
 
+// serveCommands responds to commands on the upgraded session and records each received command.
+// It acknowledges fixture authentication, envelope commands, and completed DATA.
+// Read/write failures end the session, and QUIT attempts its final reply before
+// returning to the owning session goroutine for socket cleanup.
 func (srv *fakeSMTPServer) serveCommands(reader *bufio.Reader, writer *bufio.Writer) {
+	// Replies expose success as a boolean to the fixture loop. A socket write
+	// or flush failure ends that protocol branch so a closed/canceled peer can release its session.
 	writeLine := func(line string) bool {
 		if _, err := writer.WriteString(line + "\r\n"); err != nil {
 			return false
@@ -455,6 +530,8 @@ func (srv *fakeSMTPServer) serveCommands(reader *bufio.Reader, writer *bufio.Wri
 				return
 			}
 		case upper == "QUIT":
+			// QUIT already ends this fixture session. Ignore final reply failure
+			// and let the owning goroutine close the socket instead of waiting for another command.
 			_ = writeLine("221 bye")
 			return
 		default:
@@ -465,6 +542,9 @@ func (srv *fakeSMTPServer) serveCommands(reader *bufio.Reader, writer *bufio.Wri
 	}
 }
 
+// smtpTestConfig returns fresh loopback SMTP settings with the requested port and TLS flag.
+// The fixture uses fixed sender, account, and password strings for command-path
+// assertions; callers can modify the returned configuration without changing another fixture value.
 func smtpTestConfig(port int, useTLS bool) *SMTPConfig {
 	return &SMTPConfig{
 		Host:     "127.0.0.1",

@@ -10,17 +10,31 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/notification/contract"
 )
 
+// Moderation notices format an already recorded log or session warning into
+// event variables and source identity. The shared mailer resolves language and
+// sends the selected notice; these adapters report the provided risk observation
+// and do not choose whether a request is blocked or an account is disabled.
+
+// defaultContentModerationBanThreshold supplies the legacy disabled-account
+// body's displayed threshold when a supplied policy value is nonpositive.
 const defaultContentModerationBanThreshold = 10
 
+// RiskDelivery maps moderation observations into localized user notification requests through the mailer.
 type RiskDelivery struct {
-	emailService *Mailer
+	emailService *Mailer // assembled event mailer
 }
 
+// NewRiskDelivery binds the event mailer used for moderation and session-risk user notices.
+// Notice wrappers require this mailer when invoked. Construction retains the
+// supplied pointer and performs no settings reads, credential work, or transport operations.
 func NewRiskDelivery(mail *Mailer) *RiskDelivery {
 	return &RiskDelivery{emailService: mail}
 }
 
-// SendViolationEmail sends a moderation notice in the user's language.
+// SendViolationEmail sends a content-violation notice identified by the supplied risk log.
+// log is required because its address is read before helper normalization. A nil
+// policy supplies zero threshold variables; the mailer selects language and transport,
+// and the source ID permits notification deduplication when the log ID is positive.
 func (s *RiskDelivery) SendViolationEmail(ctx context.Context, cfg *contract.RiskPolicy, log *contract.RiskLog) error {
 	return s.emailService.SendUserNotification(ctx, SendRequest{
 		Event: NotificationEmailEventContentModerationViolation, RecipientEmail: log.UserEmail,
@@ -29,7 +43,10 @@ func (s *RiskDelivery) SendViolationEmail(ctx context.Context, cfg *contract.Ris
 	})
 }
 
-// SendAccountDisabledEmail selects the suspension template using account preferences.
+// SendAccountDisabledEmail sends the account-disabled event using the provided content-moderation log.
+// log is required for recipient lookup; policy can be nil for zero threshold
+// variables. This operation reports the caller's disabled outcome and returns the
+// mailer's error without applying or undoing any account-status change.
 func (s *RiskDelivery) SendAccountDisabledEmail(ctx context.Context, cfg *contract.RiskPolicy, log *contract.RiskLog) error {
 	return s.emailService.SendUserNotification(ctx, SendRequest{
 		Event: NotificationEmailEventContentModerationDisabled, RecipientEmail: log.UserEmail,
@@ -38,7 +55,10 @@ func (s *RiskDelivery) SendAccountDisabledEmail(ctx context.Context, cfg *contra
 	})
 }
 
-// SendCyberAccountDisabledEmail renders a session risk warning with the account suspension template.
+// SendCyberAccountDisabledEmail sends an account-disabled event with session-warning source identity.
+// warning is required for its recipient. The optional policy supplies CyberBanThreshold;
+// shared variable preparation uses the cyber category and its own source type so
+// session and content logs with equal IDs remain distinct notification sources.
 func (s *RiskDelivery) SendCyberAccountDisabledEmail(ctx context.Context, cfg *contract.RiskPolicy, warning *contract.RiskWarning) error {
 	return s.emailService.SendUserNotification(ctx, SendRequest{
 		Event: NotificationEmailEventContentModerationDisabled, RecipientEmail: warning.UserEmail,
@@ -47,6 +67,9 @@ func (s *RiskDelivery) SendCyberAccountDisabledEmail(ctx context.Context, cfg *c
 	})
 }
 
+// contentModerationEmailUserID returns the log's pointed account identifier or zero when absent.
+// It does not validate positivity; the assembled recipient-language reader treats
+// positive IDs as account lookup and nonpositive values as email-based lookup input.
 func contentModerationEmailUserID(log *contract.RiskLog) int64 {
 	if log == nil || log.UserID == nil {
 		return 0
@@ -54,6 +77,9 @@ func contentModerationEmailUserID(log *contract.RiskLog) int64 {
 	return *log.UserID
 }
 
+// contentModerationEmailSourceID returns decimal source text for a positive recorded log ID.
+// Nil logs and nonpositive IDs return empty, causing source-backed marker handling
+// to be skipped when the wrapper supplies that missing identity to notification delivery.
 func contentModerationEmailSourceID(log *contract.RiskLog) string {
 	if log == nil || log.ID <= 0 {
 		return ""
@@ -61,6 +87,10 @@ func contentModerationEmailSourceID(log *contract.RiskLog) string {
 	return fmt.Sprintf("%d", log.ID)
 }
 
+// contentModerationEmailVariables returns a new notice map from optional log and policy values.
+// Missing fields use current UTC time, dash labels, and zero-valued numeric text.
+// Nonzero log time and nonblank group/category override those defaults; score is
+// formatted to three decimals and policy threshold is displayed as supplied.
 func contentModerationEmailVariables(log *contract.RiskLog, cfg *contract.RiskPolicy) map[string]string {
 	variables := map[string]string{
 		"triggered_at":        time.Now().UTC().Format(time.RFC3339),
@@ -80,6 +110,7 @@ func contentModerationEmailVariables(log *contract.RiskLog, cfg *contract.RiskPo
 		if strings.TrimSpace(log.HighestCategory) != "" {
 			variables["moderation_category"] = strings.TrimSpace(log.HighestCategory)
 		}
+		// The notice rounds recorded moderation scores to three decimals.
 		variables["moderation_score"] = fmt.Sprintf("%.3f", log.HighestScore)
 		variables["violation_count"] = fmt.Sprintf("%d", log.ViolationCount)
 	}
@@ -89,6 +120,9 @@ func contentModerationEmailVariables(log *contract.RiskLog, cfg *contract.RiskPo
 	return variables
 }
 
+// contentModerationCyberEmailUserID returns the warning's pointed account identifier or zero when absent.
+// The helper retains nonpositive pointed values, leaving the assembled recipient
+// reader to choose email lookup when no positive account ID was supplied.
 func contentModerationCyberEmailUserID(warning *contract.RiskWarning) int64 {
 	if warning == nil || warning.UserID == nil {
 		return 0
@@ -96,6 +130,9 @@ func contentModerationCyberEmailUserID(warning *contract.RiskWarning) int64 {
 	return *warning.UserID
 }
 
+// contentModerationCyberEmailSourceID returns decimal source text for a positive session-warning identifier.
+// Nil or nonpositive input yields an empty identity, so its assembled notification
+// request does not select source-key coordination or delivery-marker lookup.
 func contentModerationCyberEmailSourceID(warning *contract.RiskWarning) string {
 	if warning == nil || warning.ID <= 0 {
 		return ""
@@ -103,6 +140,10 @@ func contentModerationCyberEmailSourceID(warning *contract.RiskWarning) string {
 	return fmt.Sprintf("%d", warning.ID)
 }
 
+// contentModerationCyberEmailVariables returns a fresh session-notice variable map with cyber category.
+// Nonzero warning time and nonblank group replace current UTC/dash defaults, while
+// score and violation count remain zero text. A supplied policy replaces the
+// cyber ban threshold; warning ViolationCount and ProviderName are not rendered by this helper.
 func contentModerationCyberEmailVariables(warning *contract.RiskWarning, cfg *contract.RiskPolicy) map[string]string {
 	variables := map[string]string{
 		"triggered_at":        time.Now().UTC().Format(time.RFC3339),
@@ -126,15 +167,27 @@ func contentModerationCyberEmailVariables(warning *contract.RiskWarning, cfg *co
 	return variables
 }
 
+// BuildContentModerationAccountDisabledEmailBody formats the legacy disabled-account HTML from supplied observations.
+// A nil log returns empty. With a log, cfg is required; a nonpositive BanThreshold
+// uses the built-in display threshold, and empty email can use the pointed user ID.
+//
+// The body escapes string observations and branding, formats score to three decimal
+// places, and labels its notice time using current server-local time rather than
+// log.CreatedAt. Formatting reports the provided outcome and leaves account state
+// handling to the caller that already chose this notice.
 func BuildContentModerationAccountDisabledEmailBody(siteName string, log *contract.RiskLog, cfg *contract.RiskPolicy) string {
 	if log == nil {
 		return ""
 	}
 	userName := strings.TrimSpace(log.UserEmail)
+	// This legacy input has no separate display-name field. When email is blank,
+	// the pointed account identifier still gives the recipient an account label in the notice.
 	if userName == "" && log.UserID != nil {
 		userName = fmt.Sprintf("UID %d", *log.UserID)
 	}
 	threshold := cfg.BanThreshold
+	// The legacy body's nonpositive policy threshold uses its built-in display
+	// value so the notice still shows a positive limit; the policy decision was made by its caller.
 	if threshold <= 0 {
 		threshold = defaultContentModerationBanThreshold
 	}
@@ -175,6 +228,9 @@ func BuildContentModerationAccountDisabledEmailBody(siteName string, log *contra
 	)
 }
 
+// defaultContentModerationString returns trimmed nonblank text or the supplied display fallback.
+// It trims both for its emptiness decision and returned value, leaving caller
+// fallback spelling unchanged when the observation has no usable display text.
 func defaultContentModerationString(value string, fallback string) string {
 	if strings.TrimSpace(value) == "" {
 		return fallback

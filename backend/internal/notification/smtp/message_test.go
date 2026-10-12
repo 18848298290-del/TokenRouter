@@ -13,6 +13,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestBuildSMTPMessageProducesStandardsCompliantMIME prepares Chinese headers and an HTML body with newlines.
+// It verifies parsed envelope and display addresses, decoded subject, date and
+// message-ID fields, MIME declarations, and body content after quoted-printable CRLF normalization.
 func TestBuildSMTPMessageProducesStandardsCompliantMIME(t *testing.T) {
 	config := &SMTPConfig{
 		Host:     "smtp.example.com",
@@ -59,6 +62,9 @@ func TestBuildSMTPMessageProducesStandardsCompliantMIME(t *testing.T) {
 	require.Equal(t, strings.ReplaceAll(body, "\n", "\r\n"), string(decodedBody))
 }
 
+// TestBuildSMTPMessagePreventsHeaderInjection supplies CRLF-bearing sender name and subject strings.
+// It verifies the resulting parsed message contains no injected Bcc or Cc header
+// and that subject text is retained after line separators are removed.
 func TestBuildSMTPMessagePreventsHeaderInjection(t *testing.T) {
 	config := &SMTPConfig{
 		Host:     "smtp.example.com",
@@ -79,6 +85,9 @@ func TestBuildSMTPMessagePreventsHeaderInjection(t *testing.T) {
 	require.Equal(t, "SubjectCc: hidden@example.com", decodedSubject)
 }
 
+// TestBuildSMTPMessageRejectsInvalidConfiguration supplies nil configuration, missing sender, and invalid recipient forms.
+// It verifies message preparation returns field-specific errors for those inputs,
+// including a recipient string carrying a header-separator injection attempt.
 func TestBuildSMTPMessageRejectsInvalidConfiguration(t *testing.T) {
 	_, err := buildSMTPMessage(nil, "user@example.net", "subject", "body")
 	require.ErrorContains(t, err, "missing SMTP configuration")
@@ -99,6 +108,9 @@ func TestBuildSMTPMessageRejectsInvalidConfiguration(t *testing.T) {
 	require.ErrorContains(t, err, "invalid SMTP recipient address")
 }
 
+// TestBuildSMTPMessageUsesUniqueMessageIDs prepares two messages with the same sender, recipient, and content.
+// It verifies their parsed Message-ID values differ in this pair of preparations,
+// exercising fresh random identifier data rather than deterministic identity from message content.
 func TestBuildSMTPMessageUsesUniqueMessageIDs(t *testing.T) {
 	config := &SMTPConfig{Host: "smtp.example.com", From: "reply@example.com"}
 

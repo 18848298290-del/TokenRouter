@@ -24,56 +24,86 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// Notification delivery renders event-specific placeholders using recipient
+// language and stored template overrides. HTML variables are escaped except for
+// the operations-report field admitted through a separate trusted map. Optional
+// events additionally consult persisted unsubscribe preferences before sending.
+//
+// A source-backed request coordinates marker lookup, SMTP sending, and marker
+// storage under one instance-local delivery key. Acceptance and persistence are
+// separate operations, so a failed marker write after acceptance leaves an
+// uncertain result. Signing-secret creation shares this local coordinator,
+// while current preference and delivery identities also read legacy keys.
+
 const (
+	// Branding values identify current site copy and link bases used by
+	// rendering and unsubscribe URLs, with a built-in site name for missing copy.
 	defaultSiteName       = "TokenRouter"
 	SettingKeySiteName    = "site_name"
 	SettingKeyAPIBaseURL  = "api_base_url"
 	SettingKeyFrontendURL = "frontend_url"
 
-	NotificationEmailEventAuthVerifyCode              = "auth.verify_code"
-	NotificationEmailEventAuthPasswordReset           = "auth.password_reset"
-	NotificationEmailEventNotificationEmailVerifyCode = "notification_email.verify_code"
-	NotificationEmailEventTeamInvitation              = "team.invitation"
-	NotificationEmailEventSubscriptionPurchaseSuccess = "subscription.purchase_success"
-	NotificationEmailEventSubscriptionExpiryReminder  = "subscription.expiry_reminder"
-	NotificationEmailEventBalanceLow                  = "balance.low"
-	NotificationEmailEventBalanceRechargeSuccess      = "balance.recharge_success"
-	NotificationEmailEventProviderQuotaAlert          = "provider.quota_alert"
-	NotificationEmailEventContentModerationViolation  = "content_moderation.violation_notice"
-	NotificationEmailEventContentModerationDisabled   = "content_moderation.account_disabled"
-	NotificationEmailEventOpsAlert                    = "ops.alert"
-	NotificationEmailEventTeamOwnershipTransfer       = "team.ownership_transfer"
-	NotificationEmailEventOpsScheduledReport          = "ops.scheduled_report"
+	// Event identifiers select templates, placeholder rules, preference
+	// eligibility, and source-backed delivery identities for the supported business notices.
+	NotificationEmailEventAuthVerifyCode              = "auth.verify_code"                    // identity verification credential
+	NotificationEmailEventAuthPasswordReset           = "auth.password_reset"                 // password recovery link
+	NotificationEmailEventNotificationEmailVerifyCode = "notification_email.verify_code"      // additional address verification
+	NotificationEmailEventTeamInvitation              = "team.invitation"                     // team membership invitation
+	NotificationEmailEventSubscriptionPurchaseSuccess = "subscription.purchase_success"       // fulfilled subscription purchase
+	NotificationEmailEventSubscriptionExpiryReminder  = "subscription.expiry_reminder"        // optional subscription reminder
+	NotificationEmailEventBalanceLow                  = "balance.low"                         // optional low-balance notice
+	NotificationEmailEventBalanceRechargeSuccess      = "balance.recharge_success"            // fulfilled balance recharge
+	NotificationEmailEventProviderQuotaAlert          = "provider.quota_alert"                // administrator provider-quota notice
+	NotificationEmailEventContentModerationViolation  = "content_moderation.violation_notice" // content violation notice
+	NotificationEmailEventContentModerationDisabled   = "content_moderation.account_disabled" // moderation account-disabled notice
+	NotificationEmailEventOpsAlert                    = "ops.alert"                           // operations rule alert
+	NotificationEmailEventTeamOwnershipTransfer       = "team.ownership_transfer"             // team ownership offer
+	NotificationEmailEventOpsScheduledReport          = "ops.scheduled_report"                // scheduled operations report
 
+	// Persistence prefixes separate templates, recipient preferences, delivery
+	// markers, remembered language, and the shared token-signing secret in settings.
 	notificationEmailTemplateKeyPrefix    = "notification_email_template:"
 	notificationEmailPreferenceKeyPrefix  = "notification_email_preference:"
 	notificationEmailDeliveryKeyPrefix    = "notification_email_delivery:"
 	notificationEmailLocaleUserKeyPrefix  = "notification_email_locale:user:"
 	notificationEmailLocaleEmailKeyPrefix = "notification_email_locale:email:"
 	notificationEmailUnsubscribeSecretKey = "notification_email_unsubscribe_secret"
-	notificationEmailDefaultLocale        = "en"
-	notificationEmailLocaleChinese        = "zh-Hans"
-	notificationEmailMaxSubjectLength     = 200
-	notificationEmailMaxHTMLLength        = 30000
-	notificationEmailUnsubscribeTTL       = 365 * 24 * time.Hour
+	// Language defaults, content limits, and token lifetime govern template
+	// selection, administrator validation, and the validity of signed unsubscribe requests.
+	notificationEmailDefaultLocale    = "en"
+	notificationEmailLocaleChinese    = "zh-Hans"
+	notificationEmailMaxSubjectLength = 200
+	notificationEmailMaxHTMLLength    = 30000
+	notificationEmailUnsubscribeTTL   = 365 * 24 * time.Hour
 )
 
 var (
-	// ErrSettingNotFound indicates that a notification setting is missing.
+	// ErrSettingNotFound identifies absent notification configuration or markers.
+	// Readers use this shared error to distinguish a missing key from other
+	// storage failures before selecting another persisted or built-in value.
 	ErrSettingNotFound = settings.ErrSettingNotFound
 
+	// notificationEmailPlaceholderPattern recognizes named substitutions used
+	// by both validation and rendering when checking each event's allowed variable names.
 	notificationEmailPlaceholderPattern = regexp.MustCompile(`{{\s*([a-zA-Z][a-zA-Z0-9_]*)\s*}}`)
-	notificationEmailLocales            = func() []string {
+	// notificationEmailLocales captures manifest language order for template
+	// listing, allowing administrator responses to follow the declared language sequence.
+	notificationEmailLocales = func() []string {
 		codes := []string{}
 		for _, item := range locale.Definitions() {
 			codes = append(codes, item.Code)
 		}
 		return codes
 	}()
+	// notificationEmailCommonPlaceholders names branding and recipient values
+	// admitted by every event before its event-specific variables are appended.
 	notificationEmailCommonPlaceholders = []string{"site_name", "recipient_name", "recipient_email"}
-	// Separate metric placeholders let administrators reorder or omit individual summary values.
+	// notificationEmailOpsSummaryPlaceholders names independently selectable
+	// summary metrics used by report validation, preview values, and runtime sample cleanup.
 	notificationEmailOpsSummaryPlaceholders = contract.SummaryPlaceholders()
 
+	// notificationEmailEvents defines listing order, optional-event eligibility,
+	// and placeholder names; public metadata readers copy its slices before returning them.
 	notificationEmailEvents = []NotificationEmailEventInfo{
 		{
 			Event:        NotificationEmailEventAuthVerifyCode,
@@ -198,8 +228,12 @@ var (
 		},
 	}
 
+	// notificationEmailEventDefinitions indexes event metadata for normalized
+	// sending, preference, validation, and administrator-template lookups throughout this service.
 	notificationEmailEventDefinitions = indexNotificationEmailEvents(notificationEmailEvents)
 
+	// notificationEmailOfficialTemplates supplies event/language defaults when
+	// stored overrides are absent, unreadable, malformed, or invalid for the selected event.
 	notificationEmailOfficialTemplates = map[string]map[string]notificationEmailOfficialTemplate{
 		NotificationEmailEventTeamOwnershipTransfer: {
 			notificationEmailDefaultLocale: {
@@ -490,131 +524,194 @@ var (
 	}
 )
 
-// SettingRepository reads and writes notification settings.
+// SettingRepository reads and persists templates, preferences, markers, and notification configuration.
 type SettingRepository = settings.Repository
 
 type (
+	// NotificationEmailSendInput is the event, recipient, identity, and rendering input for delivery.
 	NotificationEmailSendInput = SendRequest
-	Sender                     interface {
+	// Sender delivers rendered subject and HTML values with caller cancellation.
+	Sender interface {
+		// SendEmail returns the transport outcome for a rendered message.
+		// The notification service writes its success marker after this call succeeds;
+		// the sender determines when SMTP acceptance becomes a successful result.
 		SendEmail(context.Context, string, string, string) error
 	}
 )
 
+// NotificationEmailService renders events and coordinates recipient preferences with source-backed delivery markers.
 type NotificationEmailService struct {
+	// recipientLocale is installed during assembly and read before stored
+	// language fallbacks. Configure it before concurrent lookups because this field
+	// assignment and its readers are unsynchronized.
 	recipientLocale func(context.Context, int64, string) string
-	locks           keyCoordinator
-	settingRepo     SettingRepository
-	emailService    Sender
+	locks           keyCoordinator    // instance-local keyed coordination
+	settingRepo     SettingRepository // persisted notification settings
+	emailService    Sender            // rendered-message transport sender
 }
 
+// NotificationEmailEventInfo describes an editable event and its admitted template variable names.
 type NotificationEmailEventInfo struct {
-	Event        string   `json:"event"`
-	Label        string   `json:"label"`
-	Description  string   `json:"description"`
-	Category     string   `json:"category"`
-	Optional     bool     `json:"optional"`
-	Placeholders []string `json:"placeholders"`
+	Event       string `json:"event"`       // notification event identifier
+	Label       string `json:"label"`       // administrator event label
+	Description string `json:"description"` // administrator event explanation
+	Category    string `json:"category"`    // administrator event category
+	// Optional permits unsubscribe handling for this event. Transactional events
+	// ignore recipient preference records and reject unsubscribe requests when this flag is false.
+	Optional bool `json:"optional"` // recipient preference eligibility
+	// Placeholders lists admitted names. ListEventInfos copies this slice for
+	// callers, while internal event lookup retains the shared definition's backing storage.
+	Placeholders []string `json:"placeholders"` // admitted variable names
 }
 
+// NotificationEmailTemplate contains selected subject and HTML content for one event and language.
 type NotificationEmailTemplate struct {
-	Event        string     `json:"event"`
-	Locale       string     `json:"locale"`
-	Subject      string     `json:"subject"`
-	HTML         string     `json:"html"`
-	IsCustom     bool       `json:"is_custom"`
-	UpdatedAt    *time.Time `json:"updated_at,omitempty"`
-	Placeholders []string   `json:"placeholders"`
+	Event   string `json:"event"`   // notification event identifier
+	Locale  string `json:"locale"`  // selected template language
+	Subject string `json:"subject"` // template subject text
+	HTML    string `json:"html"`    // template HTML body
+	// IsCustom reports a successfully decoded and validated stored override;
+	// failed override reads leave built-in content selected with this flag false.
+	IsCustom bool `json:"is_custom"` // selected override indicator
+	// UpdatedAt is copied from a valid override and stays nil for built-in
+	// content, allowing administrator views to distinguish saved overrides from defaults.
+	UpdatedAt *time.Time `json:"updated_at,omitempty"` // stored override timestamp
+	// Placeholders is copied from event metadata by GetTemplate. The HTTP detail
+	// mapper retains this returned slice, so independently mutable consumers copy it again.
+	Placeholders []string `json:"placeholders"` // admitted variable names
 }
 
+// NotificationEmailPreview contains a rendered subject and HTML body for inspection or sending.
 type NotificationEmailPreview struct {
-	Subject string `json:"subject"`
-	HTML    string `json:"html"`
+	Subject string `json:"subject"` // template subject text
+	HTML    string `json:"html"`    // template HTML body
 }
 
+// NotificationEmailPreviewInput supplies unsaved content and sample-variable replacements for administrator rendering.
 type NotificationEmailPreviewInput struct {
-	Event     string            `json:"event"`
-	Locale    string            `json:"locale"`
-	Subject   string            `json:"subject"`
-	HTML      string            `json:"html"`
-	Variables map[string]string `json:"variables,omitempty"`
+	Event  string `json:"event"`  // notification event identifier
+	Locale string `json:"locale"` // requested template language
+	// Subject and HTML independently use the selected template when their
+	// supplied text is whitespace-only. PreviewTemplate validates the resulting
+	// pair after filling either missing companion.
+	Subject string `json:"subject"` // template subject text
+	HTML    string `json:"html"`    // template HTML body
+	// Variables replaces localized preview samples. PreviewTemplate reads this
+	// map synchronously; callers keep it stable until copying and rendering finish.
+	Variables map[string]string `json:"variables,omitempty"` // escaped substitution values
 }
 
+// SendRequest supplies recipient, event, source identity, and substitution values for notification delivery.
 type SendRequest struct {
-	Event            string
-	Locale           string
-	RecipientEmail   string
-	RecipientName    string
-	UserID           int64
-	SourceType       string
-	SourceID         string
-	ReminderKey      string
-	Variables        map[string]string
-	RawHTMLVariables map[string]string
+	Event string // notification event identifier
+	// Locale is negotiated before recipient preferences; an absent or unusable
+	// hint permits the account, remembered-address, and site-language lookup sequence.
+	Locale string // selected template language
+	// RecipientEmail is trimmed for transport and delivery identity, while the
+	// recipient_email variable retains this request's supplied address spelling.
+	RecipientEmail string // recipient delivery address
+	// RecipientName replaces the greeting sample when nonblank. A blank value
+	// leaves the sample recipient name in the renderer's working variable map.
+	RecipientName string // recipient greeting text
+	// UserID is passed to the assembled language reader. The app looks up positive
+	// IDs by account ID and otherwise looks up the supplied recipient address.
+	UserID int64 // account language identifier
+	// SourceType, SourceID, and ReminderKey identify a delivery with Event and
+	// RecipientEmail. A blank source type or ID skips marker lookup and keyed
+	// coordination; ReminderKey separates recurring notices for the same source.
+	SourceType  string // delivery source category
+	SourceID    string // delivery source identifier
+	ReminderKey string // recurring notice discriminator
+	// Variables is copied into a working map, while RawHTMLVariables is read
+	// directly for admitted raw fields. Callers keep both maps stable during Send
+	// so rendering does not race with a concurrent write to their input storage.
+	Variables        map[string]string // escaped substitution values
+	RawHTMLVariables map[string]string // trusted HTML substitutions
 }
 
+// NotificationEmailUnsubscribeResult identifies the optional event and recipient whose preference was saved.
 type NotificationEmailUnsubscribeResult struct {
-	Event string `json:"event"`
-	Email string `json:"email"`
-	Done  bool   `json:"done"`
+	Event string `json:"event"` // notification event identifier
+	Email string `json:"email"` // unsubscribe recipient address
+	Done  bool   `json:"done"`  // preference write completed
 }
 
+// notificationEmailStoredTemplate records an administrator override and its saved timestamp in settings JSON.
 type notificationEmailStoredTemplate struct {
-	Subject   string    `json:"subject"`
-	HTML      string    `json:"html"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Subject   string    `json:"subject"`    // template subject text
+	HTML      string    `json:"html"`       // template HTML body
+	UpdatedAt time.Time `json:"updated_at"` // stored override timestamp
 }
 
+// notificationEmailOfficialTemplate contains built-in subject and HTML content for one event/language pair.
 type notificationEmailOfficialTemplate struct {
-	Subject string
-	HTML    string
+	Subject string // template subject text
+	HTML    string // template HTML body
 }
 
+// notificationEmailTemplateError classifies rendering or event-definition failures used by caller fallback decisions.
 type notificationEmailTemplateError struct {
-	Err error
+	Err error // wrapped classified failure
 }
 
+// notificationEmailConfigError classifies unavailable sender configuration used by caller fallback decisions.
 type notificationEmailConfigError struct {
-	Err error
+	Err error // wrapped classified failure
 }
 
+// notificationEmailDeliveryError classifies a failed send operation for delivery-outcome inspection by callers.
 type notificationEmailDeliveryError struct {
-	Err error
+	Err error // wrapped classified failure
 }
 
+// notificationEmailUnsubscribeClaims encodes recipient, event, and expiration covered by the token signature.
 type notificationEmailUnsubscribeClaims struct {
-	Email string `json:"email"`
-	Event string `json:"event"`
-	Exp   int64  `json:"exp"`
+	Email string `json:"email"` // unsubscribe recipient address
+	Event string `json:"event"` // notification event identifier
+	Exp   int64  `json:"exp"`   // Unix expiration seconds
 }
 
+// Error returns the wrapped template failure text for this classified error.
 func (e notificationEmailTemplateError) Error() string {
 	return e.Err.Error()
 }
 
+// Unwrap exposes the template failure to error-chain inspection by callers.
 func (e notificationEmailTemplateError) Unwrap() error {
 	return e.Err
 }
 
+// Error returns the wrapped configuration failure text for this classified error.
 func (e notificationEmailConfigError) Error() string {
 	return e.Err.Error()
 }
 
+// Unwrap exposes the configuration failure to error-chain inspection by callers.
 func (e notificationEmailConfigError) Unwrap() error {
 	return e.Err
 }
 
+// Error returns the wrapped send failure text for this classified error.
 func (e notificationEmailDeliveryError) Error() string {
 	return e.Err.Error()
 }
 
+// Unwrap exposes the failed send outcome to error-chain inspection by callers.
 func (e notificationEmailDeliveryError) Unwrap() error {
 	return e.Err
 }
 
+// NewNotificationEmailService constructs an instance-local renderer and keyed delivery coordinator.
+// When the sender implements SetNotificationEmailService, construction binds the
+// new service back to it. Assemble shared dependencies before concurrent calls;
+// construction performs no settings reads or SMTP operations.
 func NewNotificationEmailService(settingRepo SettingRepository, emailService Sender) *NotificationEmailService {
 	svc := &NotificationEmailService{settingRepo: settingRepo, emailService: emailService}
 	if emailService != nil {
 		if binder, ok := emailService.(interface {
+			// SetNotificationEmailService binds the assembled renderer to its sender.
+			// Construction invokes this before using the service, allowing mailer event
+			// wrappers to share this instance's template and delivery-key coordination.
 			SetNotificationEmailService(*NotificationEmailService)
 		}); ok {
 			binder.SetNotificationEmailService(svc)
@@ -623,6 +720,9 @@ func NewNotificationEmailService(settingRepo SettingRepository, emailService Sen
 	return svc
 }
 
+// NotificationEmailTemplateErr classifies a non-nil template failure for caller fallback selection.
+// A nil input returns nil. The wrapper retains the original error for Unwrap,
+// so callers can inspect both classification and the underlying failure.
 func NotificationEmailTemplateErr(err error) error {
 	if err == nil {
 		return nil
@@ -630,6 +730,9 @@ func NotificationEmailTemplateErr(err error) error {
 	return notificationEmailTemplateError{Err: err}
 }
 
+// NotificationEmailConfigErr classifies a non-nil configuration failure for caller fallback selection.
+// A nil input returns nil. The underlying error remains available through Unwrap
+// for callers inspecting why the notification configuration was unavailable.
 func NotificationEmailConfigErr(err error) error {
 	if err == nil {
 		return nil
@@ -637,6 +740,9 @@ func NotificationEmailConfigErr(err error) error {
 	return notificationEmailConfigError{Err: err}
 }
 
+// NotificationEmailDeliveryErr classifies a non-nil send failure for transport-outcome inspection.
+// A nil input returns nil. The underlying failure remains in its error chain;
+// classification records the send phase rather than proving whether SMTP accepted bytes.
 func NotificationEmailDeliveryErr(err error) error {
 	if err == nil {
 		return nil
@@ -644,6 +750,11 @@ func NotificationEmailDeliveryErr(err error) error {
 	return notificationEmailDeliveryError{Err: err}
 }
 
+// ShouldFallbackNotificationEmail reports whether the error chain contains template or configuration classification.
+// Nil returns false. A delivery classification alone does not select fallback;
+// callers select fallback from the recognized classification in that chain.
+// The helper does not inspect transport acceptance, so callers and senders
+// remain responsible for the accuracy of the error phase they classify.
 func ShouldFallbackNotificationEmail(err error) bool {
 	if err == nil {
 		return false
@@ -655,11 +766,17 @@ func ShouldFallbackNotificationEmail(err error) bool {
 	return errors.As(err, &configErr)
 }
 
+// IsNotificationEmailDeliveryError reports whether a classified send failure occurs in err's chain.
+// It recognizes wrapped delivery failures and returns false for nil or an error
+// chain containing only other classifications, supporting caller delivery-outcome handling.
 func IsNotificationEmailDeliveryError(err error) bool {
 	var deliveryErr notificationEmailDeliveryError
 	return errors.As(err, &deliveryErr)
 }
 
+// indexNotificationEmailEvents indexes event metadata by its configured event identifier.
+// Later duplicate identifiers overwrite earlier metadata. Values are copied as
+// structs, while their placeholder slices retain the source definitions' backing storage.
 func indexNotificationEmailEvents(events []NotificationEmailEventInfo) map[string]NotificationEmailEventInfo {
 	index := make(map[string]NotificationEmailEventInfo, len(events))
 	for _, info := range events {
@@ -668,6 +785,9 @@ func indexNotificationEmailEvents(events []NotificationEmailEventInfo) map[strin
 	return index
 }
 
+// ListEventInfos returns event metadata in configured declaration order with copied placeholder slices.
+// The outer list and each placeholder collection are separately allocated, so
+// administrator consumers can edit those returned values without changing subsequent metadata reads.
 func (s *NotificationEmailService) ListEventInfos() []NotificationEmailEventInfo {
 	infos := make([]NotificationEmailEventInfo, 0, len(notificationEmailEvents))
 	for _, info := range notificationEmailEvents {
@@ -677,10 +797,16 @@ func (s *NotificationEmailService) ListEventInfos() []NotificationEmailEventInfo
 	return infos
 }
 
+// SupportedLocales returns a separately allocated copy of the captured language-manifest order.
+// Callers can change the returned slice independently of later locale listings.
+// The captured service list itself is initialized from locale.Definitions at package startup.
 func (s *NotificationEmailService) SupportedLocales() []string {
 	return append([]string(nil), notificationEmailLocales...)
 }
 
+// ListTemplates returns every configured event/language pair in event-major manifest order.
+// It delegates each selection to GetTemplate and stops on a returned event error.
+// Stored override failures are interpreted by that getter's built-in selection rules.
 func (s *NotificationEmailService) ListTemplates(ctx context.Context) ([]NotificationEmailTemplate, error) {
 	items := make([]NotificationEmailTemplate, 0, len(notificationEmailEvents)*len(notificationEmailLocales))
 	for _, info := range notificationEmailEvents {
@@ -695,12 +821,23 @@ func (s *NotificationEmailService) ListTemplates(ctx context.Context) ([]Notific
 	return items, nil
 }
 
+// GetTemplate returns a validated stored override or the selected event's built-in content.
+// Event names are normalized and rejected when unsupported; language hints are
+// negotiated with the default language. A missing built-in language entry uses
+// that event's English content while retaining the requested normalized locale.
+//
+// All override-read errors, blank values, decoding failures, and invalid template
+// content leave the built-in result available with no returned storage error.
+// A valid override sets IsCustom and receives its own copied timestamp pointer;
+// returned placeholder names are separately allocated for the caller.
 func (s *NotificationEmailService) GetTemplate(ctx context.Context, event, locale string) (NotificationEmailTemplate, error) {
 	info, normalizedEvent, err := s.eventInfo(event)
 	if err != nil {
 		return NotificationEmailTemplate{}, err
 	}
 	normalizedLocale := normalizeNotificationLocale(locale)
+	// A manifest language can lack a built-in event body. Select English content
+	// then, while keeping the normalized locale for override lookup and response metadata.
 	official, ok := notificationEmailOfficialTemplates[normalizedEvent][normalizedLocale]
 	if !ok {
 		official = notificationEmailOfficialTemplates[normalizedEvent][notificationEmailDefaultLocale]
@@ -714,6 +851,8 @@ func (s *NotificationEmailService) GetTemplate(ctx context.Context, event, local
 		Placeholders: append([]string(nil), info.Placeholders...),
 	}
 
+	// Override availability is optional to rendering. Missing or failed reads keep
+	// the selected built-in body, including read failures caused by a canceled context.
 	raw, err := s.settingRepo.GetValue(ctx, notificationEmailTemplateKey(normalizedEvent, normalizedLocale))
 	if err != nil {
 		if errors.Is(err, ErrSettingNotFound) {
@@ -725,6 +864,8 @@ func (s *NotificationEmailService) GetTemplate(ctx context.Context, event, local
 		return tmpl, nil
 	}
 
+	// Unusable stored JSON and event-invalid copy retain the built-in selection.
+	// Only a decoded valid override publishes IsCustom and its copied save timestamp.
 	var stored notificationEmailStoredTemplate
 	if err := json.Unmarshal([]byte(raw), &stored); err != nil {
 		return tmpl, nil
@@ -740,6 +881,10 @@ func (s *NotificationEmailService) GetTemplate(ctx context.Context, event, local
 	return tmpl, nil
 }
 
+// UpdateTemplate validates and persists a subject/HTML override for the normalized event and language.
+// The stored subject is trimmed and its UTC save timestamp is assigned here.
+// After persistence, GetTemplate reads the selected result using its ordinary
+// built-in-on-read-failure behavior, so a successful write is not rolled back by that lookup.
 func (s *NotificationEmailService) UpdateTemplate(ctx context.Context, event, locale, subject, htmlBody string) (NotificationEmailTemplate, error) {
 	_, normalizedEvent, err := s.eventInfo(event)
 	if err != nil {
@@ -758,24 +903,36 @@ func (s *NotificationEmailService) UpdateTemplate(ctx context.Context, event, lo
 	if err != nil {
 		return NotificationEmailTemplate{}, err
 	}
+	// Save the complete validated override before reading it back for display.
+	// A later default-selected response from GetTemplate does not undo this completed persistence step.
 	if err := s.settingRepo.Set(ctx, notificationEmailTemplateKey(normalizedEvent, normalizedLocale), string(payload)); err != nil {
 		return NotificationEmailTemplate{}, err
 	}
 	return s.GetTemplate(ctx, normalizedEvent, normalizedLocale)
 }
 
+// RestoreOfficialTemplate deletes the normalized event/language override and reads the selected template.
+// A missing override is accepted as already restored. Other deletion errors stop
+// before reading; GetTemplate then applies its ordinary selection rules to the
+// current settings, including an override another caller may have saved meanwhile.
 func (s *NotificationEmailService) RestoreOfficialTemplate(ctx context.Context, event, locale string) (NotificationEmailTemplate, error) {
 	_, normalizedEvent, err := s.eventInfo(event)
 	if err != nil {
 		return NotificationEmailTemplate{}, err
 	}
 	normalizedLocale := normalizeNotificationLocale(locale)
+	// Missing override rows are already restored. Accept that deletion result
+	// before the normal getter selects built-in content; other failures stop this settings mutation.
 	if err := s.settingRepo.Delete(ctx, notificationEmailTemplateKey(normalizedEvent, normalizedLocale)); err != nil && !errors.Is(err, ErrSettingNotFound) {
 		return NotificationEmailTemplate{}, err
 	}
 	return s.GetTemplate(ctx, normalizedEvent, normalizedLocale)
 }
 
+// PreviewTemplate renders unsaved content with localized samples and caller-provided variable replacements.
+// Blank subject or HTML fields are filled independently from GetTemplate before
+// validation. Supplied variables overwrite a fresh sample map, and raw HTML
+// substitution is unavailable through this preview input.
 func (s *NotificationEmailService) PreviewTemplate(ctx context.Context, input NotificationEmailPreviewInput) (NotificationEmailPreview, error) {
 	_, normalizedEvent, err := s.eventInfo(input.Event)
 	if err != nil {
@@ -784,6 +941,8 @@ func (s *NotificationEmailService) PreviewTemplate(ctx context.Context, input No
 	normalizedLocale := normalizeNotificationLocale(input.Locale)
 	subject := input.Subject
 	htmlBody := input.HTML
+	// An unsaved preview can provide either field alone. Fill just its blank
+	// companion from the selected template so supplied content remains available for validation and rendering.
 	if strings.TrimSpace(subject) == "" || strings.TrimSpace(htmlBody) == "" {
 		tmpl, err := s.GetTemplate(ctx, normalizedEvent, normalizedLocale)
 		if err != nil {
@@ -805,6 +964,16 @@ func (s *NotificationEmailService) PreviewTemplate(ctx context.Context, input No
 }
 
 // @project-doc docs/interfaces/configuration.md#notification_delivery
+// Send renders one event and sends it after preference and source-marker checks.
+// A blank recipient for a supported event returns success, as do an optional-event
+// unsubscribe and an existing delivery marker. Event language precedes recipient
+// preferences, and rendering occurs before keyed delivery admission.
+//
+// When source type and ID are present, one instance-local key serializes current
+// and legacy marker lookup, the send call, and success-marker persistence.
+// Sender failures receive delivery classification. A marker-write failure after
+// successful sending returns the storage error with no compensation: another
+// instance or retry can observe no marker despite transport acceptance.
 func (s *NotificationEmailService) Send(ctx context.Context, input SendRequest) error {
 	info, normalizedEvent, err := s.eventInfo(input.Event)
 	if err != nil {
@@ -838,6 +1007,8 @@ func (s *NotificationEmailService) Send(ctx context.Context, input SendRequest) 
 	}
 
 	deliveryKey := notificationEmailDeliveryKey(normalizedEvent, input.SourceType, input.SourceID, recipient, input.ReminderKey)
+	// Coordinate marker lookup, transport sending, and marker persistence under
+	// the same entry so equal keys in this instance cannot both pass lookup before either stores success.
 	if deliveryKey != "" {
 		release, err := s.locks.acquire(ctx, deliveryKey)
 		if err != nil {
@@ -845,6 +1016,8 @@ func (s *NotificationEmailService) Send(ctx context.Context, input SendRequest) 
 		}
 		defer release()
 	}
+	// Current and legacy markers both suppress this source-backed notice. Keep
+	// both lookups within the held entry so a successful older identity remains visible to this send.
 	if deliveryKey != "" {
 		sent, err := s.deliveryExists(ctx, deliveryKey, legacyNotificationEmailDeliveryKey(normalizedEvent, input.SourceType, input.SourceID, recipient, input.ReminderKey))
 		if err != nil {
@@ -861,6 +1034,8 @@ func (s *NotificationEmailService) Send(ctx context.Context, input SendRequest) 
 	if err := s.emailService.SendEmail(ctx, recipient, rendered.Subject, rendered.HTML); err != nil {
 		return NotificationEmailDeliveryErr(err)
 	}
+	// Transport acceptance precedes persistence. Store success only after the send
+	// returns nil; a failure here leaves delivered mail possible even though no current marker was saved.
 	if deliveryKey != "" {
 		if err := s.settingRepo.Set(ctx, deliveryKey, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 			return err
@@ -869,16 +1044,31 @@ func (s *NotificationEmailService) Send(ctx context.Context, input SendRequest) 
 	return nil
 }
 
+// RememberRecipientLocale stores a normalized language hint for the supplied email's hash.
+// Blank language input, missing service/storage, and blank hashed address are ignored.
+// The userID parameter is retained by the caller interface; this method writes
+// only the email-key hint and discards persistence errors.
 func (s *NotificationEmailService) RememberRecipientLocale(ctx context.Context, userID int64, email, acceptLanguage string) {
 	locale := normalizeNotificationLocale(acceptLanguage)
 	if strings.TrimSpace(acceptLanguage) == "" || s == nil || s.settingRepo == nil {
 		return
 	}
 	if emailHash := NotificationEmailHash(email); emailHash != "" {
+		// Language memory is best effort for later preference lookup. A failed
+		// write leaves existing account/email/site sources in place and does not fail the triggering business operation.
 		_ = s.settingRepo.Set(ctx, notificationEmailLocaleEmailKeyPrefix+emailHash, locale)
 	}
 }
 
+// ResolveRecipientLocale selects account, legacy user, remembered-email, then site language.
+// A missing service or settings reader selects English. A valid assembled account
+// reader result wins; otherwise a positive userID permits legacy user-key lookup,
+// followed by the normalized email-key hint and the stored site default.
+//
+// Read errors are ignored along this sequence. A nonblank remembered string is
+// negotiated immediately, so an invalid remembered value can select English
+// instead of reaching the later site default. Event-specific language negotiation
+// in Send can take precedence over this recipient result.
 func (s *NotificationEmailService) ResolveRecipientLocale(ctx context.Context, userID int64, email string) string {
 	if s == nil || s.settingRepo == nil {
 		return notificationEmailDefaultLocale
@@ -889,6 +1079,8 @@ func (s *NotificationEmailService) ResolveRecipientLocale(ctx context.Context, u
 		}
 	}
 
+	// Account lookup can leave no selection. Legacy user and email reads then
+	// ignore unavailable settings and use the next source; a nonblank found value is negotiated immediately.
 	if userID > 0 {
 		if locale, err := s.settingRepo.GetValue(ctx, notificationEmailLocaleUserKeyPrefix+strconv.FormatInt(userID, 10)); err == nil && strings.TrimSpace(locale) != "" {
 			return normalizeNotificationLocale(locale)
@@ -899,10 +1091,21 @@ func (s *NotificationEmailService) ResolveRecipientLocale(ctx context.Context, u
 			return normalizeNotificationLocale(locale)
 		}
 	}
+	// An unavailable site default supplies empty input to negotiation, selecting
+	// the locale library's default while keeping recipient-language lookup usable after storage read failure.
 	fallback, _ := s.settingRepo.GetValue(ctx, "default_locale")
 	return locale.Negotiate("", fallback)
 }
 
+// IsUnsubscribed reports whether the first available preference value names unsubscribed.
+// Unsupported events return an error, and mandatory events return false before
+// storage access. Optional events try the current hashed key, then the legacy
+// key only when the current key is absent.
+//
+// A successful current-key read is authoritative even when its trimmed value is
+// empty or different from unsubscribed; it does not consult a legacy record then.
+// Missing both records means subscribed. Other storage failures abort the check
+// so Send can report an unavailable preference decision to its caller.
 func (s *NotificationEmailService) IsUnsubscribed(ctx context.Context, email, event string) (bool, error) {
 	info, normalizedEvent, err := s.eventInfo(event)
 	if err != nil {
@@ -911,6 +1114,8 @@ func (s *NotificationEmailService) IsUnsubscribed(ctx context.Context, email, ev
 	if !info.Optional {
 		return false, nil
 	}
+	// A successful current-key read owns the preference decision even if its
+	// value is not unsubscribed. The legacy key is consulted only after an absent current record.
 	for _, key := range []string{notificationEmailPreferenceKey(normalizedEvent, email), legacyNotificationEmailPreferenceKey(normalizedEvent, email)} {
 		if strings.TrimSpace(key) == "" {
 			continue
@@ -926,6 +1131,10 @@ func (s *NotificationEmailService) IsUnsubscribed(ctx context.Context, email, ev
 	return false, nil
 }
 
+// Unsubscribe verifies a signed unexpired token and persists its recipient's optional-event preference.
+// Mandatory events reject the request after token validation. A successful settings
+// write returns Done with the normalized event and signed email; repeated requests
+// can save the same preference value again.
 func (s *NotificationEmailService) Unsubscribe(ctx context.Context, token string) (NotificationEmailUnsubscribeResult, error) {
 	claims, err := s.parseUnsubscribeToken(ctx, token)
 	if err != nil {
@@ -938,12 +1147,17 @@ func (s *NotificationEmailService) Unsubscribe(ctx context.Context, token string
 	if !info.Optional {
 		return NotificationEmailUnsubscribeResult{}, fmt.Errorf("%s is transactional and cannot be unsubscribed", normalizedEvent)
 	}
+	// Persist the normalized optional-event preference after signature and event
+	// eligibility checks, so the returned Done result describes a completed settings write.
 	if err := s.settingRepo.Set(ctx, notificationEmailPreferenceKey(normalizedEvent, claims.Email), "unsubscribed"); err != nil {
 		return NotificationEmailUnsubscribeResult{}, err
 	}
 	return NotificationEmailUnsubscribeResult{Event: normalizedEvent, Email: claims.Email, Done: true}, nil
 }
 
+// eventInfo returns declared metadata for a trimmed lowercase event identifier.
+// Unsupported names return an error. The metadata struct retains the declared
+// placeholder backing slice; callers that expose mutable metadata copy that slice before returning it.
 func (s *NotificationEmailService) eventInfo(event string) (NotificationEmailEventInfo, string, error) {
 	normalized := strings.ToLower(strings.TrimSpace(event))
 	info, ok := notificationEmailEventDefinitions[normalized]
@@ -953,6 +1167,10 @@ func (s *NotificationEmailService) eventInfo(event string) (NotificationEmailEve
 	return info, normalized, nil
 }
 
+// sampleVariables returns a fresh localized example map with current site branding.
+// Balance previews resolve the configured recharge link, and optional events receive
+// a sample unsubscribe destination when absent. This map initializes previews
+// and runtime rendering; runtimeVariables replaces report-specific samples before delivery.
 func (s *NotificationEmailService) sampleVariables(ctx context.Context, event, languageCode string) map[string]string {
 	ctx = locale.WithLanguage(ctx, languageCode)
 	info := notificationEmailEventDefinitions[event]
@@ -968,17 +1186,29 @@ func (s *NotificationEmailService) sampleVariables(ctx context.Context, event, l
 	return variables
 }
 
+// runtimeVariables returns a fresh working map combining localized samples with event values.
+// Caller substitutions are copied first, then current branding, recipient email,
+// optional recipient name, and selected optional-event unsubscribe links are applied.
+// Balance recharge links are resolved from localized settings after caller values.
+//
+// Operations reports replace missing summary values with dashes and remove an
+// unsupplied sample report body. Missing display controls are inferred from supplied
+// summary-field presence and the detail default, preventing preview metrics from appearing
+// as measured runtime results. Other event samples remain available for any
+// placeholders the business caller did not supply.
 func (s *NotificationEmailService) runtimeVariables(ctx context.Context, event, languageCode string, input NotificationEmailSendInput) map[string]string {
 	ctx = locale.WithLanguage(ctx, languageCode)
 	variables := s.sampleVariables(ctx, event, languageCode)
 	maps.Copy(variables, input.Variables)
 	if event == NotificationEmailEventOpsScheduledReport {
-		// Callers may provide only report_html; replace preview samples before sending a real report.
+		// Runtime reports can supply only detailed HTML. Clear unsupplied preview
+		// body and summary samples before deriving section visibility from caller field presence.
 		if _, ok := input.Variables["report_html"]; !ok {
 			variables["report_html"] = ""
 		}
 		if _, ok := input.Variables["report_detail_display"]; !ok {
-			// Templates that render only report_html still need the detail section displayed.
+			// A caller can supply detailed report HTML without a display control.
+			// Keep that section visible by default while retaining any explicitly supplied display value.
 			variables["report_detail_display"] = "block"
 		}
 		hasSummaryValues := false
@@ -1008,6 +1238,8 @@ func (s *NotificationEmailService) runtimeVariables(ctx context.Context, event, 
 		variables["recipient_name"] = input.RecipientName
 	}
 	if notificationEmailEventDefinitions[event].Optional {
+		// Link generation failure leaves the supplied or sample unsubscribe value in
+		// place; this preparation path continues rendering with its existing variables instead of returning that error.
 		if unsubscribeURL, err := s.buildUnsubscribeURL(ctx, input.RecipientEmail, event); err == nil {
 			variables["unsubscribe_url"] = unsubscribeURL
 		}
@@ -1015,14 +1247,24 @@ func (s *NotificationEmailService) runtimeVariables(ctx context.Context, event, 
 	return variables
 }
 
+// siteName resolves the grouped site branding for the language carried by ctx.
+// A decoded grouped field is authoritative, including empty copy. Missing or
+// malformed group data permits the legacy site_name value, then TokenRouter
+// when that legacy value is empty or unavailable.
 func (s *NotificationEmailService) siteName(ctx context.Context) string {
 	return locale.ReadGroupedText(ctx, s.settingRepo, "site_texts", "site_name", defaultSiteName)
 }
 
+// baseURL returns the first nonblank API base or frontend URL from current settings.
+// Read failures and blank values proceed to the next source, and the selected
+// string is trimmed with trailing slashes removed. Missing service/storage or
+// both unavailable values produces an empty base for relative unsubscribe links.
 func (s *NotificationEmailService) baseURL(ctx context.Context) string {
 	if s == nil || s.settingRepo == nil {
 		return ""
 	}
+	// Prefer the API base before the frontend base. Failed reads and blank values
+	// leave the next source eligible, and no usable source keeps unsubscribe links relative.
 	for _, key := range []string{SettingKeyAPIBaseURL, SettingKeyFrontendURL} {
 		value, err := s.settingRepo.GetValue(ctx, key)
 		if err == nil && strings.TrimSpace(value) != "" {
@@ -1032,25 +1274,43 @@ func (s *NotificationEmailService) baseURL(ctx context.Context) string {
 	return ""
 }
 
+// buildUnsubscribeURL signs a recipient/event token and appends its escaped value to the endpoint path.
+// Signing failures propagate. A usable configured base prefixes the path; an
+// empty base returns the relative unsubscribe endpoint for the caller's rendered link.
 func (s *NotificationEmailService) buildUnsubscribeURL(ctx context.Context, email, event string) (string, error) {
 	token, err := s.createUnsubscribeToken(ctx, email, event)
 	if err != nil {
 		return "", err
 	}
+	// Escape the complete signed token as one query value so payload punctuation
+	// remains within token input when the unsubscribe handler reads the request parameter.
 	path := "/api/v1/settings/email-unsubscribe?token=" + url.QueryEscape(token)
 	baseURL := s.baseURL(ctx)
+	// A missing link base leaves an endpoint-relative path available. The renderer
+	// accepts slash-prefixed URL substitutions, so the optional notice can still carry that prepared link.
 	if baseURL == "" {
 		return path, nil
 	}
 	return baseURL + path, nil
 }
 
+// createUnsubscribeToken returns signed JSON claims with a 365-day expiration and trimmed recipient.
+// It obtains the persisted signing secret before encoding URL-safe payload and
+// signature parts. The event is stored as supplied here; optional-event and
+// supported-event restrictions are enforced when Unsubscribe consumes the token.
+//
+// The signature covers the encoded payload exactly as returned before the dot
+// separator. Recipient and event remain together in those signed claims, while
+// expiration is represented as Unix seconds for the parser's inclusive expiry check.
 func (s *NotificationEmailService) createUnsubscribeToken(ctx context.Context, email, event string) (string, error) {
 	secret, err := s.unsubscribeSecret(ctx)
 	if err != nil {
 		return "", err
 	}
+	// Encode expiry in whole Unix seconds for token validation.
 	claims := notificationEmailUnsubscribeClaims{Email: strings.TrimSpace(email), Event: event, Exp: time.Now().Add(notificationEmailUnsubscribeTTL).Unix()}
+	// Serialize recipient, event, and expiry together before signing the encoded
+	// payload, so the parser verifies the same claim representation before interpreting its fields.
 	payload, err := json.Marshal(claims)
 	if err != nil {
 		return "", err
@@ -1060,6 +1320,15 @@ func (s *NotificationEmailService) createUnsubscribeToken(ctx context.Context, e
 	return encodedPayload + "." + signature, nil
 }
 
+// parseUnsubscribeToken verifies payload/signature structure, HMAC equality, claims, and expiration.
+// It trims the token, requires two nonempty parts, and verifies the signature
+// before decoding JSON. Expiration at or before current Unix seconds is rejected;
+// returned event claims still require Unsubscribe's supported/optional-event checks.
+//
+// Signature comparison covers the encoded payload before JSON is interpreted,
+// tying the claim fields to the supplied signature. unsubscribeSecret can
+// initialize a missing secret during this lookup, so parsing may perform a
+// settings write before accepting or rejecting the token signature.
 func (s *NotificationEmailService) parseUnsubscribeToken(ctx context.Context, token string) (notificationEmailUnsubscribeClaims, error) {
 	parts := strings.Split(strings.TrimSpace(token), ".")
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
@@ -1069,6 +1338,8 @@ func (s *NotificationEmailService) parseUnsubscribeToken(ctx context.Context, to
 	if err != nil {
 		return notificationEmailUnsubscribeClaims{}, err
 	}
+	// Verify the supplied encoded payload before decoding its claims. This order
+	// ties every interpreted recipient, event, and expiry value to the successful signature comparison.
 	expected := signNotificationEmailToken(secret, parts[0])
 	if !hmac.Equal([]byte(expected), []byte(parts[1])) {
 		return notificationEmailUnsubscribeClaims{}, errors.New("invalid unsubscribe token signature")
@@ -1090,7 +1361,17 @@ func (s *NotificationEmailService) parseUnsubscribeToken(ctx context.Context, to
 	return claims, nil
 }
 
+// unsubscribeSecret returns the current signing secret or persists a fresh random secret.
+// A nonblank stored value is trimmed and reused. Missing or blank configuration
+// permits generation, while other read errors stop before any replacement is written.
+//
+// Instance-local coordination spans read, random-byte generation, and persistence
+// so concurrent first requests using this service share the saved secret. Lock
+// waits obey ctx and release after the complete sequence. Other processes have
+// separate coordinators, so the method establishes no cross-process creation lock.
 func (s *NotificationEmailService) unsubscribeSecret(ctx context.Context) (string, error) {
+	// All first-secret readers in this instance use one entry through storage.
+	// Hold it until an existing secret is returned or a generated replacement has been persisted.
 	release, lockErr := s.locks.acquire(ctx, notificationEmailUnsubscribeSecretKey)
 	if lockErr != nil {
 		return "", lockErr
@@ -1103,6 +1384,7 @@ func (s *NotificationEmailService) unsubscribeSecret(ctx context.Context) (strin
 	if err != nil && !errors.Is(err, ErrSettingNotFound) {
 		return "", err
 	}
+	// Thirty-two random bytes supply 256 bits of secret entropy.
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
 		return "", err
@@ -1114,7 +1396,12 @@ func (s *NotificationEmailService) unsubscribeSecret(ctx context.Context) (strin
 	return secret, nil
 }
 
+// deliveryExists reports whether any supplied nonblank delivery key is present in storage.
+// Stored contents do not affect presence. Missing keys allow later alternatives,
+// while other read errors stop with an error; no available marker returns false.
 func (s *NotificationEmailService) deliveryExists(ctx context.Context, keys ...string) (bool, error) {
+	// Marker contents are irrelevant to suppression. Missing current keys leave
+	// legacy alternatives eligible, while other read failures stop before another send can be admitted.
 	for _, key := range keys {
 		if strings.TrimSpace(key) == "" {
 			continue
@@ -1130,17 +1417,23 @@ func (s *NotificationEmailService) deliveryExists(ctx context.Context, keys ...s
 	return false, nil
 }
 
+// validateNotificationEmailTemplate checks nonblank copy, configured sizes, and event-admitted substitutions.
+// Subject length counts Unicode characters after trimming, while HTML length
+// counts bytes in the supplied body. Recognized placeholder spellings must belong
+// to the selected event's definition; other text remains literal template content.
 func validateNotificationEmailTemplate(event, subject, htmlBody string) error {
 	subject = strings.TrimSpace(subject)
 	if subject == "" {
 		return errors.New("email subject cannot be empty")
 	}
+	// Subject capacity counts characters so multibyte names share the same limit.
 	if len([]rune(subject)) > notificationEmailMaxSubjectLength {
 		return fmt.Errorf("email subject cannot exceed %d characters", notificationEmailMaxSubjectLength)
 	}
 	if strings.TrimSpace(htmlBody) == "" {
 		return errors.New("email html cannot be empty")
 	}
+	// HTML capacity limits stored template bytes before substitution.
 	if len([]byte(htmlBody)) > notificationEmailMaxHTMLLength {
 		return fmt.Errorf("email html cannot exceed %d bytes", notificationEmailMaxHTMLLength)
 	}
@@ -1153,6 +1446,12 @@ func validateNotificationEmailTemplate(event, subject, htmlBody string) error {
 	return nil
 }
 
+// RenderNotificationEmail validates copy and substitutes event variables into subject and HTML.
+// HTML substitutions are escaped unless the admitted report_html field has a
+// trusted raw-map value; literal template markup remains as supplied. Unsupported
+// ordinary _url values become empty, and subject values have CR/LF removed.
+// Callers supply an exact event identifier and keep both maps stable during
+// rendering. Unknown events with no recognized placeholders can pass validation.
 func RenderNotificationEmail(event, subject, htmlBody string, variables map[string]string, rawHTMLVariables map[string]string) (NotificationEmailPreview, error) {
 	if err := validateNotificationEmailTemplate(event, subject, htmlBody); err != nil {
 		return NotificationEmailPreview{}, err
@@ -1168,6 +1467,16 @@ func RenderNotificationEmail(event, subject, htmlBody string, variables map[stri
 	return NotificationEmailPreview{Subject: SanitizeEmailHeader(renderedSubject), HTML: renderedHTML}, nil
 }
 
+// renderNotificationEmailString substitutes recognized event fields using subject or HTML escaping rules.
+// Unknown recognized placeholders return an error; absent ordinary values become
+// empty strings. A trusted raw value is used only for an HTML report field admitted
+// by notificationEmailRawHTMLAllowed.
+//
+// Raw values are selected before ordinary URL and escaping checks. Otherwise,
+// unsafe _url values become empty, HTML values are escaped, and subject values
+// have line separators removed. Replacement matches are evaluated from the original
+// template, so substitution text is inserted as content rather than recursively
+// interpreted as another template placeholder.
 func renderNotificationEmailString(event, raw string, variables map[string]string, rawHTMLVariables map[string]string, escapeHTML bool) (string, error) {
 	allowed := notificationEmailAllowedPlaceholderSet(event)
 	var renderErr error
@@ -1185,6 +1494,8 @@ func renderNotificationEmailString(event, raw string, variables map[string]strin
 			return ""
 		}
 		value := variables[name]
+		// Raw substitution is confined to admitted report-body HTML. Selecting that
+		// map value here intentionally bypasses the ordinary escaping applied to other template variables.
 		if escapeHTML && notificationEmailRawHTMLAllowed(event, name) {
 			if rawHTMLVariables != nil {
 				if rawValue, ok := rawHTMLVariables[name]; ok {
@@ -1192,9 +1503,13 @@ func renderNotificationEmailString(event, raw string, variables map[string]strin
 				}
 			}
 		}
+		// URL placeholders can otherwise place an unsupported scheme in HTML links.
+		// Clear unsafe ordinary values before escaping while retaining the surrounding template structure.
 		if strings.HasSuffix(name, "_url") && !isSafeNotificationEmailURL(value) {
 			value = ""
 		}
+		// Escape the inserted value while leaving literal template markup intact.
+		// Replacement scans the original template, so inserted brace text does not become another substitution.
 		if escapeHTML {
 			return html.EscapeString(value)
 		}
@@ -1206,10 +1521,14 @@ func renderNotificationEmailString(event, raw string, variables map[string]strin
 	return rendered, nil
 }
 
+// notificationEmailRawHTMLAllowed reports whether the operations-report body field admits trusted HTML.
 func notificationEmailRawHTMLAllowed(event, placeholder string) bool {
 	return event == NotificationEmailEventOpsScheduledReport && placeholder == "report_html"
 }
 
+// notificationEmailAllowedPlaceholderSet returns a fresh set of declared names for the exact event.
+// An unknown event yields an empty set. This helper expects prior event normalization
+// when callers want case-insensitive public input to select the corresponding definition.
 func notificationEmailAllowedPlaceholderSet(event string) map[string]struct{} {
 	info := notificationEmailEventDefinitions[event]
 	allowed := make(map[string]struct{}, len(info.Placeholders))
@@ -1219,6 +1538,9 @@ func notificationEmailAllowedPlaceholderSet(event string) map[string]struct{} {
 	return allowed
 }
 
+// notificationEmailPlaceholdersIn returns unique recognized variable names in first-occurrence order.
+// Only spellings matched by the shared placeholder regexp participate, so malformed
+// or unrecognized brace text remains ordinary content during validation and rendering.
 func notificationEmailPlaceholdersIn(raw string) []string {
 	matches := notificationEmailPlaceholderPattern.FindAllStringSubmatch(raw, -1)
 	seen := make(map[string]struct{}, len(matches))
@@ -1236,19 +1558,33 @@ func notificationEmailPlaceholdersIn(raw string) []string {
 	return out
 }
 
+// normalizeNotificationLocale negotiates a language hint using English as its fallback.
+// It delegates aliases and Accept-Language selection to locale.Negotiate, producing
+// one supported language code for template keys, samples, and remembered preferences.
 func normalizeNotificationLocale(raw string) string {
 	return locale.Negotiate(raw, notificationEmailDefaultLocale)
 }
 
-// SetRecipientLocaleReader installs the account-language reader supplied by app assembly.
+// SetRecipientLocaleReader installs the account-language lookup used before persisted language hints.
+// Call during assembly before concurrent recipient resolution; the field assignment
+// is unsynchronized. A nil reader leaves legacy user/email records and site default
+// as the service's available preference sources.
 func (s *NotificationEmailService) SetRecipientLocaleReader(read func(context.Context, int64, string) string) {
 	s.recipientLocale = read
 }
 
+// notificationEmailTemplateKey joins the selected event and language into its stored override key.
 func notificationEmailTemplateKey(event, locale string) string {
 	return notificationEmailTemplateKeyPrefix + event + ":" + locale
 }
 
+// notificationEmailPreferenceKey returns the current hashed preference identity or empty for missing inputs.
+// It separates trimmed event and normalized recipient with NUL before hashing,
+// then prefixes the digest with v2. NotificationEmailHash lowercases that complete
+// identity, so event and recipient case differences share the resulting preference key.
+// The digest keeps the persisted key size independent of email length while
+// the NUL component separator distinguishes the normalized event/address pair
+// from the older colon-separated preference representation read for compatibility.
 func notificationEmailPreferenceKey(event, email string) string {
 	if strings.TrimSpace(event) == "" || strings.TrimSpace(email) == "" {
 		return ""
@@ -1257,10 +1593,24 @@ func notificationEmailPreferenceKey(event, email string) string {
 	return notificationEmailPreferenceKeyPrefix + "v2:" + NotificationEmailHash(identity)
 }
 
+// legacyNotificationEmailPreferenceKey returns the prior event/address key used for existing preference lookups.
+// Event text is retained as supplied, while the address uses NotificationEmailHash.
+// An empty normalized address still leaves the event's colon prefix in this
+// compatibility key, reproducing that format for legacy reads.
 func legacyNotificationEmailPreferenceKey(event, email string) string {
 	return notificationEmailPreferenceKeyPrefix + event + ":" + NotificationEmailHash(email)
 }
 
+// notificationEmailDeliveryKey returns a v2 digest identity for one source-backed recipient notice.
+// Blank source type, source ID, or recipient returns empty and disables keyed
+// delivery handling. Event and recipient are normalized, while source and reminder
+// parts pass through their existing key-part normalization.
+//
+// NUL separators distinguish the component positions before hashing and keep the
+// persisted key length independent of source identifier size. Normalization still
+// maps unsupported source characters to underscores, so caller identifiers differing
+// only through that transformation can share a delivery identity. The reminder
+// component separates recurring notices after that normalization.
 func notificationEmailDeliveryKey(event, sourceType, sourceID, recipient, reminderKey string) string {
 	if strings.TrimSpace(sourceType) == "" || strings.TrimSpace(sourceID) == "" || strings.TrimSpace(recipient) == "" {
 		return ""
@@ -1275,6 +1625,10 @@ func notificationEmailDeliveryKey(event, sourceType, sourceID, recipient, remind
 	return notificationEmailDeliveryKeyPrefix + "v2:" + NotificationEmailHash(identity)
 }
 
+// legacyNotificationEmailDeliveryKey reconstructs the prior colon-separated marker identity for compatibility reads.
+// Missing source type, source ID, or recipient returns empty. Source and reminder
+// parts retain the same sanitizer, while recipient uses its normalized address hash;
+// a nonblank reminder appends its older optional suffix.
 func legacyNotificationEmailDeliveryKey(event, sourceType, sourceID, recipient, reminderKey string) string {
 	if strings.TrimSpace(sourceType) == "" || strings.TrimSpace(sourceID) == "" || strings.TrimSpace(recipient) == "" {
 		return ""
@@ -1286,6 +1640,9 @@ func legacyNotificationEmailDeliveryKey(event, sourceType, sourceID, recipient, 
 	return strings.Join(parts, "")
 }
 
+// NotificationEmailHash returns a hexadecimal SHA-256 digest of trimmed lowercase input.
+// An empty normalized value returns empty. The helper hashes both addresses and
+// composite key identities, so normalization applies to the complete value supplied by its caller.
 func NotificationEmailHash(value string) string {
 	trimmed := strings.ToLower(strings.TrimSpace(value))
 	if trimmed == "" {
@@ -1295,8 +1652,17 @@ func NotificationEmailHash(value string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// safeNotificationEmailKeyPart trims and lowercases a source or reminder component for both marker formats.
+// ASCII letters, digits, underscore, hyphen, and dot remain; each other rune becomes
+// underscore. Both current digests and legacy marker reconstruction use this value.
+//
+// For example, a/b and a:b both become a_b. Callers choose source identifiers
+// that remain distinct after normalization, because adding separators or hashing
+// afterward cannot recover a distinction already removed from one component.
 func safeNotificationEmailKeyPart(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
+	// Builder rune writes target memory and return nil errors; ignoring those
+	// error results leaves only the normalized identity text as this helper's output.
 	var builder strings.Builder
 	for _, r := range value {
 		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' || r == '-' || r == '.' {
@@ -1308,12 +1674,21 @@ func safeNotificationEmailKeyPart(value string) string {
 	return builder.String()
 }
 
+// signNotificationEmailToken returns the URL-safe unpadded HMAC-SHA256 signature of the encoded payload.
+// The secret is used as supplied text bytes, including the stored base64 spelling.
+// Payload bytes are signed exactly as supplied for comparison before claim decoding.
 func signNotificationEmailToken(secret, payload string) string {
 	mac := hmac.New(sha256.New, []byte(secret))
+	// Hash writes accept the entire payload and return nil errors. Sign its
+	// exact encoded bytes so the parser can compare the same payload representation before decoding claims.
 	_, _ = mac.Write([]byte(payload))
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
+// isSafeNotificationEmailURL reports whether a substitution uses an admitted URL form.
+// Blank values are accepted; absolute links allow HTTP, HTTPS, and mailto schemes.
+// A nonabsolute value must begin with slash after trimming, including a protocol-relative
+// slash-prefixed link accepted by this check.
 func isSafeNotificationEmailURL(raw string) bool {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -1330,6 +1705,10 @@ func isSafeNotificationEmailURL(raw string) bool {
 	return strings.HasPrefix(trimmed, "/")
 }
 
+// notificationEmailSampleVariables returns a fresh sample map for Chinese or English template rendering.
+// The hint is normalized first; Chinese selects localized example text, while
+// other supported selections use English examples. Report summary samples are added
+// before the map reaches preview or runtime variable preparation.
 func notificationEmailSampleVariables(locale string) map[string]string {
 	if normalizeNotificationLocale(locale) == notificationEmailLocaleChinese {
 		variables := map[string]string{
@@ -1437,7 +1816,9 @@ func notificationEmailSampleVariables(locale string) map[string]string {
 	return variables
 }
 
-// addNotificationEmailOpsSummarySampleVariables fills preview metrics for the operations summary.
+// addNotificationEmailOpsSummarySampleVariables writes report-preview metrics and display controls into variables.
+// The map must be writable. Existing values with these names are replaced;
+// runtimeVariables subsequently clears or replaces unsupplied report samples before actual sending.
 func addNotificationEmailOpsSummarySampleVariables(variables map[string]string) {
 	variables["report_summary_display"] = "block"
 	variables["report_detail_display"] = "none"
@@ -1464,7 +1845,9 @@ func addNotificationEmailOpsSummarySampleVariables(variables map[string]string) 
 	variables["report_tps_avg"] = "1406.8"
 }
 
-// notificationEmailOpsScheduledReportTemplate returns the built-in operations report in the requested locale.
+// notificationEmailOpsScheduledReportTemplate returns the built-in operations-report HTML for the normalized language.
+// Chinese selects its translated report headings; other selections use English.
+// The markup exposes summary and detail display controls as placeholders for later rendering.
 func notificationEmailOpsScheduledReportTemplate(locale string) string {
 	if normalizeNotificationLocale(locale) == notificationEmailLocaleChinese {
 		return `<!DOCTYPE html>
@@ -1657,11 +2040,17 @@ func notificationEmailOpsScheduledReportTemplate(locale string) string {
 </html>`
 }
 
-// notificationEmailChineseCard uses a Chinese footer for Chinese event templates.
+// notificationEmailChineseCard wraps trusted event markup with the shared Chinese-language card footer.
+// Callers supply accent, title, and content fragments suitable for direct HTML
+// insertion; the delegated card builder leaves those fragments and their placeholders intact.
 func notificationEmailChineseCard(accent, title, content string) string {
 	return notificationEmailCard(accent, title, content, "zh-Hans")
 }
 
+// notificationEmailCard builds trusted built-in markup around accent, title, and content fragments.
+// Only a first language argument exactly equal to zh-Hans selects the Chinese
+// footer; other inputs use English. These constructor fragments are inserted as
+// HTML directly and still contain placeholders for later event-variable rendering.
 func notificationEmailCard(accent, title, content string, language ...string) string {
 	selected := "en"
 	footer := "This email was sent by {{site_name}}. Please do not reply directly."
