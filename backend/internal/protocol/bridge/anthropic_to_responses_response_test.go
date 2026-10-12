@@ -9,6 +9,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestAnthropicToResponsesResponse_CacheTokensUseOpenAIInputSemantics supplies
+// uncached, cache-read, cache-write, and output usage. Assertions check summed
+// input/total counts, retained output, and the cached-token detail value.
 func TestAnthropicToResponsesResponse_CacheTokensUseOpenAIInputSemantics(t *testing.T) {
 	resp := &AnthropicResponse{
 		ID:    "msg_cache",
@@ -35,6 +38,9 @@ func TestAnthropicToResponsesResponse_CacheTokensUseOpenAIInputSemantics(t *test
 	assert.Equal(t, 50688, out.Usage.InputTokensDetails.CachedTokens)
 }
 
+// TestAnthropicToResponsesResponse_NoCacheTokens converts usage containing
+// uncached input and output alone. Input/output/total must retain those
+// counts, and cache-read detail remains nil in the returned struct.
 func TestAnthropicToResponsesResponse_NoCacheTokens(t *testing.T) {
 	resp := &AnthropicResponse{
 		ID:    "msg_nocache",
@@ -57,6 +63,10 @@ func TestAnthropicToResponsesResponse_NoCacheTokens(t *testing.T) {
 	assert.Nil(t, out.Usage.InputTokensDetails)
 }
 
+// TestAnthropicEventToResponses_CacheTokensRoundTripFromMessageStart supplies
+// initial uncached/read/write counters and a later output count. The terminal
+// event must retain normalized input/total usage and the inspected cache-read
+// detail.
 func TestAnthropicEventToResponses_CacheTokensRoundTripFromMessageStart(t *testing.T) {
 	state := NewAnthropicEventToResponsesState(testRuntime())
 
@@ -101,6 +111,10 @@ func TestAnthropicEventToResponses_CacheTokensRoundTripFromMessageStart(t *testi
 	assert.Equal(t, 9, completed.Response.Usage.InputTokensDetails.CachedTokens)
 }
 
+// TestAnthropicEventToResponses_CacheTokensFromMessageDelta supplies input at
+// creation and cache/output counts later. The terminal snapshot must add the
+// retained input and final cache buckets, with the asserted output/detail
+// values.
 func TestAnthropicEventToResponses_CacheTokensFromMessageDelta(t *testing.T) {
 	state := NewAnthropicEventToResponsesState(testRuntime())
 
@@ -113,7 +127,9 @@ func TestAnthropicEventToResponses_CacheTokensFromMessageDelta(t *testing.T) {
 		},
 	}, state)
 
-	// Some upstreams report cache counters only in the final message_delta.
+	// Withhold initial cache counts in this fixture so terminal aggregation
+	// depends on the later usage observation while retaining the initial uncached
+	// input.
 	AnthropicEventToResponsesEvents(testRuntime(), &AnthropicStreamEvent{
 		Type: "message_delta",
 		Usage: &AnthropicUsage{
@@ -140,8 +156,9 @@ func TestAnthropicEventToResponses_CacheTokensFromMessageDelta(t *testing.T) {
 	assert.Equal(t, 11, completed.Response.Usage.InputTokensDetails.CachedTokens)
 }
 
-// TestAnthropicEventToResponses_TextEmitsContentPart checks that content_part.added precedes text deltas.
-// The SDK needs the part to exist before appending its text.
+// TestAnthropicEventToResponses_TextEmitsContentPart feeds one text block
+// split into two deltas. It checks part-added and first-delta presence/order
+// plus a part-done event, without decoding terminal payload content.
 func TestAnthropicEventToResponses_TextEmitsContentPart(t *testing.T) {
 	state := NewAnthropicEventToResponsesState(testRuntime())
 	state.Model = "claude-sonnet-4-5"
@@ -187,7 +204,9 @@ func TestAnthropicEventToResponses_TextEmitsContentPart(t *testing.T) {
 	}
 }
 
-// TestAnthropicEventToResponses_DoneEventsCarryFullText checks full text in completion events.
+// TestAnthropicEventToResponses_DoneEventsCarryFullText stops a text block
+// after two fragments. Both text-done and part-done events must appear with
+// the complete concatenated text in their inspected fields.
 func TestAnthropicEventToResponses_DoneEventsCarryFullText(t *testing.T) {
 	state := NewAnthropicEventToResponsesState(testRuntime())
 	state.Model = "claude-sonnet-4-5"
@@ -225,7 +244,9 @@ func TestAnthropicEventToResponses_DoneEventsCarryFullText(t *testing.T) {
 	}
 }
 
-// TestAnthropicEventToResponses_CompletedCarriesOutput checks that the SDK can reconstruct output from the terminal event.
+// TestAnthropicEventToResponses_CompletedCarriesOutput completes a single text
+// stream. Its terminal snapshot must contain a message with content and the
+// expected text value in the first part.
 func TestAnthropicEventToResponses_CompletedCarriesOutput(t *testing.T) {
 	state := NewAnthropicEventToResponsesState(testRuntime())
 	state.Model = "claude-sonnet-4-5"
@@ -263,8 +284,10 @@ func TestAnthropicEventToResponses_CompletedCarriesOutput(t *testing.T) {
 	}
 }
 
-// TestAnthropicEventToResponses_ToolCallCompletedCarriesArguments checks accumulated
-// arguments in output_item.done and response.completed.
+// TestAnthropicEventToResponses_ToolCallCompletedCarriesArguments splits
+// function JSON across two deltas and closes the stream. The terminal output
+// must contain a function call with its complete argument text and selected
+// name.
 func TestAnthropicEventToResponses_ToolCallCompletedCarriesArguments(t *testing.T) {
 	state := NewAnthropicEventToResponsesState(testRuntime())
 	state.Model = "claude-sonnet-4-5"
@@ -309,10 +332,10 @@ func TestAnthropicEventToResponses_ToolCallCompletedCarriesArguments(t *testing.
 	}
 }
 
-// TestAnthropicEventToResponses_ThinkingAfterTextKeepsMessageOutput covers interleaved thinking after text.
-// The text block leaves its message open; starting thinking must save that message
-// to Outputs and emit output_item.done before replacing its identity.
-// Otherwise response.completed loses the assistant text.
+// TestAnthropicEventToResponses_ThinkingAfterTextKeepsMessageOutput places
+// thinking after a stopped text block. The terminal snapshot must retain
+// message then reasoning outputs, the message text, and two distinct added-
+// item indexes.
 func TestAnthropicEventToResponses_ThinkingAfterTextKeepsMessageOutput(t *testing.T) {
 	state := NewAnthropicEventToResponsesState(testRuntime())
 	state.Model = "claude-sonnet-4-5"
@@ -367,8 +390,10 @@ func TestAnthropicEventToResponses_ThinkingAfterTextKeepsMessageOutput(t *testin
 	}
 }
 
-// TestAnthropicEventToResponses_MultipleTextBlocksAdvanceContentIndex checks distinct indexes within a message.
-// Reusing an index would overwrite the preceding block in the SDK.
+// TestAnthropicEventToResponses_MultipleTextBlocksAdvanceContentIndex feeds
+// two stopped text blocks under one message. It checks added-part indexes
+// zero/one and groups delta text by those indexes to retain both
+// contributions.
 func TestAnthropicEventToResponses_MultipleTextBlocksAdvanceContentIndex(t *testing.T) {
 	state := NewAnthropicEventToResponsesState(testRuntime())
 	state.Model = "claude-sonnet-4-5"
@@ -401,7 +426,7 @@ func TestAnthropicEventToResponses_MultipleTextBlocksAdvanceContentIndex(t *test
 		t.Errorf("content_part.added indexes = %v, want [0 1]", partAdded)
 	}
 
-	// Delta and done events identify the part whose text the SDK is accumulating.
+	// Group the asserted delta text by the emitted content position.
 	byIndex := map[int]string{}
 	for _, evt := range events {
 		if evt.Type == "response.output_text.delta" {
@@ -413,11 +438,17 @@ func TestAnthropicEventToResponses_MultipleTextBlocksAdvanceContentIndex(t *test
 	}
 }
 
-// TestAnthropicEventToResponses_ItemLifecycleIsBalanced checks paired item events and complete terminal output.
+// TestAnthropicEventToResponses_ItemLifecycleIsBalanced covers five
+// text/thinking/tool block orders. Added/done counts balance per item ID, and
+// terminal output IDs must match announcement order with one output per added
+// item.
 func TestAnthropicEventToResponses_ItemLifecycleIsBalanced(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		blocks []*AnthropicContentBlock
+		name string // block-order fixture case label
+		// blocks supplies one sequential block lifecycle per entry. The fixture
+		// injects matching deltas and stops so identity balance can be compared with
+		// terminal order.
+		blocks []*AnthropicContentBlock // ordered source block starts
 	}{
 		{"text then thinking", []*AnthropicContentBlock{{Type: "text"}, {Type: "thinking"}}},
 		{"thinking then text", []*AnthropicContentBlock{{Type: "thinking"}, {Type: "text"}}},
@@ -496,8 +527,9 @@ func TestAnthropicEventToResponses_ItemLifecycleIsBalanced(t *testing.T) {
 	}
 }
 
-// TestResponsesEventToSSE_CustomToolCallItemCarriesAllFields checks the JSON produced
-// by responsesItemWire, whose field allowlist can omit fields present in the Go struct.
+// TestResponsesEventToSSE_CustomToolCallItemCarriesAllFields serializes one
+// completed custom item. The frame must contain its client kind, call ID,
+// name, and input strings in the inspected JSON fields.
 func TestResponsesEventToSSE_CustomToolCallItemCarriesAllFields(t *testing.T) {
 	evt := ResponsesStreamEvent{
 		Type:        "response.output_item.done",
@@ -521,8 +553,9 @@ func TestResponsesEventToSSE_CustomToolCallItemCarriesAllFields(t *testing.T) {
 	assert.Contains(t, sse, `"type":"custom_tool_call"`)
 }
 
-// TestStream_SSEWireComplete checks function-call fields after SSE serialization
-// of a complete stream.
+// TestStream_SSEWireComplete collects a reasoning/tool Chat stream and
+// serializes its Responses events. The function-item added frame must exist
+// and contain the inspected empty arguments member plus call correlation.
 func TestStream_SSEWireComplete(t *testing.T) {
 	events := collectStreamEvents(t, []string{
 		`{"choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"plan"}}]}`,
@@ -544,6 +577,9 @@ func TestStream_SSEWireComplete(t *testing.T) {
 	require.Contains(t, addedLine, `"call_id":"call_a"`)
 }
 
+// TestAnthropicToResponsesResponse_CacheCreation combines all input buckets
+// with output in a buffered reply. Assertions check normalized input and the
+// top-level cache-creation counter in the returned usage.
 func TestAnthropicToResponsesResponse_CacheCreation(t *testing.T) {
 	resp := AnthropicResponse{
 		ID:    "msg_test",
@@ -566,6 +602,9 @@ func TestAnthropicToResponsesResponse_CacheCreation(t *testing.T) {
 	assert.Equal(t, 6, out.Usage.CacheCreationInputTokens, "cache creation must round-trip")
 }
 
+// TestAnthropicToResponsesResponse_StampsCreatedAt converts a buffered
+// Messages reply without a source timestamp. The result must contain a
+// positive creation time from the supplied runtime.
 func TestAnthropicToResponsesResponse_StampsCreatedAt(t *testing.T) {
 	out := AnthropicToResponsesResponse(testRuntime(), &AnthropicResponse{
 		ID:      "msg_1",
@@ -578,6 +617,9 @@ func TestAnthropicToResponsesResponse_StampsCreatedAt(t *testing.T) {
 		"Anthropic 响应不带时间戳，网关必须自己盖一个")
 }
 
+// TestAnthropicEventToResponsesStream_CreatedAtStableAcrossEvents decodes and
+// completes a text stream using one constructed state. Created and completed
+// snapshots must both carry the captured positive state timestamp.
 func TestAnthropicEventToResponsesStream_CreatedAtStableAcrossEvents(t *testing.T) {
 	state := NewAnthropicEventToResponsesState(testRuntime())
 	state.Model = "claude-sonnet-4-20250514"
@@ -613,6 +655,9 @@ func TestAnthropicEventToResponsesStream_CreatedAtStableAcrossEvents(t *testing.
 		"同一条流的 created_at 必须恒定")
 }
 
+// TestAnthropicStreamingMaxTokens_MapsToIncomplete supplies max_tokens stop
+// evidence before message stop. It checks retained stop state and the terminal
+// incomplete label/status with max_output_tokens details.
 func TestAnthropicStreamingMaxTokens_MapsToIncomplete(t *testing.T) {
 	state := NewAnthropicEventToResponsesState(testRuntime())
 
@@ -650,6 +695,10 @@ func TestAnthropicStreamingMaxTokens_MapsToIncomplete(t *testing.T) {
 	assert.Equal(t, "max_output_tokens", completed.Response.IncompleteDetails.Reason)
 }
 
+// TestAnthropicStreamingMaxTokens_FinalizeMapsToIncompleteWithoutMessageStop
+// finalizes after max_tokens without a source stop event. One incomplete
+// terminal with details must appear, and repeated finalization must return no
+// events.
 func TestAnthropicStreamingMaxTokens_FinalizeMapsToIncompleteWithoutMessageStop(t *testing.T) {
 	state := NewAnthropicEventToResponsesState(testRuntime())
 
@@ -673,6 +722,9 @@ func TestAnthropicStreamingMaxTokens_FinalizeMapsToIncompleteWithoutMessageStop(
 	assert.Empty(t, FinalizeAnthropicResponsesStream(state), "repeated finalization must be idempotent")
 }
 
+// TestAnthropicStreamingEndTurn_MapsToCompleted supplies end_turn evidence
+// before message stop. A completed terminal snapshot must appear with
+// completed status and no incomplete-details pointer.
 func TestAnthropicStreamingEndTurn_MapsToCompleted(t *testing.T) {
 	state := NewAnthropicEventToResponsesState(testRuntime())
 

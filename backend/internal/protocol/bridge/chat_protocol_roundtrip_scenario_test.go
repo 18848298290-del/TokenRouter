@@ -1,7 +1,8 @@
 package bridge
 
-// These scenarios cover reasoning, usage, and tool streams across chatcompletions_anthropic_bridge.go,
-// chatcompletions_responses_bridge.go, responses_to_anthropic.go, and responses_to_chatcompletions.go.
+// These scenarios cover reasoning, usage, and tool streams across
+// chatcompletions_anthropic_bridge.go, chatcompletions_responses_bridge.go,
+// responses_to_anthropic.go, and responses_to_chatcompletions.go.
 
 import (
 	"encoding/json"
@@ -11,7 +12,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestChatReasoningAliasNonStreaming checks the reasoning alias in both response bridges.
+// TestChatReasoningAliasNonStreaming decodes the Chat reasoning alias beside
+// final text. Each response bridge returns two entries and places the
+// asserted thinking/reasoning kind and selected alias text in its first entry.
 func TestChatReasoningAliasNonStreaming(t *testing.T) {
 	var response ChatCompletionsResponse
 	require.NoError(t, json.Unmarshal([]byte(`{
@@ -30,12 +33,17 @@ func TestChatReasoningAliasNonStreaming(t *testing.T) {
 	require.Equal(t, "fallback reasoning", responses.Output[0].Summary[0].Text)
 }
 
-// TestChatReasoningAliasStreaming checks precedence between the reasoning field and alias.
+// TestChatReasoningAliasStreaming compares alias-only, preferred
+// reasoning_content, and explicitly empty preferred-field chunks. Both stream
+// bridges must accumulate exactly the expected reasoning text for each
+// fixture.
 func TestChatReasoningAliasStreaming(t *testing.T) {
 	tests := []struct {
-		name    string
-		payload string
-		want    string
+		name string // reasoning alias fixture label
+		// payload and want pair one decoded chunk with the reasoning accumulated
+		// by both bridges. Presence of an empty preferred field suppresses alias text.
+		payload string // supplied Chat chunk JSON
+		want    string // expected accumulated reasoning text
 	}{
 		{
 			name:    "alias fallback",
@@ -80,6 +88,9 @@ func TestChatReasoningAliasStreaming(t *testing.T) {
 	}
 }
 
+// TestUsageConversionsPreserveCacheWriteTokens decodes detailed Responses
+// cache usage, converts it to Chat, and converts it back. Assertions check
+// cached/write counts and both returned Responses write-token locations.
 func TestUsageConversionsPreserveCacheWriteTokens(t *testing.T) {
 	var responsesUsage ResponsesUsage
 	require.NoError(t, json.Unmarshal([]byte(`{
@@ -101,8 +112,10 @@ func TestUsageConversionsPreserveCacheWriteTokens(t *testing.T) {
 	require.Equal(t, 200, roundTrip.InputTokensDetails.CacheWriteTokens)
 }
 
-// TestStreamingParallelToolUseNoGhostDelta covers Chat-to-Responses-to-Anthropic tool streams.
-// Completed arguments must target an opened block or Claude Code reports "Content block not found".
+// TestStreamingParallelToolUseNoGhostDelta converts two Chat tool calls
+// through Responses into Messages events and finalizes the stream. It checks
+// two opened tool blocks, membership of delta/stop indexes among opened
+// blocks, and the tool-use stop reason.
 func TestStreamingParallelToolUseNoGhostDelta(t *testing.T) {
 	ccState := NewChatCompletionsToResponsesStreamState(testRuntime(), "glm-5.2")
 	anthropicState := NewResponsesEventToAnthropicState(testRuntime())
@@ -168,7 +181,9 @@ func TestStreamingParallelToolUseNoGhostDelta(t *testing.T) {
 		}
 	}
 
-	// Finalization emits function_call_arguments.done for each tool.
+	// Finish both intermediate tool lifecycles before checking block references.
+	// This exposes done-event handling when each argument body already arrived in
+	// a single delta.
 	finalResponsesEvents := FinalizeChatCompletionsResponsesStream(testRuntime(), ccState)
 	for _, rEvent := range finalResponsesEvents {
 		allAnthropicEvents = append(allAnthropicEvents, ResponsesEventToAnthropicEvents(&rEvent, anthropicState)...)
@@ -182,7 +197,7 @@ func TestStreamingParallelToolUseNoGhostDelta(t *testing.T) {
 		}
 	}
 
-	// Every delta must target an opened block.
+	// Every delta index must occur among the collected block starts.
 	for _, e := range allAnthropicEvents {
 		if e.Type != "content_block_delta" || e.Index == nil {
 			continue
@@ -193,7 +208,7 @@ func TestStreamingParallelToolUseNoGhostDelta(t *testing.T) {
 			"content_block_delta on index %d which was never content_block_start'ed (ghost delta bug #4193)", idx)
 	}
 
-	// Every stop must target an opened block.
+	// Every stop index must occur among the collected block starts.
 	for _, e := range allAnthropicEvents {
 		if e.Type != "content_block_stop" || e.Index == nil {
 			continue
@@ -224,4 +239,5 @@ func TestStreamingParallelToolUseNoGhostDelta(t *testing.T) {
 	assert.True(t, sawMessageDelta, "message_delta should be emitted")
 }
 
+// intPtr allocates an integer value for optional stream fixture indexes.
 func intPtr(v int) *int { return &v }

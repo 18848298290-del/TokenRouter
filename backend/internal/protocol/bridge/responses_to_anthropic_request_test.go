@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// anthropicInboundBlockTypes lists content types accepted by these Messages conversion tests.
-// Responses-only types can trigger Request body format invalid (issue #5329).
+// anthropicInboundBlockTypes supplies the exact labels accepted by the fixture
+// content checker; it does not validate the fields required by each block kind.
 var anthropicInboundBlockTypes = map[string]bool{
 	"text":              true,
 	"image":             true,
@@ -21,6 +21,9 @@ var anthropicInboundBlockTypes = map[string]bool{
 	"redacted_thinking": true,
 }
 
+// TestResponsesToAnthropicRequest_ToolChoiceFunctionName supplies a top-level
+// Responses function name. The decoded Messages choice must use tool type and
+// retain that selected weather name.
 func TestResponsesToAnthropicRequest_ToolChoiceFunctionName(t *testing.T) {
 	req := &ResponsesRequest{
 		Model:      "gpt-5.2",
@@ -37,6 +40,9 @@ func TestResponsesToAnthropicRequest_ToolChoiceFunctionName(t *testing.T) {
 	assert.Equal(t, "get_weather", tc["name"])
 }
 
+// TestResponsesToAnthropicRequest_ToolChoiceLegacyFunctionName supplies the
+// legacy nested function-name shape. The converted selector must decode to
+// tool type and the same selected weather name.
 func TestResponsesToAnthropicRequest_ToolChoiceLegacyFunctionName(t *testing.T) {
 	req := &ResponsesRequest{
 		Model:      "gpt-5.2",
@@ -53,6 +59,9 @@ func TestResponsesToAnthropicRequest_ToolChoiceLegacyFunctionName(t *testing.T) 
 	assert.Equal(t, "get_weather", tc["name"])
 }
 
+// TestResponsesToAnthropicRequest_RejectsUltraReasoningEffort supplies ultra
+// reasoning with scalar input. Conversion must return an unsupported-effort
+// error and a nil request for that supplied level.
 func TestResponsesToAnthropicRequest_RejectsUltraReasoningEffort(t *testing.T) {
 	req := &ResponsesRequest{
 		Model:     "gpt-5.6-sol",
@@ -65,6 +74,9 @@ func TestResponsesToAnthropicRequest_RejectsUltraReasoningEffort(t *testing.T) {
 	require.Nil(t, resp)
 }
 
+// TestOpenAIPriorityConvertsToClaudeFast converts a priority Responses request
+// containing scalar user input. Its Messages speed field must be fast after
+// successful request conversion.
 func TestOpenAIPriorityConvertsToClaudeFast(t *testing.T) {
 	input, err := json.Marshal("hello")
 	require.NoError(t, err)
@@ -77,6 +89,10 @@ func TestOpenAIPriorityConvertsToClaudeFast(t *testing.T) {
 	require.Equal(t, "fast", converted.Speed)
 }
 
+// TestResponsesToAnthropicRequest_Instructions covers present/absent
+// instructions, instructions beside a system item, and scalar input.
+// Assertions check system text presence/content and the selected output
+// message shape for those four fixtures.
 func TestResponsesToAnthropicRequest_Instructions(t *testing.T) {
 	t.Run("instructions_becomes_system", func(t *testing.T) {
 		req := &ResponsesRequest{
@@ -142,6 +158,10 @@ func TestResponsesToAnthropicRequest_Instructions(t *testing.T) {
 	})
 }
 
+// TestConvertResponsesInputToAnthropic_DeveloperRole supplies developer text
+// as blocks or a scalar beside user content. It checks system extraction,
+// exclusion from inspected user text, and instructions-before-developer
+// concatenation.
 func TestConvertResponsesInputToAnthropic_DeveloperRole(t *testing.T) {
 	t.Run("developer_becomes_system", func(t *testing.T) {
 		input := `[
@@ -194,8 +214,9 @@ func TestConvertResponsesInputToAnthropic_DeveloperRole(t *testing.T) {
 	})
 }
 
-// TestResponsesToAnthropic_ReasoningItemWithContentIsDropped covers replayed reasoning content (issue #5329).
-// Anthropic request content does not accept reasoning_text.
+// TestResponsesToAnthropic_ReasoningItemWithContentIsDropped replays a
+// reasoning_text item after valid user content. One accepted message remains,
+// and neither the reasoning kind nor its text appears in its content.
 func TestResponsesToAnthropic_ReasoningItemWithContentIsDropped(t *testing.T) {
 	messages := responsesToAnthropicMessages(t, `[
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"run a shell command"}]},
@@ -208,6 +229,9 @@ func TestResponsesToAnthropic_ReasoningItemWithContentIsDropped(t *testing.T) {
 	require.NotContains(t, string(messages[0].Content), "let me think")
 }
 
+// TestResponsesToAnthropic_ReasoningItemSummaryOnlyStillDropped replays
+// summary/encrypted reasoning after one user item. The accepted output retains
+// one message and excludes the inspected encrypted signature from its content.
 func TestResponsesToAnthropic_ReasoningItemSummaryOnlyStillDropped(t *testing.T) {
 	messages := responsesToAnthropicMessages(t, `[
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]},
@@ -219,6 +243,10 @@ func TestResponsesToAnthropic_ReasoningItemSummaryOnlyStillDropped(t *testing.T)
 	require.NotContains(t, string(messages[0].Content), "gAAAA")
 }
 
+// TestResponsesToAnthropic_UnknownItemTypeContentIsSanitized supplies a
+// search-call item containing an unsupported result part. Filtering must
+// produce no Messages turns, and the common content checks inspect that
+// result.
 func TestResponsesToAnthropic_UnknownItemTypeContentIsSanitized(t *testing.T) {
 	messages := responsesToAnthropicMessages(t, `[
 		{"type":"web_search_call","id":"ws_1","content":[{"type":"web_search_result","text":"payload"}]}
@@ -228,6 +256,9 @@ func TestResponsesToAnthropic_UnknownItemTypeContentIsSanitized(t *testing.T) {
 	require.Empty(t, messages, "整条内容都无法映射时不应发出消息")
 }
 
+// TestResponsesToAnthropic_UnknownItemTypeKeepsRecognizableText mixes
+// input_text and reasoning_text under an unfamiliar item type. One accepted
+// message keeps the first text and excludes the unsupported contribution.
 func TestResponsesToAnthropic_UnknownItemTypeKeepsRecognizableText(t *testing.T) {
 	messages := responsesToAnthropicMessages(t, `[
 		{"type":"some_future_item","content":[
@@ -242,7 +273,9 @@ func TestResponsesToAnthropic_UnknownItemTypeKeepsRecognizableText(t *testing.T)
 	require.NotContains(t, string(messages[0].Content), "drop me")
 }
 
-// TestResponsesToAnthropic_UserMessageWithOnlyUnknownPartsIsDropped prevents empty messages after filtering.
+// TestResponsesToAnthropic_UserMessageWithOnlyUnknownPartsIsDropped supplies a
+// user message consisting of a file part. The converter must return no
+// Messages turns after that unsupported content is filtered.
 func TestResponsesToAnthropic_UserMessageWithOnlyUnknownPartsIsDropped(t *testing.T) {
 	messages := responsesToAnthropicMessages(t, `[
 		{"type":"message","role":"user","content":[{"type":"input_file","file_id":"file_1"}]}
@@ -252,7 +285,9 @@ func TestResponsesToAnthropic_UserMessageWithOnlyUnknownPartsIsDropped(t *testin
 	require.Empty(t, messages)
 }
 
-// TestResponsesToAnthropic_AssistantMessageWithOnlyUnknownPartsIsDropped prevents empty text blocks after filtering.
+// TestResponsesToAnthropic_AssistantMessageWithOnlyUnknownPartsIsDropped
+// places an unsupported refusal after valid user text. Only the accepted user
+// message remains, with no empty assistant turn.
 func TestResponsesToAnthropic_AssistantMessageWithOnlyUnknownPartsIsDropped(t *testing.T) {
 	messages := responsesToAnthropicMessages(t, `[
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]},
@@ -264,12 +299,13 @@ func TestResponsesToAnthropic_AssistantMessageWithOnlyUnknownPartsIsDropped(t *t
 	require.Equal(t, "user", messages[0].Role)
 }
 
-// TestResponsesToAnthropic_BlankTextMessagesAreDropped covers blank strings and text blocks
-// across user, assistant, and unknown item types.
+// TestResponsesToAnthropic_BlankTextMessagesAreDropped compares blank user
+// strings/blocks, assistant blocks, and an unfamiliar item. Every supplied
+// fixture must yield no turns after conversion and the common content checks.
 func TestResponsesToAnthropic_BlankTextMessagesAreDropped(t *testing.T) {
 	tests := []struct {
-		name  string
-		input string
+		name  string // blank-content fixture case label
+		input string // supplied Responses input JSON
 	}{
 		{"user_string", `[{"type":"message","role":"user","content":"   "}]`},
 		{"user_block", `[{"type":"message","role":"user","content":[{"type":"input_text","text":"\n\t"}]}]`},
@@ -285,6 +321,9 @@ func TestResponsesToAnthropic_BlankTextMessagesAreDropped(t *testing.T) {
 	}
 }
 
+// TestResponsesToAnthropic_BlankTextBesideImageKeepsImage combines blank user
+// text with an inline image. One message containing one image block remains
+// after blank-part filtering and content checks.
 func TestResponsesToAnthropic_BlankTextBesideImageKeepsImage(t *testing.T) {
 	messages := responsesToAnthropicMessages(t, `[
 		{"type":"message","role":"user","content":[
@@ -300,8 +339,10 @@ func TestResponsesToAnthropic_BlankTextBesideImageKeepsImage(t *testing.T) {
 	require.Equal(t, "image", blocks[0].Type)
 }
 
-// TestResponsesToAnthropic_CodexToolRoundStaysIntactAndSendable checks that reasoning filtering
-// retains paired tool calls and sendable message content.
+// TestResponsesToAnthropic_CodexToolRoundStaysIntactAndSendable interleaves
+// user text, encrypted reasoning, a call/result pair, and continuation text.
+// Assertions find the expected correlated tool blocks and exclude reasoning
+// text/signature from encoded messages.
 func TestResponsesToAnthropic_CodexToolRoundStaysIntactAndSendable(t *testing.T) {
 	messages := responsesToAnthropicMessages(t, `[
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"run ls"}]},
@@ -333,10 +374,16 @@ func TestResponsesToAnthropic_CodexToolRoundStaysIntactAndSendable(t *testing.T)
 	require.NotContains(t, string(mustMarshal(t, messages)), "gAAAA")
 }
 
+// TestAnthropicContentIsEmpty compares absent, null, empty-array, blank-
+// string, and nonempty-content fixtures. Each predicate result must match its
+// expected flag, including whitespace around selected representations.
 func TestAnthropicContentIsEmpty(t *testing.T) {
 	cases := []struct {
-		raw  string
-		want bool
+		// raw and want pair one JSON content representation with its expected
+		// predicate result. Fixtures distinguish empty encodings and blank scalar
+		// text from a nonempty text block or scalar.
+		raw  string // supplied content JSON text
+		want bool   // expected content predicate result
 	}{
 		{``, true},
 		{`""`, true},
@@ -353,10 +400,16 @@ func TestAnthropicContentIsEmpty(t *testing.T) {
 	}
 }
 
+// TestAnthropicContentIsOnlyBlankText compares blank-only text arrays with
+// nonblank, mixed image, and empty arrays. The predicate must match each
+// expected flag, separating empty content from nonempty blank blocks.
 func TestAnthropicContentIsOnlyBlankText(t *testing.T) {
 	cases := []struct {
-		raw  string
-		want bool
+		// raw and want pair one JSON content representation with its expected
+		// predicate result. Cases compare emptiness rules, including blank text and
+		// mixed block arrays.
+		raw  string // supplied content JSON text
+		want bool   // expected content predicate result
 	}{
 		{`[{"type":"text","text":""}]`, true},
 		{`[{"type":"text","text":"   "}]`, true},
@@ -370,8 +423,10 @@ func TestAnthropicContentIsOnlyBlankText(t *testing.T) {
 	}
 }
 
-// TestAnthropicPairing_DeveloperMessageBetween covers an approval message inserted between
-// a call and its result; Anthropic requires the result adjacent to its call.
+// TestAnthropicPairing_DeveloperMessageBetween places developer approval text
+// between a call and its output. Common assertions require alternating
+// adjacent pairs, and the inspected call must have its correlated user result
+// next.
 func TestAnthropicPairing_DeveloperMessageBetween(t *testing.T) {
 	msgs := convertAnthropic(t, `[
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"do it"}]},
@@ -387,8 +442,9 @@ func TestAnthropicPairing_DeveloperMessageBetween(t *testing.T) {
 	}
 }
 
-// TestAnthropicPairing_ParallelBothAnswered keeps parallel calls together in one assistant
-// message followed by a user message containing their results.
+// TestAnthropicPairing_ParallelBothAnswered supplies two calls followed by
+// both results. Common pairing assertions validate the converted turns, and
+// both tool-use IDs must occur in one assistant message.
 func TestAnthropicPairing_ParallelBothAnswered(t *testing.T) {
 	msgs := convertAnthropic(t, `[
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"features?"}]},
@@ -407,6 +463,9 @@ func TestAnthropicPairing_ParallelBothAnswered(t *testing.T) {
 	require.True(t, sawGrouped, "parallel tool_use blocks should share one assistant message")
 }
 
+// TestAnthropicPairing_ParallelOneUnanswered supplies parallel calls with only
+// one output. Common pairing assertions inspect the repaired turns, and every
+// emitted message must exclude the unanswered call ID.
 func TestAnthropicPairing_ParallelOneUnanswered(t *testing.T) {
 	msgs := convertAnthropic(t, `[
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"q"}]},
@@ -420,6 +479,9 @@ func TestAnthropicPairing_ParallelOneUnanswered(t *testing.T) {
 	}
 }
 
+// TestAnthropicPairing_OrphanToolResultDropped supplies a result whose call is
+// absent. Common pairing checks inspect the conversion, and all emitted
+// messages must exclude that orphan result ID.
 func TestAnthropicPairing_OrphanToolResultDropped(t *testing.T) {
 	msgs := convertAnthropic(t, `[
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"q"}]},
@@ -431,7 +493,9 @@ func TestAnthropicPairing_OrphanToolResultDropped(t *testing.T) {
 	}
 }
 
-// TestAnthropicPairing_DanglingCallDropped removes an unanswered call and its empty assistant message.
+// TestAnthropicPairing_DanglingCallDropped supplies an unanswered call after
+// user text. The converted turns undergo common pairing checks and must
+// contain no tool-use block for that call.
 func TestAnthropicPairing_DanglingCallDropped(t *testing.T) {
 	msgs := convertAnthropic(t, `[
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"q"}]},
@@ -443,6 +507,9 @@ func TestAnthropicPairing_DanglingCallDropped(t *testing.T) {
 	}
 }
 
+// TestAnthropicPairing_SingleCall supplies user text, a call/result pair, and
+// final assistant text. It checks at least four turns and the leading user,
+// call, and correlated result positions.
 func TestAnthropicPairing_SingleCall(t *testing.T) {
 	msgs := convertAnthropic(t, `[
 		{"type":"message","role":"user","content":[{"type":"input_text","text":"latest sha?"}]},
@@ -450,13 +517,18 @@ func TestAnthropicPairing_SingleCall(t *testing.T) {
 		{"type":"function_call_output","call_id":"call_A","output":"deadbeef"},
 		{"type":"message","role":"assistant","content":[{"type":"output_text","text":"It is deadbeef."}]}
 	]`)
-	// Expected order: user, assistant call, user result, assistant text.
+	// Pairing repair is checked again through leading turn positions here.
+	// The final text only contributes to the minimum length assertion below.
 	require.GreaterOrEqual(t, len(msgs), 4)
 	require.Equal(t, "user", msgs[0].Role)
 	require.True(t, hasToolUse(parseContentBlocks(msgs[1].Content), "call_A"))
 	require.True(t, hasToolResult(parseContentBlocks(msgs[2].Content), "call_A"))
 }
 
+// TestResponsesToAnthropic_FunctionOutputContentArray returns text and an
+// inline PNG inside one function output. Assertions check two turns, one
+// result wrapper, ordered text/image blocks, and the image's retained
+// MIME/data.
 func TestResponsesToAnthropic_FunctionOutputContentArray(t *testing.T) {
 	msgs := convertAnthropic(t, `[
 		{"type":"function_call","call_id":"call_A","name":"view_image","arguments":"{}"},
@@ -482,6 +554,10 @@ func TestResponsesToAnthropic_FunctionOutputContentArray(t *testing.T) {
 	require.Equal(t, "YQ==", content[1].Source.Data)
 }
 
+// TestResponsesToAnthropic_CustomGrammarToolUsesObjectSchema decodes a grammar
+// custom declaration with no parameters. Its converted tool keeps
+// name/description, uses the empty object schema, and omits inspected
+// custom/format/grammar fields from wire JSON.
 func TestResponsesToAnthropic_CustomGrammarToolUsesObjectSchema(t *testing.T) {
 	body := []byte(`{
 		"model": "gpt-5.2",
@@ -519,6 +595,10 @@ func TestResponsesToAnthropic_CustomGrammarToolUsesObjectSchema(t *testing.T) {
 	assert.NotContains(t, string(wire), `"grammar"`)
 }
 
+// TestResponsesToAnthropic_CustomToolPreservesSchemaParameters supplies a
+// custom tool with object properties and required members. Conversion keeps
+// its name and unnamed type, while parsed schema assertions retain those
+// supplied constraints.
 func TestResponsesToAnthropic_CustomToolPreservesSchemaParameters(t *testing.T) {
 	tools := convertResponsesToAnthropicTools([]ResponsesTool{{
 		Type:        "custom",
@@ -536,6 +616,9 @@ func TestResponsesToAnthropic_CustomToolPreservesSchemaParameters(t *testing.T) 
 	assert.JSONEq(t, `["patch"]`, string(schema["required"]))
 }
 
+// TestResponsesToAnthropic_FunctionToolSchemaUnchanged supplies a function
+// with a complete object schema. Its converted name/description remain, the
+// type is empty, and JSON equality checks the retained parameter structure.
 func TestResponsesToAnthropic_FunctionToolSchemaUnchanged(t *testing.T) {
 	parameters := json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}`)
 	tools := convertResponsesToAnthropicTools([]ResponsesTool{{
@@ -552,6 +635,10 @@ func TestResponsesToAnthropic_FunctionToolSchemaUnchanged(t *testing.T) {
 	assert.JSONEq(t, string(parameters), string(tools[0].InputSchema))
 }
 
+// TestResponsesToAnthropic_MixedToolsProduceValidAnthropicTools mixes
+// function, custom, and hosted search declarations. Assertions inspect ordered
+// names/types and object schemas, then verify that encoded hosted search omits
+// input_schema.
 func TestResponsesToAnthropic_MixedToolsProduceValidAnthropicTools(t *testing.T) {
 	tools := convertResponsesToAnthropicTools([]ResponsesTool{
 		{
@@ -585,6 +672,10 @@ func TestResponsesToAnthropic_MixedToolsProduceValidAnthropicTools(t *testing.T)
 	assert.NotContains(t, string(serverToolWire), `"input_schema"`)
 }
 
+// TestResponsesToAnthropic_DefaultToolNormalizesInputSchema supplies an
+// unfamiliar local_shell declaration without parameters. Its type/name
+// survive, and the converted input schema must equal the empty object
+// template.
 func TestResponsesToAnthropic_DefaultToolNormalizesInputSchema(t *testing.T) {
 	tools := convertResponsesToAnthropicTools([]ResponsesTool{{
 		Type: "local_shell",
@@ -597,6 +688,9 @@ func TestResponsesToAnthropic_DefaultToolNormalizesInputSchema(t *testing.T) {
 	assert.JSONEq(t, `{"type":"object","properties":{}}`, string(tools[0].InputSchema))
 }
 
+// responsesToAnthropicMessages embeds raw input in one request fixture,
+// decodes it, and returns converted messages. Decode or conversion errors fail
+// the test; the helper supplies the model used by content-filtering cases.
 func responsesToAnthropicMessages(t *testing.T, input string) []AnthropicMessage {
 	t.Helper()
 	var req ResponsesRequest
@@ -606,8 +700,10 @@ func responsesToAnthropicMessages(t *testing.T, input string) []AnthropicMessage
 	return out.Messages
 }
 
-// requireAnthropicMessagesAreSendable rejects unknown block types, empty messages,
-// and blank text blocks in converted test output.
+// requireAnthropicMessagesAreSendable fails tests on selected empty
+// representations, unsupported block labels, or blank text. Scalar content is
+// checked separately from block content; other block fields, correlation, and
+// upstream schema requirements are outside this helper's assertions.
 func requireAnthropicMessagesAreSendable(t *testing.T, messages []AnthropicMessage) {
 	t.Helper()
 	for i, m := range messages {
@@ -633,6 +729,9 @@ func requireAnthropicMessagesAreSendable(t *testing.T, messages []AnthropicMessa
 	}
 }
 
+// mustMarshal encodes the supplied fixture and fails the test on encoding
+// error. The returned bytes are used for content-presence assertions,
+// including fields spread across converted message blocks.
 func mustMarshal(t *testing.T, v any) []byte {
 	t.Helper()
 	b, err := json.Marshal(v)
@@ -640,7 +739,10 @@ func mustMarshal(t *testing.T, v any) []byte {
 	return b
 }
 
-// assertAnthropicPairing checks alternating roles and adjacent tool call/result pairs.
+// assertAnthropicPairing requires different adjacent roles and a neighboring
+// counterpart for every decoded tool call/result. It fails the test on missing
+// adjacency or mismatched IDs; it does not check duplicate uniqueness or
+// validate non-tool block fields.
 func assertAnthropicPairing(t *testing.T, messages []AnthropicMessage) {
 	t.Helper()
 	for i, m := range messages {
@@ -667,6 +769,7 @@ func assertAnthropicPairing(t *testing.T, messages []AnthropicMessage) {
 	}
 }
 
+// hasToolUse reports an exact tool_use block with the supplied ID.
 func hasToolUse(blocks []AnthropicContentBlock, id string) bool {
 	for _, b := range blocks {
 		if b.Type == "tool_use" && b.ID == id {
@@ -676,6 +779,8 @@ func hasToolUse(blocks []AnthropicContentBlock, id string) bool {
 	return false
 }
 
+// hasToolResult reports an exact tool_result block with the supplied
+// correlation ID.
 func hasToolResult(blocks []AnthropicContentBlock, toolUseID string) bool {
 	for _, b := range blocks {
 		if b.Type == "tool_result" && b.ToolUseID == toolUseID {
@@ -685,6 +790,10 @@ func hasToolResult(blocks []AnthropicContentBlock, toolUseID string) bool {
 	return false
 }
 
+// convertAnthropic converts raw Responses fixture input without top-level
+// instructions and returns Messages turns. Conversion errors fail the test,
+// and all results pass assertAnthropicPairing before callers inspect their
+// scenario-specific blocks.
 func convertAnthropic(t *testing.T, input string) []AnthropicMessage {
 	t.Helper()
 	_, messages, err := convertResponsesInputToAnthropic("", json.RawMessage(input))
@@ -693,6 +802,10 @@ func convertAnthropic(t *testing.T, input string) []AnthropicMessage {
 	return messages
 }
 
+// requireObjectInputSchema decodes a nonempty fixture schema and checks object
+// type plus present, map-decodable properties. Failed checks stop the test;
+// remaining schema members are returned for case-specific assertions rather
+// than fully validated.
 func requireObjectInputSchema(t *testing.T, schema json.RawMessage) map[string]json.RawMessage {
 	t.Helper()
 

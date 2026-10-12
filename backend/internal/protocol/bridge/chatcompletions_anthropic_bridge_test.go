@@ -10,11 +10,17 @@ import (
 
 // assembledToolUse holds a reconstructed call's ID, name, and arguments.
 type assembledToolUse struct {
-	ID    string
-	Name  string
-	Input string
+	// ID, Name, and Input describe one announced tool-use fixture record.
+	// Starts supply correlation/name, and only mapped input_json_delta events
+	// contribute text; the start input object and stop events are not read.
+	ID    string // announced call correlation spelling
+	Name  string // announced tool name spelling
+	Input string // concatenated argument delta text
 }
 
+// TestChatCompletionsResponseToAnthropic_TextOnly converts a first-choice text
+// reply with usage. Assertions check retained ID, selected model, text
+// block/content, end-turn reason, and input/output counts.
 func TestChatCompletionsResponseToAnthropic_TextOnly(t *testing.T) {
 	resp := &ChatCompletionsResponse{
 		ID:    "chatcmpl-1",
@@ -38,6 +44,9 @@ func TestChatCompletionsResponseToAnthropic_TextOnly(t *testing.T) {
 	require.Equal(t, 2, out.Usage.OutputTokens)
 }
 
+// TestChatCompletionsResponseToAnthropic_ToolUse supplies a function-only
+// first choice. It checks one tool-use block with correlation/name/input and a
+// tool-use stop reason in the buffered reply.
 func TestChatCompletionsResponseToAnthropic_ToolUse(t *testing.T) {
 	resp := &ChatCompletionsResponse{
 		ID:    "chatcmpl-2",
@@ -68,6 +77,9 @@ func TestChatCompletionsResponseToAnthropic_ToolUse(t *testing.T) {
 	require.Equal(t, "tool_use", AnthropicStopReasonString(out.StopReason))
 }
 
+// TestChatCompletionsResponseToAnthropic_ReasoningOnlyFallback supplies
+// reasoning with no answer text or calls. The result must contain thinking
+// then visible text, both holding the asserted reasoning string.
 func TestChatCompletionsResponseToAnthropic_ReasoningOnlyFallback(t *testing.T) {
 	resp := &ChatCompletionsResponse{
 		ID:    "chatcmpl-3",
@@ -91,6 +103,9 @@ func TestChatCompletionsResponseToAnthropic_ReasoningOnlyFallback(t *testing.T) 
 	require.Equal(t, "I should think about this", out.Content[1].Text)
 }
 
+// TestChatCompletionsResponseToAnthropic_FinishReasonLength uses an assistant
+// text choice whose finish reason reports length. The converted stop value
+// must be max_tokens even though visible text was returned.
 func TestChatCompletionsResponseToAnthropic_FinishReasonLength(t *testing.T) {
 	resp := &ChatCompletionsResponse{
 		ID:    "chatcmpl-4",
@@ -106,6 +121,9 @@ func TestChatCompletionsResponseToAnthropic_FinishReasonLength(t *testing.T) {
 	require.Equal(t, "max_tokens", AnthropicStopReasonString(out.StopReason))
 }
 
+// TestChatCompletionsResponseToAnthropic_EmptyChoices supplies a reply with no
+// choices. It checks one empty text block and end_turn, protecting the modeled
+// content and nonempty stop defaults.
 func TestChatCompletionsResponseToAnthropic_EmptyChoices(t *testing.T) {
 	resp := &ChatCompletionsResponse{
 		ID:      "chatcmpl-5",
@@ -120,6 +138,9 @@ func TestChatCompletionsResponseToAnthropic_EmptyChoices(t *testing.T) {
 	require.Equal(t, "end_turn", AnthropicStopReasonString(out.StopReason), "empty choices must not produce an empty stop_reason")
 }
 
+// TestChatCompletionsResponseToAnthropic_CacheTokens supplies prompt input
+// with read/creation cache counts. Returned usage must subtract both from
+// uncached input and retain output plus the two separate cache buckets.
 func TestChatCompletionsResponseToAnthropic_CacheTokens(t *testing.T) {
 	resp := &ChatCompletionsResponse{
 		ID:    "chatcmpl-6",
@@ -148,6 +169,9 @@ func TestChatCompletionsResponseToAnthropic_CacheTokens(t *testing.T) {
 	require.Equal(t, 10, out.Usage.CacheCreationInputTokens)
 }
 
+// TestChatCompletionsResponseToAnthropic_NilResponse converts a nil source
+// reply with an injected runtime. It checks one text block, end-turn reason,
+// and a nonempty generated response ID.
 func TestChatCompletionsResponseToAnthropic_NilResponse(t *testing.T) {
 	out := ChatCompletionsResponseToAnthropic(testRuntime(), nil, "claude-sonnet-4-20250514")
 	require.Len(t, out.Content, 1)
@@ -156,6 +180,9 @@ func TestChatCompletionsResponseToAnthropic_NilResponse(t *testing.T) {
 	require.NotEmpty(t, out.ID)
 }
 
+// TestChatCompletionsChunkToAnthropicEvents_TextOnly feeds two text fragments
+// and final usage. It checks the complete event-type order, retained fragment
+// list, and inspected final stop/input/output values.
 func TestChatCompletionsChunkToAnthropicEvents_TextOnly(t *testing.T) {
 	events := collectAnthropicStreamEvents(t, []string{
 		`{"choices":[{"index":0,"delta":{"role":"assistant","content":"hello"}}]}`,
@@ -194,6 +221,9 @@ func TestChatCompletionsChunkToAnthropicEvents_TextOnly(t *testing.T) {
 	}
 }
 
+// TestChatCompletionsChunkToAnthropicEvents_ReasoningThenContent feeds
+// reasoning before answer text and finalizes. Its exact event-type sequence
+// and opened block-kind order must close thinking before text begins.
 func TestChatCompletionsChunkToAnthropicEvents_ReasoningThenContent(t *testing.T) {
 	events := collectAnthropicStreamEvents(t, []string{
 		`{"choices":[{"index":0,"delta":{"reasoning_content":"thinking..."}}]}`,
@@ -225,6 +255,10 @@ func TestChatCompletionsChunkToAnthropicEvents_ReasoningThenContent(t *testing.T
 	require.Equal(t, []string{"thinking", "text"}, blockTypes)
 }
 
+// TestChatCompletionsChunkToAnthropicEvents_ToolCallAggregation splits one
+// function's arguments after an empty first fragment. It checks complete
+// lifecycle order, correlation/name, tool-use stop, and one joined argument
+// delta.
 func TestChatCompletionsChunkToAnthropicEvents_ToolCallAggregation(t *testing.T) {
 	events := collectAnthropicStreamEvents(t, []string{
 		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_weather","arguments":""}}]}}]}`,
@@ -266,6 +300,9 @@ func TestChatCompletionsChunkToAnthropicEvents_ToolCallAggregation(t *testing.T)
 	require.Equal(t, []string{`{"city":"SF"}`}, partials)
 }
 
+// TestChatCompletionsChunkToAnthropicEvents_LengthMapsToMaxTokens supplies
+// partial text followed by length. Any collected message_delta must carry
+// max_tokens, checking the finish mapping in the finalized fixture.
 func TestChatCompletionsChunkToAnthropicEvents_LengthMapsToMaxTokens(t *testing.T) {
 	events := collectAnthropicStreamEvents(t, []string{
 		`{"choices":[{"index":0,"delta":{"content":"partial"}}]}`,
@@ -279,6 +316,9 @@ func TestChatCompletionsChunkToAnthropicEvents_LengthMapsToMaxTokens(t *testing.
 	}
 }
 
+// TestChatCompletionsChunkToAnthropicEvents_EmptyStream supplies an empty-
+// delta finish chunk with usage. The collected type list must contain message
+// start and stop even though visible content is absent.
 func TestChatCompletionsChunkToAnthropicEvents_EmptyStream(t *testing.T) {
 	events := collectAnthropicStreamEvents(t, []string{
 		`{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":0,"total_tokens":1}}`,
@@ -290,6 +330,9 @@ func TestChatCompletionsChunkToAnthropicEvents_EmptyStream(t *testing.T) {
 	require.Contains(t, types, "message_stop")
 }
 
+// TestChatCompletionsChunkToAnthropicEvents_MessageStartEmittedOnce feeds two
+// text chunks and a finish chunk. Counting the collected events must find
+// exactly one message_start across conversion and finalization.
 func TestChatCompletionsChunkToAnthropicEvents_MessageStartEmittedOnce(t *testing.T) {
 	events := collectAnthropicStreamEvents(t, []string{
 		`{"choices":[{"index":0,"delta":{"content":"a"}}]}`,
@@ -306,6 +349,10 @@ func TestChatCompletionsChunkToAnthropicEvents_MessageStartEmittedOnce(t *testin
 	require.Equal(t, 1, count, "message_start should only be emitted once")
 }
 
+// TestChatCompletionsChunkToAnthropicEvents_ParallelToolCalls interleaves
+// declarations/fragments for two reversed source indexes. It checks ordered
+// reconstructed calls, each block's open/delta/closed lifecycle, final closed
+// states, and tool-use stop evidence.
 func TestChatCompletionsChunkToAnthropicEvents_ParallelToolCalls(t *testing.T) {
 	events := collectAnthropicStreamEvents(t, []string{
 		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"call_2","type":"function","function":{"name":"tool_b","arguments":"{\"b\":"}},{"index":0,"id":"call_1","type":"function","function":{"name":"tool_a","arguments":"{\"a\":"}}]}}]}`,
@@ -347,11 +394,17 @@ func TestChatCompletionsChunkToAnthropicEvents_ParallelToolCalls(t *testing.T) {
 	}
 }
 
+// TestChatCompletionsChunkToAnthropicEvents_BuffersToolArgumentFragments
+// supplies opening/closing JSON around 1024 small body pieces. Stored full
+// arguments remain empty, fragment count retains every piece, and finalization
+// emits the asserted joined argument string.
 func TestChatCompletionsChunkToAnthropicEvents_BuffersToolArgumentFragments(t *testing.T) {
 	state := NewChatCompletionsToAnthropicStreamState(testRuntime(), "test")
 	toolIndex := 0
 
-	// Many small Write/Edit-style fragments must not repeatedly rebuild the full argument string.
+	// Keep opening, repeated body, and closing pieces in separate fragment slots.
+	// The assertions inspect storage and final text, without measuring allocation
+	// or elapsed time.
 	ChatCompletionsChunkToAnthropicEvents(testRuntime(), &ChatCompletionsChunk{
 		Choices: []ChatChunkChoice{{
 			Delta: ChatDelta{ToolCalls: []ChatToolCall{{
@@ -392,6 +445,9 @@ func TestChatCompletionsChunkToAnthropicEvents_BuffersToolArgumentFragments(t *t
 	require.Equal(t, `{"content":"`+strings.Repeat("x", fragmentCount)+`"}`, events[1].Delta.PartialJSON)
 }
 
+// TestFinalizeChatCompletionsAnthropicStream_NoOpAfterStop marks constructed
+// state as already stopped. Finalization must return nil, protecting
+// suppression of additional termination for that lifecycle flag.
 func TestFinalizeChatCompletionsAnthropicStream_NoOpAfterStop(t *testing.T) {
 	state := NewChatCompletionsToAnthropicStreamState(testRuntime(), "test")
 	state.MessageStopSent = true
@@ -400,6 +456,9 @@ func TestFinalizeChatCompletionsAnthropicStream_NoOpAfterStop(t *testing.T) {
 	require.Nil(t, events, "finalize should be a no-op after message_stop")
 }
 
+// TestFinalizeChatCompletionsAnthropicStream_EmitsMessageStartIfMissing
+// finalizes constructed state before any chunk arrives. The returned type list
+// must contain both message_start and message_stop for that empty stream.
 func TestFinalizeChatCompletionsAnthropicStream_EmitsMessageStartIfMissing(t *testing.T) {
 	state := NewChatCompletionsToAnthropicStreamState(testRuntime(), "test")
 	// No chunk has arrived, so message_start has not been emitted.
@@ -410,7 +469,10 @@ func TestFinalizeChatCompletionsAnthropicStream_EmitsMessageStartIfMissing(t *te
 	require.Contains(t, types, "message_stop")
 }
 
-// TestDirectBridge_NonStreamingMatchesDoubleConversion compares direct conversion with conversion through Responses.
+// TestDirectBridge_NonStreamingMatchesDoubleConversion compares direct and
+// Responses-mediated conversion of one mixed first choice. Assertions compare
+// stop/model, selected block fields, and all four usage buckets for that
+// fixture.
 func TestDirectBridge_NonStreamingMatchesDoubleConversion(t *testing.T) {
 	resp := &ChatCompletionsResponse{
 		ID:    "chatcmpl-eq",
@@ -465,6 +527,9 @@ func TestDirectBridge_NonStreamingMatchesDoubleConversion(t *testing.T) {
 	require.Equal(t, double.Usage.CacheCreationInputTokens, direct.Usage.CacheCreationInputTokens)
 }
 
+// TestChatCompletionsToAnthropicStreamState_ToolCallNameArrivesLate sends call
+// identity before name and arguments. The collected tool-use start must
+// contain the name supplied in the later chunk.
 func TestChatCompletionsToAnthropicStreamState_ToolCallNameArrivesLate(t *testing.T) {
 	// The upstream may send an index before the tool name.
 	events := collectAnthropicStreamEvents(t, []string{
@@ -484,6 +549,9 @@ func TestChatCompletionsToAnthropicStreamState_ToolCallNameArrivesLate(t *testin
 	require.Equal(t, "late_tool", toolName)
 }
 
+// TestChatCompletionsToAnthropicStreamState_ToolCallIDAndNameArriveLate sends
+// arguments, Read name, and identity separately. Reconstruction must retain
+// the late correlation/name and JSON equality must exclude empty pages.
 func TestChatCompletionsToAnthropicStreamState_ToolCallIDAndNameArriveLate(t *testing.T) {
 	// Arguments, name, and ID arrive separately; retain the upstream ID.
 	events := collectAnthropicStreamEvents(t, []string{
@@ -500,8 +568,13 @@ func TestChatCompletionsToAnthropicStreamState_ToolCallIDAndNameArriveLate(t *te
 	require.JSONEq(t, `{"path":"README.md"}`, tools[0].Input)
 }
 
+// TestChatCompletionsToAnthropicStreamState_ToolCallArgsArriveBeforeName
+// splits arguments before the name arrives. It checks retained
+// correlation/name/input and requires every collected delta to follow a start
+// at its index.
 func TestChatCompletionsToAnthropicStreamState_ToolCallArgsArriveBeforeName(t *testing.T) {
-	// Buffer arguments arriving before the name and emit them after the tool block opens.
+	// Buffer arguments arriving before the name and emit them after the tool
+	// block opens.
 	events := collectAnthropicStreamEvents(t, []string{
 		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_early","function":{"arguments":"{\"city\":"}}]}}]}`,
 		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"SF\""}}]}}]}`,
@@ -527,8 +600,11 @@ func TestChatCompletionsToAnthropicStreamState_ToolCallArgsArriveBeforeName(t *t
 	}
 }
 
+// TestChatCompletionsToAnthropicStreamState_ToolCallNameNeverArrives supplies
+// arguments and ID but no name. It checks one empty-named reconstructed call
+// with retained input and an exact balanced event-type sequence.
 func TestChatCompletionsToAnthropicStreamState_ToolCallNameNeverArrives(t *testing.T) {
-	// An unnamed call still emits arguments and a tool_use stop reason at finalization.
+	// An unnamed call still has its argument text and balanced fixture lifecycle.
 	events := collectAnthropicStreamEvents(t, []string{
 		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_anon","function":{"arguments":"{\"a\":1}"}}]}}]}`,
 		`{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`,
@@ -552,8 +628,12 @@ func TestChatCompletionsToAnthropicStreamState_ToolCallNameNeverArrives(t *testi
 	}, types)
 }
 
+// TestChatCompletionsToAnthropicStreamState_EmptyArgsToolEmitsPlaceholderDelta
+// announces a call with empty arguments. Delta-only reconstruction must
+// produce its selected name and an empty object input after finalization.
 func TestChatCompletionsToAnthropicStreamState_EmptyArgsToolEmitsPlaceholderDelta(t *testing.T) {
-	// Supply an empty-object delta for clients that reconstruct input from deltas alone.
+	// Supply an empty-object delta for clients that reconstruct input from deltas
+	// alone.
 	events := collectAnthropicStreamEvents(t, []string{
 		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_empty","type":"function","function":{"name":"noop","arguments":""}}]}}]}`,
 		`{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`,
@@ -565,6 +645,10 @@ func TestChatCompletionsToAnthropicStreamState_EmptyArgsToolEmitsPlaceholderDelt
 	require.JSONEq(t, `{}`, tools[0].Input)
 }
 
+// TestDirectBridge_NonStreamingMatchesDoubleConversion_CacheWriteTokens
+// supplies positive write and creation aliases together. Direct and mediated
+// usage buckets must agree, and the selected cache-creation count must equal
+// the positive write value.
 func TestDirectBridge_NonStreamingMatchesDoubleConversion_CacheWriteTokens(t *testing.T) {
 	// Cache write and creation are aliases; prefer write when both are positive.
 	resp := &ChatCompletionsResponse{
@@ -598,6 +682,9 @@ func TestDirectBridge_NonStreamingMatchesDoubleConversion_CacheWriteTokens(t *te
 	require.Equal(t, 9, direct.Usage.CacheCreationInputTokens)
 }
 
+// TestChatCompletionsResponseToAnthropic_GeneratesIDWhenMissing converts a
+// text reply whose ID is absent. The resulting Messages response must have a
+// nonempty identity from the injected runtime.
 func TestChatCompletionsResponseToAnthropic_GeneratesIDWhenMissing(t *testing.T) {
 	resp := &ChatCompletionsResponse{
 		Model: "deepseek-v4-pro",
@@ -611,6 +698,9 @@ func TestChatCompletionsResponseToAnthropic_GeneratesIDWhenMissing(t *testing.T)
 	require.NotEmpty(t, out.ID, "response id must be generated when the upstream omits one")
 }
 
+// TestDirectBridge_NonStreamingMatchesDoubleConversion_EmptyChoices compares
+// two conversion routes for choice-free input. Their stop reasons must agree,
+// and direct conversion must select end_turn for that fixture.
 func TestDirectBridge_NonStreamingMatchesDoubleConversion_EmptyChoices(t *testing.T) {
 	// An empty choices response ends with end_turn.
 	resp := &ChatCompletionsResponse{ID: "chatcmpl-empty", Model: "deepseek-v4-pro"}
@@ -624,6 +714,9 @@ func TestDirectBridge_NonStreamingMatchesDoubleConversion_EmptyChoices(t *testin
 	require.Equal(t, "end_turn", AnthropicStopReasonString(direct.StopReason))
 }
 
+// TestChatCompletionsResponseToAnthropic_ContentFilterWithToolUse supplies
+// content_filter finish with visible text and a function call. The direct
+// reply must infer tool_use from the converted tool block.
 func TestChatCompletionsResponseToAnthropic_ContentFilterWithToolUse(t *testing.T) {
 	// Infer content_filter and unknown finish reasons from the content blocks.
 	resp := &ChatCompletionsResponse{
@@ -647,7 +740,10 @@ func TestChatCompletionsResponseToAnthropic_ContentFilterWithToolUse(t *testing.
 	require.Equal(t, "tool_use", AnthropicStopReasonString(out.StopReason))
 }
 
-// TestAnthropicChatBridge_ReasoningSurvivesOutboundInboundRoundTrip checks replay of emitted thinking as reasoning_content.
+// TestAnthropicChatBridge_ReasoningSurvivesOutboundInboundRoundTrip converts
+// reasoning/text/tool fields to Messages blocks and replays them as assistant
+// history. It checks thinking text, restored reasoning_content, and one
+// retained tool call.
 func TestAnthropicChatBridge_ReasoningSurvivesOutboundInboundRoundTrip(t *testing.T) {
 	upstream := ChatMessage{
 		Role:             "assistant",
@@ -678,6 +774,10 @@ func TestAnthropicChatBridge_ReasoningSurvivesOutboundInboundRoundTrip(t *testin
 	require.Len(t, back[0].ToolCalls, 1)
 }
 
+// TestAnthropicThinkingToReasoningContent compares seven plaintext, redacted,
+// signature-only, empty, and no-tool fixtures. The helper must match each
+// expected newline-joined or empty reasoning string under the supplied tool-
+// presence flag.
 func TestAnthropicThinkingToReasoningContent(t *testing.T) {
 	blocksOf := func(t *testing.T, raw string) []AnthropicContentBlock {
 		t.Helper()
@@ -687,10 +787,13 @@ func TestAnthropicThinkingToReasoningContent(t *testing.T) {
 	}
 
 	cases := []struct {
-		name         string
-		raw          string
-		hasToolCalls bool
-		want         string
+		name string // thinking replay fixture label
+		// raw, hasToolCalls, and want combine source block plaintext with the
+		// assistant call-presence selection. False tool presence expects empty
+		// output even when the supplied blocks contain thinking text.
+		raw          string // supplied block-array JSON
+		hasToolCalls bool   // assistant tool calls present
+		want         string // expected replay reasoning text
 	}{
 		{
 			name:         "single_thinking_block",
@@ -713,7 +816,7 @@ func TestAnthropicThinkingToReasoningContent(t *testing.T) {
 			want:         "",
 		},
 		{
-			// A signature-only xAI/Codex replay placeholder also has no plaintext.
+			// Signature-only thinking provides no plaintext contribution in this fixture.
 			name:         "signature_only_thinking",
 			raw:          `[{"type":"thinking","thinking":"","signature":"gAAAAxxx"}]`,
 			hasToolCalls: true,
@@ -747,7 +850,9 @@ func TestAnthropicThinkingToReasoningContent(t *testing.T) {
 	}
 }
 
-// TestAnthropicAssistantToChatMessages_PlainStringContentUnaffected checks string-valued assistant content.
+// TestAnthropicAssistantToChatMessages_PlainStringContentUnaffected converts
+// scalar assistant content. The single returned message must retain its
+// encoded text and have no reasoning_content supplied by that scalar path.
 func TestAnthropicAssistantToChatMessages_PlainStringContentUnaffected(t *testing.T) {
 	msgs, err := anthropicAssistantToChatMessages(json.RawMessage(`"just text"`))
 	require.NoError(t, err)
@@ -756,7 +861,10 @@ func TestAnthropicAssistantToChatMessages_PlainStringContentUnaffected(t *testin
 	require.Equal(t, `"just text"`, string(msgs[0].Content))
 }
 
-// collectAnthropicStreamEvents converts Chat chunks directly and appends final events.
+// collectAnthropicStreamEvents decodes fixture chunks, converts them through
+// one state, and appends finalization. Decode failures stop the test. The
+// fixed selected model wins over incoming labels, while testRuntime supplies
+// the live clock and random reader used for generated metadata.
 func collectAnthropicStreamEvents(t *testing.T, chunks []string) []AnthropicStreamEvent {
 	t.Helper()
 	state := NewChatCompletionsToAnthropicStreamState(testRuntime(), "deepseek-v4-pro")
@@ -770,7 +878,8 @@ func collectAnthropicStreamEvents(t *testing.T, chunks []string) []AnthropicStre
 	return events
 }
 
-// anthropicEventTypes returns event types for lifecycle assertions.
+// anthropicEventTypes returns event labels in their supplied order for
+// lifecycle assertions.
 func anthropicEventTypes(events []AnthropicStreamEvent) []string {
 	out := make([]string, 0, len(events))
 	for _, e := range events {
@@ -779,7 +888,16 @@ func anthropicEventTypes(events []AnthropicStreamEvent) []string {
 	return out
 }
 
-// assembleToolUseBlocks reconstructs calls from start events and argument deltas, as a client does.
+// assembleToolUseBlocks reconstructs call metadata from tool-use starts and
+// joins mapped input deltas in output order. Other kinds, missing indexes, and
+// unregistered deltas are ignored; initial start Input and stop events do not
+// contribute.
+//
+// Each new start appends another record and updates the block-index map. A
+// repeated index therefore routes later deltas to its newest record, while
+// earlier reconstructed entries remain. The helper models only the fields its
+// fixture assertions inspect, and does not validate JSON completeness or
+// balanced lifecycle.
 func assembleToolUseBlocks(events []AnthropicStreamEvent) []assembledToolUse {
 	blockByIdx := map[int]int{} // Anthropic block index to output position
 	var out []assembledToolUse
@@ -792,6 +910,9 @@ func assembleToolUseBlocks(events []AnthropicStreamEvent) []assembledToolUse {
 			}
 		case "content_block_delta":
 			if e.Delta != nil && e.Delta.Type == "input_json_delta" && e.Index != nil {
+				// Argument deltas carry only a block position. Select metadata from its
+				// registered tool start and ignore unrelated positions rather than
+				// guessing a call identity.
 				if pos, ok := blockByIdx[*e.Index]; ok {
 					out[pos].Input += e.Delta.PartialJSON
 				}

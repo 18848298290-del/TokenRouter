@@ -7,44 +7,102 @@ import (
 	"strings"
 )
 
+// Responses tools have output indexes among messages and reasoning, while Chat
+// tool-call indexes count tools alone. Stream conversion records those index
+// pairs when calls are announced and uses them for later raw fragments,
+// allowing index-based interleaving. Reasoning travels in reasoning_content,
+// visible text in content, and terminal status selects a finish chunk followed
+// by optional separate usage.
+//
+// Buffered reconstruction instead accumulates deltas and added-call metadata
+// when terminal output is empty. Complete item/done payloads do not
+// contribute, and rebuilt output groups reasoning before text before calls
+// rather than retaining source interleaving. Usage totals are recomputed, with
+// detail counts taking precedence over positive canonical cache-creation
+// fallback. Creation/terminal metadata has conditional replacement rules, and
+// terminal handlers can emit again even after Finalized, so that flag
+// guarantees only finalizer suppression.
+
 // ResponsesEventToChatState tracks state for converting a sequence of Responses
 // SSE events into Chat Completions SSE chunks.
 type ResponsesEventToChatState struct {
-	ID                     string
-	Model                  string
-	Created                int64
-	ServiceTier            string // upstream tier observed on response events; echoed on chunks
-	SentRole               bool
-	SawToolCall            bool
-	SawText                bool
-	Finalized              bool        // true after finish chunk has been emitted
-	NextToolCallIndex      int         // next sequential tool_call index to assign
-	OutputIndexToToolIndex map[int]int // Responses output_index → Chat tool_calls index
-	IncludeUsage           bool
-	Usage                  *ChatUsage
+	// ID, Model, Created, and ServiceTier feed every chunk. Creation replaces
+	// nonempty ID/tier and fills an empty model; terminal can update tier.
+	// Created remains the constructor's captured time.
+	ID          string // current Chat response identity
+	Model       string // selected client response model
+	Created     int64  // Unix seconds
+	ServiceTier string // latest nonempty observed tier
+	// SentRole suppresses repeated creation-role chunks. Duplicate creation
+	// still updates permitted metadata before checking this flag.
+	SentRole bool // assistant role already produced
+	// SawToolCall retains any accepted tool addition. EOF and selected terminal
+	// statuses consult it even when no argument fragment reached that call.
+	SawToolCall bool // any tool call announced
+	SawText     bool // visible text delta observed
+	// Finalized suppresses EOF finalization only. Terminal/content handlers
+	// continue to emit when called again, and transport delivery is external.
+	Finalized bool // finish construction already selected
+
+	// NextToolCallIndex and OutputIndexToToolIndex separate sequential Chat tool
+	// positions from Responses output positions. Each addition increments the
+	// counter; reuse of a source index replaces its mapping without removing an
+	// older call.
+	NextToolCallIndex      int         // next Chat tool position
+	OutputIndexToToolIndex map[int]int // source-output to Chat-tool indexes
+	// IncludeUsage requests a separate usage chunk after finish when Usage is
+	// nonnil. It has no effect on ordinary delta chunks.
+	IncludeUsage bool // separate usage output requested
+	// Usage holds converted terminal counters; nested usage overrides event
+	// usage. Emitted usage chunks share this pointer, so consumers preserve its data.
+	Usage *ChatUsage // selected terminal usage values
 }
 
+// bufferedFuncCall stores added-item correlation/name and accumulated argument
+// bytes.
 type bufferedFuncCall struct {
-	CallID string
-	Name   string
-	Args   strings.Builder
+	// CallID and Name come only from output_item.added. Later fragments update
+	// Args through the source-index mapping without refreshing these metadata values.
+	CallID string // added call correlation spelling
+	Name   string // added function name spelling
+	// Args is written through the selected slice record. Growing funcCalls can
+	// relocate a written Builder; a later write to that record triggers copy detection.
+	Args strings.Builder // accumulated raw argument bytes
 }
 
-// BufferedResponseAccumulator collects content from Responses SSE delta events
-// so that non-streaming handlers can reconstruct output when the terminal event
-// (response.completed / response.done) carries an empty output array.
+// BufferedResponseAccumulator collects modeled delta content for empty terminal
+// output reconstruction. Use it through its constructed pointer and serialize
+// mutation; used text/reasoning Builders cannot be copied before later writes.
 type BufferedResponseAccumulator struct {
-	text                 strings.Builder
-	reasoning            strings.Builder
-	funcCalls            []bufferedFuncCall
-	outputIndexToFuncIdx map[int]int
+	// text and reasoning retain independent delta streams. BuildOutput groups
+	// reasoning before text regardless of arrival order, and neither buffer is
+	// reset by building or supplementing a response.
+	text      strings.Builder // accumulated visible text bytes
+	reasoning strings.Builder // accumulated reasoning text bytes
+	// funcCalls and outputIndexToFuncIdx pair added-call order with source
+	// positions. Duplicate positions select newer records. Slice growth can copy
+	// an already-written Args Builder; writing that relocated record later panics.
+	funcCalls            []bufferedFuncCall // calls in addition order
+	outputIndexToFuncIdx map[int]int        // source-position to call-record indexes
 }
 
-// ResponsesToChatCompletions converts a Responses API response into a Chat
-// Completions response. Text output items are concatenated into
-// choices[0].message.content; function_call items become tool_calls.
+// ResponsesToChatCompletions converts a nonnil reply into one assistant choice
+// using the supplied model verbatim. It retains a nonempty source ID or
+// generates one, stamps runtime.Now, and copies service tier. Required runtime
+// callbacks must be present when metadata is synthesized.
+//
+// Supported message text and reasoning summaries concatenate independently
+// without separators; functions retain correlation, names, and argument
+// strings. Hosted search has no separate output, and custom or other
+// unsupported kinds are omitted. Empty text leaves Content absent, while
+// status/details/tool presence select finish reason. Usage receives new detail
+// objects with recomputed total tokens, and source errors are not represented
+// in the returned choice.
 func ResponsesToChatCompletions(runtime Runtime, resp *ResponsesResponse, model string) *ChatCompletionsResponse {
 	id := resp.ID
+	// A missing source identity needs a Chat response label for returned
+	// metadata. Use the injected random reader; a supplied identity otherwise
+	// retains its source spelling.
 	if id == "" {
 		id = generateChatCmplID(runtime)
 	}
@@ -66,6 +124,8 @@ func ResponsesToChatCompletions(runtime Runtime, resp *ResponsesResponse, model 
 		case "message":
 			for _, part := range item.Content {
 				if part.Type == "output_text" && part.Text != "" {
+					// Text parts concatenate without an added separator. Builder errors
+					// are nil, so the discarded result loses no encoder failure.
 					_, _ = contentText.WriteString(part.Text)
 				}
 			}
@@ -81,11 +141,14 @@ func ResponsesToChatCompletions(runtime Runtime, resp *ResponsesResponse, model 
 		case "reasoning":
 			for _, s := range item.Summary {
 				if s.Type == "summary_text" && s.Text != "" {
+					// Summary text remains separate from visible content. Builder errors
+					// are nil, so discarding the write result does not suppress a returned failure.
 					_, _ = reasoningText.WriteString(s.Text)
 				}
 			}
 		case "web_search_call":
-			// Search calls have no separate Chat output; the model response is carried by message text.
+			// Hosted search contributes no separate Chat tool output. Keep visible
+			// message text as its modeled answer instead of inventing function correlation.
 		}
 	}
 
@@ -94,6 +157,8 @@ func ResponsesToChatCompletions(runtime Runtime, resp *ResponsesResponse, model 
 		msg.ToolCalls = toolCalls
 	}
 	if contentText.String() != "" {
+		// Visible content is one constructed string, not retained raw JSON.
+		// Its encoder cannot fail from unsupported values or invalid argument fragments.
 		raw, _ := json.Marshal(contentText.String())
 		msg.Content = raw
 	}
@@ -114,7 +179,19 @@ func ResponsesToChatCompletions(runtime Runtime, resp *ResponsesResponse, model 
 	return out
 }
 
+// responsesStatusToChatFinishReason combines exact status, incomplete details,
+// and converted tool-call presence. Incomplete max_output_tokens selects
+// length and content_filter selects content_filter; other incomplete evidence
+// selects stop. Completed with any tool calls selects tool_calls.
+//
+// Other status values also select stop, including failed or absent status.
+// Tool presence affects completed only, so recognized incomplete details take
+// precedence over calls. The helper does not preserve source Error or infer a
+// missing reason from content; callers classify source failures separately.
 func responsesStatusToChatFinishReason(status string, details *ResponsesIncompleteDetails, toolCalls []ChatToolCall) string {
+	// Translate recognized terminal evidence into Chat's finish vocabulary.
+	// Incomplete details take precedence; tool presence qualifies only an exact
+	// completed response.
 	switch status {
 	case "incomplete":
 		if details != nil {
@@ -136,7 +213,10 @@ func responsesStatusToChatFinishReason(status string, details *ResponsesIncomple
 	}
 }
 
-// NewResponsesEventToChatState returns an initialised stream state.
+// NewResponsesEventToChatState generates an initial Chat ID, captures time,
+// and initializes tool-index mapping. Runtime callbacks are required. Callers
+// set model/usage preferences as needed and serialize access to one state for
+// an independent stream.
 func NewResponsesEventToChatState(runtime Runtime) *ResponsesEventToChatState {
 	return &ResponsesEventToChatState{
 		ID:                     generateChatCmplID(runtime),
@@ -145,8 +225,18 @@ func NewResponsesEventToChatState(runtime Runtime) *ResponsesEventToChatState {
 	}
 }
 
-// ResponsesEventToChatChunks converts a single Responses SSE event into zero
-// or more Chat Completions chunks, updating state as it goes.
+// ResponsesEventToChatChunks converts one nonnil event using constructed
+// nonnil state. Exact labels select creation, visible/reasoning fragments,
+// call announcements, raw argument/custom-input fragments, or four terminal
+// variants; other events contribute nothing. Source complete arguments/items
+// do not supplement deltas here.
+//
+// Tool announcements assign sequential Chat indexes independent of Responses
+// output positions. Recorded mappings route interleaved fragments, but
+// duplicate additions overwrite the source-position mapping while assigning
+// another index. Finalized is not a dispatcher guard: duplicate
+// terminal/content events can still emit. Callers preserve event
+// identity/order and determine when the source stream has ended.
 func ResponsesEventToChatChunks(evt *ResponsesStreamEvent, state *ResponsesEventToChatState) []ChatCompletionsChunk {
 	switch evt.Type {
 	case "response.created":
@@ -156,17 +246,20 @@ func ResponsesEventToChatChunks(evt *ResponsesStreamEvent, state *ResponsesEvent
 	case "response.output_item.added":
 		return resToChatHandleOutputItemAdded(evt, state)
 	case "response.function_call_arguments.delta",
-		// Custom tool input deltas use the same field as function argument deltas.
-		// Map both through OutputIndex to the matching tool call.
+		// Both fragment kinds carry Delta text and use the added-item output
+		// mapping. Custom freeform input receives no extra JSON wrapper on this route.
 		"response.custom_tool_call_input.delta":
 		return resToChatHandleFuncArgsDelta(evt, state)
 	case "response.reasoning_summary_text.delta",
-		// Map raw reasoning text to reasoning_content just like reasoning summaries.
+		// Both reasoning labels supply visible reasoning text. Keep their bytes in
+		// reasoning_content so the adjacent content field remains ordinary answer text.
 		"response.reasoning_text.delta":
 		return resToChatHandleReasoningDelta(evt, state)
 	case "response.reasoning_summary_text.done":
 		return nil
-	// Accept response.done from WebSocket and passthrough paths alongside response.completed.
+	// Legacy done shares the terminal selector with completed/incomplete/failed.
+	// Nested status/details select finish reason; event label alone does not
+	// prove completion.
 	case "response.completed", "response.done", "response.incomplete", "response.failed":
 		return resToChatHandleCompleted(evt, state)
 	default:
@@ -174,16 +267,24 @@ func ResponsesEventToChatChunks(evt *ResponsesStreamEvent, state *ResponsesEvent
 	}
 }
 
-// FinalizeResponsesChatStream emits a final chunk with finish_reason if the
-// stream ended without a proper completion event (e.g. upstream disconnect).
-// It is idempotent: if a completion event already emitted the finish chunk,
-// this returns nil.
+// FinalizeResponsesChatStream emits an EOF finish chunk unless Finalized is
+// already true. It requires nonnil state but no prior role/content event.
+// SawToolCall selects tool_calls, otherwise stop; IncludeUsage adds a separate
+// empty-choice chunk only when stored Usage is nonnil.
+//
+// Finalized is set before chunk construction, making later finalizer calls
+// return nothing. The helper uses existing metadata/counters and does not
+// recover unseen terminal status, errors, or usage. Returned usage storage is
+// shared with state; callers preserve it during delivery and classify
+// transport termination separately.
 func FinalizeResponsesChatStream(state *ResponsesEventToChatState) []ChatCompletionsChunk {
 	if state.Finalized {
 		return nil
 	}
 	state.Finalized = true
 
+	// EOF supplies no nested terminal status. Use the retained call observation
+	// for tool_calls; otherwise this recovery path emits an ordinary stop reason.
 	finishReason := "stop"
 	if state.SawToolCall {
 		finishReason = "tool_calls"
@@ -206,7 +307,9 @@ func FinalizeResponsesChatStream(state *ResponsesEventToChatState) []ChatComplet
 	return chunks
 }
 
-// ChatChunkToSSE formats a ChatCompletionsChunk as an SSE data line.
+// ChatChunkToSSE encodes one typed chunk as a complete data-only SSE frame.
+// Codec errors return no frame, and the helper writes no transport or terminal
+// DONE marker.
 func ChatChunkToSSE(chunk ChatCompletionsChunk) (string, error) {
 	data, err := json.Marshal(chunk)
 	if err != nil {
@@ -215,6 +318,16 @@ func ChatChunkToSSE(chunk ChatCompletionsChunk) (string, error) {
 	return fmt.Sprintf("data: %s\n\n", data), nil
 }
 
+// resToChatHandleCreated updates permitted metadata before emitting the
+// assistant role once. Nonempty incoming ID/tier replaces retained values,
+// while an empty state model can take a nonempty response model. Missing
+// values keep constructor or caller metadata.
+//
+// SentRole prevents another role chunk but does not prevent those earlier
+// updates. Subsequent content/finish chunks can therefore carry metadata
+// changed by duplicate creation. No usage is observed here, and nonempty
+// strings are used without trimming. Callers keep the source lifecycle
+// consistent when a fixed identity across all chunks is required.
 func resToChatHandleCreated(evt *ResponsesStreamEvent, state *ResponsesEventToChatState) []ChatCompletionsChunk {
 	if evt.Response != nil {
 		if evt.Response.ID != "" {
@@ -236,6 +349,9 @@ func resToChatHandleCreated(evt *ResponsesStreamEvent, state *ResponsesEventToCh
 	return []ChatCompletionsChunk{makeChatDeltaChunk(state, ChatDelta{Role: role})}
 }
 
+// resToChatHandleTextDelta emits nonempty visible text and records SawText.
+// Empty text contributes nothing; the emitted content pointer belongs to the
+// produced local value, and no role/terminal-state guard is applied.
 func resToChatHandleTextDelta(evt *ResponsesStreamEvent, state *ResponsesEventToChatState) []ChatCompletionsChunk {
 	if evt.Delta == "" {
 		return nil
@@ -245,9 +361,21 @@ func resToChatHandleTextDelta(evt *ResponsesStreamEvent, state *ResponsesEventTo
 	return []ChatCompletionsChunk{makeChatDeltaChunk(state, ChatDelta{Content: &content})}
 }
 
+// resToChatHandleOutputItemAdded announces function/custom items as Chat
+// function calls and records their source-output mapping. Nil or unsupported
+// kinds produce nothing. It requires initialized map storage and emits only
+// correlation/name, not initial arguments or input.
+//
+// Every accepted addition receives the next sequential Chat index, even when a
+// source index was seen before. Replacing the map entry directs later
+// fragments to that newest index, while SawToolCall remains true. This keeps
+// ordinary distinct source positions separate from message/reasoning indexes;
+// callers prevent duplicate announcements from creating unintended extra
+// calls.
 func resToChatHandleOutputItemAdded(evt *ResponsesStreamEvent, state *ResponsesEventToChatState) []ChatCompletionsChunk {
-	// Register function and custom calls so later input and argument deltas
-	// can resolve the correct Chat tool index.
+	// Register supported additions before later fragments. Sequential Chat
+	// indexes count calls alone, so Responses positions occupied by other kinds
+	// do not shift them.
 	if evt.Item == nil || (evt.Item.Type != "function_call" && evt.Item.Type != "custom_tool_call") {
 		return nil
 	}
@@ -269,11 +397,18 @@ func resToChatHandleOutputItemAdded(evt *ResponsesStreamEvent, state *ResponsesE
 	})}
 }
 
+// resToChatHandleFuncArgsDelta emits nonempty raw argument text at a known
+// mapped tool index. Missing mapping produces nothing. Call IDs/names are
+// absent on these fragment chunks, and freeform custom input is forwarded
+// without an object wrapper.
 func resToChatHandleFuncArgsDelta(evt *ResponsesStreamEvent, state *ResponsesEventToChatState) []ChatCompletionsChunk {
 	if evt.Delta == "" {
 		return nil
 	}
 
+	// The output mapping names the previously announced Chat call. A missing
+	// entry drops this fragment rather than assigning argument bytes to an
+	// invented call.
 	idx, ok := state.OutputIndexToToolIndex[evt.OutputIndex]
 	if !ok {
 		return nil
@@ -289,6 +424,9 @@ func resToChatHandleFuncArgsDelta(evt *ResponsesStreamEvent, state *ResponsesEve
 	})}
 }
 
+// resToChatHandleReasoningDelta emits nonempty reasoning_content independently
+// of visible text. Empty fragments return nothing; no item mapping, role
+// guard, thinking tags, or terminal-state guard is applied on this route.
 func resToChatHandleReasoningDelta(evt *ResponsesStreamEvent, state *ResponsesEventToChatState) []ChatCompletionsChunk {
 	if evt.Delta == "" {
 		return nil
@@ -297,10 +435,24 @@ func resToChatHandleReasoningDelta(evt *ResponsesStreamEvent, state *ResponsesEv
 	return []ChatCompletionsChunk{makeChatDeltaChunk(state, ChatDelta{ReasoningContent: &reasoning})}
 }
 
+// resToChatHandleCompleted marks Finalized and emits finish plus optional
+// separate usage. Event usage is converted first; nested response usage
+// replaces it when present, and a nonempty nested tier replaces the retained
+// tier. Explicit zero usage is a selected observation.
+//
+// Nested status/details select length, content_filter, or completed
+// tool_calls. A nil response also uses SawToolCall, whereas a present response
+// with unknown/missing/failed status selects stop. The method has no repeated-
+// terminal guard, so duplicate calls emit again despite Finalized. Error
+// payloads remain outside chunk conversion, and stored usage pointers are
+// shared with emitted usage chunks.
 func resToChatHandleCompleted(evt *ResponsesStreamEvent, state *ResponsesEventToChatState) []ChatCompletionsChunk {
 	state.Finalized = true
 	finishReason := "stop"
 
+	// Select event usage before nested response usage so a later nested
+	// observation replaces all counters together, including an explicitly zero-
+	// valued observation.
 	if evt.Usage != nil {
 		state.Usage = chatUsageFromResponsesUsage(evt.Usage)
 	}
@@ -349,16 +501,33 @@ func resToChatHandleCompleted(evt *ResponsesStreamEvent, state *ResponsesEventTo
 	return chunks
 }
 
+// chatUsageFromResponsesUsage copies input/output counts and recomputes their
+// sum as total, returning nil for nil usage. Supported input/output details
+// receive new objects and retain nonzero counts, including negative values.
+// Source TotalTokens is not used.
+//
+// A positive canonical cache-creation count fills the creation alias only when
+// both copied write/creation detail values are zero; either nonzero detail
+// prevents that fill. This keeps one selected cache-write representation while
+// retaining separate read/audio/prediction/reasoning details. The helper
+// performs no counter validation or uncached-input subtraction because Chat
+// prompt usage includes the input total.
 func chatUsageFromResponsesUsage(u *ResponsesUsage) *ChatUsage {
 	if u == nil {
 		return nil
 	}
+	// Chat totals are computed from selected input/output counters together.
+	// Ignore the supplied aggregate so the emitted total follows those copied
+	// component values.
 	usage := &ChatUsage{
 		PromptTokens:     u.InputTokens,
 		CompletionTokens: u.OutputTokens,
 		TotalTokens:      u.InputTokens + u.OutputTokens,
 	}
 	usage.PromptTokensDetails = promptDetailsFromResponses(u.InputTokensDetails)
+	// Canonical creation supplies a detail alias only when the copied details
+	// contain neither write nor creation counts. Nonzero detail values keep their
+	// precedence.
 	if u.CacheCreationInputTokens > 0 {
 		if usage.PromptTokensDetails == nil {
 			usage.PromptTokensDetails = &ChatTokenDetails{}
@@ -371,8 +540,10 @@ func chatUsageFromResponsesUsage(u *ResponsesUsage) *ChatUsage {
 	return usage
 }
 
-// promptDetailsFromResponses maps input token details to Chat prompt token details.
-// It returns nil when every supported count is zero.
+// promptDetailsFromResponses copies cached/audio/creation/write input counts
+// into a new Chat detail object. Nil or all-zero supported counts return nil;
+// negative values still qualify as nonzero, and other source fields are
+// outside this copy.
 func promptDetailsFromResponses(src *ResponsesInputTokensDetails) *ChatTokenDetails {
 	if src == nil {
 		return nil
@@ -388,8 +559,10 @@ func promptDetailsFromResponses(src *ResponsesInputTokensDetails) *ChatTokenDeta
 	}
 }
 
-// completionDetailsFromResponses maps reasoning, audio, and accepted/rejected prediction counts
-// to Chat completion token details. It returns nil when all supported counts are zero.
+// completionDetailsFromResponses copies reasoning/audio/accepted/rejected
+// output counts into a new Chat detail object. Nil or all-zero supported
+// values return nil; negative values remain, and fields outside those four
+// counters are not copied.
 func completionDetailsFromResponses(src *ResponsesOutputTokensDetails) *ChatTokenDetails {
 	if src == nil {
 		return nil
@@ -406,6 +579,9 @@ func completionDetailsFromResponses(src *ResponsesOutputTokensDetails) *ChatToke
 	}
 }
 
+// makeChatDeltaChunk places the supplied delta in choice zero with a nil
+// finish reason and current state metadata. State must be nonnil; nested delta
+// pointers/slices remain shared with the supplied value.
 func makeChatDeltaChunk(state *ResponsesEventToChatState, delta ChatDelta) ChatCompletionsChunk {
 	return ChatCompletionsChunk{
 		ID:          state.ID,
@@ -421,7 +597,13 @@ func makeChatDeltaChunk(state *ResponsesEventToChatState, delta ChatDelta) ChatC
 	}
 }
 
+// makeChatFinishChunk constructs choice zero with empty-string content and a
+// nonnil supplied finish reason. State must be nonnil; current
+// ID/model/time/tier are copied, while usage is emitted separately by the
+// caller.
 func makeChatFinishChunk(state *ResponsesEventToChatState, finishReason string) ChatCompletionsChunk {
+	// A nonnil empty content pointer keeps the finish delta's content field
+	// present in JSON. Optional usage follows in a separate empty-choice chunk.
 	empty := ""
 	return ChatCompletionsChunk{
 		ID:          state.ID,
@@ -437,30 +619,55 @@ func makeChatFinishChunk(state *ResponsesEventToChatState, finishReason string) 
 	}
 }
 
-// generateChatCmplID returns a "chatcmpl-" prefixed random hex ID.
+// generateChatCmplID prefixes twelve callback-filled hexadecimal bytes with
+// chatcmpl-. Runtime.ReadRandom is required; discarded byte count/error can
+// leave initialized zero bytes, so a fresh random identity is not guaranteed
+// after an incomplete read.
 func generateChatCmplID(runtime Runtime) string {
 	b := make([]byte, 12)
+	// Read failure/count is discarded while initialized bytes remain available.
+	// Unwritten bytes encode as zero, so the caller's reader determines generated
+	// identity quality.
 	_, _ = runtime.ReadRandom(b)
 	return "chatcmpl-" + hex.EncodeToString(b)
 }
 
-// NewBufferedResponseAccumulator returns an initialised accumulator.
+// NewBufferedResponseAccumulator initializes source-output lookup for a
+// pointer-owned delta accumulator. Callers serialize mutation and do not copy
+// the used accumulator, whose text/reasoning Builders reject later writes
+// after a value copy.
 func NewBufferedResponseAccumulator() *BufferedResponseAccumulator {
 	return &BufferedResponseAccumulator{
 		outputIndexToFuncIdx: make(map[int]int),
 	}
 }
 
-// ProcessEvent records added tool calls and accumulates text, reasoning, and argument deltas.
-// Other event types do not contribute to this accumulator.
+// ProcessEvent records text/reasoning deltas and function/custom additions
+// plus mapped raw argument fragments. It requires a nonnil event and
+// constructor-initialized lookup for additions. Other events, including
+// complete item/argument payloads, do not contribute; duplicate source indexes
+// map later fragments to a newly appended record.
+//
+// Call correlation/name comes only from the added item, while custom input
+// remains raw argument text. Adding a call can grow funcCalls and move an
+// already-written Args Builder; a subsequent write to that relocated record
+// triggers Go's Builder copy check. This exact slice-growth/write sequence is
+// not repaired here. Ordinary Builder errors are nil, and mutations preceding
+// a panic remain in the accumulator.
 func (a *BufferedResponseAccumulator) ProcessEvent(event *ResponsesStreamEvent) {
 	switch event.Type {
 	case "response.output_text.delta":
 		if event.Delta != "" {
+			// Text fragments remain in one Builder until reconstruction. Its returned
+			// error is nil; a copied used accumulator can still panic through Builder
+			// copy checking.
 			_, _ = a.text.WriteString(event.Delta)
 		}
 	case "response.output_item.added":
 		if event.Item != nil && (event.Item.Type == "function_call" || event.Item.Type == "custom_tool_call") {
+			// Record addition fixes metadata before later indexed argument writes.
+			// Append can grow/copy the slice; writing a relocated nonzero Args Builder
+			// later triggers copy checking.
 			idx := len(a.funcCalls)
 			a.outputIndexToFuncIdx[event.OutputIndex] = idx
 			a.funcCalls = append(a.funcCalls, bufferedFuncCall{
@@ -470,26 +677,50 @@ func (a *BufferedResponseAccumulator) ProcessEvent(event *ResponsesStreamEvent) 
 		}
 	case "response.function_call_arguments.delta", "response.custom_tool_call_input.delta":
 		if event.Delta != "" {
+			// Argument bytes contribute only after an added item supplies identity.
+			// Missing mapping drops the fragment instead of creating a call with
+			// guessed metadata.
 			if idx, ok := a.outputIndexToFuncIdx[event.OutputIndex]; ok {
+				// Matching fragments append raw text without validating complete JSON.
+				// Builder errors are nil, but copy detection can panic after record
+				// relocation during slice growth.
 				_, _ = a.funcCalls[idx].Args.WriteString(event.Delta)
 			}
 		}
 	case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
 		if event.Delta != "" {
+			// Raw and summary reasoning share one visible reconstruction buffer.
+			// Builder errors are nil, while copy detection remains active for a copied
+			// used accumulator.
 			_, _ = a.reasoning.WriteString(event.Delta)
 		}
 	}
 }
 
-// HasContent reports whether any content has been accumulated.
+// HasContent reports accumulated text/reasoning bytes or any recorded call,
+// including one with no arguments. A nonnil accumulator is required; the
+// result does not establish complete JSON arguments or valid call identity.
 func (a *BufferedResponseAccumulator) HasContent() bool {
 	return a.text.Len() > 0 || len(a.funcCalls) > 0 || a.reasoning.Len() > 0
 }
 
-// BuildOutput emits accumulated reasoning, then a message, then function calls.
+// BuildOutput returns reconstructed reasoning, then visible message text, then
+// recorded function calls in addition order. Empty text/reasoning groups are
+// omitted and no accumulated content returns nil. Custom additions also become
+// function calls, retaining their raw input bytes as arguments.
+//
+// The fixed grouping does not reproduce source item interleaving, IDs,
+// signatures, statuses, or extension fields. Call names/correlation remain
+// those observed at addition, and arguments may be incomplete. Reading Builder
+// strings does not clear state, so repeated builds inspect the retained
+// prefix. Callers use this modeled reconstruction only when no populated
+// terminal output takes precedence.
 func (a *BufferedResponseAccumulator) BuildOutput() []ResponsesOutput {
 	var out []ResponsesOutput
 
+	// The buffers retain text but no cross-kind arrival log. Read their current
+	// prefixes into one item per text kind, then append recorded call identities
+	// in addition order.
 	if a.reasoning.Len() > 0 {
 		out = append(out, ResponsesOutput{
 			Type: "reasoning",
@@ -523,8 +754,10 @@ func (a *BufferedResponseAccumulator) BuildOutput() []ResponsesOutput {
 	return out
 }
 
-// SupplementResponseOutput fills an empty resp.Output from accumulated content.
-// A populated output takes precedence over the accumulator.
+// SupplementResponseOutput assigns reconstructed output only to a nonnil
+// response whose output is empty and whose accumulator has content. Populated
+// terminal output wins even when apparently partial; the method leaves
+// usage/status fields unchanged and performs no merging or validation.
 func (a *BufferedResponseAccumulator) SupplementResponseOutput(resp *ResponsesResponse) {
 	if resp == nil || len(resp.Output) > 0 {
 		return
@@ -532,5 +765,8 @@ func (a *BufferedResponseAccumulator) SupplementResponseOutput(resp *ResponsesRe
 	if !a.HasContent() {
 		return
 	}
+	// Empty terminal output can be modeled from retained deltas. Assign that
+	// complete reconstruction once; a populated terminal array has already won
+	// the selection above.
 	resp.Output = a.BuildOutput()
 }

@@ -7,11 +7,17 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// TestNormalizeToolParameters compares absent, null, object, nonobject, and
+// malformed schema fixtures. JSON equality checks repaired object members and
+// retained constraints, while exact equality checks invalid-byte passthrough.
 func TestNormalizeToolParameters(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    json.RawMessage
-		expected string
+		name string // schema fixture case label
+		// input and expected pair raw schema bytes with the asserted repair.
+		// Malformed input uses byte equality; every other case compares decoded JSON
+		// structure.
+		input    json.RawMessage // supplied schema JSON bytes
+		expected string          // expected repaired schema text
 	}{
 		{
 			name:     "nil input",
