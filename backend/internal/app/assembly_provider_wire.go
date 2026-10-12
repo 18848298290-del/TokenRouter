@@ -12,7 +12,14 @@ import (
 	providerredis "github.com/TokenFlux/TokenRouter/internal/provider/rediscache"
 )
 
-// providerAssemblyProviders groups Wire providers for the provider module.
+// Provider maintenance and credential refresh share runtime blocking state.
+// The graph binds RuntimeBlockState as both RefreshFailureObserver and
+// RuntimeUnblocker, so refresh failures and recovery operations reach the same
+// instance alongside platform authorization and management services.
+
+// providerAssemblyProviders assembles provider authorization, credentials,
+// health, maintenance, and administration dependencies for the application
+// graph.
 var providerAssemblyProviders = wire.NewSet(
 	providerauth.NewOAuthUsageCache,
 	provideGeminiAuthorization,

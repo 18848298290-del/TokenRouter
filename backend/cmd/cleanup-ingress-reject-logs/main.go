@@ -18,6 +18,14 @@ import (
 	opspostgres "github.com/TokenFlux/TokenRouter/internal/ops/postgres"
 )
 
+// Historical ingress classification identifies old Ops rows eligible for
+// cleanup before an operator-supplied RFC3339 cutoff. The command defaults to
+// scanning and reporting matches, requires an execute flag for deletion, and
+// prints a classifier digest with the result counts.
+
+// main runs historical ingress cleanup and logs any returned failure.
+// A failed run exits with status one after run releases its database resources,
+// so shell callers can detect failed maintenance.
 func main() {
 	if err := run(); err != nil {
 		log.Print(err)
@@ -25,7 +33,10 @@ func main() {
 	}
 }
 
-// run closes the database connection before returning, including on failure.
+// run scans historical ingress rows and reports sorted reason counts. It
+// requires a cutoff, accepts batches of one to five thousand rows, and deletes
+// matches when execute is set. A later batch failure can leave earlier batches
+// deleted; the Ent-owned SQL pool is closed on return.
 func run() error {
 	beforeRaw := flag.String("before", "", "required RFC3339 cutoff; only older rows are considered")
 	execute := flag.Bool("execute", false, "delete matched rows (default is dry-run)")
@@ -39,6 +50,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("invalid --before: %v", err)
 	}
+	// The command caps each SQL page and deletion batch at five thousand rows.
 	if *batchSize < 1 || *batchSize > 5000 {
 		return fmt.Errorf("--batch-size must be between 1 and 5000")
 	}
@@ -51,6 +63,8 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("initialize database: %v", err)
 	}
+	// Release the acquired pool after scanning or deletion. This command reports
+	// cleanup query failures; database-close errors are discarded by the defer.
 	defer func() { _ = client.Close() }()
 
 	ctx := context.Background()

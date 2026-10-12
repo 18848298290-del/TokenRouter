@@ -10,7 +10,13 @@ import (
 	routingpostgres "github.com/TokenFlux/TokenRouter/internal/routing/postgres"
 )
 
-// routingAssemblyProviders groups Wire providers for the routing module.
+// Group administration, model attributes, and price configuration supply
+// information consumed during routing. The application set also binds the
+// persisted group store for creative execution, so creative jobs and route
+// administration resolve the same group storage implementation.
+
+// routingAssemblyProviders supplies group, pricing, and model-catalog
+// administration and binds group storage for creative execution.
 var routingAssemblyProviders = wire.NewSet(
 	wire.Bind(new(creativeprovider.ExecutionGroups), new(*routingpostgres.GroupStore)),
 	provideRoutingSettings,

@@ -13,7 +13,13 @@ import (
 	provideradapter "github.com/TokenFlux/TokenRouter/internal/provider/provider"
 )
 
-// egressAssemblyProviders groups Wire providers for the egress module.
+// OpenAI token requests consult configured TLS profile and router readers.
+// Wire binds those reader interfaces to the egress implementations, while
+// proxy administration receives its own persisted proxy store, probe adapter,
+// and Redis latency cache.
+
+// egressAssemblyProviders supplies proxy and TLS services, including the TLS
+// readers used by provider token adapters.
 var egressAssemblyProviders = wire.NewSet(
 	wire.Bind(new(provideradapter.OpenAITokenProfileResolver), new(*provider.TLSProfiles)),
 	wire.Bind(new(provideradapter.OpenAITokenRouterReader), new(*egress.TLSFingerprintRouterService)),

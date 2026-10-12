@@ -13,7 +13,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/httpapi/dto"
 )
 
-// provideKeyHTTP binds API key operations and group capacity data to HTTP handlers.
+// Available key groups include capacity and localized display data assembled
+// from routing services. Model lists are resolved when requested by the HTTP
+// caller, and attribute lookup errors are logged while the remaining group
+// response stays available.
+
+// provideKeyHTTP constructs key handlers with group presentation and capacity
+// readers. The presentation callback resolves models when requested and returns
+// the group response even when model attribute lookup fails.
 func provideKeyHTTP(keys *apikey.APIKeyService, capacity *routing.CapacityService, catalogue *routing.RequestableCatalogue, attributes *routing.ModelAttributeService) *keyhttp.APIKeyHandler[dto.Group] {
 	handler := keyhttp.NewAPIKeyHandler(keys, func(group *routing.Group, summary *accessview.GroupCapacitySummary) *dto.Group {
 		result := dto.GroupFromRouting(apikey.RoutingGroup(group))
@@ -41,6 +48,8 @@ func provideKeyHTTP(keys *apikey.APIKeyService, capacity *routing.CapacityServic
 		var err error
 		result.ModelAttributes, err = attributes.ResolveModels(ctx, group.ID, resolved.Models)
 		if err != nil {
+			// Attribute enrichment can fail after the model list is resolved. Keep
+			// the group and models available and log the failed optional lookup.
 			slog.Warn("failed to read group model attributes", "group_id", group.ID, "error", err)
 		}
 		return result

@@ -10,7 +10,14 @@ import (
 	keyredis "github.com/TokenFlux/TokenRouter/internal/apikey/rediscache"
 )
 
-// apikeyAssemblyProviders groups Wire providers for the apikey module.
+// Gateway keys depend on both persistent records and authentication caches.
+// The application graph supplies their administration and HTTP entry points
+// together with cache invalidation resources, so handlers and the invalidation
+// worker receive the same assembled dependencies.
+
+// apikeyAssemblyProviders supplies key administration, authentication,
+// persistence, and invalidation constructors to the application dependency
+// graph.
 var apikeyAssemblyProviders = wire.NewSet(
 	provideKeyAdminHTTP,
 	provideKeyHTTP,

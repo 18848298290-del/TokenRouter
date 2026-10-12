@@ -10,13 +10,24 @@ import (
 	identitypostgres "github.com/TokenFlux/TokenRouter/internal/identity/postgres"
 )
 
+// Maintenance token generation needs user lookup and access-token signing from
+// the bootstrapped database. The command owns that database pool, while
+// the constructed identity helpers use process token settings and the current
+// clock for signing.
+
 // JWTIdentity provides user lookup and access-token signing for maintenance commands.
 type JWTIdentity struct {
-	Users  *identitypostgres.UserStore
-	Tokens *identity.SessionService
+	// Users supplies the user loaded before Tokens signs it. Tokens is configured
+	// with that same store; the command keeps the database open while using these
+	// helpers.
+	Users  *identitypostgres.UserStore // maintenance user lookup
+	Tokens *identity.SessionService    // maintenance access-token signer
 }
 
-// NewJWTIdentity uses a bootstrapped database. The calling command closes the connection before returning.
+// NewJWTIdentity constructs user lookup and token signing over a bootstrapped
+// database using cfg's token lifetimes and secret. Keep the supplied database
+// open while using the helpers, then close the owning Ent client when command
+// work finishes.
 func NewJWTIdentity(client *dbent.Client, db *sql.DB, cfg *config.Config) JWTIdentity {
 	users := identitypostgres.NewUserStore(client, db)
 	options := identity.SessionOptions{Now: time.Now, Secret: cfg.JWT.Secret, ExpireHour: cfg.JWT.ExpireHour, AccessTokenExpireMinutes: cfg.JWT.AccessTokenExpireMinutes, RefreshTokenExpireDays: cfg.JWT.RefreshTokenExpireDays}

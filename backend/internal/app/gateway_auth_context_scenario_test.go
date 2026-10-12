@@ -1,7 +1,5 @@
 package app
 
-// These tests cover API key and subscription context reads used by gateway middleware, Qoder, and usage handlers.
-
 import (
 	"testing"
 
@@ -14,6 +12,14 @@ import (
 	gatewayhttp "github.com/TokenFlux/TokenRouter/internal/gateway/httpapi"
 )
 
+// Gateway handlers retrieve authorization values from the Gin keys populated
+// by middleware. A context populated with a key and subscription exercises the
+// two reader functions and checks that each retains the identifier needed by
+// its downstream consumer.
+
+// TestAPIKeyAndSubscriptionFromContext populates a Gin context with both
+// authorization values. Key and subscription readers must report the values
+// present and return their respective identifiers.
 func TestAPIKeyAndSubscriptionFromContext(t *testing.T) {
 	c := &gin.Context{}
 

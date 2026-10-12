@@ -14,13 +14,26 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
-type searchProxies struct{ proxies *egresspg.ProxyStore }
+// Search configurations combine stored provider settings with proxy URLs and
+// optional Redis quota tracking. The application initializes configuration
+// before HTTP startup and asks the runtime to wait for in-flight searches and
+// quota cleanup during shutdown; handlers and gateway consumers share its
+// registry.
 
+// searchProxies adapts the proxy store to search configuration URL lookup.
+type searchProxies struct {
+	proxies *egresspg.ProxyStore /* persisted proxy URL reader */
+}
+
+// provideSearchRegistry creates the registry shared by configuration and search execution.
 func provideSearchRegistry() *search.Registry {
 	registry := search.NewRegistry()
 	return registry
 }
 
+// provideSearchRuntime constructs search configuration loading and registers
+// its initialization and shutdown hooks. A nil Redis client leaves quota state
+// unset; the runtime and its executors share the supplied registry.
 func provideSearchRuntime(store *settings.Store, proxies *egresspg.ProxyStore, r *redis.Client, registry *search.Registry, manager *lifecycle.Manager) *search.ConfigService {
 	var state search.QuotaState
 	if r != nil {
@@ -33,10 +46,14 @@ func provideSearchRuntime(store *settings.Store, proxies *egresspg.ProxyStore, r
 	return runtime
 }
 
+// provideSearchHTTP creates the HTTP adapter for the assembled search configuration service.
 func provideSearchHTTP(runtime *search.ConfigService) *searchhttp.Handler {
 	return searchhttp.New(runtime)
 }
 
+// URLs reads persisted proxies and returns their addresses indexed by proxy ID.
+// Missing IDs have no map entry, allowing ConfigService to skip providers whose
+// configured proxy cannot be resolved.
 func (s searchProxies) URLs(ctx context.Context, ids []int64) (map[int64]string, error) {
 	values, err := s.proxies.ListByIDs(ctx, ids)
 	if err != nil {

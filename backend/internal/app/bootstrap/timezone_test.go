@@ -7,13 +7,25 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/timezone"
 )
 
-// preserveTimezone restores the process timezone after each test.
+// Process timezone changes affect time.Now and calendars built afterward.
+// Each test restores time.Local during cleanup so valid, invalid, and default
+// bootstrap settings can be checked without carrying a previous test's location
+// into later cases.
+
+// preserveTimezone captures time.Local and restores it through test cleanup.
+// Call it before changing the global timezone; tests using this helper run
+// serially because the saved value is process-wide.
 func preserveTimezone(t *testing.T) {
 	t.Helper()
 	previous := time.Local
+	// Restore the shared timezone after assertions so subsequent bootstrap tests
+	// observe the location that existed before this test changed process state.
 	t.Cleanup(func() { time.Local = previous })
 }
 
+// TestInit selects Asia/Shanghai through bootstrap. The process timezone and
+// a calendar created afterward must both expose that location to their
+// respective time consumers.
 func TestInit(t *testing.T) {
 	preserveTimezone(t)
 	if err := InitTimezone("Asia/Shanghai"); err != nil {
@@ -28,6 +40,9 @@ func TestInit(t *testing.T) {
 	}
 }
 
+// TestInitInvalidTimezone supplies a location that cannot be loaded. Bootstrap
+// must return an error and retain the previous process timezone for later
+// calendar construction.
 func TestInitInvalidTimezone(t *testing.T) {
 	preserveTimezone(t)
 	previous := time.Local
@@ -39,6 +54,9 @@ func TestInitInvalidTimezone(t *testing.T) {
 	}
 }
 
+// TestInitDefaultTimezone leaves the deployment timezone empty. Bootstrap must
+// select Asia/Shanghai as the process location so application calendars receive
+// the documented default timezone.
 func TestInitDefaultTimezone(t *testing.T) {
 	preserveTimezone(t)
 	if err := InitTimezone(""); err != nil {
@@ -49,6 +67,9 @@ func TestInitDefaultTimezone(t *testing.T) {
 	}
 }
 
+// TestTimeNowAffected captures current time under UTC and Asia/Shanghai.
+// Their zone offsets must differ by eight hours, showing that successful
+// bootstrap changes affect subsequent time.Now values.
 func TestTimeNowAffected(t *testing.T) {
 	preserveTimezone(t)
 	if err := InitTimezone("UTC"); err != nil {
@@ -61,6 +82,7 @@ func TestTimeNowAffected(t *testing.T) {
 	shanghaiNow := time.Now()
 	_, utcOffset := utcNow.Zone()
 	_, shanghaiOffset := shanghaiNow.Zone()
+	// Eight hours are compared in the seconds returned by Time.Zone.
 	if difference := shanghaiOffset - utcOffset; difference != 8*3600 {
 		t.Errorf("timezone offset difference: got %d, want %d", difference, 8*3600)
 	}

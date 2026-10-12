@@ -14,6 +14,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity"
 )
 
+// Maintenance access tokens are signed with the persisted application secret.
+// The command bootstraps the database, selects a user by email or the first
+// active administrator, and prints the user's identity with the generated JWT
+// after successful signing.
+
+// main executes token generation and reports failures through the logger.
+// A failed run exits with status one after run has attempted database cleanup,
+// allowing shell callers to detect lookup, bootstrap, or signing failures.
 func main() {
 	if err := run(); err != nil {
 		log.Print(err)
@@ -21,7 +29,10 @@ func main() {
 	}
 }
 
-// run closes the database connection before returning, including on failure.
+// run prints an access token for the selected user after bootstrap. A supplied
+// email selects that user; otherwise it selects the first active administrator.
+// It defers closing the Ent-owned SQL pool after successful bootstrap and logs
+// close failures.
 func run() error {
 	email := flag.String("email", "", "Admin email to issue a JWT for (defaults to first active admin)")
 	flag.Parse()
@@ -37,12 +48,16 @@ func run() error {
 	}
 	defer func() {
 		if err := client.Close(); err != nil {
+			// Closing occurs after token work has selected its result. Report cleanup
+			// failure through logging because this defer cannot replace run's result.
 			log.Printf("failed to close db: %v", err)
 		}
 	}()
 
 	access := bootstrap.NewJWTIdentity(client, sqlDB, cfg)
 
+	// User queries consume this deadline; GenerateToken uses ctx to read session
+	// binding data, so the timeout is a lookup budget.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 

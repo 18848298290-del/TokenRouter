@@ -9,7 +9,13 @@ import (
 	serverhttp "github.com/TokenFlux/TokenRouter/internal/server/httpapi"
 )
 
-// httpAssemblyProviders groups HTTP server and route Wire providers.
+// Panel, authentication, payment, and gateway routes are mounted on the
+// application HTTP server. The graph resolves each mount with its handlers and
+// supplies runtime panel settings, forwarded-header settings, and request
+// logging before server construction.
+
+// httpAssemblyProviders supplies server construction, route mounts, and the
+// runtime settings handlers used by the HTTP application.
 var httpAssemblyProviders = wire.NewSet(
 	nativeHTTPProviders,
 	server.ProviderSet,

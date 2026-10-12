@@ -6,7 +6,13 @@ import (
 	"github.com/google/wire"
 )
 
-// usageAssemblyProviders groups Wire providers for the usage module.
+// Usage records feed user reports, administrator reports, and cached
+// dashboards. The application passes shared aggregation settings into
+// dashboard and background aggregation constructors, so those consumers make
+// decisions from the same preaggregation configuration.
+
+// usageAssemblyProviders supplies usage reporting, dashboards, storage,
+// aggregation, cleanup, and HTTP constructors to the application graph.
 var usageAssemblyProviders = wire.NewSet(
 	provideUsageDashboardCache,
 	providePublicUsage,

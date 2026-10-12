@@ -6,7 +6,13 @@ import (
 	"github.com/google/wire"
 )
 
-// notificationAssemblyProviders groups Wire providers for the notification module.
+// Risk messages and alert templates use the application mail and notification
+// services. Identity challenge emails have a separate queue built around
+// EmailChallenges; Wire supplies both delivery paths and the mail
+// administration handler with their respective dependencies.
+
+// notificationAssemblyProviders supplies risk and alert delivery together with
+// mail, notification, email queue, and HTTP dependencies.
 var notificationAssemblyProviders = wire.NewSet(
 	provideRiskDelivery,
 	provideAlertDelivery,

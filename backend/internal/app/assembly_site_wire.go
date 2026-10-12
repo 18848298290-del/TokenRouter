@@ -9,7 +9,13 @@ import (
 	sitepostgres "github.com/TokenFlux/TokenRouter/internal/site/postgres"
 )
 
-// siteAssemblyProviders groups Wire providers for the site module.
+// Announcement audience checks read users and active billing subscriptions
+// through application adapters. Public site information reuses shared settings
+// and OAuth settings, while announcement persistence and expiry constructors
+// join the same application graph used by site HTTP routes.
+
+// siteAssemblyProviders supplies public site and page services alongside
+// announcement persistence, audience readers, and expiry handling.
 var siteAssemblyProviders = wire.NewSet(
 	provideSiteDisplay,
 	provideSitePublicHTTP,

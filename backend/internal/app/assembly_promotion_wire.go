@@ -6,7 +6,13 @@ import (
 	"github.com/google/wire"
 )
 
-// promotionAssemblyProviders groups Wire providers for the promotion module.
+// Registration promo codes and affiliate rewards use separate services and
+// persistence. Identity registration and promotion HTTP handlers receive those
+// same services, while promotion settings govern which invitation and reward
+// features can be offered.
+
+// promotionAssemblyProviders supplies promo-code and affiliate services, their
+// stores, promotion settings, and user HTTP entry points.
 var promotionAssemblyProviders = wire.NewSet(
 	providePromotionPromoHTTP,
 	providePromotionAffiliateHTTP,

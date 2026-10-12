@@ -9,8 +9,15 @@ import (
 	paymentpostgres "github.com/TokenFlux/TokenRouter/internal/payment/postgres"
 )
 
+// Payment runtime, public endpoints, and administrator handlers share
+// persisted provider instances and the application provider registry. Wire
+// binds DefaultLoadBalancer to payment.LoadBalancer, so order processing
+// receives selection backed by the same instance store and configured
+// encryption key.
+
 var (
-	// paymentAssemblyProviders groups Wire providers for the payment module.
+	// paymentAssemblyProviders supplies payment runtime, expiry handling, and
+	// public, administrator, and webhook HTTP constructors for application routes.
 	paymentAssemblyProviders = wire.NewSet(
 		providePaymentExpiry,
 		providePaymentHTTP,
@@ -21,8 +28,8 @@ var (
 		paymentProviders,
 	)
 
-	// paymentProviders groups payment persistence, encryption, and load-balancing dependencies.
-	// Constructors live in app files compiled without the wireinject tag.
+	// paymentProviders supplies persisted instances, encryption, and registry
+	// construction, then binds the default payment load balancer.
 	paymentProviders = wire.NewSet(
 		paymentpostgres.NewInstanceStore,
 		providePaymentEncryptionKey,

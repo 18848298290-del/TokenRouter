@@ -12,7 +12,14 @@ import (
 	identityredis "github.com/TokenFlux/TokenRouter/internal/identity/rediscache"
 )
 
-// identityAssemblyProviders groups Wire providers for the identity module.
+// Login endpoints, JWT middleware, and administrator authorization share the
+// application's authentication graph. Redis stores supply refresh-token, TOTP,
+// and passkey state, while external challenge verifiers are injected into the
+// identity services used by those HTTP entry points.
+
+// identityAssemblyProviders supplies identity persistence, authentication
+// services, challenge verifiers, and HTTP authorization dependencies for
+// application routes.
 var identityAssemblyProviders = wire.NewSet(
 	provideIdentityAdminHTTP,
 	identityhttp.NewTotpHandler,
