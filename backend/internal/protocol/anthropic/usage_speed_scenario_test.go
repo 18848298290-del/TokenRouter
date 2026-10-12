@@ -10,6 +10,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
+// TestClaudeUsageSpeedParsing reads processing speed from an initial SSE event
+// and a buffered Messages response. Both parsing paths must retain the upstream
+// speed label for subsequent usage processing.
 func TestClaudeUsageSpeedParsing(t *testing.T) {
 	usage := &protocol.TokenUsage{}
 	ParseSSEUsage(`{"type":"message_start","message":{"usage":{"input_tokens":10,"speed":"fast"}}}`, usage)

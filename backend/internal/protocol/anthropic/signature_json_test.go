@@ -7,6 +7,10 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestStripAnthropicThinkingSignaturesPreservesLargeIntegers removes an opaque
+// reasoning signature beside metadata exceeding float64 integer precision. The
+// signature must disappear while the unrelated integer retains its exact decimal
+// representation.
 func TestStripAnthropicThinkingSignaturesPreservesLargeIntegers(t *testing.T) {
 	body := []byte(`{"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"work","signature":"opaque"}]}],"metadata":{"large_id":9007199254740993}}`)
 

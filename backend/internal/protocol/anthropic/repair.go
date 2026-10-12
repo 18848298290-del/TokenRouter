@@ -10,6 +10,22 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// Historical Claude content can contain empty text or reasoning blocks that
+// conflict with the next request's thinking configuration. Request preparation
+// and signature recovery use different repairs: empty-text cleanup leaves
+// reasoning intact, retry downgrades turn readable reasoning into text, and
+// replay filtering retains eligible signed assistant reasoning.
+//
+// Repairs inspect common byte patterns before decoding, then either replace a
+// message subtree or reserialize a decoded request. Subtree repairs leave
+// unrelated top-level JSON outside their replacement, while decoded maps use
+// encoding/json's float64 representation. Thinking removal also attempts to
+// remove its dependent context edit; that cleanup can retain edits on failure.
+// Changed content can require placeholder text for retry validity. Replay
+// filtering leaves empty arrays for its caller's later preparation rules.
+
+// These byte patterns gate common thinking and empty-content repairs before
+// JSON decoding; accepted spacing is limited to the literal forms listed here.
 var (
 	patternTypeThinking         = []byte(`"type":"thinking"`)
 	patternTypeThinkingSpaced   = []byte(`"type": "thinking"`)
@@ -30,6 +46,8 @@ var (
 // SliceRawFromBody returns the bytes corresponding to Result.Raw.
 // It borrows a slice of body when Result.Index is usable; otherwise it copies Raw.
 // Callers must keep body unchanged while using a borrowed result.
+// The result comes from parsing this same body: the borrowing check validates
+// bounds, so an offset from another document can select unrelated bytes.
 func SliceRawFromBody(body []byte, r gjson.Result) []byte {
 	if r.Index > 0 {
 		end := r.Index + len(r.Raw)
@@ -37,12 +55,21 @@ func SliceRawFromBody(body []byte, r gjson.Result) []byte {
 			return body[r.Index:end]
 		}
 	}
-	// Copy Raw when its location in body is unavailable.
+	// A missing or unusable offset cannot borrow the requested bytes from body.
+	// Copy Result.Raw so callers still receive the parsed subtree in that case.
 	return []byte(r.Raw)
 }
 
-// StripEmptyTextBlocksFromSlice removes empty text blocks from a content slice (including nested tool_result content).
-// Returns (cleaned slice, true) if any blocks were removed, or (original, false) if unchanged.
+// StripEmptyTextBlocksFromSlice removes text blocks with empty or nonstring
+// text, including blocks nested inside tool_result content arrays. The boolean
+// reports whether a removal or nested repair occurred; unchanged input returns
+// the supplied slice.
+//
+// A changed result uses a new slice and shallow copies each tool_result map
+// whose nested content changed. Other blocks and their mutable values remain
+// shared with the input. Callers needing independent mutable history copy those
+// retained objects separately; this helper changes content membership, not every
+// block's ownership.
 func StripEmptyTextBlocksFromSlice(blocks []any) ([]any, bool) {
 	var result []any
 	changed := false
@@ -56,7 +83,9 @@ func StripEmptyTextBlocksFromSlice(blocks []any) ([]any, bool) {
 		}
 		blockType, _ := blockMap["type"].(string)
 
-		// Strip empty text blocks
+		// This cleanup treats text as readable only when its field is a nonempty
+		// string. Missing and nonstring values therefore disappear with empty text,
+		// allowing callers to detect content arrays emptied by repair.
 		if blockType == "text" {
 			if txt, _ := blockMap["text"].(string); txt == "" {
 				if result == nil {
@@ -68,7 +97,8 @@ func StripEmptyTextBlocksFromSlice(blocks []any) ([]any, bool) {
 			}
 		}
 
-		// Recurse into tool_result nested content
+		// Tool results can contain further block arrays. Repair nested empty
+		// text with a shallow map copy so the supplied parent map retains its content value.
 		if blockType == "tool_result" {
 			if nestedContent, ok := blockMap["content"].([]any); ok {
 				if cleaned, nestedChanged := StripEmptyTextBlocksFromSlice(nestedContent); nestedChanged {
@@ -96,11 +126,18 @@ func StripEmptyTextBlocksFromSlice(blocks []any) ([]any, bool) {
 	return result, true
 }
 
-// StripEmptyTextBlocks removes empty text blocks from the request body (including nested tool_result content).
-// This is a lightweight pre-filter for the initial request path to prevent upstream 400 errors.
-// Returns the original body unchanged if no empty text blocks are found.
+// StripEmptyTextBlocks removes empty text blocks from message content and
+// nested tool_result arrays when a recognized empty-text byte pattern triggers
+// inspection. Requests outside that heuristic, missing message arrays, failed
+// decoding, and failed patching return the supplied body.
+//
+// Changed messages are decoded and reserialized as one subtree, leaving other
+// top-level fields outside the replacement. The helper adds no placeholder when
+// cleanup empties an array; callers apply further request-validity rules when
+// needed. Numbers inside rewritten messages follow encoding/json's map decoding.
 func StripEmptyTextBlocks(body []byte) []byte {
-	// Fast path: check if body contains empty text patterns
+	// These common spellings avoid decoding most ordinary requests. Other
+	// spacing can bypass the heuristic, so this prefilter is not complete request validation.
 	hasEmptyTextBlock := bytes.Contains(body, patternEmptyText) ||
 		bytes.Contains(body, patternEmptyTextSpaced) ||
 		bytes.Contains(body, patternEmptyTextSp1) ||
@@ -117,6 +154,8 @@ func StripEmptyTextBlocks(body []byte) []byte {
 
 	var messages []any
 	if err := json.Unmarshal(SliceRawFromBody(body, msgsRes), &messages); err != nil {
+		// A failed message-subtree decode leaves the supplied request intact.
+		// The caller retains its original history for subsequent validation or recovery decisions.
 		return body
 	}
 
@@ -142,32 +181,40 @@ func StripEmptyTextBlocks(body []byte) []byte {
 
 	msgsBytes, err := json.Marshal(messages)
 	if err != nil {
+		// Failed message encoding cannot supply a replacement subtree. Return
+		// the input so empty-text cleanup does not expose an incomplete request representation.
 		return body
 	}
 	out, err := sjson.SetRawBytes(body, "messages", msgsBytes)
 	if err != nil {
+		// A failed subtree patch leaves the newly encoded messages uncommitted.
+		// Keep the complete supplied body available to the caller's later request preparation.
 		return body
 	}
 	return out
 }
 
-// FilterThinkingBlocksForRetry removes or downgrades thinking structures for a retry.
+// FilterThinkingBlocksForRetry disables thinking and downgrades historical
+// reasoning for a signature-recovery attempt. Readable reasoning becomes text,
+// redacted reasoning disappears, and empty repaired content receives a
+// role-specific placeholder. Structured tool calls remain available.
 //
-// Upstream constraints:
-//   - Missing or invalid signatures can cause historical thinking blocks to be rejected.
-//   - With extended thinking enabled, an assistant prefill must start with
-//     a thinking block.
-//   - Removing blocks while leaving top-level thinking enabled can yield
-//     "Expected `thinking` or `redacted_thinking`, but found `text`".
+// Byte heuristics and array-shaped messages gate the repair. Message decoding,
+// mode deletion, and message encoding or patch failures return the supplied
+// body. After successful mode deletion, dependent-context cleanup can retain
+// edits on its own failure, so that failure does not restore thinking.
+// Rewritten message arrays use float64 decoding, which can round large numeric
+// values; unrelated top-level JSON remains outside that message decode.
 //
-// The filter performs these repairs:
-//   - Remove top-level thinking.
-//   - Convert thinking blocks to text, retaining their text.
-//   - Drop encrypted redacted_thinking blocks.
-//   - Add placeholder text when content is empty.
-//
-// Callers must check model replay rules; use the original body for unknown rules or exact-replay requirements.
+// A precheck finding only the unspaced "thinking": spelling enters a mode-only
+// path that skips untyped historical reasoning. Recognized typed blocks or
+// empty text/content patterns enter history conversion. Callers check model
+// replay rules before using this downgrade, retaining exact history when those
+// rules are unknown or require unchanged signed blocks.
 func FilterThinkingBlocksForRetry(body []byte) []byte {
+	// Empty text and empty content arrays need retry preparation even when no
+	// reasoning block is present. Screen all three cases before decoding history
+	// so those arrays can reach the role-specific placeholder handling below.
 	hasThinkingContent := bytes.Contains(body, patternTypeThinking) ||
 		bytes.Contains(body, patternTypeThinkingSpaced) ||
 		bytes.Contains(body, patternTypeRedactedThinking) ||
@@ -175,27 +222,22 @@ func FilterThinkingBlocksForRetry(body []byte) []byte {
 		bytes.Contains(body, patternThinkingField) ||
 		bytes.Contains(body, patternThinkingFieldSpaced)
 
-	// Also check for empty content arrays and empty text blocks that need fixing.
-	// Note: This is a heuristic check; the actual empty content handling is done below.
 	hasEmptyContent := bytes.Contains(body, patternEmptyContent) ||
 		bytes.Contains(body, patternEmptyContentSpaced) ||
 		bytes.Contains(body, patternEmptyContentSp1) ||
 		bytes.Contains(body, patternEmptyContentSp2)
 
-	// Check for empty text blocks: {"type":"text","text":""}
-	// These cause upstream 400: "text content blocks must be non-empty"
 	hasEmptyTextBlock := bytes.Contains(body, patternEmptyText) ||
 		bytes.Contains(body, patternEmptyTextSpaced) ||
 		bytes.Contains(body, patternEmptyTextSp1) ||
 		bytes.Contains(body, patternEmptyTextSp2)
 
-	// Fast path: nothing to process
 	if !hasThinkingContent && !hasEmptyContent && !hasEmptyTextBlock {
 		return body
 	}
 
-	// Decode and encode the messages subtree to limit map and interface allocations.
-	// Other fields are patched directly in the JSON body.
+	// Rewriting the message subtree leaves unrelated top-level fields outside
+	// map decoding, while the thinking option and dependent context edits are patched separately.
 	jsonStr := *(*string)(unsafe.Pointer(&body))
 	msgsRes := gjson.Get(jsonStr, "messages")
 	if !msgsRes.Exists() || !msgsRes.IsArray() {
@@ -215,6 +257,8 @@ func FilterThinkingBlocksForRetry(body []byte) []byte {
 				out = RemoveThinkingDependentContextStrategies(out)
 				return out
 			}
+			// Failure to remove the mode leaves its dependent context strategy
+			// in place too, returning the supplied request for another recovery decision.
 			return body
 		}
 		return body
@@ -222,12 +266,16 @@ func FilterThinkingBlocksForRetry(body []byte) []byte {
 
 	var messages []any
 	if err := json.Unmarshal(SliceRawFromBody(body, msgsRes), &messages); err != nil {
+		// Without decoded message history, this downgrade cannot coordinate
+		// reasoning conversion with mode removal. Keep both parts of the supplied request together.
 		return body
 	}
 
 	modified := false
 
-	// Disable top-level thinking mode for retry to avoid structural/signature constraints upstream.
+	// Mode removal is tracked independently of message edits. Record its presence
+	// before walking history so a retry can disable thinking even when every
+	// understood message block passes through unchanged.
 	deleteTopLevelThinking := gjson.Get(jsonStr, "thinking").Exists()
 
 	for i := range messages {
@@ -239,7 +287,8 @@ func FilterThinkingBlocksForRetry(body []byte) []byte {
 		role, _ := msgMap["role"].(string)
 		content, ok := msgMap["content"].([]any)
 		if !ok {
-			// String content or other format - keep as is
+			// String-valued history has no block signature to rewrite. Retain
+			// nonarray content so this repair stays limited to the understood block representation.
 			continue
 		}
 
@@ -269,8 +318,9 @@ func FilterThinkingBlocksForRetry(body []byte) []byte {
 
 			blockType, _ := blockMap["type"].(string)
 
-			// Strip empty text blocks: {"type":"text","text":""}
-			// Upstream rejects these with 400: "text content blocks must be non-empty"
+			// Empty or nonstring text contributes no readable history to this
+			// downgrade. Remove it before counting retained blocks so an emptied
+			// message reaches the placeholder path instead of retaining an unusable block.
 			if blockType == "text" {
 				if txt, _ := blockMap["text"].(string); txt == "" {
 					modifiedThisMsg = true
@@ -279,7 +329,8 @@ func FilterThinkingBlocksForRetry(body []byte) []byte {
 				}
 			}
 
-			// Convert thinking blocks to text (preserve content) and drop redacted_thinking.
+			// Readable reasoning can remain as text after its replay signature
+			// is rejected. Redacted reasoning has no readable history for this downgrade to retain.
 			switch blockType {
 			case "thinking":
 				modifiedThisMsg = true
@@ -295,7 +346,8 @@ func FilterThinkingBlocksForRetry(body []byte) []byte {
 				continue
 			}
 
-			// Handle blocks without type discriminator but with a "thinking" field.
+			// Compatibility blocks can carry reasoning without a type discriminator.
+			// Convert that history too so the retry does not leave unsigned thinking behind.
 			if blockType == "" {
 				if rawThinking, hasThinking := blockMap["thinking"]; hasThinking {
 					modifiedThisMsg = true
@@ -306,6 +358,8 @@ func FilterThinkingBlocksForRetry(body []byte) []byte {
 							newContent = append(newContent, map[string]any{"type": "text", "text": v})
 						}
 					default:
+						// Nonstring reasoning is rendered as JSON text when encodable.
+						// A failed encoding drops that unusable detail while the remaining message repair continues.
 						if b, err := json.Marshal(v); err == nil && len(b) > 0 {
 							newContent = append(newContent, map[string]any{"type": "text", "text": string(b)})
 						}
@@ -314,7 +368,8 @@ func FilterThinkingBlocksForRetry(body []byte) []byte {
 				}
 			}
 
-			// Recursively strip empty text blocks from tool_result nested content.
+			// Tool result arrays can contain empty text at deeper levels. Copy
+			// the changed result map so recursive cleanup replaces its content without rewriting other fields.
 			if blockType == "tool_result" {
 				if nestedContent, ok := blockMap["content"].([]any); ok {
 					if cleaned, changed := StripEmptyTextBlocksFromSlice(nestedContent); changed {
@@ -334,7 +389,8 @@ func FilterThinkingBlocksForRetry(body []byte) []byte {
 			}
 		}
 
-		// Handle empty content: either from filtering or originally empty
+		// Both initially empty arrays and arrays emptied by repair need text
+		// content for the retry. The assistant label distinguishes the removed prefill from user history.
 		if newContent == nil {
 			if len(content) == 0 {
 				modified = true
@@ -348,6 +404,8 @@ func FilterThinkingBlocksForRetry(body []byte) []byte {
 		}
 
 		if len(newContent) == 0 {
+			// All original blocks were removed by this repair. Replace the empty
+			// array with role-specific text so the next Messages attempt has content to send.
 			modified = true
 			placeholder := "(content removed)"
 			if role == "assistant" {
@@ -373,20 +431,26 @@ func FilterThinkingBlocksForRetry(body []byte) []byte {
 		if b, err := sjson.DeleteBytes(out, "thinking"); err == nil {
 			out = b
 		} else {
+			// Mode deletion failed before repaired messages are published. Return
+			// the supplied body so the caller does not receive conflicting mode and history.
 			return body
 		}
-		// Removing "thinking" makes any context_management strategy that requires it invalid
-		// (e.g. clear_thinking_20251015).  Strip those entries so the retry request does not
-		// receive a 400 "strategy requires thinking to be enabled or adaptive".
+		// Remove the clear-thinking edit after deleting its mode, retaining other
+		// strategies and context fields. This helper returns its supplied body on
+		// cleanup failure, so that failure can leave edits beside the removed mode.
 		out = RemoveThinkingDependentContextStrategies(out)
 	}
 	if modified {
 		msgsBytes, err := json.Marshal(messages)
 		if err != nil {
+			// Message encoding failed after options were tentatively repaired.
+			// Return the supplied body, discarding those temporary option changes with the unusable history.
 			return body
 		}
 		out, err = sjson.SetRawBytes(out, "messages", msgsBytes)
 		if err != nil {
+			// Publishing repaired history failed after tentative mode cleanup.
+			// Return the supplied body so those earlier changes are not exposed on their own.
 			return body
 		}
 	}
@@ -394,9 +458,16 @@ func FilterThinkingBlocksForRetry(body []byte) []byte {
 }
 
 // RemoveThinkingDependentContextStrategies removes clear_thinking_20251015
-// from context_management.edits. Call it after disabling top-level thinking
-// to prevent the upstream error:
-// "strategy requires thinking to be enabled or adaptive".
+// from context_management.edits after the caller disables thinking. Missing,
+// nonarray, and unchanged edits return the supplied body, as do failed encoding
+// or patch operations.
+//
+// Other edits retain their order and raw JSON values, keeping unknown strategy
+// fields outside map decoding. When every edit is removed, the edits key is
+// deleted while its surrounding context_management object remains. Retry callers
+// invoke this cleanup after mode deletion so the corresponding thinking-specific
+// edit is removed alongside that option; unrelated strategies remain available
+// for subsequent request validation.
 func RemoveThinkingDependentContextStrategies(body []byte) []byte {
 	jsonStr := *(*string)(unsafe.Pointer(&body))
 	editsRes := gjson.Get(jsonStr, "context_management.edits")
@@ -407,6 +478,9 @@ func RemoveThinkingDependentContextStrategies(body []byte) []byte {
 	var filtered []json.RawMessage
 	hasRemoved := false
 	editsRes.ForEach(func(_, v gjson.Result) bool {
+		// Mode-removal callers drop this thinking-specific strategy alongside the
+		// top-level option. Keep every other raw edit for its own preparation and
+		// upstream validation rules.
 		if v.Get("type").String() == "clear_thinking_20251015" {
 			hasRemoved = true
 			return true
@@ -420,34 +494,48 @@ func RemoveThinkingDependentContextStrategies(body []byte) []byte {
 	}
 
 	if len(filtered) == 0 {
+		// No strategy remains after removal. Delete the edits key rather than
+		// emitting an empty strategy list, leaving other context-management fields in the request.
 		if b, err := sjson.DeleteBytes(body, "context_management.edits"); err == nil {
 			return b
 		}
+		// A failed key deletion leaves the supplied context object available.
+		// Return the input so callers retain the complete request for their recovery decision.
 		return body
 	}
 
 	filteredBytes, err := json.Marshal(filtered)
 	if err != nil {
+		// Failed encoding cannot supply the retained strategy list. Keep the
+		// original context edits together instead of exposing only part of their ordered configuration.
 		return body
 	}
 	if b, err := sjson.SetRawBytes(body, "context_management.edits", filteredBytes); err == nil {
 		return b
 	}
+	// A failed strategy-list patch leaves the retained raw edits unpublished.
+	// Return the supplied body so later recovery still sees its complete context configuration.
 	return body
 }
 
-// FilterSignatureSensitiveBlocksForRetry downgrades thinking and tool blocks
-// when an upstream error identifies tool signature/thought_signature validation.
+// FilterSignatureSensitiveBlocksForRetry downgrades reasoning, tool calls,
+// and results when recovery requires abandoning their signed representations.
+// Readable reasoning and decoded tool details become ordinary text, while
+// redacted reasoning is removed and emptied messages receive role-specific
+// placeholders.
 //
-// It disables top-level thinking and converts readable thinking to text, then:
-//   - Converts tool_use blocks to text, removing structured calls.
-//   - Converts tool_result content to text.
-//
-// Use only when needed: text conversion changes tool behavior and can increase prompt-injection risk.
-//
-// Callers must check model replay rules; use the original body for unknown rules or exact-replay requirements.
+// The repair disables thinking and removes its dependent context edit before
+// encoding the complete request. Byte heuristics, absent message arrays, or
+// failed decoding and encoding can return the supplied body. Callers check
+// model replay rules and accept loss of structured tool behavior before using
+// this stage: tool-result text becomes ordinary prompt history, including any
+// instructions present in that result.
+// Changed requests are reencoded from generic JSON maps, so unrelated numeric
+// values throughout the request follow float64 decoding and can lose precision.
 func FilterSignatureSensitiveBlocksForRetry(body []byte) []byte {
-	// Fast path: only run when we see likely relevant constructs.
+	// Literal block patterns screen common JSON encodings before object decoding.
+	// Unusual whitespace or escaped field spellings can bypass this screen and
+	// leave history for the caller's later request policy.
 	if !bytes.Contains(body, []byte(`"type":"thinking"`)) &&
 		!bytes.Contains(body, []byte(`"type": "thinking"`)) &&
 		!bytes.Contains(body, []byte(`"type":"redacted_thinking"`)) &&
@@ -463,17 +551,21 @@ func FilterSignatureSensitiveBlocksForRetry(body []byte) []byte {
 
 	var req map[string]any
 	if err := json.Unmarshal(body, &req); err != nil {
+		// An undecodable object cannot be selectively downgraded. Retain its
+		// supplied bytes so the caller can report or recover from the original request.
 		return body
 	}
 
 	modified := false
 
-	// Disable top-level thinking for retry to avoid structural/signature constraints upstream.
+	// Ordinary text replaces the signed reasoning representation. Disable its
+	// thinking mode and dependent context edits together before constructing the broader retry history.
 	if _, exists := req["thinking"]; exists {
 		delete(req, "thinking")
 		modified = true
-		// Remove context_management strategies that require thinking to be enabled
-		// (e.g. clear_thinking_20251015), otherwise upstream returns 400.
+		// Drop the clear-thinking edit with its mode before publishing the retry
+		// object. Every other edit remains in order, keeping unrelated context
+		// strategies available after this reasoning downgrade.
 		if cm, ok := req["context_management"].(map[string]any); ok {
 			if edits, ok := cm["edits"].([]any); ok {
 				filtered := make([]any, 0, len(edits))
@@ -530,6 +622,8 @@ func FilterSignatureSensitiveBlocksForRetry(body []byte) []byte {
 			blockType, _ := blockMap["type"].(string)
 			switch blockType {
 			case "thinking":
+				// Retain readable reasoning as ordinary prompt text for the retry.
+				// Empty reasoning disappears because it cannot contribute a content-bearing replacement block.
 				modifiedThisMsg = true
 				thinkingText, _ := blockMap["thinking"].(string)
 				if thinkingText == "" {
@@ -538,13 +632,19 @@ func FilterSignatureSensitiveBlocksForRetry(body []byte) []byte {
 				newContent = append(newContent, map[string]any{"type": "text", "text": thinkingText})
 				continue
 			case "redacted_thinking":
+				// Redacted reasoning contains encrypted replay data. Dropping that
+				// representation removes unusable signature-dependent history from the downgraded text conversation.
 				modifiedThisMsg = true
 				continue
 			case "tool_use":
+				// Structured calls can also fail thought-signature validation. Render
+				// their identifying details as text after the caller accepts loss of tool execution.
 				modifiedThisMsg = true
 				name, _ := blockMap["name"].(string)
 				id, _ := blockMap["id"].(string)
 				input := blockMap["input"]
+				// Failed argument encoding omits that detail while the textual call
+				// still retains its available name and ID for the downgraded conversation history.
 				inputJSON, _ := json.Marshal(input)
 				text := "(tool_use)"
 				if name != "" {
@@ -559,10 +659,14 @@ func FilterSignatureSensitiveBlocksForRetry(body []byte) []byte {
 				newContent = append(newContent, map[string]any{"type": "text", "text": text})
 				continue
 			case "tool_result":
+				// Results follow their calls into text so a structured tool_result
+				// does not remain paired with a tool_use block that this retry already removed.
 				modifiedThisMsg = true
 				toolUseID, _ := blockMap["tool_use_id"].(string)
 				isError, _ := blockMap["is_error"].(bool)
 				content := blockMap["content"]
+				// Failed result encoding omits its body detail while the textual
+				// history still identifies the originating call and any reported error marker.
 				contentJSON, _ := json.Marshal(content)
 				text := "(tool_result)"
 				if toolUseID != "" {
@@ -579,6 +683,8 @@ func FilterSignatureSensitiveBlocksForRetry(body []byte) []byte {
 			}
 
 			if blockType == "" {
+				// Untyped compatibility blocks can still carry reasoning history.
+				// Apply the downgrade there too so a missing discriminator cannot retain unsigned thinking.
 				if rawThinking, hasThinking := blockMap["thinking"]; hasThinking {
 					modifiedThisMsg = true
 					switch v := rawThinking.(type) {
@@ -587,6 +693,8 @@ func FilterSignatureSensitiveBlocksForRetry(body []byte) []byte {
 							newContent = append(newContent, map[string]any{"type": "text", "text": v})
 						}
 					default:
+						// Nonstring reasoning can be represented as JSON text. Failed
+						// encoding removes that detail while allowing the other content blocks to complete their downgrade.
 						if b, err := json.Marshal(v); err == nil && len(b) > 0 {
 							newContent = append(newContent, map[string]any{"type": "text", "text": string(b)})
 						}
@@ -601,6 +709,8 @@ func FilterSignatureSensitiveBlocksForRetry(body []byte) []byte {
 		if modifiedThisMsg {
 			modified = true
 			if len(newContent) == 0 {
+				// Removing every signature-sensitive block would leave an empty
+				// conversation turn. Keep a role-specific placeholder so the retry still supplies message content.
 				placeholder := "(content removed)"
 				if role == "assistant" {
 					placeholder = "(assistant content removed)"
@@ -620,17 +730,30 @@ func FilterSignatureSensitiveBlocksForRetry(body []byte) []byte {
 	req["messages"] = newMessages
 	newBody, err := json.Marshal(req)
 	if err != nil {
+		// Failed final encoding leaves the complete downgrade unpublished.
+		// Return the supplied body so reasoning-mode changes and textual history are not exposed separately.
 		return body
 	}
 	return newBody
 }
 
-// FilterThinkingBlocksInternal removes thinking blocks rejected by the replay rules.
-// It retains a thinking or redacted_thinking block only when thinking is enabled
-// or adaptive, the message is from the assistant, and the signature is nonempty
-// and differs from rejectedSignature. Untyped thinking blocks are removed.
+// FilterThinkingBlocksInternal removes historical reasoning that fails the
+// request's replay eligibility checks. A typed reasoning block survives when
+// thinking is enabled or adaptive, the message belongs to the assistant, and
+// its nonempty signature differs from rejectedSignature.
+//
+// These checks establish mode, role, and signature presence rather than
+// cryptographic validity. Untyped reasoning is removed, while other content
+// retains its order. Empty arrays remain empty for later preparation rules;
+// this filter does not supply retry placeholders or disable thinking. Byte
+// heuristics, absent message arrays, unchanged requests, and decoding or encoding
+// failures return the supplied body.
+// Changed requests are reencoded from generic JSON maps, so unrelated numeric
+// values throughout the request follow float64 decoding and can lose precision.
 func FilterThinkingBlocksInternal(body []byte, rejectedSignature string) []byte {
-	// Fast path: if body doesn't contain "thinking", skip parsing
+	// Literal block patterns screen common JSON encodings before object decoding.
+	// Unusual whitespace or escaped field spellings can bypass this screen and
+	// leave historical reasoning for the caller's later request policy.
 	if !bytes.Contains(body, []byte(`"type":"thinking"`)) &&
 		!bytes.Contains(body, []byte(`"type": "thinking"`)) &&
 		!bytes.Contains(body, []byte(`"type":"redacted_thinking"`)) &&
@@ -642,10 +765,11 @@ func FilterThinkingBlocksInternal(body []byte, rejectedSignature string) []byte 
 
 	var req map[string]any
 	if err := json.Unmarshal(body, &req); err != nil {
+		// Failed object decoding leaves no reliable block history to filter.
+		// Return the supplied bytes so callers retain their complete request for error handling.
 		return body
 	}
 
-	// Check if thinking is enabled
 	thinkingEnabled := false
 	if thinking, ok := req["thinking"].(map[string]any); ok {
 		if thinkType, ok := thinking["type"].(string); ok && (thinkType == "enabled" || thinkType == "adaptive") {
@@ -698,7 +822,8 @@ func FilterThinkingBlocksInternal(body []byte, rejectedSignature string) []byte 
 				continue
 			}
 
-			// Handle blocks without type discriminator but with "thinking" key
+			// Reasoning without a block discriminator cannot qualify for the
+			// signed assistant replay path, so remove that compatibility form even when thinking is enabled.
 			if blockType == "" {
 				if _, hasThinking := blockMap["thinking"]; hasThinking {
 					filtered = true
@@ -721,6 +846,8 @@ func FilterThinkingBlocksInternal(body []byte, rejectedSignature string) []byte 
 
 	newBody, err := json.Marshal(req)
 	if err != nil {
+		// Failed encoding leaves the filtered history unpublished. Return the
+		// supplied body so callers retain all original block evidence for another recovery decision.
 		return body
 	}
 	return newBody

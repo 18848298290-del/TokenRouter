@@ -1,29 +1,57 @@
 package protocol
 
-// AudioUsage records the audio processing mode and billable quantity.
+// Token and audio usage feed different pricing dimensions after upstream
+// execution. Audio quantities depend on their processing mode, while cache
+// writes can carry both an aggregate token count and a TTL-specific breakdown
+// used by separate five-minute and one-hour prices.
+//
+// Reclassifying cache TTL moves the category counts while retaining other
+// usage fields, including the aggregate. Detail totals take precedence over
+// the aggregate for that operation, and filling absent five-minute detail alone
+// does not report a reclassification. Independently reported reasoning tokens
+// need another overlap rule: add only the observed gap between the total and
+// existing input/output, capped by the reported reasoning count, so inclusive
+// output totals are not counted again.
+
+// AudioUsage records the processing mode and quantity consumed by audio pricing.
 type AudioUsage struct {
-	Mode            string  // realtime | tts | stt
-	DurationOrUnits float64 // minutes / million-chars / hours
+	// Mode selects DurationOrUnits' unit in CalculateAudioCost: realtime uses
+	// minutes, tts uses millions of characters, and stt uses hours. The producer
+	// computes the quantity before passing both fields to pricing.
+	Mode            string  // audio processing mode
+	DurationOrUnits float64 // mode-specific billable quantity
 }
 
 // TokenUsage holds input, output, and cache token counts.
 type TokenUsage struct {
-	InputTokens              int `json:"input_tokens"`
-	OutputTokens             int `json:"output_tokens"`
-	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
-	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
-	CacheCreation5mTokens    int // 5-minute cache creation tokens from the nested cache_creation object
-	CacheCreation1hTokens    int // 1-hour cache creation tokens from the nested cache_creation object
-	ImageOutputTokens        int `json:"image_output_tokens,omitempty"`
-	// Speed records the speed returned by Claude; "fast" maps to internal priority billing.
+	InputTokens              int `json:"input_tokens"`                // reported input tokens
+	OutputTokens             int `json:"output_tokens"`               // reported output tokens
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"` // aggregate cache-write tokens
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`     // reported cache-read tokens
+	// CacheCreation5mTokens and CacheCreation1hTokens hold TTL details beneath
+	// CacheCreationInputTokens. ApplyCacheTTLOverride redistributes their summed
+	// detail count while leaving the aggregate field unchanged, even when its
+	// observation differs from that detail total.
+	CacheCreation5mTokens int // five-minute cache-write tokens
+	CacheCreation1hTokens int // one-hour cache-write tokens
+	ImageOutputTokens     int `json:"image_output_tokens,omitempty"` // generated image tokens
+	// Speed records Claude's processing mode. Completion's ClaudeServiceTier
+	// maps a trimmed, case-insensitive "fast" value to the internal priority billing tier.
 	Speed string `json:"speed,omitempty"`
 }
 
-// ApplyCacheTTLOverride reclassifies cache creation tokens into the requested TTL bucket. usage must be non-nil.
-// The target "1h" selects the one-hour bucket; all other values select five minutes.
-// It reports reclassification, excluding the initial fill of missing five-minute details from the aggregate.
+// ApplyCacheTTLOverride moves cache-write detail into the requested TTL bucket
+// on a nonnil usage value. The exact target "1h" selects one hour; every other
+// value selects five minutes, including differently cased or padded targets.
+//
+// When both detail buckets are zero, a positive aggregate first fills the
+// five-minute bucket. That initialization alone returns false. Otherwise the
+// detail sum is authoritative, and true reports moving it from another category.
+// The aggregate and unrelated usage fields remain unchanged; callers serialize
+// this in-place reclassification before pricing consumes the TTL categories.
 func ApplyCacheTTLOverride(usage *TokenUsage, target string) bool {
-	// When TTL details are absent, treat the aggregate as five-minute cache creation.
+	// Older observations can provide only the aggregate cache-write count.
+	// Fill the default five-minute detail so TTL pricing can classify that known quantity.
 	if usage.CacheCreation5mTokens == 0 && usage.CacheCreation1hTokens == 0 && usage.CacheCreationInputTokens > 0 {
 		usage.CacheCreation5mTokens = usage.CacheCreationInputTokens
 	}
@@ -40,6 +68,8 @@ func ApplyCacheTTLOverride(usage *TokenUsage, target string) bool {
 		usage.CacheCreation1hTokens = total
 		usage.CacheCreation5mTokens = 0
 	default: // "5m"
+		// Unrecognized targets follow the five-minute category, including "1H".
+		// The caller's selected TTL therefore needs exact matching to request the one-hour price.
 		if usage.CacheCreation5mTokens == total {
 			return false // already entirely in the five-minute bucket
 		}
@@ -49,11 +79,15 @@ func ApplyCacheTTLOverride(usage *TokenUsage, target string) bool {
 	return true
 }
 
-// IncludeIndependentReasoningTokens adds reasoning tokens to output up to the gap
-// between total and input+output. Missing or inconsistent counts leave output unchanged.
-// An xAI Chat example is prompt=32, completion=9, reasoning=94, total=135;
-// a Responses example is input=32, output=9, reasoning=110, total=151. Standard
-// OpenAI completion_tokens includes reasoning, with total equal to input+output.
+// IncludeIndependentReasoningTokens adds separately reported reasoning to
+// output within the positive gap between total and input plus output. Missing
+// reasoning or total counts, negative input/output, and totals that already
+// include all observed output leave the supplied output unchanged.
+//
+// An xAI Chat observation with input=32, output=9, reasoning=94, and total=135
+// yields output=103. Inclusive OpenAI output already closes that total gap and
+// receives no addition. When the gap is smaller than the reasoning count, the
+// gap caps the addition; when reasoning is smaller, its count caps the addition.
 func IncludeIndependentReasoningTokens(input, output, total, reasoning int64) int64 {
 	if input < 0 || output < 0 || reasoning <= 0 || total <= 0 {
 		return output
@@ -66,12 +100,16 @@ func IncludeIndependentReasoningTokens(input, output, total, reasoning int64) in
 		return output
 	}
 	if reasoning < gap {
+		// The total gap can include work beyond the separately reported reasoning.
+		// Cap the addition at that reasoning observation so the helper does not invent extra output.
 		gap = reasoning
 	}
 	return output + gap
 }
 
-// HasObservedTokens reports whether any token count is positive.
+// HasObservedTokens reports whether any stored token bucket is positive.
+// Nil receivers and all-zero counts return false; speed labels alone and
+// explicit zero-token usage observations do not establish positive token work.
 func (u *TokenUsage) HasObservedTokens() bool {
 	if u == nil {
 		return false

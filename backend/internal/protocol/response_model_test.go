@@ -7,7 +7,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestResponseModelObserver checks model declaration precedence and absent-model results.
+// TestResponseModelObserver supplies initial, terminal, wrapped, malformed,
+// absent, and Unicode model declarations. Responses terminal models and Gemini
+// revisions must win their respective selection rules, while Chat and Messages
+// retain their initial model and independent observers retain separate state.
 func TestResponseModelObserver(t *testing.T) {
 	t.Run("responses terminal wins", func(t *testing.T) {
 		var o ResponseModelObserver

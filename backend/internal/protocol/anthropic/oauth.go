@@ -1,23 +1,32 @@
 package anthropic
 
-// OAuthTokenResponse represents the token response from OAuth provider.
+// Claude authorization exchanges return credentials together with optional
+// account and organization identities. Provider authorization converts the
+// relative token lifetime into an expiry time and copies the identity objects
+// when they are present in the upstream JSON response.
+
+// OAuthTokenResponse holds credentials and identities returned by Claude authorization.
 type OAuthTokenResponse struct {
-	AccessToken  string             `json:"access_token"`
-	TokenType    string             `json:"token_type"`
-	ExpiresIn    int64              `json:"expires_in"`
-	RefreshToken string             `json:"refresh_token,omitempty"`
-	Scope        string             `json:"scope,omitempty"`
-	Organization *OAuthOrgInfo      `json:"organization,omitempty"`
-	Provider     *OAuthProviderInfo `json:"account,omitempty"`
+	AccessToken  string `json:"access_token"`            // inference access credential
+	TokenType    string `json:"token_type"`              // returned authorization scheme
+	ExpiresIn    int64  `json:"expires_in"`              // seconds
+	RefreshToken string `json:"refresh_token,omitempty"` // optional refresh credential
+	Scope        string `json:"scope,omitempty"`         // granted OAuth scopes
+	// Organization is optional; ClaudeAuthorization copies its UUID into token
+	// information when the response supplies a nonempty organization identifier.
+	Organization *OAuthOrgInfo `json:"organization,omitempty"`
+	// Provider decodes the upstream account object; ClaudeAuthorization copies
+	// its account UUID and email when this optional object is present.
+	Provider *OAuthProviderInfo `json:"account,omitempty"`
 }
 
-// OAuthOrgInfo represents organization info from OAuth response.
+// OAuthOrgInfo identifies the organization returned by Claude's token endpoint.
 type OAuthOrgInfo struct {
-	UUID string `json:"uuid"`
+	UUID string `json:"uuid"` // upstream organization identifier
 }
 
-// OAuthProviderInfo represents provider info from OAuth response.
+// OAuthProviderInfo identifies the upstream account returned by Claude authorization.
 type OAuthProviderInfo struct {
-	UUID         string `json:"uuid"`
-	EmailAddress string `json:"email_address"`
+	UUID         string `json:"uuid"`          // upstream account identifier
+	EmailAddress string `json:"email_address"` // upstream account email
 }

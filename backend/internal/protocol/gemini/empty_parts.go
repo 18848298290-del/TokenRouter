@@ -2,8 +2,20 @@ package gemini
 
 import "encoding/json"
 
-// FilterEmptyParts removes content entries whose parts field is an empty array.
-// Gemini rejects empty parts; absent or non-array fields are left for upstream validation.
+// Gemini requests can contain conversation entries whose parts array is
+// empty after compatibility conversion. Empty-array entries are removed before
+// forwarding, while absent or differently shaped parts fields remain available
+// for upstream validation rather than being treated as empty conversation turns.
+
+// FilterEmptyParts removes content entries with an explicitly empty parts
+// array, retaining the order of other entries. JSON decoding and encoding errors
+// are returned; unchanged valid requests retain their supplied bytes.
+//
+// Missing or nonarray contents, nonobject entries, and absent or nonarray parts
+// remain untouched. A successful repair reserializes the complete decoded
+// object through encoding/json, including unrelated numeric values in that
+// object. Callers decide how to handle a returned error before forwarding the
+// original or repaired request.
 func FilterEmptyParts(body []byte) ([]byte, error) {
 	var payload map[string]any
 	if err := json.Unmarshal(body, &payload); err != nil {
@@ -38,6 +50,8 @@ func FilterEmptyParts(body []byte) ([]byte, error) {
 		}
 
 		if len(partsSlice) == 0 {
+			// An explicit empty parts array cannot supply Gemini conversation
+			// content. Remove that entry while leaving unknown parts representations for upstream validation.
 			modified = true
 			continue
 		}

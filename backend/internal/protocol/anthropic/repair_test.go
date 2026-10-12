@@ -9,6 +9,9 @@ import (
 	testassert "github.com/TokenFlux/TokenRouter/internal/testutil/assertion"
 )
 
+// TestStripEmptyTextBlocks removes empty text at message and nested tool-result
+// levels. Nonempty text and string-valued results must remain usable, while a
+// request needing no cleanup retains its supplied bytes.
 func TestStripEmptyTextBlocks(t *testing.T) {
 	t.Run("strips top-level empty text", func(t *testing.T) {
 		input := []byte(`{"messages":[{"role":"user","content":[{"type":"text","text":"hello"},{"type":"text","text":""}]}]}`)
@@ -71,24 +74,36 @@ func TestStripEmptyTextBlocks(t *testing.T) {
 	})
 }
 
+// TestRemoveThinkingDependentContextStrategies_NoContextManagement supplies a
+// request with thinking but no context-management configuration. Strategy cleanup
+// must return the supplied bytes because there is no edits list to repair.
 func TestRemoveThinkingDependentContextStrategies_NoContextManagement(t *testing.T) {
 	input := []byte(`{"thinking":{"type":"enabled"},"messages":[]}`)
 	out := RemoveThinkingDependentContextStrategies(input)
 	require.Equal(t, input, out, "无 context_management 字段时应原样返回")
 }
 
+// TestRemoveThinkingDependentContextStrategies_EmptyEdits supplies an existing
+// empty context edits array. Cleanup must leave that request byte-for-byte
+// unchanged because it contains no thinking-dependent strategy to remove.
 func TestRemoveThinkingDependentContextStrategies_EmptyEdits(t *testing.T) {
 	input := []byte(`{"context_management":{"edits":[]},"messages":[]}`)
 	out := RemoveThinkingDependentContextStrategies(input)
 	require.Equal(t, input, out, "edits 为空数组时应原样返回")
 }
 
+// TestRemoveThinkingDependentContextStrategies_NoClearThinkingEntry supplies a
+// context edits list containing another strategy. Cleanup must retain the supplied
+// bytes because the list has no clear-thinking entry.
 func TestRemoveThinkingDependentContextStrategies_NoClearThinkingEntry(t *testing.T) {
 	input := []byte(`{"context_management":{"edits":[{"type":"other_strategy"}]},"messages":[]}`)
 	out := RemoveThinkingDependentContextStrategies(input)
 	require.Equal(t, input, out, "edits 中无 clear_thinking_20251015 时应原样返回")
 }
 
+// TestRemoveThinkingDependentContextStrategies_RemovesSingleEntry removes the
+// only clear-thinking edit from a context object. The edits key must disappear
+// while the surrounding context_management object remains present.
 func TestRemoveThinkingDependentContextStrategies_RemovesSingleEntry(t *testing.T) {
 	input := []byte(`{"context_management":{"edits":[{"type":"clear_thinking_20251015"}]},"messages":[]}`)
 	out := RemoveThinkingDependentContextStrategies(input)
@@ -101,6 +116,9 @@ func TestRemoveThinkingDependentContextStrategies_RemovesSingleEntry(t *testing.
 	require.False(t, hasEdits, "所有 edits 均为 clear_thinking_20251015 时应删除 edits 键")
 }
 
+// TestRemoveThinkingDependentContextStrategies_MixedEntries places a dependent
+// clear-thinking edit beside another context strategy. Cleanup must remove the
+// dependent entry and retain the other strategy as the sole remaining edit.
 func TestRemoveThinkingDependentContextStrategies_MixedEntries(t *testing.T) {
 	input := []byte(`{"context_management":{"edits":[{"type":"clear_thinking_20251015"},{"type":"other_strategy","param":1}]},"messages":[]}`)
 	out := RemoveThinkingDependentContextStrategies(input)

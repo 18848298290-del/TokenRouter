@@ -7,6 +7,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestClaudeUsageResponse_FableWindowDecoding decodes usage responses with and
+// without the optional overage-included weekly window. The wire fields must
+// retain supplied values and remain zero when the window is omitted.
 func TestClaudeUsageResponse_FableWindowDecoding(t *testing.T) {
 	t.Run("seven_day_overage_included", func(t *testing.T) {
 		raw := `{

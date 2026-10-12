@@ -7,6 +7,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestStripSignatureSensitiveBlocksFromClaudeRequest supplies reasoning,
+// a tool call, its result, and redacted history. The broader repair must disable
+// thinking, turn readable blocks into text, and remove redacted reasoning.
 func TestStripSignatureSensitiveBlocksFromClaudeRequest(t *testing.T) {
 	req := &ClaudeRequest{
 		Model: "claude-sonnet-4-5",
@@ -58,6 +61,9 @@ func TestStripSignatureSensitiveBlocksFromClaudeRequest(t *testing.T) {
 	require.NotEmpty(t, blocks1[0]["text"])
 }
 
+// TestStripThinkingFromClaudeRequest_DoesNotDowngradeTools places reasoning
+// and a tool call in one assistant message. The narrower repair must disable
+// thinking and convert its text while retaining the structured tool call.
 func TestStripThinkingFromClaudeRequest_DoesNotDowngradeTools(t *testing.T) {
 	req := &ClaudeRequest{
 		Model: "claude-sonnet-4-5",

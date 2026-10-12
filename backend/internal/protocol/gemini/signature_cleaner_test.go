@@ -6,6 +6,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestReplaceThoughtSignaturesRecursive_OnlyReplacesTargetField supplies
+// replay and generic signature fields at the root and in nested array objects.
+// Replacement must target thoughtSignature at both levels while retaining
+// the neighboring signature values.
 func TestReplaceThoughtSignaturesRecursive_OnlyReplacesTargetField(t *testing.T) {
 	input := map[string]any{
 		"thoughtSignature": "sig_root",

@@ -8,6 +8,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol"
 )
 
+// TestParseSSEUsagePassthroughNormalizesKimiPromptUsage models an initial Kimi
+// prompt total followed by separate cache and uncached observations. The final
+// billing buckets must exclude cached tokens from uncached input while retaining
+// the output count.
 func TestParseSSEUsagePassthroughNormalizesKimiPromptUsage(t *testing.T) {
 	usage := &protocol.TokenUsage{}
 
@@ -21,6 +25,9 @@ func TestParseSSEUsagePassthroughNormalizesKimiPromptUsage(t *testing.T) {
 	require.Equal(t, 166, usage.OutputTokens)
 }
 
+// TestParseSSEUsagePassthroughKimiFullyCachedInputReplacesStartTotal follows
+// an initial total with a fully cached prompt observation. Normalization must
+// clear the earlier uncached count and place the prompt entirely in cache reads.
 func TestParseSSEUsagePassthroughKimiFullyCachedInputReplacesStartTotal(t *testing.T) {
 	usage := &protocol.TokenUsage{}
 
@@ -31,13 +38,17 @@ func TestParseSSEUsagePassthroughKimiFullyCachedInputReplacesStartTotal(t *testi
 	require.Equal(t, 173306, usage.CacheReadInputTokens)
 }
 
+// TestParseClaudeUsageFromResponseBodyNormalizesCNProviderAliases decodes
+// buffered Kimi, GLM, and DeepSeek usage shapes. Their total, nested-cache, and
+// hit/miss aliases must produce separate uncached input, cache-read, and output
+// buckets with the expected counts.
 func TestParseClaudeUsageFromResponseBodyNormalizesCNProviderAliases(t *testing.T) {
 	tests := []struct {
-		name          string
-		body          string
-		wantInput     int
-		wantCacheRead int
-		wantOutput    int
+		name          string // upstream usage shape
+		body          string // buffered response JSON
+		wantInput     int    // expected uncached input
+		wantCacheRead int    // expected cache-read tokens
+		wantOutput    int    // expected generated tokens
 	}{
 		{
 			name:          "Kimi top-level cached_tokens",
@@ -72,12 +83,15 @@ func TestParseClaudeUsageFromResponseBodyNormalizesCNProviderAliases(t *testing.
 	}
 }
 
+// TestParseSSEUsagePassthroughNormalizesGLMAndDeepSeekAliases supplies deltas
+// with GLM nested cache details and DeepSeek hit/miss fields. Both forms must
+// produce the same disjoint prompt buckets while retaining generated output.
 func TestParseSSEUsagePassthroughNormalizesGLMAndDeepSeekAliases(t *testing.T) {
 	tests := []struct {
-		name          string
-		data          string
-		wantInput     int
-		wantCacheRead int
+		name          string // upstream usage shape
+		data          string // streaming event JSON
+		wantInput     int    // expected uncached input
+		wantCacheRead int    // expected cache-read tokens
 	}{
 		{
 			name:          "GLM",
@@ -104,6 +118,9 @@ func TestParseSSEUsagePassthroughNormalizesGLMAndDeepSeekAliases(t *testing.T) {
 	}
 }
 
+// TestGatewayService_ParseSSEUsagePassthrough_MessageStartFallbacks supplies
+// zero cache aggregates with cached_tokens and TTL details. Parsing must fill
+// cache reads from the alias and cache writes from the category sum.
 func TestGatewayService_ParseSSEUsagePassthrough_MessageStartFallbacks(t *testing.T) {
 	usage := &protocol.TokenUsage{}
 	data := `{"type":"message_start","message":{"usage":{"input_tokens":12,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cached_tokens":9,"cache_creation":{"ephemeral_5m_input_tokens":3,"ephemeral_1h_input_tokens":4}}}}`
@@ -117,6 +134,10 @@ func TestGatewayService_ParseSSEUsagePassthrough_MessageStartFallbacks(t *testin
 	require.Equal(t, 4, usage.CacheCreation1hTokens)
 }
 
+// TestGatewayService_ParseSSEUsagePassthrough_MessageDeltaSelectiveOverwrite
+// applies a delta with zero input and revised cache TTL categories. Initial input
+// must survive while positive output, the cache-read alias, and explicit zero
+// TTL observations update their respective buckets.
 func TestGatewayService_ParseSSEUsagePassthrough_MessageDeltaSelectiveOverwrite(t *testing.T) {
 	usage := &protocol.TokenUsage{}
 	start := `{"type":"message_start","message":{"usage":{"input_tokens":10,"cache_creation_input_tokens":463184,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":463184}}}}`
@@ -134,6 +155,9 @@ func TestGatewayService_ParseSSEUsagePassthrough_MessageDeltaSelectiveOverwrite(
 	require.Equal(t, 0, usage.CacheCreation1hTokens)
 }
 
+// TestGatewayService_ParseSSEUsagePassthrough_NoopCases passes empty data,
+// the DONE sentinel, undecodable text, and a nil destination. These cases must
+// retain an existing input observation or return safely for the nil destination.
 func TestGatewayService_ParseSSEUsagePassthrough_NoopCases(t *testing.T) {
 	usage := &protocol.TokenUsage{InputTokens: 3}
 	ParseSSEUsagePassthrough("", usage)
@@ -149,6 +173,9 @@ func TestGatewayService_ParseSSEUsagePassthrough_NoopCases(t *testing.T) {
 	ParseSSEUsagePassthrough(`{"type":"message_start"}`, nil)
 }
 
+// TestGatewayService_ParseSSEUsagePassthrough_FallbackFromUsageNode attaches
+// cache observations to a content event. Alias and TTL fallback extraction must
+// still populate usage even when the event has no recognized aggregate-usage type.
 func TestGatewayService_ParseSSEUsagePassthrough_FallbackFromUsageNode(t *testing.T) {
 	usage := &protocol.TokenUsage{}
 	data := `{"type":"content_block_delta","usage":{"cached_tokens":6,"cache_creation":{"ephemeral_5m_input_tokens":2,"ephemeral_1h_input_tokens":1}}}`
@@ -159,6 +186,9 @@ func TestGatewayService_ParseSSEUsagePassthrough_FallbackFromUsageNode(t *testin
 	require.Equal(t, 3, usage.CacheCreationInputTokens)
 }
 
+// TestParseClaudeUsageFromResponseBody covers missing usage, cache aliases,
+// TTL details, and supplied cache aggregates in buffered responses. Parsing must
+// return a nonnil result and prefer nonzero canonical aggregates over their aliases.
 func TestParseClaudeUsageFromResponseBody(t *testing.T) {
 	t.Run("empty or missing usage", func(t *testing.T) {
 		got := ParseClaudeUsageFromResponseBody(nil)
@@ -189,6 +219,10 @@ func TestParseClaudeUsageFromResponseBody(t *testing.T) {
 	})
 }
 
+// BenchmarkGatewayService_ParseSSEUsagePassthrough_MessageStart measures
+// initial-event extraction with canonical cache counts and TTL details. A fresh
+// destination in each iteration includes usage initialization in the measured
+// parse operation.
 func BenchmarkGatewayService_ParseSSEUsagePassthrough_MessageStart(b *testing.B) {
 	data := `{"type":"message_start","message":{"usage":{"input_tokens":123,"cache_creation_input_tokens":45,"cache_read_input_tokens":6,"cached_tokens":6,"cache_creation":{"ephemeral_5m_input_tokens":20,"ephemeral_1h_input_tokens":25}}}}`
 	b.ReportAllocs()
@@ -199,6 +233,9 @@ func BenchmarkGatewayService_ParseSSEUsagePassthrough_MessageStart(b *testing.B)
 	}
 }
 
+// BenchmarkGatewayService_ParseSSEUsagePassthrough_MessageDelta measures
+// selective aggregate and TTL extraction from a delta event. Each iteration
+// starts with fresh usage so the benchmark covers the complete observation merge.
 func BenchmarkGatewayService_ParseSSEUsagePassthrough_MessageDelta(b *testing.B) {
 	data := `{"type":"message_delta","usage":{"output_tokens":456,"cache_creation_input_tokens":30,"cache_read_input_tokens":7,"cached_tokens":7,"cache_creation":{"ephemeral_5m_input_tokens":10,"ephemeral_1h_input_tokens":20}}}`
 	b.ReportAllocs()
@@ -209,6 +246,9 @@ func BenchmarkGatewayService_ParseSSEUsagePassthrough_MessageDelta(b *testing.B)
 	}
 }
 
+// BenchmarkParseClaudeUsageFromResponseBody measures buffered Messages usage
+// extraction with canonical counts and TTL cache detail. Result allocation remains
+// inside the timed loop because the parser returns a fresh usage value.
 func BenchmarkParseClaudeUsageFromResponseBody(b *testing.B) {
 	body := []byte(`{"id":"msg_123","type":"message","usage":{"input_tokens":123,"output_tokens":456,"cache_creation_input_tokens":45,"cache_read_input_tokens":6,"cached_tokens":6,"cache_creation":{"ephemeral_5m_input_tokens":20,"ephemeral_1h_input_tokens":25}}}`)
 	b.ReportAllocs()

@@ -4,13 +4,16 @@ import (
 	"testing"
 )
 
-// TestApplyCacheTTLOverrideContract checks TTL buckets and excludes aggregate-to-detail filling from the changed flag.
+// TestApplyCacheTTLOverrideContract reclassifies absent, mixed, and already
+// classified cache-write details with known and unknown TTL targets. The changed
+// flag must distinguish category movement from initial aggregate filling, and
+// unrelated usage fields must retain their values.
 func TestApplyCacheTTLOverrideContract(t *testing.T) {
 	tests := []struct {
-		name, target          string
-		aggregate, five, hour int
-		wantFive, wantHour    int
-		changed               bool
+		name, target          string // scenario and TTL selection
+		aggregate, five, hour int    // initial total and TTL buckets
+		wantFive, wantHour    int    // expected TTL category counts
+		changed               bool   // expected category movement
 	}{
 		{name: "empty", target: "1h"},
 		{name: "aggregate fills 5m without reporting override", target: "5m", aggregate: 9, wantFive: 9},
@@ -41,13 +44,16 @@ func TestApplyCacheTTLOverrideContract(t *testing.T) {
 	}
 }
 
-// TestIncludeIndependentReasoningTokens checks output totals with separately reported reasoning tokens.
+// TestIncludeIndependentReasoningTokens supplies separate reasoning counts,
+// inclusive output, incomplete gaps, and inconsistent totals. Added reasoning
+// must fit the observed gap and its own count, while unusable totals leave
+// the supplied output unchanged.
 func TestIncludeIndependentReasoningTokens(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name                         string
-		input, output, total, reason int64
-		want                         int64
+		name                         string // reasoning usage scenario
+		input, output, total, reason int64  // supplied token observations
+		want                         int64  // expected inclusive output
 	}{
 		{name: "xAI chat example", input: 32, output: 9, total: 135, reason: 94, want: 103},
 		{name: "xAI responses example", input: 32, output: 9, total: 151, reason: 110, want: 119},
