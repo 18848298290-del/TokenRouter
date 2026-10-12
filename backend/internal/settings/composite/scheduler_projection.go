@@ -4,7 +4,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// SchedulerAdminSettings extracts scheduler settings from the snapshot.
+// Advanced scheduler parameters are stored as optional numeric text alongside
+// switches for selection behavior. The combined Snapshot passes that configured
+// text to scheduler normalization with its separate presence flag, then receives
+// the normalized update values; effective inherited values come from the
+// scheduler read-result conversion.
+
+// SchedulerAdminSettings returns configured scheduler text, switches, and the
+// sticky-escape presence flag.
 func (s *Snapshot) SchedulerAdminSettings() scheduler.AdminSettings {
 	return scheduler.AdminSettings{
 		AdvancedSchedulerEWMAErrorRateAlpha:          s.AdvancedSchedulerEWMAErrorRateAlpha,
@@ -28,7 +35,8 @@ func (s *Snapshot) SchedulerAdminSettings() scheduler.AdminSettings {
 	}
 }
 
-// ApplySchedulerAdminSettings copies scheduler settings into the snapshot.
+// ApplySchedulerAdminSettings assigns normalized scheduler text, switches, and
+// presence metadata to the Snapshot.
 func (s *Snapshot) ApplySchedulerAdminSettings(value scheduler.AdminSettings) {
 	s.AdvancedSchedulerEWMAErrorRateAlpha = value.AdvancedSchedulerEWMAErrorRateAlpha
 	s.AdvancedSchedulerEWMATTFTAlpha = value.AdvancedSchedulerEWMATTFTAlpha

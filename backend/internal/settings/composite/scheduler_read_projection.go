@@ -2,7 +2,14 @@ package composite
 
 import "github.com/TokenFlux/TokenRouter/internal/scheduler"
 
-// ApplySchedulerAdminReadSettings copies the scheduler read result into the snapshot.
+// Administrator scheduler settings show configured text beside the parameters
+// that will actually be used after inheritance and normalization. Both sets
+// come from one scheduler read result, allowing empty overrides to remain
+// visible while the separate effective fields explain their deployment defaults
+// and selected runtime values.
+
+// ApplySchedulerAdminReadSettings transfers configured and effective scheduler
+// values from the owning reader result.
 func (s *Snapshot) ApplySchedulerAdminReadSettings(value *scheduler.AdminReadSettings) {
 	s.AdvancedSchedulerEWMAErrorRateAlpha = value.AdvancedSchedulerEWMAErrorRateAlpha
 	s.AdvancedSchedulerEWMATTFTAlpha = value.AdvancedSchedulerEWMATTFTAlpha

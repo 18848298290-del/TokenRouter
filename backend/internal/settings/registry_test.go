@@ -8,15 +8,20 @@ import (
 	"testing"
 )
 
-// registryParticipant supplies an empty preparation function for ownership tests.
+// registryParticipant constructs one module's ownership declarations with an empty
+// preparer for registry tests. Callers replace that callback when testing mutation
+// or failures, and construction alone performs no preparation.
 func registryParticipant(module, field, key string) Participant {
 	return Participant{Module: module, Fields: []string{field}, Keys: []string{key}, Prepare: func(context.Context, Fields, map[string]string) (PreparedChange, error) { return PreparedChange{}, nil }}
 }
 
+// TestRegistryRejectsDuplicateOwnershipAtConstruction adds a second declaration
+// that duplicates a module, request field, or storage key. Each constructor call
+// returns an error, protecting exclusive ownership before any participant prepares data.
 func TestRegistryRejectsDuplicateOwnershipAtConstruction(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		second Participant
+		name   string      // duplicated ownership category label
+		second Participant // conflicting second module registration
 	}{
 		{"field", registryParticipant("second", "field", "other")},
 		{"key", registryParticipant("second", "other", "key")},
@@ -30,6 +35,10 @@ func TestRegistryRejectsDuplicateOwnershipAtConstruction(t *testing.T) {
 	}
 }
 
+// TestRegistryPreparesInOrderWithoutSharingMutableInput mutates constructor slices,
+// participant inputs, and the returned source map. The registry preserves declared
+// ownership and call order while retaining the caller's JSON/current values and
+// a detached prepared write map.
 func TestRegistryPreparesInOrderWithoutSharingMutableInput(t *testing.T) {
 	input := Fields{"first": json.RawMessage(`{"enabled":true}`), "second": json.RawMessage(`false`), "secret": json.RawMessage(`"not-owned"`)}
 	current := map[string]string{"one": "old-one", "two": "old-two", "unowned": "secret"}
@@ -57,7 +66,8 @@ func TestRegistryPreparesInOrderWithoutSharingMutableInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Mutating constructor inputs must not change the registered declarations.
+	// Change the supplied declaration slices after construction so preparation
+	// must use the registry's retained copies rather than those modified ownership names.
 	first.Fields[0] = "secret"
 	first.Keys[0] = "unowned"
 	changes, err := registry.Prepare(context.Background(), input, current)
@@ -70,6 +80,9 @@ func TestRegistryPreparesInOrderWithoutSharingMutableInput(t *testing.T) {
 	}
 }
 
+// TestRegistryRejectsUnownedWritesAndStopsAfterPrepareFailure supplies an unowned
+// write, a preparer error, and a cancelled context. Each case stops preparation
+// before later participant calls, and the expected error remains observable.
 func TestRegistryRejectsUnownedWritesAndStopsAfterPrepareFailure(t *testing.T) {
 	first := registryParticipant("first", "first", "one")
 	first.Prepare = func(context.Context, Fields, map[string]string) (PreparedChange, error) {

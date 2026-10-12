@@ -18,6 +18,23 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/site"
 )
 
+// Settings audit records list submitted or changed field names after the
+// combined update has committed. Ordinary fields compare the prior readback with
+// the prepared Snapshot; credential labels instead reflect nonempty submitted
+// secret text, keeping credential content out of the log. Grant changes add
+// provider-specific names from the two authentication-default values.
+//
+// Comparisons follow each stored representation: ordered lists retain positional
+// meaning, legal records compare ID/title/body, and provider thresholds compare
+// supported platforms with missing entries interpreted as disabled pausing.
+// These helpers do not read committed values again, so a logged label describes
+// preparation or submission evidence, and a later response read can still fail
+// after the audit event is written.
+
+// auditSettingsUpdate logs changed or submitted setting names after successful
+// Commit, using authenticated context identity when available. Nil snapshots and
+// an empty change list skip logging; the caller passes prepared values and its
+// audit request before final response readback.
 func (h *Handler) auditSettingsUpdate(c *gin.Context, before *composite.Snapshot, after *composite.Snapshot, beforeAuthSourceDefaults *identity.AuthSourceDefaultSettings, afterAuthSourceDefaults *identity.AuthSourceDefaultSettings, req UpdateSettingsRequest) {
 	if before == nil || after == nil {
 		return
@@ -38,6 +55,16 @@ func (h *Handler) auditSettingsUpdate(c *gin.Context, before *composite.Snapshot
 	)
 }
 
+// DiffSettings returns audited field names by comparing nonnil prior and
+// prepared Snapshots with submitted credential metadata. Scalar and collection
+// comparisons follow the explicit field sequence, while nonempty secret request
+// values add credential labels even when the stored secret is unchanged.
+//
+// The result describes preparation and submission, not a second database read.
+// Ordered collection helpers can treat nil and empty alike; legal comparison
+// uses ID, title, and body, while supported provider thresholds use 100 for
+// missing entries. Authentication-source grant differences are appended last
+// with nil grant records interpreted as zero defaults.
 func DiffSettings(before *composite.Snapshot, after *composite.Snapshot, beforeAuthSourceDefaults *identity.AuthSourceDefaultSettings, afterAuthSourceDefaults *identity.AuthSourceDefaultSettings, req UpdateSettingsRequest) []string {
 	changed := make([]string, 0, 20)
 	if before.RegistrationEnabled != after.RegistrationEnabled {
@@ -652,12 +679,14 @@ func DiffSettings(before *composite.Snapshot, after *composite.Snapshot, beforeA
 	if before.AdvancedSchedulerWeightSessionSticky != after.AdvancedSchedulerWeightSessionSticky {
 		changed = append(changed, "advanced_scheduler_weight_session_sticky")
 	}
-	// Audit changes to global OpenAI quota auto-pause thresholds.
+	// Compare both global window defaults as one audited setting because these
+	// fractions are saved together in the quota object within Ops advanced JSON.
 	if before.OpenAIQuotaAutoPauseSettings.DefaultThreshold5h != after.OpenAIQuotaAutoPauseSettings.DefaultThreshold5h ||
 		before.OpenAIQuotaAutoPauseSettings.DefaultThreshold7d != after.OpenAIQuotaAutoPauseSettings.DefaultThreshold7d {
 		changed = append(changed, "openai_provider_quota_auto_pause")
 	}
-	// Balance, subscription expiry, and provider quota notifications.
+	// Compare notification controls after the quota object so their labels retain
+	// the audit field sequence while recipient eligibility flags are checked by their helper.
 	if before.BalanceLowNotifyEnabled != after.BalanceLowNotifyEnabled {
 		changed = append(changed, "balance_low_notify_enabled")
 	}
@@ -683,6 +712,10 @@ func DiffSettings(before *composite.Snapshot, after *composite.Snapshot, beforeA
 	return changed
 }
 
+// AppendAuthSourceDefaultChanges appends provider-specific grant labels to the
+// supplied list in its fixed source order. Nil grant values become zero defaults;
+// callers use the returned slice because append can allocate or retain its existing
+// backing storage.
 func AppendAuthSourceDefaultChanges(changed []string, before *identity.AuthSourceDefaultSettings, after *identity.AuthSourceDefaultSettings) []string {
 	if before == nil {
 		before = &identity.AuthSourceDefaultSettings{}
@@ -691,10 +724,12 @@ func AppendAuthSourceDefaultChanges(changed []string, before *identity.AuthSourc
 		after = &identity.AuthSourceDefaultSettings{}
 	}
 
+	// providerDefaultGrantField pairs one authentication source's before and after
+	// grant values so audit labels retain the same source name during comparison.
 	type providerDefaultGrantField struct {
-		name   string
-		before identity.ProviderDefaultGrantSettings
-		after  identity.ProviderDefaultGrantSettings
+		name   string                                // authentication source audit name
+		before identity.ProviderDefaultGrantSettings // grants from prior settings
+		after  identity.ProviderDefaultGrantSettings // grants from prepared update
 	}
 
 	fields := []providerDefaultGrantField{
@@ -729,11 +764,16 @@ func AppendAuthSourceDefaultChanges(changed []string, before *identity.AuthSourc
 	return changed
 }
 
+// normalizeDefaultSubscriptions copies positive plan selections in supplied
+// order, keeping duplicates for later billing validation. Empty input returns nil;
+// a nonempty list containing no positive IDs returns an allocated empty list.
 func normalizeDefaultSubscriptions(input []billinghttp.DefaultSubscriptionSetting) []billinghttp.DefaultSubscriptionSetting {
 	if len(input) == 0 {
 		return nil
 	}
 	normalized := make([]billinghttp.DefaultSubscriptionSetting, 0, len(input))
+	// Discard nonpositive editor selections before the retained list reaches
+	// billing's duplicate checks and optional saved-plan lookup validation.
 	for _, item := range input {
 		if item.PlanID <= 0 {
 			continue
@@ -743,6 +783,9 @@ func normalizeDefaultSubscriptions(input []billinghttp.DefaultSubscriptionSettin
 	return normalized
 }
 
+// normalizeOptionalDefaultSubscriptions keeps a nil request pointer as nil and
+// normalizes a supplied subscription list through the positive-plan filter. Its
+// new pointer remains supplied even when the filtered slice is nil or empty.
 func normalizeOptionalDefaultSubscriptions(input *[]billinghttp.DefaultSubscriptionSetting) *[]billinghttp.DefaultSubscriptionSetting {
 	if input == nil {
 		return nil
@@ -751,6 +794,9 @@ func normalizeOptionalDefaultSubscriptions(input *[]billinghttp.DefaultSubscript
 	return &normalized
 }
 
+// float64ValueOrDefault returns the supplied scalar value or its prior default.
+// Nil chooses fallback; nonnil zero and negative values stay supplied for the
+// calling handler's separate normalization and validation rules.
 func float64ValueOrDefault(value *float64, fallback float64) float64 {
 	if value == nil {
 		return fallback
@@ -758,6 +804,9 @@ func float64ValueOrDefault(value *float64, fallback float64) float64 {
 	return *value
 }
 
+// intValueOrDefault returns a pointed integer or the supplied prior default.
+// Nil keeps fallback, while nonnil zero remains submitted input so the handler
+// or owning module can apply its field-specific rule.
 func intValueOrDefault(value *int, fallback int) int {
 	if value == nil {
 		return fallback
@@ -765,6 +814,9 @@ func intValueOrDefault(value *int, fallback int) int {
 	return *value
 }
 
+// boolValueOrDefault returns the submitted boolean or the supplied prior state.
+// A nil pointer keeps fallback, and a pointed false remains a supplied update
+// for the caller's subsequent field preparation.
 func boolValueOrDefault(value *bool, fallback bool) bool {
 	if value == nil {
 		return fallback
@@ -772,6 +824,9 @@ func boolValueOrDefault(value *bool, fallback bool) bool {
 	return *value
 }
 
+// defaultSubscriptionsValueOrDefault returns the prior slice when input is nil,
+// retaining its storage. A supplied list becomes a new slice of core plan-ID
+// records, so an empty supplied value can clear selections after handler merging.
 func defaultSubscriptionsValueOrDefault(input *[]billinghttp.DefaultSubscriptionSetting, fallback []billing.DefaultSubscriptionSetting) []billing.DefaultSubscriptionSetting {
 	if input == nil {
 		return fallback
@@ -785,6 +840,9 @@ func defaultSubscriptionsValueOrDefault(input *[]billinghttp.DefaultSubscription
 	return result
 }
 
+// equalStringSlice reports ordered equality of the two string lists. Nil and
+// empty lists compare equal because both have zero length; nonempty entries
+// compare exactly with no trimming, sorting, or case normalization.
 func equalStringSlice(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
@@ -797,6 +855,9 @@ func equalStringSlice(a, b []string) bool {
 	return true
 }
 
+// equalDefaultSubscriptions reports equality of ordered plan-ID selections.
+// Nil and empty lists compare equal, while plan order and duplicate positions
+// remain meaningful in this audit comparison of the stored grant representation.
 func equalDefaultSubscriptions(a, b []billing.DefaultSubscriptionSetting) bool {
 	if len(a) != len(b) {
 		return false
@@ -809,6 +870,9 @@ func equalDefaultSubscriptions(a, b []billing.DefaultSubscriptionSetting) bool {
 	return true
 }
 
+// equalLoginAgreementDocuments compares ordered legal records by ID, title,
+// and Markdown body. Nil and empty lists compare equal; localization pointers
+// and their revision metadata are outside this helper's selected audit comparison.
 func equalLoginAgreementDocuments(a, b []site.LoginAgreementDocument) bool {
 	if len(a) != len(b) {
 		return false
@@ -821,6 +885,9 @@ func equalLoginAgreementDocuments(a, b []site.LoginAgreementDocument) bool {
 	return true
 }
 
+// equalIntSlice reports ordered equality for table page-size choices. Nil and
+// empty lists compare equal, while each supplied integer and its position
+// remain significant when the audit decides whether the list changed.
 func equalIntSlice(a, b []int) bool {
 	if len(a) != len(b) {
 		return false
@@ -833,6 +900,9 @@ func equalIntSlice(a, b []int) bool {
 	return true
 }
 
+// equalNotifyEmailEntries compares ordered recipient addresses with Disabled
+// and Verified flags. Nil and empty lists compare equal; a difference in any
+// selected flag or exact address adds the recipient-setting audit label.
 func equalNotifyEmailEntries(a, b []contact.Entry) bool {
 	if len(a) != len(b) {
 		return false
@@ -845,7 +915,18 @@ func equalNotifyEmailEntries(a, b []contact.Entry) bool {
 	return true
 }
 
+// equalProviderSchedulingThresholds compares percentages for supported platform
+// keys, using 100 when an entry is missing from either map. Nil or empty
+// maps therefore represent disabled automatic pausing for every platform in this
+// comparison, while supplied supported values are compared directly.
+//
+// Unsupported keys are outside the selected platform iteration, so their differences
+// do not change this result. The comparison preserves the provider module's
+// missing-entry meaning for audit labels; it performs no range validation or
+// normalization of values, which occurs during settings preparation.
 func equalProviderSchedulingThresholds(before, after map[string]int) bool {
+	// Compare the provider-supported platform set with absent entries selected as
+	// 100, keeping sparse maps consistent with disabled-pausing meaning for audit decisions.
 	for _, platform := range provider.AllowedSchedulingThresholdPlatforms {
 		beforeValue := 100
 		if before != nil {
@@ -866,6 +947,9 @@ func equalProviderSchedulingThresholds(before, after map[string]int) bool {
 	return true
 }
 
+// stringSetting returns pointed text or the supplied prior value for merging.
+// Nil keeps fallback, while a supplied empty string stays empty so scheduler
+// preparation can interpret it as inherited configuration.
 func stringSetting(value *string, fallback string) string {
 	if value == nil {
 		return fallback
@@ -873,8 +957,14 @@ func stringSetting(value *string, fallback string) string {
 	return *value
 }
 
-// equalUserPromptReplacementConfig compares serialized configurations, including nested rule fields.
+// equalUserPromptReplacementConfig compares serialized prompt rule objects,
+// including nested fields and their order. Nil serializes as null and differs
+// from an empty nonnil object; encoding errors are discarded before comparing
+// the available serialized text.
 func equalUserPromptReplacementConfig(a, b *promptpolicy.UserPromptReplacementConfig) bool {
+	// The current prompt configuration consists of JSON-supported scalar/rule
+	// fields. Encoding errors are still discarded here, and comparison uses whatever
+	// serialized bytes each attempted encoding returned for the audited object.
 	rawA, _ := json.Marshal(a)
 	rawB, _ := json.Marshal(b)
 	return string(rawA) == string(rawB)

@@ -8,7 +8,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestApplicationsUseOneCommittedSnapshot checks that every application receives the same persisted snapshot.
+// TestApplicationsUseOneCommittedSnapshot loads one Snapshot before invoking
+// three application callbacks in sequence. The first receives the expected pointer,
+// later callbacks read site and worker fields, and the loader runs once in the asserted order.
 func TestApplicationsUseOneCommittedSnapshot(t *testing.T) {
 	reads := 0
 	var order []string
@@ -37,7 +39,9 @@ func TestApplicationsUseOneCommittedSnapshot(t *testing.T) {
 	require.Equal(t, []string{"gateway", "site", "creative"}, order)
 }
 
-// TestApplicationsDoNotPublishAfterReadFailure checks that a failed read returning nil skips module application.
+// TestApplicationsDoNotPublishAfterReadFailure supplies a loader returning nil
+// with its configured error. The load callback reports that error, while the
+// later module callback succeeds as a skip and stays uncalled.
 func TestApplicationsDoNotPublishAfterReadFailure(t *testing.T) {
 	failed := errors.New("read failed")
 	applied := false

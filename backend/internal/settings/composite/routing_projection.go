@@ -2,7 +2,13 @@ package composite
 
 import "github.com/TokenFlux/TokenRouter/internal/routing"
 
-// RoutingAdminSettings extracts routing settings from the snapshot.
+// Routing settings determine fallback model choices and the marketplace
+// observation window shown in administrator settings. Their value struct copies
+// these scalar fields between the combined Snapshot and the routing normalizer,
+// so the saved batch and later readback use the owning module's selected values.
+
+// RoutingAdminSettings returns fallback choices and marketplace window controls
+// for routing preparation.
 func (s *Snapshot) RoutingAdminSettings() routing.AdminSettings {
 	return routing.AdminSettings{
 		EnableModelFallback:                  s.EnableModelFallback,
@@ -15,7 +21,8 @@ func (s *Snapshot) RoutingAdminSettings() routing.AdminSettings {
 	}
 }
 
-// ApplyRoutingAdminSettings copies routing settings into the snapshot.
+// ApplyRoutingAdminSettings assigns normalized fallback models and marketplace
+// intervals to the Snapshot.
 func (s *Snapshot) ApplyRoutingAdminSettings(value routing.AdminSettings) {
 	s.EnableModelFallback = value.EnableModelFallback
 	s.FallbackModelAnthropic = value.FallbackModelAnthropic
@@ -26,7 +33,8 @@ func (s *Snapshot) ApplyRoutingAdminSettings(value routing.AdminSettings) {
 	s.MarketplaceAvailabilityWindowDays = value.MarketplaceAvailabilityWindowDays
 }
 
-// ApplyRoutingAdminReadSettings copies model fallback and marketplace availability windows into the snapshot.
+// ApplyRoutingAdminReadSettings assigns the routing reader's fallback models and
+// marketplace observation settings.
 func (s *Snapshot) ApplyRoutingAdminReadSettings(value *routing.AdminReadSettings) {
 	s.EnableModelFallback = value.EnableModelFallback
 	s.FallbackModelAnthropic = value.FallbackModelAnthropic

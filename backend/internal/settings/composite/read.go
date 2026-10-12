@@ -26,19 +26,52 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// ReadOptions provides module readers, runtime defaults, and the model publication callback.
+// One raw settings batch supplies the combined administrator Snapshot, while
+// each owning module interprets its keys with the appropriate startup defaults.
+// The batch map is copied for later revision checks, and module results provide
+// the typed display and update fields. Reading can also publish the resolved
+// Grok default model when assembly installs that callback.
+//
+// Responses WebSocket settings retain their override JSON separately from the
+// effective parameters. A failed override resolution selects deployment defaults
+// or the current runtime Snapshot, leaving valid JSON available for administrator
+// inspection; invalid JSON is replaced with an empty object. Other module
+// collections are transferred through their read-result values and keep the
+// sharing rules of the Snapshot and its extraction helpers.
+
+// ReadOptions supplies module interpreters, deployment fallback callbacks, and
+// optional read publication.
 type ReadOptions struct {
-	ResponsesWS        *ws.Runtime
-	OAuth              *identity.OAuthSettings
-	Gateway            gateway.AdminSettingsRules
-	Scheduler          scheduler.AdminDefaults
-	DefaultBalance     func() float64
-	DefaultConcurrency func() int
-	Forwarded          func() runtimeconfig.ForwardedInput
-	PublishModel       func(string)
+	// ResponsesWS supplies deployment defaults and a current effective value when
+	// override resolution fails. Nil selects the built-in WebSocket defaults for both paths.
+	ResponsesWS *ws.Runtime                // optional Responses WebSocket runtime reader
+	OAuth       *identity.OAuthSettings    // identity OAuth settings interpreter
+	Gateway     gateway.AdminSettingsRules // gateway administrator read rules
+	Scheduler   scheduler.AdminDefaults    // scheduler deployment parameter defaults
+	// DefaultBalance and DefaultConcurrency provide startup numeric defaults when
+	// the owning billing/identity readers cannot use stored values. Callers install
+	// these callbacks before Parse can select their fallback paths.
+	DefaultBalance     func() float64 // registration balance fallback reader
+	DefaultConcurrency func() int     // registration concurrency fallback reader
+	// Forwarded is called before module parsing to supply the current forwarded-IP
+	// defaults. It is required for every Parse call and stays valid during that read.
+	Forwarded func() runtimeconfig.ForwardedInput // current forwarded-IP deployment reader
+	// PublishModel is called synchronously after all fields are parsed. A nil
+	// callback skips publication; installed callbacks can update runtime model selection
+	// even when Parse was invoked for an administrator GET.
+	PublishModel func(string) // optional Grok model publication callback
 }
 
-// Parse combines stored values and module read results into an admin snapshot.
+// Parse combines a raw settings batch and module readers into a new Snapshot.
+// It calls Forwarded for current defaults, clones the stored map for later
+// conditional updates, and transfers parsed module values with their retained
+// collection references. Assembly supplies the required readers and numeric callbacks.
+//
+// Responses overrides are kept beside their effective parameters. Invalid
+// resolution selects built-in defaults or the current WebSocket runtime value;
+// valid override JSON stays visible even when its contents cannot resolve, while
+// invalid JSON becomes {}. The optional PublishModel callback runs after parsing
+// so this read can publish its resolved Grok model before the Snapshot is returned.
 func Parse(settings map[string]string, options ReadOptions) *Snapshot {
 	prior := options.Forwarded()
 	forwarded := runtimeconfig.ReadForwardedSettings(settings, prior)
@@ -60,11 +93,15 @@ func Parse(settings map[string]string, options ReadOptions) *Snapshot {
 	result.ResponsesWS = json.RawMessage(raw)
 	effective, err := ws.ResolveParameters(defaults, raw)
 	if err != nil {
+		// Failed overrides leave effective runtime parameters available for display,
+		// while valid raw JSON remains visible so an administrator can inspect and correct it.
 		effective = defaults
 		if options.ResponsesWS != nil {
 			effective = options.ResponsesWS.Snapshot()
 		}
 		if !json.Valid([]byte(raw)) {
+			// Invalid JSON cannot be embedded in the HTTP response, so show an empty
+			// override object while retaining the selected effective parameters alongside it.
 			result.ResponsesWS = json.RawMessage("{}")
 		}
 	}
@@ -87,7 +124,8 @@ func Parse(settings map[string]string, options ReadOptions) *Snapshot {
 
 	result.ApplySchedulerAdminReadSettings(scheduler.ReadAdminSettings(settings, options.Scheduler))
 
-	// Reading the admin snapshot also publishes the dynamic default model when a callback is installed.
+	// Publish the resolved model after module interpretation so later requests
+	// that omit a model can use this value, including when this parsing began as an admin read.
 	if options.PublishModel != nil {
 		options.PublishModel(result.GrokDefaultTextModel)
 	}
@@ -95,26 +133,33 @@ func Parse(settings map[string]string, options ReadOptions) *Snapshot {
 	return result
 }
 
-// ApplyAuditAdminReadSettings copies audit retention days into the snapshot.
+// ApplyAuditAdminReadSettings assigns the parsed audit retention value for administrator display.
 func (s *Snapshot) ApplyAuditAdminReadSettings(value *audit.AdminReadSettings) {
 	s.AuditLogRetentionDays = value.AuditLogRetentionDays
 }
 
-// ApplyCreativeAdminReadSettings copies Creative Studio access, model, and worker settings into the snapshot.
+// ApplyCreativeAdminReadSettings transfers Creative access, worker count, and
+// model selections from a nonnil read result. The model slice and its nested
+// operation lists remain the same references used by that result until callers
+// choose a separate copy.
 func (s *Snapshot) ApplyCreativeAdminReadSettings(value *creative.AdminReadSettings) {
 	s.CreativeEnabled = value.CreativeEnabled
 	s.CreativeModelSettings = value.CreativeModelSettings
 	s.CreativeWorkerCount = value.CreativeWorkerCount
 }
 
-// ApplyModerationAdminReadSettings copies session blocking and risk control settings into the snapshot.
+// ApplyModerationAdminReadSettings assigns parsed risk-center and session-blocking
+// controls to the Snapshot.
 func (s *Snapshot) ApplyModerationAdminReadSettings(value *moderation.AdminReadSettings) {
 	s.CyberSessionBlockEnabled = value.CyberSessionBlockEnabled
 	s.CyberSessionBlockTTLSeconds = value.CyberSessionBlockTTLSeconds
 	s.RiskControlEnabled = value.RiskControlEnabled
 }
 
-// ApplyNotificationAdminReadSettings copies SMTP connection, sender, and credential settings into the snapshot.
+// ApplyNotificationAdminReadSettings transfers SMTP connection and sender values
+// from a nonnil read result. Its raw password remains internal alongside the
+// configured flag; the response mapper exposes that flag while settings preparation
+// can use the credential.
 func (s *Snapshot) ApplyNotificationAdminReadSettings(value *notification.AdminReadSettings) {
 	s.SMTPFrom = value.SMTPFrom
 	s.SMTPFromName = value.SMTPFromName
@@ -126,7 +171,8 @@ func (s *Snapshot) ApplyNotificationAdminReadSettings(value *notification.AdminR
 	s.SMTPUsername = value.SMTPUsername
 }
 
-// ApplyOpsAdminReadSettings copies quota auto-pause and monitoring settings into the snapshot.
+// ApplyOpsAdminReadSettings assigns quota thresholds and monitoring cadence from
+// a nonnil Ops read result.
 func (s *Snapshot) ApplyOpsAdminReadSettings(value *ops.AdminReadSettings) {
 	s.OpenAIQuotaAutoPauseSettings = value.OpenAIQuotaAutoPauseSettings
 	s.OpsMetricsIntervalSeconds = value.OpsMetricsIntervalSeconds
@@ -134,7 +180,8 @@ func (s *Snapshot) ApplyOpsAdminReadSettings(value *ops.AdminReadSettings) {
 	s.OpsRealtimeMonitoringEnabled = value.OpsRealtimeMonitoringEnabled
 }
 
-// ApplyPaymentAdminReadSettings copies Alipay and WeChat Pay visibility and source settings into the snapshot.
+// ApplyPaymentAdminReadSettings assigns parsed Alipay/WeChat visibility switches
+// and source choices to the Snapshot.
 func (s *Snapshot) ApplyPaymentAdminReadSettings(value *payment.AdminReadSettings) {
 	s.PaymentVisibleMethodAlipayEnabled = value.PaymentVisibleMethodAlipayEnabled
 	s.PaymentVisibleMethodAlipaySource = value.PaymentVisibleMethodAlipaySource
@@ -142,7 +189,8 @@ func (s *Snapshot) ApplyPaymentAdminReadSettings(value *payment.AdminReadSetting
 	s.PaymentVisibleMethodWxpaySource = value.PaymentVisibleMethodWxpaySource
 }
 
-// ApplyPromotionAdminReadSettings copies invitation, promotion, and rebate settings into the snapshot.
+// ApplyPromotionAdminReadSettings assigns invitation, promo, and rebate controls
+// from the promotion read result.
 func (s *Snapshot) ApplyPromotionAdminReadSettings(value *promotion.AdminReadSettings) {
 	s.AdminRechargeRebateEnabled = value.AdminRechargeRebateEnabled
 	s.AffiliateEnabled = value.AffiliateEnabled
@@ -154,19 +202,23 @@ func (s *Snapshot) ApplyPromotionAdminReadSettings(value *promotion.AdminReadSet
 	s.PromoCodeEnabled = value.PromoCodeEnabled
 }
 
-// ApplyProviderAdminReadSettings copies provider quota notifications and scheduling thresholds into the snapshot.
+// ApplyProviderAdminReadSettings transfers provider notification recipients and
+// auto-pause thresholds from a nonnil read result. The recipient slice and
+// threshold map remain shared with that result; later response and preparation
+// helpers choose their own conversions.
 func (s *Snapshot) ApplyProviderAdminReadSettings(value *provider.AdminReadSettings) {
 	s.ProviderQuotaNotifyEmails = value.ProviderQuotaNotifyEmails
 	s.ProviderQuotaNotifyEnabled = value.ProviderQuotaNotifyEnabled
 	s.ProviderSchedulingThresholds = value.ProviderSchedulingThresholds
 }
 
-// ApplySearchAdminReadSettings copies the search emulation setting into the snapshot.
+// ApplySearchAdminReadSettings assigns the parsed web-search emulation switch to the Snapshot.
 func (s *Snapshot) ApplySearchAdminReadSettings(value *search.AdminReadSettings) {
 	s.WebSearchEmulationEnabled = value.WebSearchEmulationEnabled
 }
 
-// ApplyUsageAdminReadSettings copies failed-request visibility and usage ranking settings into the snapshot.
+// ApplyUsageAdminReadSettings assigns parsed ranking choices and failed-request
+// visibility for administrator display.
 func (s *Snapshot) ApplyUsageAdminReadSettings(value *usage.AdminReadSettings) {
 	s.AllowUserViewErrorRequests = value.AllowUserViewErrorRequests
 	s.UsageRankingEnabled = value.UsageRankingEnabled

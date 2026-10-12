@@ -4,7 +4,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway"
 )
 
-// GatewayAdminSettings extracts gateway settings from the snapshot.
+// Gateway administrator values mix model defaults, request header choices,
+// and prompt rules in the combined Snapshot. Extraction supplies the gateway
+// preparer with those fields, and readback transfers the gateway reader's result;
+// the prompt-replacement pointer remains shared during either transfer.
+
+// GatewayAdminSettings returns forwarding, model, and prompt controls for gateway
+// preparation. UserPromptReplacementConfig retains the Snapshot's pointer and nested
+// rules; callers keep that object stable while it is encoded or compared for audit.
 func (s *Snapshot) GatewayAdminSettings() gateway.AdminSettings {
 	return gateway.AdminSettings{
 		AntigravityUserAgentVersion:            s.AntigravityUserAgentVersion,
@@ -31,7 +38,10 @@ func (s *Snapshot) GatewayAdminSettings() gateway.AdminSettings {
 	}
 }
 
-// ApplyGatewayAdminReadSettings copies gateway request processing and model defaults into the snapshot.
+// ApplyGatewayAdminReadSettings transfers gateway model defaults and request
+// processing fields from a nonnil read result. Prompt replacement retains the
+// returned configuration pointer, while scalar header and prompt text values are
+// assigned into the combined Snapshot.
 func (s *Snapshot) ApplyGatewayAdminReadSettings(value *gateway.AdminReadSettings) {
 	s.AntigravityUserAgentVersion = value.AntigravityUserAgentVersion
 	s.BackendModeEnabled = value.BackendModeEnabled

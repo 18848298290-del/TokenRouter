@@ -2,7 +2,16 @@ package composite
 
 import "github.com/TokenFlux/TokenRouter/internal/billing"
 
-// BillingAdminSettings extracts billing settings from the snapshot.
+// Billing display, default grants, and notification settings share one
+// Snapshot during a combined administrator update. The billing value struct
+// selects those fields for module preparation; successful normalization writes
+// them back, while its default-subscription slice remains shared across these
+// transfers.
+
+// BillingAdminSettings returns billing display, grant, and notification values
+// for module preparation. DefaultSubscriptions keeps the Snapshot's slice storage,
+// so callers leave its entries stable while preparation or another consumer can
+// read the same selection.
 func (s *Snapshot) BillingAdminSettings() billing.AdminSettings {
 	return billing.AdminSettings{
 		BalanceIconSVG:                  s.BalanceIconSVG,
@@ -19,7 +28,9 @@ func (s *Snapshot) BillingAdminSettings() billing.AdminSettings {
 	}
 }
 
-// ApplyBillingAdminSettings copies billing settings into the snapshot.
+// ApplyBillingAdminSettings writes normalized display, grant, and notification
+// values back into the Snapshot. DefaultSubscriptions retains the supplied slice;
+// its caller keeps that list stable through the later encoded batch preparation.
 func (s *Snapshot) ApplyBillingAdminSettings(value billing.AdminSettings) {
 	s.BalanceIconSVG = value.BalanceIconSVG
 	s.BalanceLowNotifyEnabled = value.BalanceLowNotifyEnabled
@@ -34,8 +45,10 @@ func (s *Snapshot) ApplyBillingAdminSettings(value billing.AdminSettings) {
 	s.USDExchangeRate = value.USDExchangeRate
 }
 
-// ApplyBillingAdminReadSettings copies balance display, notification, grant, and exchange-rate settings into
-// the snapshot.
+// ApplyBillingAdminReadSettings transfers the billing reader's selected balance
+// labels, grants, and notification controls. A nonnil result is required, and its
+// default-subscription slice remains shared with the Snapshot for later response
+// and preparation consumers.
 func (s *Snapshot) ApplyBillingAdminReadSettings(value *billing.AdminReadSettings) {
 	s.BalanceIconSVG = value.BalanceIconSVG
 	s.BalanceLowNotifyEnabled = value.BalanceLowNotifyEnabled
