@@ -31,7 +31,14 @@ import (
 	usagecore "github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// openAILadderCatalogJSON supplies absolute above_272k prices that the parser converts into thresholds and multipliers.
+// Recording fixtures observe financial commands and attempted analysis rows
+// through serial spies. They exercise protocol bucket interpretation,
+// configured price identities, media units, and captured request ownership
+// using fixed catalogues; these assertions do not run persistent settlement
+// transactions or upstream exchanges.
+
+// openAILadderCatalogJSON supplies absolute above_272k prices that the parser
+// converts into thresholds and multipliers for fixed long-context expectations.
 const openAILadderCatalogJSON = `{
 	"gpt-5.4": {"provider": "openai", "mode": "chat", "fast_multiplier": 2, "flex_multiplier": 0.5,
 		"input_cost_per_token": 2.5e-06, "output_cost_per_token": 1.5e-05,
@@ -45,18 +52,31 @@ const openAILadderCatalogJSON = `{
 		"output_cost_per_token_above_272k_tokens": 2.7e-04}
 }`
 
-// modelCatalogFixture constructs an unstarted catalog for tests.
+// modelCatalogFixture supplies parsed prices for an unstarted catalogue query service.
 type modelCatalogFixture struct {
+	// pricingData is transferred to NewServiceFromSnapshot; the fixture stops
+	// mutating its map and pointed-to entries once that service owns them.
 	pricingData map[string]*pricing.CatalogModelPricing
 }
 
+// configuredPrices overrides one group's settings/cards while retaining a prior
+// resolver for other lookups. The serial fixtures retain supplied settings
+// pointers and card storage until getters clone matching results.
 type configuredPrices struct {
-	base     *billing.PriceResolver
-	groupID  int64
-	settings pricing.BillingSettings
-	cards    []routing.ModelPricingEntry
+	// base handles other groups and unmatched cards; nil supplies default settings
+	// through BillingSettings and leaves unmatched configured pricing absent.
+	base    *billing.PriceResolver
+	groupID int64 // owning fixture group identifier
+	// settings and cards retain nested pointers or collection storage supplied
+	// by the test. Keep those inputs stable; settings reads clone prices, and
+	// MatchPriceCard clones a selected card before returning it to the resolver.
+	settings pricing.BillingSettings     // owning shared charge settings
+	cards    []routing.ModelPricingEntry // owning model price cards
 }
 
+// TestGatewayServiceRecordUsage_BillingUsesDetachedContext records native usage
+// after cancelling its source while the log spy fails. It checks a live funds
+// context, one financial call, and matching billable/key-quota amounts.
 func TestGatewayServiceRecordUsage_BillingUsesDetachedContext(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: false, Err: context.DeadlineExceeded}
 	userRepo := &completiontestkit.UserStore{}
@@ -64,6 +84,8 @@ func TestGatewayServiceRecordUsage_BillingUsesDetachedContext(t *testing.T) {
 	quotaSvc := &completiontestkit.KeyQuotaUpdater{}
 	svc := newGatewayRecordUsageServiceForTest(usageRepo, userRepo, subRepo)
 
+	// Cancel before capture so live funds or analysis context observations distinguish
+	// detached completion work from the request context that has already ended.
 	reqCtx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -92,9 +114,14 @@ func TestGatewayServiceRecordUsage_BillingUsesDetachedContext(t *testing.T) {
 	require.Equal(t, 1, billingRepo.Calls)
 	require.NoError(t, billingRepo.LastCtxErr)
 	require.NotNil(t, billingRepo.LastCmd)
+	// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 	require.InDelta(t, billingRepo.LastCmd.BillableAmountUSD, billingRepo.LastCmd.APIKeyQuotaCost, 1e-12)
 }
 
+// TestGatewayServiceRecordUsage_BillingFingerprintIncludesRequestPayloadHash
+// supplies a semantic Messages payload digest to synchronous capture. It checks
+// that the digest reaches the normalized financial command rather than being
+// replaced by correlation evidence.
 func TestGatewayServiceRecordUsage_BillingFingerprintIncludesRequestPayloadHash(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{}
 	billingRepo := &completiontestkit.SettlementStore{Result: &billing.UsageBillingApplyResult{Applied: true}}
@@ -121,6 +148,10 @@ func TestGatewayServiceRecordUsage_BillingFingerprintIncludesRequestPayloadHash(
 	require.Equal(t, payloadHash, billingRepo.LastCmd.RequestPayloadHash)
 }
 
+// TestGatewayServiceRecordUsage_BillingFingerprintFallsBackToContextRequestID
+// supplies only the internal request-ID context value and no payload digest. It
+// checks the client-prefixed fingerprint produced because production
+// compatibility and local context keys are aliases.
 func TestGatewayServiceRecordUsage_BillingFingerprintFallsBackToContextRequestID(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{}
 	billingRepo := &completiontestkit.SettlementStore{Result: &billing.UsageBillingApplyResult{Applied: true}}
@@ -146,6 +177,10 @@ func TestGatewayServiceRecordUsage_BillingFingerprintFallsBackToContextRequestID
 	require.Equal(t, "client:req-local-123", billingRepo.LastCmd.RequestPayloadHash)
 }
 
+// TestGatewayServiceRecordUsage_PreservesRequestedAndUpstreamModels records a
+// logical Claude name alongside a dated outbound model. It checks that both
+// logical/requested columns retain the logical name and the separate outbound
+// column retains its dated value.
 func TestGatewayServiceRecordUsage_PreservesRequestedAndUpstreamModels(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	svc := newGatewayRecordUsageServiceForTest(usageRepo, &completiontestkit.UserStore{}, &completiontestkit.SubscriptionStore{})
@@ -172,6 +207,9 @@ func TestGatewayServiceRecordUsage_PreservesRequestedAndUpstreamModels(t *testin
 	require.Equal(t, mappedModel, *usageRepo.LastLog.UpstreamModel)
 }
 
+// TestGatewayServiceRecordUsage_PreservesGroupMappedUpstreamModel captures a
+// group mapping from one GPT model to another. It checks the original requested
+// name separately from the mapped internal and outbound names in the usage row.
 func TestGatewayServiceRecordUsage_PreservesGroupMappedUpstreamModel(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	svc := newGatewayRecordUsageServiceForTest(usageRepo, &completiontestkit.UserStore{}, &completiontestkit.SubscriptionStore{})
@@ -201,6 +239,10 @@ func TestGatewayServiceRecordUsage_PreservesGroupMappedUpstreamModel(t *testing.
 	require.Equal(t, "gpt-5.6-terra", *usageRepo.LastLog.UpstreamModel)
 }
 
+// TestGatewayServiceRecordUsage_PreservesLoopedPricingConfigAndProviderUpstreamModel
+// captures a group remap whose provider returns to the original outbound model.
+// It checks that the row retains all three observations in their respective
+// model columns.
 func TestGatewayServiceRecordUsage_PreservesLoopedPricingConfigAndProviderUpstreamModel(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	svc := newGatewayRecordUsageServiceForTest(usageRepo, &completiontestkit.UserStore{}, &completiontestkit.SubscriptionStore{})
@@ -230,6 +272,10 @@ func TestGatewayServiceRecordUsage_PreservesLoopedPricingConfigAndProviderUpstre
 	require.Equal(t, "gpt-5.6-sol", *usageRepo.LastLog.UpstreamModel)
 }
 
+// TestGatewayServiceRecordUsage_QoderUsesStandardRequestedModelPricing supplies
+// a priced requested GPT identity and Qoder route key without a group ID. It
+// checks calculator-matching costs and the funds amount, while captured key
+// quota capability is absent.
 func TestGatewayServiceRecordUsage_QoderUsesStandardRequestedModelPricing(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	billingRepo := &completiontestkit.SettlementStore{Result: &billing.UsageBillingApplyResult{Applied: true}}
@@ -265,6 +311,7 @@ func TestGatewayServiceRecordUsage_QoderUsesStandardRequestedModelPricing(t *tes
 	require.Equal(t, "gpt-5.4", usageRepo.LastLog.Model)
 	require.Equal(t, 1200, usageRepo.LastLog.InputTokens)
 	require.Equal(t, 300, usageRepo.LastLog.OutputTokens)
+	// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 	require.InDelta(t, expectedCost.TotalCost, usageRepo.LastLog.TotalCost, 1e-12)
 	require.InDelta(t, expectedCost.ActualCost, usageRepo.LastLog.ActualCost, 1e-12)
 	require.True(t, usageRepo.LastLog.ActualCost > 0, "Qoder should reuse standard requested-model pricing instead of a Qoder-specific upstream/deferred branch")
@@ -277,6 +324,10 @@ func TestGatewayServiceRecordUsage_QoderUsesStandardRequestedModelPricing(t *tes
 	require.Zero(t, billingRepo.LastCmd.ProviderQuotaCost)
 }
 
+// TestGatewayServiceRecordUsage_QoderGroupMappedBasisDoesNotUseRequestedStandardPricing
+// selects an unpriced Qoder route key while the requested GPT model is priced.
+// It checks one retained usage row and a zero billable financial command for
+// the selected identity.
 func TestGatewayServiceRecordUsage_QoderGroupMappedBasisDoesNotUseRequestedStandardPricing(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	billingRepo := &completiontestkit.SettlementStore{Result: &billing.UsageBillingApplyResult{Applied: true}}
@@ -317,6 +368,10 @@ func TestGatewayServiceRecordUsage_QoderGroupMappedBasisDoesNotUseRequestedStand
 	require.Zero(t, billingRepo.LastCmd.BillableAmountUSD)
 }
 
+// TestGatewayServiceRecordUsage_QoderGroupMappedImageBasisDoesNotUseGlobalFallback
+// selects an unpriced route key for two requested GPT image outputs. It checks
+// retained image quantity and zero row/command costs when the selected mapped
+// identity has no media price.
 func TestGatewayServiceRecordUsage_QoderGroupMappedImageBasisDoesNotUseGlobalFallback(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	billingRepo := &completiontestkit.SettlementStore{Result: &billing.UsageBillingApplyResult{Applied: true}}
@@ -351,7 +406,8 @@ func TestGatewayServiceRecordUsage_QoderGroupMappedImageBasisDoesNotUseGlobalFal
 	require.Equal(t, 1, usageRepo.Calls)
 	require.NotNil(t, usageRepo.LastLog)
 	require.Equal(t, 2, usageRepo.LastLog.ImageCount)
-	// Missing per-image pricing produces a zero-cost usage record.
+	// The selected media identity is unpriced, so completion retains its observed
+	// image count with zero costs instead of substituting another route's price.
 
 	require.Zero(t, usageRepo.LastLog.TotalCost)
 	require.Zero(t, usageRepo.LastLog.TotalCost)
@@ -361,6 +417,10 @@ func TestGatewayServiceRecordUsage_QoderGroupMappedImageBasisDoesNotUseGlobalFal
 	require.Zero(t, billingRepo.LastCmd.BillableAmountUSD)
 }
 
+// TestGatewayServiceRecordUsage_QoderGroupMappedImageDoesNotUseGlobalFallback
+// selects a custom mapped image identity with no available media price. It
+// checks the observed image count remains in the attempted row while financial
+// and analysis charges stay zero.
 func TestGatewayServiceRecordUsage_QoderGroupMappedImageDoesNotUseGlobalFallback(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	billingRepo := &completiontestkit.SettlementStore{Result: &billing.UsageBillingApplyResult{Applied: true}}
@@ -395,7 +455,8 @@ func TestGatewayServiceRecordUsage_QoderGroupMappedImageDoesNotUseGlobalFallback
 	require.Equal(t, 1, usageRepo.Calls)
 	require.NotNil(t, usageRepo.LastLog)
 	require.Equal(t, 1, usageRepo.LastLog.ImageCount)
-	// Missing per-image pricing produces a zero-cost usage record.
+	// The selected media identity is unpriced, so completion retains its observed
+	// image count with zero costs instead of substituting another route's price.
 
 	require.Zero(t, usageRepo.LastLog.TotalCost)
 	require.Zero(t, usageRepo.LastLog.TotalCost)
@@ -405,6 +466,10 @@ func TestGatewayServiceRecordUsage_QoderGroupMappedImageDoesNotUseGlobalFallback
 	require.Zero(t, billingRepo.LastCmd.BillableAmountUSD)
 }
 
+// TestGatewayServiceRecordUsage_QoderRequestedBasisDoesNotFallBackToGroupMappedPricing
+// configures a priced mapped key but chooses an unpriced requested Qoder
+// identity. It checks that the selected source produces zero costs in the usage
+// row and financial command.
 func TestGatewayServiceRecordUsage_QoderRequestedBasisDoesNotFallBackToGroupMappedPricing(t *testing.T) {
 	groupID := int64(45)
 	inputPrice := 0.01
@@ -460,6 +525,10 @@ func TestGatewayServiceRecordUsage_QoderRequestedBasisDoesNotFallBackToGroupMapp
 	require.Zero(t, billingRepo.LastCmd.BillableAmountUSD)
 }
 
+// TestGatewayServiceRecordUsage_QoderRequestedImageDoesNotUseGlobalFallback
+// chooses an unpriced custom requested image alias with a different mapped
+// route. It checks retained image mode/count and zero model charges under that
+// selected pricing identity.
 func TestGatewayServiceRecordUsage_QoderRequestedImageDoesNotUseGlobalFallback(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	billingRepo := &completiontestkit.SettlementStore{Result: &billing.UsageBillingApplyResult{Applied: true}}
@@ -496,7 +565,8 @@ func TestGatewayServiceRecordUsage_QoderRequestedImageDoesNotUseGlobalFallback(t
 	require.Equal(t, 1, usageRepo.LastLog.ImageCount)
 	require.NotNil(t, usageRepo.LastLog.BillingMode)
 	require.Equal(t, string(routing.BillingModeImage), *usageRepo.LastLog.BillingMode)
-	// Missing per-image pricing produces a zero-cost usage record.
+	// The selected media identity is unpriced, so completion retains its observed
+	// image count with zero costs instead of substituting another route's price.
 
 	require.Zero(t, usageRepo.LastLog.TotalCost)
 	require.Zero(t, usageRepo.LastLog.TotalCost)
@@ -506,6 +576,10 @@ func TestGatewayServiceRecordUsage_QoderRequestedImageDoesNotUseGlobalFallback(t
 	require.Zero(t, billingRepo.LastCmd.BillableAmountUSD)
 }
 
+// TestGatewayServiceRecordUsage_QoderAliasesInheritAvailableBuiltinPrices
+// supplies each listed Qoder request alias with its helper-resolved route key.
+// It checks positive base cost when that full alias has fixture pricing, zero
+// otherwise, and command/row charge agreement.
 func TestGatewayServiceRecordUsage_QoderAliasesInheritAvailableBuiltinPrices(t *testing.T) {
 	aliases := qoder.DefaultRequestModelIDs()
 
@@ -537,12 +611,14 @@ func TestGatewayServiceRecordUsage_QoderAliasesInheritAvailableBuiltinPrices(t *
 			require.Equal(t, 1, usageRepo.Calls)
 			require.NotNil(t, usageRepo.LastLog)
 			require.Equal(t, alias, usageRepo.LastLog.Model)
-			// Priced aliases are billed; unknown routes retain unpriced records.
+			// The requested full alias selects the catalogue row; unavailable aliases still
+			// reach the measured-usage write with zero model charges under that selected identity.
 			if _, pricingErr := svc.Dependencies.Calculator.GetModelPricing(alias); pricingErr == nil {
 				require.Positive(t, usageRepo.LastLog.TotalCost)
 			} else {
 				require.Zero(t, usageRepo.LastLog.TotalCost)
 			}
+			// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 			require.InDelta(t, usageRepo.LastLog.TotalCost*usageRepo.LastLog.RateMultiplier, usageRepo.LastLog.ActualCost, 1e-12)
 
 			require.Equal(t, 1, billingRepo.Calls)
@@ -552,6 +628,10 @@ func TestGatewayServiceRecordUsage_QoderAliasesInheritAvailableBuiltinPrices(t *
 	}
 }
 
+// TestGatewayServiceRecordUsage_QoderGroupMappedRouteKeyWithoutManualPricingUsesZeroCost
+// selects an unpriced mapped route key with observed token and cache usage. It
+// checks the retained analysis attempt and zero total, actual, and billable
+// command amounts.
 func TestGatewayServiceRecordUsage_QoderGroupMappedRouteKeyWithoutManualPricingUsesZeroCost(t *testing.T) {
 	groupID := int64(902)
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
@@ -592,6 +672,10 @@ func TestGatewayServiceRecordUsage_QoderGroupMappedRouteKeyWithoutManualPricingU
 	require.Zero(t, billingRepo.LastCmd.BillableAmountUSD)
 }
 
+// TestGatewayServiceRecordUsage_QoderGroupMappedBasisDoesNotUseOriginalAliasPricing
+// prices the original Qoder alias but selects an unpriced group-mapped
+// identity. It checks the chosen source leaves both row and command costs zero
+// despite that other card.
 func TestGatewayServiceRecordUsage_QoderGroupMappedBasisDoesNotUseOriginalAliasPricing(t *testing.T) {
 	groupID := int64(902)
 	inputPrice := 0.01
@@ -647,6 +731,10 @@ func TestGatewayServiceRecordUsage_QoderGroupMappedBasisDoesNotUseOriginalAliasP
 	require.Zero(t, billingRepo.LastCmd.BillableAmountUSD)
 }
 
+// TestGatewayServiceRecordUsage_QoderGroupMappedBasisUsesRouteKeyPricing
+// configures different requested-alias and mapped-route token rates. It checks
+// that mapped-source pricing uses the route rates for the row and financial
+// command at the selected group factor.
 func TestGatewayServiceRecordUsage_QoderGroupMappedBasisUsesRouteKeyPricing(t *testing.T) {
 	groupID := int64(902)
 	aliasInputPrice := 0.01
@@ -703,6 +791,7 @@ func TestGatewayServiceRecordUsage_QoderGroupMappedBasisUsesRouteKeyPricing(t *t
 	require.NoError(t, err)
 	require.Equal(t, 1, usageRepo.Calls)
 	require.NotNil(t, usageRepo.LastLog)
+	// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 	require.InDelta(t, expectedCost, usageRepo.LastLog.TotalCost, 1e-12)
 	require.InDelta(t, expectedCost, usageRepo.LastLog.ActualCost, 1e-12)
 	require.Equal(t, 1, billingRepo.Calls)
@@ -710,6 +799,10 @@ func TestGatewayServiceRecordUsage_QoderGroupMappedBasisUsesRouteKeyPricing(t *t
 	require.InDelta(t, expectedCost, billingRepo.LastCmd.BillableAmountUSD, 1e-12)
 }
 
+// TestGatewayServiceRecordUsage_QoderImplicitRequestedBasisDoesNotInferRouteKeyPricing
+// configures a mapped-key card while leaving model source at its default. It
+// checks the unpriced requested identity produces zero costs and a zero
+// billable command.
 func TestGatewayServiceRecordUsage_QoderImplicitRequestedBasisDoesNotInferRouteKeyPricing(t *testing.T) {
 	groupID := int64(902)
 	inputPrice := 0.01
@@ -760,6 +853,10 @@ func TestGatewayServiceRecordUsage_QoderImplicitRequestedBasisDoesNotInferRouteK
 	require.Zero(t, billingRepo.LastCmd.BillableAmountUSD)
 }
 
+// TestGatewayServiceRecordUsage_QoderGroupMappedBlankRouteKeyDoesNotUseOriginalAliasPricing
+// gives the selected mapped identity a mode-only card and the requested alias
+// priced buckets. It checks that the incomplete selected price retains zero row
+// and command charges.
 func TestGatewayServiceRecordUsage_QoderGroupMappedBlankRouteKeyDoesNotUseOriginalAliasPricing(t *testing.T) {
 	groupID := int64(902)
 	inputPrice := 0.01
@@ -820,6 +917,10 @@ func TestGatewayServiceRecordUsage_QoderGroupMappedBlankRouteKeyDoesNotUseOrigin
 	require.Zero(t, billingRepo.LastCmd.BillableAmountUSD)
 }
 
+// TestGatewayServiceRecordUsage_QoderGroupMappedBasisIgnoresRequestedCustomPartialPricing
+// places an input-only card on the custom requested alias while selecting an
+// unpriced mapped key. It checks that neither that input rate nor the large
+// output quantity creates a charge.
 func TestGatewayServiceRecordUsage_QoderGroupMappedBasisIgnoresRequestedCustomPartialPricing(t *testing.T) {
 	groupID := int64(902)
 	inputPrice := 0.01
@@ -874,6 +975,10 @@ func TestGatewayServiceRecordUsage_QoderGroupMappedBasisIgnoresRequestedCustomPa
 	require.Zero(t, billingRepo.LastCmd.BillableAmountUSD)
 }
 
+// TestGatewayServiceRecordUsage_QoderGroupMappedBasisIgnoresRequestedStandardPartialPricing
+// places an input-only card on a priced standard requested model while
+// selecting another unpriced key. It checks zero row and command costs for the
+// configured mapped source.
 func TestGatewayServiceRecordUsage_QoderGroupMappedBasisIgnoresRequestedStandardPartialPricing(t *testing.T) {
 	groupID := int64(902)
 	inputPrice := 0.01
@@ -927,6 +1032,10 @@ func TestGatewayServiceRecordUsage_QoderGroupMappedBasisIgnoresRequestedStandard
 	require.Zero(t, billingRepo.LastCmd.BillableAmountUSD)
 }
 
+// TestGatewayServiceRecordUsage_QoderProviderMappedCustomAliasPartialManualPricingZerosMissingFields
+// selects a custom alias with an input-only manual card and a separate outbound
+// route. It checks the input-only expected amount in both analysis and command
+// despite large unpriced output.
 func TestGatewayServiceRecordUsage_QoderProviderMappedCustomAliasPartialManualPricingZerosMissingFields(t *testing.T) {
 	groupID := int64(902)
 	inputPrice := 0.01
@@ -975,6 +1084,7 @@ func TestGatewayServiceRecordUsage_QoderProviderMappedCustomAliasPartialManualPr
 	require.NoError(t, err)
 	require.Equal(t, 1, usageRepo.Calls)
 	require.NotNil(t, usageRepo.LastLog)
+	// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 	require.InDelta(t, expectedCost, usageRepo.LastLog.TotalCost, 1e-12)
 	require.InDelta(t, expectedCost, usageRepo.LastLog.ActualCost, 1e-12)
 	require.Equal(t, 1, billingRepo.Calls)
@@ -982,6 +1092,10 @@ func TestGatewayServiceRecordUsage_QoderProviderMappedCustomAliasPartialManualPr
 	require.InDelta(t, expectedCost, billingRepo.LastCmd.BillableAmountUSD, 1e-12)
 }
 
+// TestGatewayServiceRecordUsage_QoderCustomMappedRouteKeyWithoutManualPricingUsesZeroCost
+// records a custom requested Qoder model with a separate unpriced outbound key.
+// It checks the logical model remains visible and no row or financial model
+// charge is inferred.
 func TestGatewayServiceRecordUsage_QoderCustomMappedRouteKeyWithoutManualPricingUsesZeroCost(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	billingRepo := &completiontestkit.SettlementStore{}
@@ -1016,6 +1130,10 @@ func TestGatewayServiceRecordUsage_QoderCustomMappedRouteKeyWithoutManualPricing
 	require.Zero(t, billingRepo.LastCmd.BillableAmountUSD)
 }
 
+// TestGatewayServiceRecordUsage_QoderProviderMappedImageDoesNotUseGlobalFallback
+// records token observations and two outputs under a custom unpriced image
+// identity. It checks image mode remains visible with zero row and billable
+// command charges.
 func TestGatewayServiceRecordUsage_QoderProviderMappedImageDoesNotUseGlobalFallback(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	billingRepo := &completiontestkit.SettlementStore{}
@@ -1050,7 +1168,8 @@ func TestGatewayServiceRecordUsage_QoderProviderMappedImageDoesNotUseGlobalFallb
 	require.NotNil(t, usageRepo.LastLog)
 	require.NotNil(t, usageRepo.LastLog.BillingMode)
 	require.Equal(t, string(routing.BillingModeImage), *usageRepo.LastLog.BillingMode)
-	// Missing per-image pricing produces a zero-cost usage record.
+	// The selected media identity is unpriced, so completion retains its observed
+	// image count with zero costs instead of substituting another route's price.
 
 	require.Zero(t, usageRepo.LastLog.TotalCost)
 	require.Zero(t, usageRepo.LastLog.TotalCost)
@@ -1060,6 +1179,10 @@ func TestGatewayServiceRecordUsage_QoderProviderMappedImageDoesNotUseGlobalFallb
 	require.Zero(t, billingRepo.LastCmd.BillableAmountUSD)
 }
 
+// TestGatewayServiceRecordUsage_QoderUpstreamBasisDoesNotUseRequestedStandardPricing
+// selects an unpriced outbound Qoder route while the requested GPT identity has
+// prices. It checks retained analysis and zero financial costs under the
+// upstream-source rule.
 func TestGatewayServiceRecordUsage_QoderUpstreamBasisDoesNotUseRequestedStandardPricing(t *testing.T) {
 	groupID := int64(902)
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
@@ -1100,6 +1223,10 @@ func TestGatewayServiceRecordUsage_QoderUpstreamBasisDoesNotUseRequestedStandard
 	require.Zero(t, billingRepo.LastCmd.BillableAmountUSD)
 }
 
+// TestGatewayServiceRecordUsage_QoderUpstreamBasisUsesStandardUpstreamPricing
+// selects a priced outbound GPT identity for a different requested Qoder alias.
+// It checks calculator-matching base, actual, and command amounts for that
+// selected upstream price.
 func TestGatewayServiceRecordUsage_QoderUpstreamBasisUsesStandardUpstreamPricing(t *testing.T) {
 	groupID := int64(902)
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
@@ -1139,6 +1266,7 @@ func TestGatewayServiceRecordUsage_QoderUpstreamBasisUsesStandardUpstreamPricing
 	require.NoError(t, err)
 	require.Equal(t, 1, usageRepo.Calls)
 	require.NotNil(t, usageRepo.LastLog)
+	// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 	require.InDelta(t, expectedCost.TotalCost, usageRepo.LastLog.TotalCost, 1e-12)
 	require.InDelta(t, expectedCost.ActualCost, usageRepo.LastLog.ActualCost, 1e-12)
 	require.Equal(t, 1, billingRepo.Calls)
@@ -1146,6 +1274,10 @@ func TestGatewayServiceRecordUsage_QoderUpstreamBasisUsesStandardUpstreamPricing
 	require.InDelta(t, expectedCost.ActualCost, billingRepo.LastCmd.BillableAmountUSD, 1e-12)
 }
 
+// TestGatewayServiceRecordUsage_QoderGroupMappedProviderStatsUsesOriginalAliasRule
+// installs a requested-alias provider-statistics rule while user pricing
+// selects a mapped route. It checks the independent provider base amount
+// supplied to the attempted usage row.
 func TestGatewayServiceRecordUsage_QoderGroupMappedProviderStatsUsesOriginalAliasRule(t *testing.T) {
 	groupID := int64(902)
 	inputPrice := 0.01
@@ -1205,9 +1337,14 @@ func TestGatewayServiceRecordUsage_QoderGroupMappedProviderStatsUsesOriginalAlia
 	require.Equal(t, 1, usageRepo.Calls)
 	require.NotNil(t, usageRepo.LastLog)
 	require.NotNil(t, usageRepo.LastLog.ProviderStatsCost)
+	// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 	require.InDelta(t, 2.0, *usageRepo.LastLog.ProviderStatsCost, 1e-12)
 }
 
+// TestGatewayServiceRecordUsage_QoderBlankConfigPricingUsesZeroCost supplies a
+// selected Qoder identity with a token-mode card containing no price buckets.
+// It checks observed usage is retained with zero row and billable command
+// amounts.
 func TestGatewayServiceRecordUsage_QoderBlankConfigPricingUsesZeroCost(t *testing.T) {
 	groupID := int64(902)
 	cache := routingtestkit.NewModelConfigData()
@@ -1254,6 +1391,10 @@ func TestGatewayServiceRecordUsage_QoderBlankConfigPricingUsesZeroCost(t *testin
 	require.Zero(t, billingRepo.LastCmd.BillableAmountUSD)
 }
 
+// TestGatewayServiceRecordUsage_QoderManualConfigPricingOverridesDefaultAliasPricing
+// installs explicit input/output prices for the selected auto alias. It checks
+// the resulting fixed dollar total and user amount in both the analysis row and
+// financial command.
 func TestGatewayServiceRecordUsage_QoderManualConfigPricingOverridesDefaultAliasPricing(t *testing.T) {
 	groupID := int64(902)
 	inputPrice := 0.01
@@ -1297,6 +1438,7 @@ func TestGatewayServiceRecordUsage_QoderManualConfigPricingOverridesDefaultAlias
 	require.NoError(t, err)
 	require.Equal(t, 1, usageRepo.Calls)
 	require.NotNil(t, usageRepo.LastLog)
+	// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 	require.InDelta(t, 18.0, usageRepo.LastLog.TotalCost, 1e-12)
 	require.InDelta(t, 18.0, usageRepo.LastLog.ActualCost, 1e-12)
 	require.Equal(t, 1, billingRepo.Calls)
@@ -1304,6 +1446,10 @@ func TestGatewayServiceRecordUsage_QoderManualConfigPricingOverridesDefaultAlias
 	require.InDelta(t, 18.0, billingRepo.LastCmd.BillableAmountUSD, 1e-12)
 }
 
+// TestGatewayServiceRecordUsage_EmptyImageSizeDefaultsBeforeBillingAndPersistence
+// supplies an auto input-size hint and a shared 2K image card. It checks
+// normalized default-size metadata, retained input evidence, and the expected
+// single-output base and actual costs.
 func TestGatewayServiceRecordUsage_EmptyImageSizeDefaultsBeforeBillingAndPersistence(t *testing.T) {
 	imagePrice2K := 0.19
 	groupID := int64(901)
@@ -1344,16 +1490,22 @@ func TestGatewayServiceRecordUsage_EmptyImageSizeDefaultsBeforeBillingAndPersist
 	require.Equal(t, "auto", *usageRepo.LastLog.ImageInputSize)
 	require.NotNil(t, usageRepo.LastLog.ImageSizeSource)
 	require.Equal(t, pricing.ImageSizeSourceDefault, *usageRepo.LastLog.ImageSizeSource)
+	// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 	require.InDelta(t, 0.19, usageRepo.LastLog.TotalCost, 1e-12)
 	require.InDelta(t, 0.19, usageRepo.LastLog.ActualCost, 1e-12)
 }
 
+// TestGatewayServiceRecordUsage_PeakRateAffectsTokenModeImageOutputTokens fixes
+// native recording inside a peak window with a token-priced image output
+// subset. It checks token mode, one image-output cost contribution, and
+// peak-scaled user/command amounts.
 func TestGatewayServiceRecordUsage_PeakRateAffectsTokenModeImageOutputTokens(t *testing.T) {
 	groupID := int64(902)
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	userRepo := &completiontestkit.UserStore{}
 	svc := newGatewayRecordUsageServiceForTest(usageRepo, userRepo, &completiontestkit.SubscriptionStore{})
-	// Fix time inside the peak window; 23:59 is its exclusive end.
+	// Fix recording at noon inside the fixture's 11:59-12:01 window so token-mode
+	// peak selection can be compared with the ordinary group-price base.
 	svc.Options.Now = func() time.Time {
 		return time.Date(2026, 7, 1, 12, 0, 0, 0, time.Local)
 	}
@@ -1402,6 +1554,8 @@ func TestGatewayServiceRecordUsage_PeakRateAffectsTokenModeImageOutputTokens(t *
 	imageOutput := 100 * 15e-6
 	expectedActual := (textInput + textOutput + imageOutput) * 3.0
 
+	// Floating-point comparisons allow rounding from price and multiplier arithmetic.
+
 	require.InDelta(t, textInput+textOutput+imageOutput, usageRepo.LastLog.TotalCost, 1e-12)
 	require.InDelta(t, imageOutput, usageRepo.LastLog.ImageOutputCost, 1e-12)
 	require.InDelta(t, expectedActual, usageRepo.LastLog.ActualCost, 1e-12)
@@ -1411,6 +1565,10 @@ func TestGatewayServiceRecordUsage_PeakRateAffectsTokenModeImageOutputTokens(t *
 	require.InDelta(t, expectedActual, billingRepo.LastCmd.BillableAmountUSD, 1e-12)
 }
 
+// TestGatewayServiceRecordUsage_UsageLogWriteErrorDoesNotSkipBilling makes the
+// analysis spy return a marked not-persisted error after funds application. It
+// checks recording returns no funds error and the single command still contains
+// the captured key quota cost.
 func TestGatewayServiceRecordUsage_UsageLogWriteErrorDoesNotSkipBilling(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: false, Err: usagecore.MarkUsageLogCreateNotPersisted(context.Canceled)}
 	userRepo := &completiontestkit.UserStore{}
@@ -1442,9 +1600,14 @@ func TestGatewayServiceRecordUsage_UsageLogWriteErrorDoesNotSkipBilling(t *testi
 	billingRepo := requireGatewayRecordUsageBillingRepoStub(t, svc)
 	require.Equal(t, 1, billingRepo.Calls)
 	require.NotNil(t, billingRepo.LastCmd)
+	// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 	require.InDelta(t, billingRepo.LastCmd.BillableAmountUSD, billingRepo.LastCmd.APIKeyQuotaCost, 1e-12)
 }
 
+// TestGatewayServiceRecordUsageWithLongContext_BillingUsesDetachedContext uses
+// a cancelled source and a small native token fixture despite its retained
+// name. It checks the live detached funds context and command quota amount; no
+// long-context threshold is exercised.
 func TestGatewayServiceRecordUsageWithLongContext_BillingUsesDetachedContext(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: false, Err: context.DeadlineExceeded}
 	userRepo := &completiontestkit.UserStore{}
@@ -1452,6 +1615,8 @@ func TestGatewayServiceRecordUsageWithLongContext_BillingUsesDetachedContext(t *
 	quotaSvc := &completiontestkit.KeyQuotaUpdater{}
 	svc := newGatewayRecordUsageServiceForTest(usageRepo, userRepo, subRepo)
 
+	// Cancel before capture so live funds or analysis context observations distinguish
+	// detached completion work from the request context that has already ended.
 	reqCtx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -1480,9 +1645,14 @@ func TestGatewayServiceRecordUsageWithLongContext_BillingUsesDetachedContext(t *
 	require.Equal(t, 1, billingRepo.Calls)
 	require.NoError(t, billingRepo.LastCtxErr)
 	require.NotNil(t, billingRepo.LastCmd)
+	// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 	require.InDelta(t, billingRepo.LastCmd.BillableAmountUSD, billingRepo.LastCmd.APIKeyQuotaCost, 1e-12)
 }
 
+// TestGatewayServiceRecordUsage_UsesFallbackRequestIDForUsageLog provides an
+// internal context ID and an empty result operation ID. It checks that capture
+// and analysis retain that internal diagnostic request identity in the usage
+// row.
 func TestGatewayServiceRecordUsage_UsesFallbackRequestIDForUsageLog(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{}
 	userRepo := &completiontestkit.UserStore{}
@@ -1510,6 +1680,10 @@ func TestGatewayServiceRecordUsage_UsesFallbackRequestIDForUsageLog(t *testing.T
 	require.Equal(t, "gateway-local-fallback", usageRepo.LastLog.RequestID)
 }
 
+// TestGatewayServiceRecordUsage_PrefersClientRequestIDOverUpstreamRequestID
+// writes a compatibility ID then an internal ID to their shared context key. It
+// checks the later value drives the prefixed financial key and the separate
+// unprefixed diagnostic column.
 func TestGatewayServiceRecordUsage_PrefersClientRequestIDOverUpstreamRequestID(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{}
 	billingRepo := &completiontestkit.SettlementStore{Result: &billing.UsageBillingApplyResult{Applied: true}}
@@ -1539,6 +1713,10 @@ func TestGatewayServiceRecordUsage_PrefersClientRequestIDOverUpstreamRequestID(t
 	require.Equal(t, "req-local-ignored", usageRepo.LastLog.RequestID)
 }
 
+// TestGatewayServiceRecordUsage_GeneratesRequestIDWhenAllSourcesMissing
+// provides no context or result operation identifier during native capture. It
+// checks a generated financial prefix, matching usage BillingKey, and a
+// thirty-six-character diagnostic identity.
 func TestGatewayServiceRecordUsage_GeneratesRequestIDWhenAllSourcesMissing(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{}
 	billingRepo := &completiontestkit.SettlementStore{Result: &billing.UsageBillingApplyResult{Applied: true}}
@@ -1567,8 +1745,13 @@ func TestGatewayServiceRecordUsage_GeneratesRequestIDWhenAllSourcesMissing(t *te
 	require.Len(t, usageRepo.LastLog.RequestID, 36)
 }
 
+// TestGatewayServiceRecordUsage_DroppedUsageLogFallsBackToSyncCreate returns a
+// marked best-effort queue rejection after an applied funds fixture result. It
+// checks one queued attempt, one synchronous retry, and a live retry context
+// rather than renewed-budget timing.
 func TestGatewayServiceRecordUsage_DroppedUsageLogFallsBackToSyncCreate(t *testing.T) {
-	// After settlement, queue timeout triggers a synchronous log write for reconciliation (issue #3656).
+	// A marked queue rejection requests a synchronous analysis retry after the funds
+	// outcome; this fixture returns its error while the context budget remains live.
 	usageRepo := &completiontestkit.BestEffortUsageLogStore{
 		BestEffortErr: usagecore.MarkUsageLogCreateDropped(errors.New("usage log best-effort queue full")),
 	}
@@ -1593,10 +1776,15 @@ func TestGatewayServiceRecordUsage_DroppedUsageLogFallsBackToSyncCreate(t *testi
 	require.NoError(t, err)
 	require.Equal(t, 1, usageRepo.BestEffortCalls)
 	require.Equal(t, 1, usageRepo.CreateCalls)
-	// The synchronous retry receives a fresh live context.
+	// The retry sees a usable context after immediate queue rejection; this fixture
+	// leaves the source uncancelled and does not wait for the earlier budget to expire.
 	require.NoError(t, usageRepo.LastCtxErr)
 }
 
+// TestGatewayServiceRecordUsage_BillingErrorWritesUnsettledUsageLog makes the
+// financial store reject measured native input and output. It checks the
+// returned funds error, one attempted row, retained counts/base costs, and
+// ActualCost zero.
 func TestGatewayServiceRecordUsage_BillingErrorWritesUnsettledUsageLog(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{}
 	billingErr := errors.New("billing tx failed")
@@ -1632,6 +1820,9 @@ func TestGatewayServiceRecordUsage_BillingErrorWritesUnsettledUsageLog(t *testin
 	require.Zero(t, usageRepo.LastLog.ActualCost)
 }
 
+// TestGatewayServiceRecordUsage_ReasoningEffortPersisted records a native
+// result carrying final max effort through the best-effort analysis spy. It
+// checks that the supplied final effort is retained in the attempted usage row.
 func TestGatewayServiceRecordUsage_ReasoningEffortPersisted(t *testing.T) {
 	usageRepo := &completiontestkit.BestEffortUsageLogStore{}
 	svc := newGatewayRecordUsageServiceForTest(usageRepo, &completiontestkit.UserStore{}, &completiontestkit.SubscriptionStore{})
@@ -1659,6 +1850,9 @@ func TestGatewayServiceRecordUsage_ReasoningEffortPersisted(t *testing.T) {
 	require.Equal(t, "max", *usageRepo.LastLog.ReasoningEffort)
 }
 
+// TestGatewayServiceRecordUsage_ReasoningEffortNil records native usage without
+// a final effort observation. It checks the attempted usage row keeps a nil
+// effort pointer, retaining absence instead of inventing an executed policy.
 func TestGatewayServiceRecordUsage_ReasoningEffortNil(t *testing.T) {
 	usageRepo := &completiontestkit.BestEffortUsageLogStore{}
 	svc := newGatewayRecordUsageServiceForTest(usageRepo, &completiontestkit.UserStore{}, &completiontestkit.SubscriptionStore{})
@@ -1683,6 +1877,10 @@ func TestGatewayServiceRecordUsage_ReasoningEffortNil(t *testing.T) {
 	require.Nil(t, usageRepo.LastLog.ReasoningEffort)
 }
 
+// TestGatewayServiceRecordUsage_FastSpeedDowngradedByUpstreamResponse supplies
+// outbound fast and observed standard tiers with distinct fixture prices. It
+// checks the recorded tier becomes standard and the base amount matches
+// standard calculator pricing.
 func TestGatewayServiceRecordUsage_FastSpeedDowngradedByUpstreamResponse(t *testing.T) {
 	usageRepo := &completiontestkit.BestEffortUsageLogStore{}
 	svc, apiKey := newGatewayRecordUsageServiceWithResolverForTest(usageRepo)
@@ -1713,9 +1911,14 @@ func TestGatewayServiceRecordUsage_FastSpeedDowngradedByUpstreamResponse(t *test
 	fastCost, err := svc.Dependencies.Calculator.CalculateCostWithServiceTier("claude-opus-5", tokens, 1.0, "fast")
 	require.NoError(t, err)
 	require.Greater(t, fastCost.TotalCost, standardCost.TotalCost, "fast mode must carry a premium for the test to be meaningful")
+	// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 	require.InDelta(t, standardCost.TotalCost, usageRepo.LastLog.TotalCost, 1e-10)
 }
 
+// TestGatewayServiceRecordUsage_FastSpeedHonouredKeepsPremium supplies matching
+// outbound and observed fast tiers through a production-style resolver. It
+// checks the retained fast label and base cost matching the premium calculator
+// result.
 func TestGatewayServiceRecordUsage_FastSpeedHonouredKeepsPremium(t *testing.T) {
 	usageRepo := &completiontestkit.BestEffortUsageLogStore{}
 	svc, apiKey := newGatewayRecordUsageServiceWithResolverForTest(usageRepo)
@@ -1741,9 +1944,14 @@ func TestGatewayServiceRecordUsage_FastSpeedHonouredKeepsPremium(t *testing.T) {
 
 	fastCost, err := svc.Dependencies.Calculator.CalculateCostWithServiceTier("claude-opus-5", pricing.UsageTokens{InputTokens: 100, OutputTokens: 50}, 1.0, "fast")
 	require.NoError(t, err)
+	// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 	require.InDelta(t, fastCost.TotalCost, usageRepo.LastLog.TotalCost, 1e-10)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_RejectsNilInput invokes capture with nil
+// input and then an empty capture object. It checks recorder errors for absent
+// input or result before pricing, financial submission, or log dependencies are
+// needed.
 func TestOpenAIGatewayServiceRecordUsage_RejectsNilInput(t *testing.T) {
 	svc := completion.NewRecorder(completion.Dependencies{}, completion.RecorderOptions{DefaultMultiplier: 1})
 
@@ -1751,6 +1959,10 @@ func TestOpenAIGatewayServiceRecordUsage_RejectsNilInput(t *testing.T) {
 	require.Error(t, svc.Record(context.Background(), gatewaycapture.CaptureOpenAI(context.Background(), &gatewaycapture.OpenAICapture{}), true))
 }
 
+// TestOpenAIGatewayServiceRecordUsage_ZeroUsageStillWritesUsageLog supplies a
+// priced model with empty measured usage and an applied store response. It
+// checks one analysis/financial invocation, distinct billing/diagnostic IDs,
+// and zero token, cost, and command increments.
 func TestOpenAIGatewayServiceRecordUsage_ZeroUsageStillWritesUsageLog(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	billingRepo := &completiontestkit.SettlementStore{Result: &billing.UsageBillingApplyResult{Applied: true}}
@@ -1801,6 +2013,10 @@ func TestOpenAIGatewayServiceRecordUsage_ZeroUsageStillWritesUsageLog(t *testing
 	require.Zero(t, billingRepo.LastCmd.ProviderQuotaCost)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_MissingPricingRecordsZeroCostUsageLog
+// supplies positive usage for an unknown selected model. It checks retained
+// counts and model names with zero cost, token-mode metadata, and zero
+// financial quota amounts.
 func TestOpenAIGatewayServiceRecordUsage_MissingPricingRecordsZeroCostUsageLog(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	billingRepo := &completiontestkit.SettlementStore{Result: &billing.UsageBillingApplyResult{Applied: true}}
@@ -1852,6 +2068,10 @@ func TestOpenAIGatewayServiceRecordUsage_MissingPricingRecordsZeroCostUsageLog(t
 	require.Zero(t, billingRepo.LastCmd.ProviderQuotaCost)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_UsesUserSpecificGroupRate supplies
+// differing group and user balance factors with inclusive cached input. It
+// checks one rate lookup, selected user factor, disjoint ordinary/cache counts,
+// and matching row/command charges.
 func TestOpenAIGatewayServiceRecordUsage_UsesUserSpecificGroupRate(t *testing.T) {
 	groupID := int64(11)
 	groupRate := 1.4
@@ -1891,6 +2111,7 @@ func TestOpenAIGatewayServiceRecordUsage_UsesUserSpecificGroupRate(t *testing.T)
 	require.Equal(t, 3, usageRepo.LastLog.CacheReadTokens)
 
 	expected := expectedOpenAICost(t, svc, "gpt-5.4", usage, userRate)
+	// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 	require.InDelta(t, expected.ActualCost, usageRepo.LastLog.ActualCost, 1e-12)
 	billingRepo := requireOpenAIRecordUsageBillingRepoStub(t, svc)
 	require.Equal(t, 1, billingRepo.Calls)
@@ -1898,6 +2119,10 @@ func TestOpenAIGatewayServiceRecordUsage_UsesUserSpecificGroupRate(t *testing.T)
 	require.InDelta(t, expected.ActualCost, billingRepo.LastCmd.BillableAmountUSD, 1e-12)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_PeakRateAffectsTokenModeImageOutputTokens
+// records a token-priced image subset at an injected peak instant. It checks
+// the retained image-token cost, peak factor, and peak-scaled user and
+// financial command amounts.
 func TestOpenAIGatewayServiceRecordUsage_PeakRateAffectsTokenModeImageOutputTokens(t *testing.T) {
 	groupID := int64(14)
 	groupRate := 1.0
@@ -1911,7 +2136,8 @@ func TestOpenAIGatewayServiceRecordUsage_PeakRateAffectsTokenModeImageOutputToke
 	userRepo := &completiontestkit.UserStore{}
 	subRepo := &completiontestkit.SubscriptionStore{}
 	svc := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, subRepo, nil)
-	// Fix time inside the peak window; 23:59 is its exclusive end.
+	// Fix recording at noon inside the fixture's 11:59-12:01 window so token-mode
+	// peak selection can be compared with the ordinary group-price base.
 	svc.Options.Now = func() time.Time {
 		return time.Date(2026, 7, 1, 12, 0, 0, 0, time.Local)
 	}
@@ -1965,6 +2191,8 @@ func TestOpenAIGatewayServiceRecordUsage_PeakRateAffectsTokenModeImageOutputToke
 	require.NoError(t, err)
 	expectedActual := expected.TotalCost * 3.0
 
+	// Floating-point comparisons allow rounding from price and multiplier arithmetic.
+
 	require.InDelta(t, expected.TotalCost, usageRepo.LastLog.TotalCost, 1e-12)
 	require.InDelta(t, expected.ImageOutputCost, usageRepo.LastLog.ImageOutputCost, 1e-12)
 	require.InDelta(t, expectedActual, usageRepo.LastLog.ActualCost, 1e-12)
@@ -1974,6 +2202,10 @@ func TestOpenAIGatewayServiceRecordUsage_PeakRateAffectsTokenModeImageOutputToke
 	require.InDelta(t, expectedActual, billingRepo.LastCmd.BillableAmountUSD, 1e-12)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_IncludesEndpointMetadata captures padded
+// client and upstream endpoint strings with measured token usage. It checks the
+// attempted analysis row stores their separately trimmed operation paths after
+// recording.
 func TestOpenAIGatewayServiceRecordUsage_IncludesEndpointMetadata(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	userRepo := &completiontestkit.UserStore{}
@@ -2009,6 +2241,10 @@ func TestOpenAIGatewayServiceRecordUsage_IncludesEndpointMetadata(t *testing.T) 
 	require.Equal(t, "/v1/responses", *usageRepo.LastLog.UpstreamEndpoint)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_FallsBackToGroupDefaultRateOnResolverError
+// makes user-rate lookup return an error for a selected group. It checks one
+// lookup, the group factor retained in analysis, and a financial amount
+// matching that factor.
 func TestOpenAIGatewayServiceRecordUsage_FallsBackToGroupDefaultRateOnResolverError(t *testing.T) {
 	groupID := int64(12)
 	groupRate := 1.6
@@ -2048,9 +2284,14 @@ func TestOpenAIGatewayServiceRecordUsage_FallsBackToGroupDefaultRateOnResolverEr
 	billingRepo := requireOpenAIRecordUsageBillingRepoStub(t, svc)
 	require.Equal(t, 1, billingRepo.Calls)
 	require.NotNil(t, billingRepo.LastCmd)
+	// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 	require.InDelta(t, expected.ActualCost, billingRepo.LastCmd.BillableAmountUSD, 1e-12)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_FallsBackToGroupDefaultRateWhenResolverMissing
+// removes the recorder rate binding while supplying a selected group factor. It
+// checks the attempted usage row retains that base factor after recording
+// succeeds.
 func TestOpenAIGatewayServiceRecordUsage_FallsBackToGroupDefaultRateWhenResolverMissing(t *testing.T) {
 	groupID := int64(13)
 	groupRate := 1.25
@@ -2086,6 +2327,10 @@ func TestOpenAIGatewayServiceRecordUsage_FallsBackToGroupDefaultRateWhenResolver
 	require.Equal(t, groupRate, usageRepo.LastLog.RateMultiplier)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_DuplicateUsageLogSkipsBilling supplies a
+// noninserted analysis response and an unapplied financial response. It checks
+// each delegate is called once; the legacy user and subscription arguments
+// remain unbound to this fixture.
 func TestOpenAIGatewayServiceRecordUsage_DuplicateUsageLogSkipsBilling(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: false}
 	billingRepo := &completiontestkit.SettlementStore{Result: &billing.UsageBillingApplyResult{Applied: false}}
@@ -2115,6 +2360,10 @@ func TestOpenAIGatewayServiceRecordUsage_DuplicateUsageLogSkipsBilling(t *testin
 	require.Equal(t, 0, subRepo.IncrementCalls)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_DuplicateBillingKeySkipsBillingWithRepo
+// supplies an unapplied financial result with captured key quota capability. It
+// checks one financial and analysis call while the legacy direct-deduction and
+// quota-update spies receive no calls.
 func TestOpenAIGatewayServiceRecordUsage_DuplicateBillingKeySkipsBillingWithRepo(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: false}
 	billingRepo := &completiontestkit.SettlementStore{Result: &billing.UsageBillingApplyResult{Applied: false}}
@@ -2150,6 +2399,10 @@ func TestOpenAIGatewayServiceRecordUsage_DuplicateBillingKeySkipsBillingWithRepo
 	require.Equal(t, 0, quotaSvc.QuotaCalls)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_BillsWhenUsageLogCreateReturnsError makes
+// analysis creation report uncertain batch state after recording priced usage.
+// It checks a single financial command still carries the calculated user charge
+// and recording returns no funds error.
 func TestOpenAIGatewayServiceRecordUsage_BillsWhenUsageLogCreateReturnsError(t *testing.T) {
 	usage := openai.ForwardUsage{InputTokens: 8, OutputTokens: 4}
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: false, Err: errors.New("usage log batch state uncertain")}
@@ -2174,9 +2427,14 @@ func TestOpenAIGatewayServiceRecordUsage_BillsWhenUsageLogCreateReturnsError(t *
 	billingRepo := requireOpenAIRecordUsageBillingRepoStub(t, svc)
 	require.Equal(t, 1, billingRepo.Calls)
 	require.NotNil(t, billingRepo.LastCmd)
+	// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 	require.InDelta(t, usageRepo.LastLog.ActualCost, billingRepo.LastCmd.BillableAmountUSD, 1e-12)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_UsageLogWriteErrorDoesNotSkipBilling
+// makes analysis creation report marked nonpersistence with key quota
+// capability captured. It checks the single financial command and equality
+// between its billable and total key-quota amounts.
 func TestOpenAIGatewayServiceRecordUsage_UsageLogWriteErrorDoesNotSkipBilling(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: false, Err: usagecore.MarkUsageLogCreateNotPersisted(context.Canceled)}
 	userRepo := &completiontestkit.UserStore{}
@@ -2208,9 +2466,14 @@ func TestOpenAIGatewayServiceRecordUsage_UsageLogWriteErrorDoesNotSkipBilling(t 
 	billingRepo := requireOpenAIRecordUsageBillingRepoStub(t, svc)
 	require.Equal(t, 1, billingRepo.Calls)
 	require.NotNil(t, billingRepo.LastCmd)
+	// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 	require.InDelta(t, billingRepo.LastCmd.BillableAmountUSD, billingRepo.LastCmd.APIKeyQuotaCost, 1e-12)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_BillingUsesDetachedContext records
+// positive inclusive usage after cancelling its source while the log spy fails.
+// It checks a live financial context and retained billable/key-quota amounts on
+// the single command.
 func TestOpenAIGatewayServiceRecordUsage_BillingUsesDetachedContext(t *testing.T) {
 	usage := openai.ForwardUsage{InputTokens: 10, OutputTokens: 6, CacheReadInputTokens: 2}
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: false, Err: context.DeadlineExceeded}
@@ -2219,6 +2482,8 @@ func TestOpenAIGatewayServiceRecordUsage_BillingUsesDetachedContext(t *testing.T
 	quotaSvc := &completiontestkit.KeyQuotaUpdater{}
 	svc := newOpenAIRecordUsageServiceForTest(usageRepo, userRepo, subRepo, nil)
 
+	// Cancel before capture so live funds or analysis context observations distinguish
+	// detached completion work from the request context that has already ended.
 	reqCtx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -2243,9 +2508,14 @@ func TestOpenAIGatewayServiceRecordUsage_BillingUsesDetachedContext(t *testing.T
 	require.Equal(t, 1, billingRepo.Calls)
 	require.NoError(t, billingRepo.LastCtxErr)
 	require.NotNil(t, billingRepo.LastCmd)
+	// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 	require.InDelta(t, billingRepo.LastCmd.BillableAmountUSD, billingRepo.LastCmd.APIKeyQuotaCost, 1e-12)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_BillingRepoUsesDetachedContext records
+// measured work from a cancelled source with successful analysis and funds
+// spies. It checks both delegates receive live contexts and each is invoked
+// once.
 func TestOpenAIGatewayServiceRecordUsage_BillingRepoUsesDetachedContext(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{}
 	billingRepo := &completiontestkit.SettlementStore{Result: &billing.UsageBillingApplyResult{Applied: true}}
@@ -2253,6 +2523,8 @@ func TestOpenAIGatewayServiceRecordUsage_BillingRepoUsesDetachedContext(t *testi
 	subRepo := &completiontestkit.SubscriptionStore{}
 	svc := newOpenAIRecordUsageServiceWithBillingRepoForTest(usageRepo, billingRepo, userRepo, subRepo, nil)
 
+	// Cancel before capture so live funds or analysis context observations distinguish
+	// detached completion work from the request context that has already ended.
 	reqCtx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -2278,6 +2550,10 @@ func TestOpenAIGatewayServiceRecordUsage_BillingRepoUsesDetachedContext(t *testi
 	require.NoError(t, usageRepo.LastCtxErr)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_BillingFingerprintIncludesRequestPayloadHash
+// captures a semantic OpenAI request digest beside result metadata. It checks
+// the supplied digest is retained in the normalized financial command as
+// payload fingerprint evidence.
 func TestOpenAIGatewayServiceRecordUsage_BillingFingerprintIncludesRequestPayloadHash(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{}
 	billingRepo := &completiontestkit.SettlementStore{Result: &billing.UsageBillingApplyResult{Applied: true}}
@@ -2304,6 +2580,10 @@ func TestOpenAIGatewayServiceRecordUsage_BillingFingerprintIncludesRequestPayloa
 	require.Equal(t, payloadHash, billingRepo.LastCmd.RequestPayloadHash)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_UsesFallbackRequestIDForBillingAndUsageLog
+// supplies only an internal context identifier and no result operation ID. It
+// checks the compatibility-prefixed financial key and the unprefixed diagnostic
+// ID retained in analysis.
 func TestOpenAIGatewayServiceRecordUsage_UsesFallbackRequestIDForBillingAndUsageLog(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{}
 	billingRepo := &completiontestkit.SettlementStore{Result: &billing.UsageBillingApplyResult{Applied: true}}
@@ -2334,6 +2614,10 @@ func TestOpenAIGatewayServiceRecordUsage_UsesFallbackRequestIDForBillingAndUsage
 	require.Equal(t, "req-local-fallback", usageRepo.LastLog.RequestID)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_PrefersClientRequestIDOverUpstreamRequestID
+// supplies the compatibility request-ID key beside a different result operation
+// ID. It checks its value selects the prefixed financial key and remains the
+// analysis diagnostic identity.
 func TestOpenAIGatewayServiceRecordUsage_PrefersClientRequestIDOverUpstreamRequestID(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{}
 	billingRepo := &completiontestkit.SettlementStore{Result: &billing.UsageBillingApplyResult{Applied: true}}
@@ -2364,6 +2648,10 @@ func TestOpenAIGatewayServiceRecordUsage_PrefersClientRequestIDOverUpstreamReque
 	require.Equal(t, "openai-client-stable-123", usageRepo.LastLog.RequestID)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_WSModeSeparatesTurnAndBillingIDs captures
+// a WebSocket result with a turn operation ID and compatibility context ID. It
+// checks the result ID supplies financial RequestID/BillingKey while analysis
+// RequestID retains the context value.
 func TestOpenAIGatewayServiceRecordUsage_WSModeSeparatesTurnAndBillingIDs(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{}
 	billingRepo := &completiontestkit.SettlementStore{Result: &billing.UsageBillingApplyResult{Applied: true}}
@@ -2396,6 +2684,10 @@ func TestOpenAIGatewayServiceRecordUsage_WSModeSeparatesTurnAndBillingIDs(t *tes
 	require.Equal(t, "openai-ws-turn-123", usageRepo.LastLog.RequestID)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_GeneratesRequestIDWhenAllSourcesMissing
+// captures no request context identifier or result operation identity. It
+// checks the generated financial prefix, analysis BillingKey agreement, and the
+// separately derived diagnostic ID length.
 func TestOpenAIGatewayServiceRecordUsage_GeneratesRequestIDWhenAllSourcesMissing(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{}
 	billingRepo := &completiontestkit.SettlementStore{Result: &billing.UsageBillingApplyResult{Applied: true}}
@@ -2426,6 +2718,10 @@ func TestOpenAIGatewayServiceRecordUsage_GeneratesRequestIDWhenAllSourcesMissing
 	require.Len(t, usageRepo.LastLog.RequestID, 36)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_BillingErrorWritesUnsettledUsageLog
+// rejects the funds command for positive OpenAI usage. It checks the returned
+// store error, one financial and analysis attempt, retained token/base-cost
+// evidence, and zero ActualCost.
 func TestOpenAIGatewayServiceRecordUsage_BillingErrorWritesUnsettledUsageLog(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{}
 	billingErr := errors.New("billing tx failed")
@@ -2461,6 +2757,10 @@ func TestOpenAIGatewayServiceRecordUsage_BillingErrorWritesUnsettledUsageLog(t *
 	require.Zero(t, usageRepo.LastLog.ActualCost)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_UpdatesAPIKeyQuotaWhenConfigured supplies
+// positive key quota and an updater capability during capture. It checks the
+// command includes calculated total-quota cost while its unconfigured
+// rolling-rate cost remains zero.
 func TestOpenAIGatewayServiceRecordUsage_UpdatesAPIKeyQuotaWhenConfigured(t *testing.T) {
 	usage := openai.ForwardUsage{InputTokens: 10, OutputTokens: 6, CacheReadInputTokens: 2}
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
@@ -2490,10 +2790,15 @@ func TestOpenAIGatewayServiceRecordUsage_UpdatesAPIKeyQuotaWhenConfigured(t *tes
 	billingRepo := requireOpenAIRecordUsageBillingRepoStub(t, svc)
 	require.Equal(t, 1, billingRepo.Calls)
 	require.NotNil(t, billingRepo.LastCmd)
+	// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 	require.InDelta(t, expected.ActualCost, billingRepo.LastCmd.APIKeyQuotaCost, 1e-12)
 	require.InDelta(t, 0.0, billingRepo.LastCmd.APIKeyRateLimitCost, 1e-12)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_ClampsActualInputTokensToZero supplies
+// cache-read count larger than inclusive input for a priced model. It checks
+// ordinary input in the attempted row is floored at zero after cache
+// subtraction.
 func TestOpenAIGatewayServiceRecordUsage_ClampsActualInputTokensToZero(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	userRepo := &completiontestkit.UserStore{}
@@ -2521,6 +2826,10 @@ func TestOpenAIGatewayServiceRecordUsage_ClampsActualInputTokensToZero(t *testin
 	require.Equal(t, 0, usageRepo.LastLog.InputTokens)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_GPT56SeparatesCacheWriteForBillingAndStats
+// supplies inclusive input with both cache-write and cache-read buckets using
+// fixed GPT rates. It checks disjoint row counts, total token accounting,
+// individual bucket costs, and the scaled user total.
 func TestOpenAIGatewayServiceRecordUsage_GPT56SeparatesCacheWriteForBillingAndStats(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	userRepo := &completiontestkit.UserStore{}
@@ -2558,6 +2867,7 @@ func TestOpenAIGatewayServiceRecordUsage_GPT56SeparatesCacheWriteForBillingAndSt
 	require.Equal(t, 200, usageRepo.LastLog.CacheCreationTokens)
 	require.Equal(t, 100, usageRepo.LastLog.CacheReadTokens)
 	require.Equal(t, 1050, usageRepo.LastLog.TotalTokens())
+	// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 	require.InDelta(t, 700*5e-6, usageRepo.LastLog.InputCost, 1e-12)
 	require.InDelta(t, 200*6.25e-6, usageRepo.LastLog.CacheCreationCost, 1e-12)
 	require.InDelta(t, 100*0.5e-6, usageRepo.LastLog.CacheReadCost, 1e-12)
@@ -2565,11 +2875,15 @@ func TestOpenAIGatewayServiceRecordUsage_GPT56SeparatesCacheWriteForBillingAndSt
 	require.InDelta(t, usageRepo.LastLog.TotalCost*1.1, usageRepo.LastLog.ActualCost, 1e-12)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_LongContextBillingIgnoresLegacyProviderExtra
+// varies absent, false, true, and shadow-provider legacy long-context flags
+// against a parsed ladder catalogue. It checks identical ladder costs and
+// parent lookup only for the shadow fixture.
 func TestOpenAIGatewayServiceRecordUsage_LongContextBillingIgnoresLegacyProviderExtra(t *testing.T) {
 	parentID := int64(4016)
 	tests := []struct {
-		name     string
-		provider *providercore.Record
+		name     string               // fixture scenario label
+		provider *providercore.Record // executing provider and flags
 	}{
 		{name: "missing legacy value", provider: &providercore.Record{ID: 3014, Platform: capability.PlatformOpenAI}},
 		{name: "legacy false", provider: &providercore.Record{ID: 3015, Platform: capability.PlatformOpenAI, Extra: map[string]any{"openai_long_context_billing_enabled": false}}},
@@ -2619,6 +2933,7 @@ func TestOpenAIGatewayServiceRecordUsage_LongContextBillingIgnoresLegacyProvider
 			require.NotNil(t, usageRepo.LastLog)
 			expectedInput := 300000 * 2.5e-6 * 2.0
 			expectedOutput := 2000 * 15e-6 * 1.5
+			// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 			require.InDelta(t, expectedInput, usageRepo.LastLog.InputCost, 1e-10)
 			require.InDelta(t, expectedOutput, usageRepo.LastLog.OutputCost, 1e-10)
 			require.InDelta(t, expectedInput+expectedOutput, usageRepo.LastLog.TotalCost, 1e-10)
@@ -2627,7 +2942,8 @@ func TestOpenAIGatewayServiceRecordUsage_LongContextBillingIgnoresLegacyProvider
 			billingRepo := requireOpenAIRecordUsageBillingRepoStub(t, svc)
 			require.Equal(t, 1, billingRepo.Calls)
 			require.InDelta(t, usageRepo.LastLog.ActualCost, billingRepo.LastCmd.BillableAmountUSD, 1e-10)
-			// Shadow billing resolves parent credentials; the group setting controls long-context pricing.
+			// The shadow fixture requests a credential parent; the parsed catalogue and
+			// default long-context setting supply the same ladder prices in every scenario.
 			wantProviderRepoCalls := 0
 			if tt.provider.IsShadow() {
 				wantProviderRepoCalls = 1
@@ -2637,12 +2953,16 @@ func TestOpenAIGatewayServiceRecordUsage_LongContextBillingIgnoresLegacyProvider
 	}
 }
 
+// TestOpenAIGatewayServiceRecordUsage_GroupControlsLongContextBilling varies
+// shared long-context enablement while providing the opposite legacy provider
+// flag. It checks ladder application and expected input/output costs from the
+// configured group policy.
 func TestOpenAIGatewayServiceRecordUsage_GroupControlsLongContextBilling(t *testing.T) {
 	// The group setting controls the long-context policy.
 	tests := []struct {
-		name        string
-		groupEnable bool
-		wantApplied bool
+		name        string // fixture scenario label
+		groupEnable bool   // shared long-context enablement
+		wantApplied bool   // expected ladder application flag
 	}{
 		{name: "group enabled", groupEnable: true, wantApplied: true},
 		{name: "group disabled", groupEnable: false, wantApplied: false},
@@ -2697,21 +3017,25 @@ func TestOpenAIGatewayServiceRecordUsage_GroupControlsLongContextBilling(t *test
 				inputMultiplier = 2.0
 				outputMultiplier = 1.5
 			}
+			// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 			require.InDelta(t, 300000*2.5e-6*inputMultiplier, usageRepo.LastLog.InputCost, 1e-10)
 			require.InDelta(t, 2000*15e-6*outputMultiplier, usageRepo.LastLog.OutputCost, 1e-10)
 		})
 	}
 }
 
-// TestOpenAIGatewayServiceRecordUsage_GrokLongContextFollowsGroupToggle checks group control of Grok tiered long-context prices.
+// TestOpenAIGatewayServiceRecordUsage_GrokLongContextFollowsGroupToggle records
+// above-threshold Grok usage with shared long-context policy enabled or
+// disabled. It checks the application marker and both token cost buckets follow
+// that toggle.
 func TestOpenAIGatewayServiceRecordUsage_GrokLongContextFollowsGroupToggle(t *testing.T) {
 	baseInput := 250000 * 2e-6
 	baseOutput := 1000 * 6e-6
 
 	for i, tt := range []struct {
-		name        string
-		groupEnable bool
-		wantApplied bool
+		name        string // fixture scenario label
+		groupEnable bool   // shared long-context enablement
+		wantApplied bool   // expected ladder application flag
 	}{
 		{name: "group enabled", groupEnable: true, wantApplied: true},
 		{name: "group disabled", groupEnable: false, wantApplied: false},
@@ -2758,12 +3082,17 @@ func TestOpenAIGatewayServiceRecordUsage_GrokLongContextFollowsGroupToggle(t *te
 			if tt.wantApplied {
 				multiplier = 2
 			}
+			// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 			require.InDelta(t, baseInput*multiplier, usageRepo.LastLog.InputCost, 1e-10)
 			require.InDelta(t, baseOutput*multiplier, usageRepo.LastLog.OutputCost, 1e-10)
 		})
 	}
 }
 
+// TestOpenAIGatewayServiceRecordUsage_ServiceTierPriorityUsesFastPricing
+// supplies outbound priority for a fixture model with a premium multiplier. It
+// checks the captured tier and base total equal the standard calculator amount
+// times that premium factor.
 func TestOpenAIGatewayServiceRecordUsage_ServiceTierPriorityUsesFastPricing(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	userRepo := &completiontestkit.UserStore{}
@@ -2792,9 +3121,14 @@ func TestOpenAIGatewayServiceRecordUsage_ServiceTierPriorityUsesFastPricing(t *t
 
 	baseCost, calcErr := svc.Dependencies.Calculator.CalculateCost("gpt-5.4", pricing.UsageTokens{InputTokens: 100, OutputTokens: 50}, 1.0)
 	require.NoError(t, calcErr)
+	// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 	require.InDelta(t, baseCost.TotalCost*2, usageRepo.LastLog.TotalCost, 1e-10)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_ServiceTierFlexHalvesCost supplies flex
+// with inclusive input containing a cache-read subset. It checks the base total
+// is half the standard cost calculated from disjoint ordinary and cached
+// buckets.
 func TestOpenAIGatewayServiceRecordUsage_ServiceTierFlexHalvesCost(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	userRepo := &completiontestkit.UserStore{}
@@ -2821,9 +3155,15 @@ func TestOpenAIGatewayServiceRecordUsage_ServiceTierFlexHalvesCost(t *testing.T)
 
 	baseCost, calcErr := svc.Dependencies.Calculator.CalculateCost("gpt-5.4", pricing.UsageTokens{InputTokens: 80, OutputTokens: 50, CacheReadTokens: 20}, 1.0)
 	require.NoError(t, calcErr)
+	// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 	require.InDelta(t, baseCost.TotalCost*0.5, usageRepo.LastLog.TotalCost, 1e-10)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_UsesRequestedModelAndUpstreamModelMetadataFields
+// captures a logical model, a different sent model, and a raw response
+// declaration with effort/client metadata. It checks recorded model columns,
+// response mismatch, metadata, and the command amount matching calculated
+// analysis cost.
 func TestOpenAIGatewayServiceRecordUsage_UsesRequestedModelAndUpstreamModelMetadataFields(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	userRepo := &completiontestkit.UserStore{}
@@ -2879,10 +3219,14 @@ func TestOpenAIGatewayServiceRecordUsage_UsesRequestedModelAndUpstreamModelMetad
 	billingRepo := requireOpenAIRecordUsageBillingRepoStub(t, svc)
 	require.Equal(t, 1, billingRepo.Calls)
 	require.NotNil(t, billingRepo.LastCmd)
+	// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 	require.InDelta(t, usageRepo.LastLog.ActualCost, billingRepo.LastCmd.BillableAmountUSD, 1e-12)
 }
 
-// TestOpenAIGatewayServiceRecordUsage_PersistsRequestedReasoningEffort checks separate storage of requested and forwarded effort.
+// TestOpenAIGatewayServiceRecordUsage_PersistsRequestedReasoningEffort supplies
+// different requested and final effort observations in one result. It checks
+// the attempted row keeps both values independently after capture and
+// recording.
 func TestOpenAIGatewayServiceRecordUsage_PersistsRequestedReasoningEffort(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	userRepo := &completiontestkit.UserStore{}
@@ -2915,6 +3259,10 @@ func TestOpenAIGatewayServiceRecordUsage_PersistsRequestedReasoningEffort(t *tes
 	require.Equal(t, forwarded, *usageRepo.LastLog.ReasoningEffort)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_PreservesGroupMappedUpstreamModel
+// captures original requested and mapped execution model names. It checks
+// original display identity remains distinct from the internal and actual
+// outbound names in analysis.
 func TestOpenAIGatewayServiceRecordUsage_PreservesGroupMappedUpstreamModel(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	userRepo := &completiontestkit.UserStore{}
@@ -2949,6 +3297,10 @@ func TestOpenAIGatewayServiceRecordUsage_PreservesGroupMappedUpstreamModel(t *te
 	require.Equal(t, "gpt-5.6-terra", *usageRepo.LastLog.UpstreamModel)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_PreservesLoopedPricingConfigAndProviderUpstreamModel
+// captures a mapped internal name with outbound execution returning to the
+// original name. It checks requested, internal, and outbound observations
+// remain separately available in analysis.
 func TestOpenAIGatewayServiceRecordUsage_PreservesLoopedPricingConfigAndProviderUpstreamModel(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	userRepo := &completiontestkit.UserStore{}
@@ -2980,6 +3332,10 @@ func TestOpenAIGatewayServiceRecordUsage_PreservesLoopedPricingConfigAndProvider
 	require.Equal(t, "gpt-5.6-sol", *usageRepo.LastLog.UpstreamModel)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_BillsMappedRequestsUsingRequestedModel
+// supplies a priced logical GPT model and a different priced outbound model
+// under default source selection. It checks row and command amounts match the
+// logical model calculation.
 func TestOpenAIGatewayServiceRecordUsage_BillsMappedRequestsUsingRequestedModel(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	userRepo := &completiontestkit.UserStore{}
@@ -3018,6 +3374,10 @@ func TestOpenAIGatewayServiceRecordUsage_BillsMappedRequestsUsingRequestedModel(
 	require.Equal(t, expectedCost.ActualCost, billingRepo.LastCmd.BillableAmountUSD)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_GroupMappedDoesNotOverrideBillingModelWhenUnmapped
+// supplies equal original/mapped aliases and a separately priced explicit
+// BillingModel. It checks unchanged mapping leaves that explicit candidate's
+// positive calculated user amount selected.
 func TestOpenAIGatewayServiceRecordUsage_GroupMappedDoesNotOverrideBillingModelWhenUnmapped(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	userRepo := &completiontestkit.UserStore{}
@@ -3058,6 +3418,10 @@ func TestOpenAIGatewayServiceRecordUsage_GroupMappedDoesNotOverrideBillingModelW
 	require.True(t, usageRepo.LastLog.ActualCost > 0, "cost must not be zero")
 }
 
+// TestOpenAIGatewayServiceRecordUsage_GroupMappedOverridesBillingModelWhenMapped
+// supplies a changed group mapping beside a different explicit billing
+// candidate. It checks the selected mapped identity determines the attempted
+// row's positive user amount.
 func TestOpenAIGatewayServiceRecordUsage_GroupMappedOverridesBillingModelWhenMapped(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	userRepo := &completiontestkit.UserStore{}
@@ -3098,6 +3462,10 @@ func TestOpenAIGatewayServiceRecordUsage_GroupMappedOverridesBillingModelWhenMap
 	require.True(t, usageRepo.LastLog.ActualCost > 0, "cost must not be zero")
 }
 
+// TestOpenAIGatewayServiceRecordUsage_UpstreamBillingSourceOverridesRequestedModel
+// supplies different requested and outbound GPT prices while selecting upstream
+// source. It checks the attempted row's positive user charge matches the
+// outbound model calculation.
 func TestOpenAIGatewayServiceRecordUsage_UpstreamBillingSourceOverridesRequestedModel(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	userRepo := &completiontestkit.UserStore{}
@@ -3137,14 +3505,18 @@ func TestOpenAIGatewayServiceRecordUsage_UpstreamBillingSourceOverridesRequested
 	require.True(t, usageRepo.LastLog.ActualCost > 0, "cost must not be zero")
 }
 
+// TestOpenAIGatewayServiceRecordUsage_ResponsesMappedBillingModelHonorsBillingModelSource
+// varies requested versus upstream source for a result carrying mapped billing
+// evidence. It checks the internal model remains unchanged while row/command
+// amounts follow the selected price identity.
 func TestOpenAIGatewayServiceRecordUsage_ResponsesMappedBillingModelHonorsBillingModelSource(t *testing.T) {
 	usage := openai.ForwardUsage{InputTokens: 20, OutputTokens: 10}
 	tokens := pricing.UsageTokens{InputTokens: 20, OutputTokens: 10}
 
 	tests := []struct {
-		name               string
-		billingModelSource string
-		wantBillingModel   string
+		name               string // fixture scenario label
+		billingModelSource string // configured billing model source
+		wantBillingModel   string // expected selected price identity
 	}{
 		{
 			name:               "upstream uses mapped billing model",
@@ -3190,6 +3562,7 @@ func TestOpenAIGatewayServiceRecordUsage_ResponsesMappedBillingModelHonorsBillin
 			require.NoError(t, err)
 			require.NotNil(t, usageRepo.LastLog)
 			require.Equal(t, "gpt-5.4", usageRepo.LastLog.Model)
+			// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 			require.InDelta(t, expectedCost.ActualCost, usageRepo.LastLog.ActualCost, 1e-12)
 			billingRepo := requireOpenAIRecordUsageBillingRepoStub(t, svc)
 			require.NotNil(t, billingRepo.LastCmd)
@@ -3200,6 +3573,10 @@ func TestOpenAIGatewayServiceRecordUsage_ResponsesMappedBillingModelHonorsBillin
 	}
 }
 
+// TestOpenAIGatewayServiceRecordUsage_BillsCompactOpenAIModelAlias supplies an
+// unpriced compact-spelled alias beside a priced canonical name and different
+// outbound model. It checks retained model metadata with zero row and command
+// charges for the selected alias.
 func TestOpenAIGatewayServiceRecordUsage_BillsCompactOpenAIModelAlias(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	userRepo := &completiontestkit.UserStore{}
@@ -3237,6 +3614,10 @@ func TestOpenAIGatewayServiceRecordUsage_BillsCompactOpenAIModelAlias(t *testing
 	require.Zero(t, billingRepo.LastCmd.BillableAmountUSD)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_FallsBackToUpstreamModelWhenPrimaryUnpriceable
+// supplies an unpriced explicit/logical candidate alongside a known priced
+// outbound model. It checks zero row and command amounts, retaining the
+// selected identity rather than borrowing the outbound price.
 func TestOpenAIGatewayServiceRecordUsage_FallsBackToUpstreamModelWhenPrimaryUnpriceable(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	userRepo := &completiontestkit.UserStore{}
@@ -3272,6 +3653,10 @@ func TestOpenAIGatewayServiceRecordUsage_FallsBackToUpstreamModelWhenPrimaryUnpr
 	require.Zero(t, billingRepo.LastCmd.BillableAmountUSD)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_UnpricedTokenModelFallsBackToZeroCostUsageLog
+// records positive tokens for an unpriced alias with no outbound alternative.
+// It checks retained model/count metadata and zero costs in the single
+// attempted analysis row.
 func TestOpenAIGatewayServiceRecordUsage_UnpricedTokenModelFallsBackToZeroCostUsageLog(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	userRepo := &completiontestkit.UserStore{}
@@ -3302,6 +3687,10 @@ func TestOpenAIGatewayServiceRecordUsage_UnpricedTokenModelFallsBackToZeroCostUs
 	require.Equal(t, 0, subRepo.IncrementCalls)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_SubscriptionBillingSetsSubscriptionFields
+// supplies an applied store fixture with an allocation identifying one
+// subscription and plan. It checks the analysis funding category, subscription
+// ID, and single financial call while legacy repositories remain unbound.
 func TestOpenAIGatewayServiceRecordUsage_SubscriptionBillingSetsSubscriptionFields(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	userRepo := &completiontestkit.UserStore{}
@@ -3344,6 +3733,10 @@ func TestOpenAIGatewayServiceRecordUsage_SubscriptionBillingSetsSubscriptionFiel
 	require.Equal(t, 0, userRepo.DeductCalls)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_SubscriptionBillingUsesPlanGroupRateOverUserGroupRate
+// supplies a covered subscription plan rate and a competing balance user
+// override. It checks the plan factor, subscription metadata, calculated
+// row/command charge, and absence of user-rate lookup.
 func TestOpenAIGatewayServiceRecordUsage_SubscriptionBillingUsesPlanGroupRateOverUserGroupRate(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	userRepo := &completiontestkit.UserStore{}
@@ -3403,12 +3796,17 @@ func TestOpenAIGatewayServiceRecordUsage_SubscriptionBillingUsesPlanGroupRateOve
 	require.Equal(t, usagecore.BillingTypeSubscription, usageRepo.LastLog.BillingType)
 	require.NotNil(t, usageRepo.LastLog.SubscriptionID)
 	require.Equal(t, subscription.ID, *usageRepo.LastLog.SubscriptionID)
+	// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 	require.InDelta(t, 0.5, usageRepo.LastLog.RateMultiplier, 1e-12)
 	require.InDelta(t, expectedCost.ActualCost, usageRepo.LastLog.ActualCost, 1e-12)
 	require.InDelta(t, expectedCost.ActualCost, billingRepo.LastCmd.BillableAmountUSD, 1e-12)
 	require.Equal(t, 0, rateRepo.Calls)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_InferredSubscriptionUsesPlanGroupRate
+// returns a preliminary subscription from the financial reader instead of
+// capturing one. It checks one subscription lookup, its plan rate and row
+// identity, calculated command amount, and no balance-rate lookup.
 func TestOpenAIGatewayServiceRecordUsage_InferredSubscriptionUsesPlanGroupRate(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	userRepo := &completiontestkit.UserStore{}
@@ -3474,6 +3872,7 @@ func TestOpenAIGatewayServiceRecordUsage_InferredSubscriptionUsesPlanGroupRate(t
 	require.Equal(t, usagecore.BillingTypeSubscription, usageRepo.LastLog.BillingType)
 	require.NotNil(t, usageRepo.LastLog.SubscriptionID)
 	require.Equal(t, subscription.ID, *usageRepo.LastLog.SubscriptionID)
+	// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 	require.InDelta(t, 0.5, usageRepo.LastLog.RateMultiplier, 1e-12)
 	require.InDelta(t, expectedCost.ActualCost, usageRepo.LastLog.ActualCost, 1e-12)
 	require.InDelta(t, expectedCost.ActualCost, billingRepo.LastCmd.BillableAmountUSD, 1e-12)
@@ -3481,6 +3880,10 @@ func TestOpenAIGatewayServiceRecordUsage_InferredSubscriptionUsesPlanGroupRate(t
 	require.Equal(t, 1, billingRepo.ResolveCalls)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_ImageOnlyUsageStillPersists supplies two
+// image outputs without token observations using fixture media prices. It
+// checks the attempted row retains image count, size, and image billing mode
+// after successful recording.
 func TestOpenAIGatewayServiceRecordUsage_ImageOnlyUsageStillPersists(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	userRepo := &completiontestkit.UserStore{}
@@ -3509,6 +3912,10 @@ func TestOpenAIGatewayServiceRecordUsage_ImageOnlyUsageStillPersists(t *testing.
 	require.Equal(t, string(routing.BillingModeImage), *usageRepo.LastLog.BillingMode)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_EmptyImageSizeDefaultsBeforeBillingAndPersistence
+// supplies two image outputs without dimension evidence and a labeled 2K card.
+// It checks default-size/source metadata, nil input/output dimensions, and the
+// resulting doubled media charge.
 func TestOpenAIGatewayServiceRecordUsage_EmptyImageSizeDefaultsBeforeBillingAndPersistence(t *testing.T) {
 	imagePrice2K := 0.31
 	groupID := int64(1201)
@@ -3549,12 +3956,17 @@ func TestOpenAIGatewayServiceRecordUsage_EmptyImageSizeDefaultsBeforeBillingAndP
 	require.Equal(t, pricing.ImageSizeSourceDefault, *usageRepo.LastLog.ImageSizeSource)
 	require.Nil(t, usageRepo.LastLog.ImageInputSize)
 	require.Nil(t, usageRepo.LastLog.ImageOutputSize)
+	// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 	require.InDelta(t, 0.62, usageRepo.LastLog.TotalCost, 1e-12)
 	require.InDelta(t, 0.62, usageRepo.LastLog.ActualCost, 1e-12)
 	require.NotNil(t, usageRepo.LastLog.BillingMode)
 	require.Equal(t, string(routing.BillingModeImage), *usageRepo.LastLog.BillingMode)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_OutputImageSizeWinsBeforeBillingAndPersistence
+// supplies a small input hint and larger decoded output dimensions with two
+// labeled card prices. It checks output-selected tier/evidence/breakdown and
+// the corresponding media dollar charge.
 func TestOpenAIGatewayServiceRecordUsage_OutputImageSizeWinsBeforeBillingAndPersistence(t *testing.T) {
 	imagePrice1K := 0.11
 	imagePrice4K := 0.44
@@ -3599,10 +4011,15 @@ func TestOpenAIGatewayServiceRecordUsage_OutputImageSizeWinsBeforeBillingAndPers
 	require.NotNil(t, usageRepo.LastLog.ImageSizeSource)
 	require.Equal(t, pricing.ImageSizeSourceOutput, *usageRepo.LastLog.ImageSizeSource)
 	require.Equal(t, map[string]int{pricing.ImageBillingSize4K: 1}, usageRepo.LastLog.ImageSizeBreakdown)
+	// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 	require.InDelta(t, 0.44, usageRepo.LastLog.TotalCost, 1e-12)
 	require.InDelta(t, 0.44, usageRepo.LastLog.ActualCost, 1e-12)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_ImageUsesPerImageBillingEvenWithUsageTokens
+// supplies token counts alongside two outputs and a configured image card. It
+// checks image mode/unit charges and zero ordinary or image-token cost buckets
+// under that card.
 func TestOpenAIGatewayServiceRecordUsage_ImageUsesPerImageBillingEvenWithUsageTokens(t *testing.T) {
 	imagePrice := 0.02
 	groupID := int64(12)
@@ -3647,6 +4064,7 @@ func TestOpenAIGatewayServiceRecordUsage_ImageUsesPerImageBillingEvenWithUsageTo
 	require.NotNil(t, usageRepo.LastLog.BillingMode)
 	require.Equal(t, string(routing.BillingModeImage), *usageRepo.LastLog.BillingMode)
 	require.Equal(t, 2, usageRepo.LastLog.ImageCount)
+	// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 	require.InDelta(t, 0.04, usageRepo.LastLog.TotalCost, 1e-12)
 	require.InDelta(t, 0.04, usageRepo.LastLog.ActualCost, 1e-12)
 	require.InDelta(t, 0.0, usageRepo.LastLog.InputCost, 1e-12)
@@ -3654,6 +4072,10 @@ func TestOpenAIGatewayServiceRecordUsage_ImageUsesPerImageBillingEvenWithUsageTo
 	require.InDelta(t, 0.0, usageRepo.LastLog.ImageOutputCost, 1e-12)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_ImageSharedMultiplierPreservesExistingBehavior
+// supplies one configured image output with a fractional group base factor. It
+// checks the base media price, scaled user amount, recorded factor, and image
+// mode in analysis.
 func TestOpenAIGatewayServiceRecordUsage_ImageSharedMultiplierPreservesExistingBehavior(t *testing.T) {
 	imagePrice := 0.2
 	groupID := int64(121)
@@ -3688,6 +4110,7 @@ func TestOpenAIGatewayServiceRecordUsage_ImageSharedMultiplierPreservesExistingB
 
 	require.NoError(t, err)
 	require.NotNil(t, usageRepo.LastLog)
+	// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 	require.InDelta(t, 0.2, usageRepo.LastLog.TotalCost, 1e-12)
 	require.InDelta(t, 0.03, usageRepo.LastLog.ActualCost, 1e-12)
 	require.InDelta(t, 0.15, usageRepo.LastLog.RateMultiplier, 1e-12)
@@ -3695,6 +4118,10 @@ func TestOpenAIGatewayServiceRecordUsage_ImageSharedMultiplierPreservesExistingB
 	require.Equal(t, string(routing.BillingModeImage), *usageRepo.LastLog.BillingMode)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_ImageSharedMultiplierUsesUserGroupOverride
+// supplies a balance user factor different from the group factor for a
+// configured image card. It checks the media base stays fixed and the user
+// amount uses that override.
 func TestOpenAIGatewayServiceRecordUsage_ImageSharedMultiplierUsesUserGroupOverride(t *testing.T) {
 	imagePrice := 0.5
 	userRate := 0.2
@@ -3735,11 +4162,16 @@ func TestOpenAIGatewayServiceRecordUsage_ImageSharedMultiplierUsesUserGroupOverr
 
 	require.NoError(t, err)
 	require.NotNil(t, usageRepo.LastLog)
+	// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 	require.InDelta(t, 0.5, usageRepo.LastLog.TotalCost, 1e-12)
 	require.InDelta(t, 0.1, usageRepo.LastLog.ActualCost, 1e-12)
 	require.InDelta(t, 0.2, usageRepo.LastLog.RateMultiplier, 1e-12)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_GrokVideoUsesDefaultRateCard supplies one
+// 720p video without duration under fixture catalogue media rates. It checks
+// the eight-second default charge, retained video metadata/mode, and absent
+// image metadata.
 func TestOpenAIGatewayServiceRecordUsage_GrokVideoUsesDefaultRateCard(t *testing.T) {
 	groupID := int64(1261)
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
@@ -3773,6 +4205,7 @@ func TestOpenAIGatewayServiceRecordUsage_GrokVideoUsesDefaultRateCard(t *testing
 	require.NotNil(t, usageRepo.LastLog)
 	require.Nil(t, usageRepo.LastLog.ImageSize)
 	// Missing duration uses the default eight seconds: USD 0.14/s * 8s.
+	// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 	require.InDelta(t, 0.14*8, usageRepo.LastLog.TotalCost, 1e-12)
 	require.InDelta(t, 0.14*8, usageRepo.LastLog.ActualCost, 1e-12)
 	require.Equal(t, 0, usageRepo.LastLog.ImageCount)
@@ -3783,6 +4216,10 @@ func TestOpenAIGatewayServiceRecordUsage_GrokVideoUsesDefaultRateCard(t *testing
 	require.Equal(t, pricing.VideoBillingDefaultDurationSeconds, *usageRepo.LastLog.VideoDurationSeconds)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_GroupImagePriceOverridesPricingConfigImagePrice
+// installs an owning fixture image card over an underlying image resolver card.
+// It checks the selected 2K tier uses that owning card's smaller base and
+// actual amounts.
 func TestOpenAIGatewayServiceRecordUsage_GroupImagePriceOverridesPricingConfigImagePrice(t *testing.T) {
 	groupID := int64(127)
 	pricingConfigPrice := 0.201
@@ -3821,12 +4258,17 @@ func TestOpenAIGatewayServiceRecordUsage_GroupImagePriceOverridesPricingConfigIm
 	require.NotNil(t, usageRepo.LastLog)
 	require.Equal(t, 1, usageRepo.LastLog.ImageCount)
 	require.Equal(t, pricing.ImageBillingSize2K, *usageRepo.LastLog.ImageSize)
+	// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 	require.InDelta(t, 0.021, usageRepo.LastLog.TotalCost, 1e-12)
 	require.InDelta(t, 0.021, usageRepo.LastLog.ActualCost, 1e-12)
 	require.NotNil(t, usageRepo.LastLog.BillingMode)
 	require.Equal(t, string(routing.BillingModeImage), *usageRepo.LastLog.BillingMode)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_GroupVideoPriceOverridesPricingConfigImagePrice
+// installs an owning fixture video card over an underlying image-mode card. It
+// checks positive video identity, absent image metadata, video mode, and the
+// configured one-second media amount.
 func TestOpenAIGatewayServiceRecordUsage_GroupVideoPriceOverridesPricingConfigImagePrice(t *testing.T) {
 	groupID := int64(128)
 	pricingConfigPrice := 0.201
@@ -3867,15 +4309,17 @@ func TestOpenAIGatewayServiceRecordUsage_GroupVideoPriceOverridesPricingConfigIm
 	require.NotNil(t, usageRepo.LastLog)
 	require.Equal(t, 0, usageRepo.LastLog.ImageCount)
 	require.Nil(t, usageRepo.LastLog.ImageSize)
+	// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 	require.InDelta(t, 0.037, usageRepo.LastLog.TotalCost, 1e-12)
 	require.InDelta(t, 0.037, usageRepo.LastLog.ActualCost, 1e-12)
 	require.NotNil(t, usageRepo.LastLog.BillingMode)
 	require.Equal(t, string(routing.BillingModeVideo), *usageRepo.LastLog.BillingMode)
 }
 
-// TestOpenAIGatewayServiceRecordUsage_GrokVideoWithTokenConfigPricingKeepsVideoMetadata checks token-priced video records.
-// VideoCount remains positive even when billing_mode is token and image_size is NULL.
-// This keeps the video identity available to usage-log validation and reporting.
+// TestOpenAIGatewayServiceRecordUsage_GrokVideoWithTokenConfigPricingKeepsVideoMetadata
+// supplies video quantity/duration and token observations under a configured
+// token card. It checks token mode retains video count, normalized
+// resolution/duration, and nil image-size metadata.
 func TestOpenAIGatewayServiceRecordUsage_GrokVideoWithTokenConfigPricingKeepsVideoMetadata(t *testing.T) {
 	groupID := int64(132)
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
@@ -3920,6 +4364,10 @@ func TestOpenAIGatewayServiceRecordUsage_GrokVideoWithTokenConfigPricingKeepsVid
 	require.Equal(t, 5, *usageRepo.LastLog.VideoDurationSeconds)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_PricingConfigImageBillingUsesImageCountAndSharedMultiplier
+// supplies three outputs under a configured per-image card with a fractional
+// group rate. It checks base cost, scaled user cost, recorded factor, count,
+// and image mode.
 func TestOpenAIGatewayServiceRecordUsage_PricingConfigImageBillingUsesImageCountAndSharedMultiplier(t *testing.T) {
 	groupID := int64(123)
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
@@ -3948,6 +4396,7 @@ func TestOpenAIGatewayServiceRecordUsage_PricingConfigImageBillingUsesImageCount
 
 	require.NoError(t, err)
 	require.NotNil(t, usageRepo.LastLog)
+	// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 	require.InDelta(t, 0.75, usageRepo.LastLog.TotalCost, 1e-12)
 	require.InDelta(t, 0.1125, usageRepo.LastLog.ActualCost, 1e-12)
 	require.InDelta(t, 0.15, usageRepo.LastLog.RateMultiplier, 1e-12)
@@ -3956,6 +4405,10 @@ func TestOpenAIGatewayServiceRecordUsage_PricingConfigImageBillingUsesImageCount
 	require.Equal(t, string(routing.BillingModeImage), *usageRepo.LastLog.BillingMode)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_ServiceTierDowngradedByUpstreamResponse
+// supplies priority request evidence and a default response on an API-key
+// provider. It checks the recorded default tier and base price matching the
+// standard calculator result.
 func TestOpenAIGatewayServiceRecordUsage_ServiceTierDowngradedByUpstreamResponse(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	userRepo := &completiontestkit.UserStore{}
@@ -3985,9 +4438,14 @@ func TestOpenAIGatewayServiceRecordUsage_ServiceTierDowngradedByUpstreamResponse
 
 	baseCost, calcErr := svc.Dependencies.Calculator.CalculateCost("gpt-5.4", pricing.UsageTokens{InputTokens: 100, OutputTokens: 50}, 1.0)
 	require.NoError(t, calcErr)
+	// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 	require.InDelta(t, baseCost.TotalCost, usageRepo.LastLog.TotalCost, 1e-10, "a request served at default must not pay the priority price")
 }
 
+// TestOpenAIGatewayServiceRecordUsage_CodexDefaultEchoKeepsFastBilling supplies
+// a default response echo for OAuth and setup-token providers with outbound
+// priority. It checks the captured premium tier and corresponding premium model
+// base cost.
 func TestOpenAIGatewayServiceRecordUsage_CodexDefaultEchoKeepsFastBilling(t *testing.T) {
 	for _, providerType := range []string{capability.ProviderTypeOAuth, capability.ProviderTypeSetupToken} {
 		t.Run(providerType, func(t *testing.T) {
@@ -4022,11 +4480,16 @@ func TestOpenAIGatewayServiceRecordUsage_CodexDefaultEchoKeepsFastBilling(t *tes
 
 			fastCost, calcErr := svc.Dependencies.Calculator.CalculateCostWithServiceTier("gpt-5.6-sol", tokens, 1.0, "priority")
 			require.NoError(t, calcErr)
+			// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 			require.InDelta(t, fastCost.TotalCost, usageRepo.LastLog.TotalCost, 1e-10)
 		})
 	}
 }
 
+// TestOpenAIGatewayServiceRecordUsage_ShadowUsesParentCredentialTierContract
+// supplies an API-key shadow whose credential parent is OAuth-like. It checks
+// one parent read and retention of premium tier/base cost despite the upstream
+// default echo.
 func TestOpenAIGatewayServiceRecordUsage_ShadowUsesParentCredentialTierContract(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	svc := newOpenAIRecordUsageServiceForTest(
@@ -4075,10 +4538,14 @@ func TestOpenAIGatewayServiceRecordUsage_ShadowUsesParentCredentialTierContract(
 
 	fastCost, calcErr := svc.Dependencies.Calculator.CalculateCostWithServiceTier("gpt-5.6-sol", tokens, 1.0, "priority")
 	require.NoError(t, calcErr)
+	// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 	require.InDelta(t, fastCost.TotalCost, usageRepo.LastLog.TotalCost, 1e-10)
 }
 
-// TestOpenAIGatewayServiceRecordUsage_FreeOpenAIFastChargesStandard checks standard user charges with priority base cost in logs.
+// TestOpenAIGatewayServiceRecordUsage_FreeOpenAIFastChargesStandard enables
+// free Fast with manual premium prices and a fractional group factor. It checks
+// premium TotalCost, standard user ActualCost, retained tier, and standard
+// financial allocation base.
 func TestOpenAIGatewayServiceRecordUsage_FreeOpenAIFastChargesStandard(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	svc := newOpenAIRecordUsageServiceForTest(
@@ -4135,6 +4602,7 @@ func TestOpenAIGatewayServiceRecordUsage_FreeOpenAIFastChargesStandard(t *testin
 	require.NotNil(t, usageRepo.LastLog)
 	require.NotNil(t, usageRepo.LastLog.ServiceTier)
 	require.Equal(t, "priority", *usageRepo.LastLog.ServiceTier)
+	// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 	require.InDelta(t, 0.5, usageRepo.LastLog.RateMultiplier, 1e-12)
 
 	standardTotal := float64(tokens.InputTokens)*inputPrice + float64(tokens.OutputTokens)*outputPrice
@@ -4143,11 +4611,16 @@ func TestOpenAIGatewayServiceRecordUsage_FreeOpenAIFastChargesStandard(t *testin
 
 	billingRepo := requireOpenAIRecordUsageBillingRepoStub(t, svc)
 	require.NotNil(t, billingRepo.LastCmd)
-	// Allocate subscription and balance charges from the standard base price.
+	// Premium TotalCost stays in analysis, while this command base allocates the
+	// standard-price user amount across subscription and balance inside real billing.
 	require.InDelta(t, standardTotal, billingRepo.LastCmd.BaseAmountUSD, 1e-10)
 	require.InDelta(t, standardTotal*0.5, billingRepo.LastCmd.BillableAmountUSD, 1e-10)
 }
 
+// TestOpenAIGatewayServiceRecordUsage_ServiceTierNeverRaisedByUpstreamResponse
+// supplies an observed priority tier with no outbound premium selection on an
+// API-key provider. It checks the row keeps nil tier and standard model base
+// cost.
 func TestOpenAIGatewayServiceRecordUsage_ServiceTierNeverRaisedByUpstreamResponse(t *testing.T) {
 	usageRepo := &completiontestkit.UsageLogStore{Inserted: true}
 	userRepo := &completiontestkit.UserStore{}
@@ -4174,9 +4647,14 @@ func TestOpenAIGatewayServiceRecordUsage_ServiceTierNeverRaisedByUpstreamRespons
 
 	baseCost, calcErr := svc.Dependencies.Calculator.CalculateCost("gpt-5.4", pricing.UsageTokens{InputTokens: 100, OutputTokens: 50}, 1.0)
 	require.NoError(t, calcErr)
+	// Floating-point comparisons allow rounding from price and multiplier arithmetic.
 	require.InDelta(t, baseCost.TotalCost, usageRepo.LastLog.TotalCost, 1e-10)
 }
 
+// requireGatewayRecordUsageBillingRepoStub returns the native fixture's
+// financial spy after asserting its concrete type. A mismatched fixture fails
+// the test assertion; callers inspect its retained command and invocation
+// observations after recording.
 func requireGatewayRecordUsageBillingRepoStub(t *testing.T, svc *completiontestkit.Recording) *completiontestkit.SettlementStore {
 	t.Helper()
 
@@ -4185,14 +4663,22 @@ func requireGatewayRecordUsageBillingRepoStub(t *testing.T, svc *completiontestk
 	return billingRepo
 }
 
+// lookupQoderAliasKeyForTest resolves a listed Qoder request alias to its route
+// key for fixture input. Unknown aliases return their supplied spelling, so
+// test pricing still uses the declared full identity.
 func lookupQoderAliasKeyForTest(alias string) string {
 	if info, ok := qoder.LookupQoderModelAlias(alias); ok {
 		return info.Key
 	}
+	// An unknown alias stays as supplied evidence; pricing tests can then observe
+	// its missing full-identity price rather than constructing a related model name.
 	return alias
 }
 
-// newGatewayRecordUsageServiceWithResolverForTest supplies a production-style price resolver for service-tier billing tests.
+// newGatewayRecordUsageServiceWithResolverForTest builds the native recording
+// fixture with a production-style catalogue resolver and group factor one. The
+// caller owns the returned mutable fixture and key for synchronous tier
+// assertions.
 func newGatewayRecordUsageServiceWithResolverForTest(usageRepo usagecore.UsageLogRepository) (*completiontestkit.Recording, *apikey.APIKey) {
 	svc := newGatewayRecordUsageServiceForTest(usageRepo, &completiontestkit.UserStore{}, &completiontestkit.SubscriptionStore{})
 	svc.Dependencies.Prices = billingtestkit.PriceResolver(nil, svc.Dependencies.Calculator)
@@ -4200,15 +4686,26 @@ func newGatewayRecordUsageServiceWithResolverForTest(usageRepo usagecore.UsageLo
 	return svc, &apikey.APIKey{ID: 1, GroupID: &groupID, Group: &routing.Group{ID: groupID, RateMultiplier: 1.0}}
 }
 
-// newGatewayRecordUsageServiceForTest builds the usage-recording fixture.
+// newGatewayRecordUsageServiceForTest builds native recording with a fresh
+// financial spy and default resolver. The legacy user/subscription repository
+// arguments are unused; financial observations come from the bound completion
+// Store.
 func newGatewayRecordUsageServiceForTest(logs usagecore.UsageLogRepository, _ identity.UserRepository, _ billing.UserSubscriptionRepository) *completiontestkit.Recording {
 	return completiontestkit.NewRecording(logs, &completiontestkit.SettlementStore{}, nil, true)
 }
 
+// newGatewayRecordUsageServiceWithBillingRepoForTest binds the supplied
+// financial store and analysis repository to native recording. The legacy
+// user/subscription arguments are unused, and configured pricing is left for
+// the individual test to install.
 func newGatewayRecordUsageServiceWithBillingRepoForTest(logs usagecore.UsageLogRepository, funds completion.Store, _ identity.UserRepository, _ billing.UserSubscriptionRepository) *completiontestkit.Recording {
 	return completiontestkit.NewRecording(logs, funds, nil, false)
 }
 
+// requireOpenAIRecordUsageBillingRepoStub returns the OpenAI fixture's
+// financial spy after checking its concrete type. Callers use its retained
+// command, result, and counts for synchronous recording assertions rather than
+// inspecting legacy repositories.
 func requireOpenAIRecordUsageBillingRepoStub(t *testing.T, svc *completiontestkit.Recording) *completiontestkit.SettlementStore {
 	t.Helper()
 
@@ -4217,9 +4714,20 @@ func requireOpenAIRecordUsageBillingRepoStub(t *testing.T, svc *completiontestki
 	return billingRepo
 }
 
+// expectedOpenAICost calculates the expected model amount from inclusive OpenAI
+// usage for a synchronous assertion. Callers supply a fixture with available
+// model pricing; calculator errors fail the calling test through require.NoError.
+//
+// Cache read and write observations are subsets of the reported input, so both
+// are subtracted before pricing ordinary input. Excess cache counts floor that
+// ordinary bucket at zero. Output and the two cache buckets keep their supplied
+// quantities, and the caller's multiplier scales the resulting amount. This
+// comparison therefore avoids billing the cache subsets again as ordinary input.
 func expectedOpenAICost(t *testing.T, svc *completiontestkit.Recording, model string, usage openai.ForwardUsage, multiplier float64) *pricing.CostBreakdown {
 	t.Helper()
 
+	// Separate both cache buckets from inclusive input before deriving expected cost,
+	// so the assertion cannot count cache tokens again at the ordinary input rate.
 	cost, err := svc.Dependencies.Calculator.CalculateCost(model, pricing.UsageTokens{
 		InputTokens:         max(usage.InputTokens-usage.CacheReadInputTokens-usage.CacheCreationInputTokens, 0),
 		OutputTokens:        usage.OutputTokens,
@@ -4230,12 +4738,19 @@ func expectedOpenAICost(t *testing.T, svc *completiontestkit.Recording, model st
 	return cost
 }
 
-// swapInOpenAILadderCatalog supplies above_272k prices for catalog-driven long-context rules.
+// swapInOpenAILadderCatalog replaces the fixture calculator with prices parsed
+// from the fixed above-272k JSON catalogue. It mutates the caller-owned
+// recording fixture before the test records usage; no remote refresh is
+// started.
 func swapInOpenAILadderCatalog(t *testing.T, svc *completiontestkit.Recording) {
 	t.Helper()
 	svc.Dependencies.Calculator = NewBillingService(newStubCatalogFromJSON(t, openAILadderCatalogJSON))
 }
 
+// newOpenAITokenImageConfigPricingResolverForTest installs a token card with
+// separate ordinary input, output, and image-output prices for one model/group.
+// The returned resolver combines that configuration with the fixed historical
+// catalogue fixture.
 func newOpenAITokenImageConfigPricingResolverForTest(t *testing.T, groupID int64, model string) *billing.PriceResolver {
 	t.Helper()
 	inputPrice := 3e-6
@@ -4256,24 +4771,40 @@ func newOpenAITokenImageConfigPricingResolverForTest(t *testing.T, groupID int64
 	return billingtestkit.PriceResolver(cs, NewBillingService(nil))
 }
 
-// newOpenAIRecordUsageServiceForTest builds a recorder with test stores and rates.
+// newOpenAIRecordUsageServiceForTest builds OpenAI recording with a fresh
+// financial spy, optional balance-rate reader, and default price resolver.
+// Legacy user/subscription repository arguments are unused; tests inspect
+// financial Store and analysis writer observations.
 func newOpenAIRecordUsageServiceForTest(logs usagecore.UsageLogRepository, _ identity.UserRepository, _ billing.UserSubscriptionRepository, rates billing.UserGroupRateRepository) *completiontestkit.Recording {
 	return completiontestkit.NewRecording(logs, &completiontestkit.SettlementStore{}, rates, true)
 }
 
+// newOpenAIRecordUsageServiceWithBillingRepoForTest binds supplied funds and
+// analysis delegates with an optional balance-rate reader. The legacy
+// user/subscription arguments are unused, and the returned mutable fixture lets
+// tests install their own prices or parent lookup.
 func newOpenAIRecordUsageServiceWithBillingRepoForTest(logs usagecore.UsageLogRepository, funds completion.Store, _ identity.UserRepository, _ billing.UserSubscriptionRepository, rates billing.UserGroupRateRepository) *completiontestkit.Recording {
 	return completiontestkit.NewRecording(logs, funds, rates, false)
 }
 
-// testImageModelPricing supplies media prices through model price cards.
+// testImageModelPricing returns a wildcard image-mode card containing the
+// supplied labeled per-image dollar rates. Price pointers remain shared by the
+// constructed fixture, so callers keep their values stable during recording.
 func testImageModelPricing(prices map[string]*float64) []routing.ModelPricingEntry {
 	return testMediaModelPricing(routing.BillingModeImage, prices)
 }
 
+// testVideoModelPricing returns a wildcard video-mode card containing the
+// supplied labeled per-second dollar rates. Price pointers remain shared by the
+// constructed fixture, so callers keep their values stable during recording.
 func testVideoModelPricing(prices map[string]*float64) []routing.ModelPricingEntry {
 	return testMediaModelPricing(routing.BillingModeVideo, prices)
 }
 
+// testMediaModelPricing builds one wildcard media card from labeled rate
+// pointers. Map iteration leaves interval order unspecified, and the pointers
+// remain shared; fixture callers supply distinct labels and keep prices stable
+// during recording.
 func testMediaModelPricing(mode routing.BillingMode, prices map[string]*float64) []routing.ModelPricingEntry {
 	card := routing.ModelPricingEntry{Models: []string{"*"}, BillingMode: mode}
 	for tier, price := range prices {
@@ -4282,13 +4813,19 @@ func testMediaModelPricing(mode routing.BillingMode, prices map[string]*float64)
 	return []routing.ModelPricingEntry{card}
 }
 
+// newModelCatalogFixture creates an unstarted query service with the supplied
+// parsed price map and model-identity options. The snapshot constructor takes
+// ownership of that map; callers stop mutating its entries after construction.
 func newModelCatalogFixture(fixture modelCatalogFixture) *provider.Service {
 	return provider.NewServiceFromSnapshot(provider.Options{
 		ModelLookupCandidates: modelidentity.CandidatesFactory,
 	}, nil, provider.Snapshot{Data: fixture.pricingData})
 }
 
-// newStubCatalogFromJSON uses the production catalog parser for test pricing.
+// newStubCatalogFromJSON decodes and validates fixture catalogue entries with
+// production parsing functions before constructing a query service. Encoding,
+// validation, or parsing failures fail the test; the result starts no remote
+// refresh work.
 func newStubCatalogFromJSON(t *testing.T, body string) *provider.Service {
 	t.Helper()
 	raw, err := pricing.DecodeCatalogEntries([]byte(body))
@@ -4300,13 +4837,20 @@ func newStubCatalogFromJSON(t *testing.T, body string) *provider.Service {
 	return service
 }
 
-// configureBillingGroup installs the group settings and shared price cards in a resolver.
+// configureBillingGroup installs fixture settings and model cards for the
+// supplied group's ID, retaining the prior resolver as a delegate. It mutates
+// the recording fixture and returns the same group; callers keep referenced
+// settings/cards stable.
 func configureBillingGroup(svc *completiontestkit.Recording, group *routing.Group, settings pricing.BillingSettings, cards []routing.ModelPricingEntry) *routing.Group {
 	source := configuredPrices{base: svc.Dependencies.Prices, groupID: group.ID, settings: settings, cards: cards}
 	svc.Dependencies.Prices = billing.NewPriceResolver(source, svc.Dependencies.Calculator, nil, nil)
 	return group
 }
 
+// GetEffectiveBillingSettings returns cloned settings for the fixture's owning
+// group, then delegates other groups to the prior resolver. A nil prior
+// resolver supplies production default settings, while cloned optional prices
+// isolate the returned values.
 func (s configuredPrices) GetEffectiveBillingSettings(ctx context.Context, id int64) pricing.BillingSettings {
 	if id == s.groupID {
 		return s.settings.Clone()
@@ -4314,6 +4858,10 @@ func (s configuredPrices) GetEffectiveBillingSettings(ctx context.Context, id in
 	return s.base.BillingSettings(ctx, &id)
 }
 
+// GetEffectiveConfigModelPricing returns a cloned matching owning-group card
+// before consulting the prior resolver's normalized lookup. A missing match or
+// different group can delegate; no prior resolver or available card yields nil
+// pricing evidence.
 func (s configuredPrices) GetEffectiveConfigModelPricing(ctx context.Context, id int64, model string) *pricing.ModelPricingEntry {
 	if id == s.groupID {
 		if card := pricing.MatchPriceCard(s.cards, model); card != nil {

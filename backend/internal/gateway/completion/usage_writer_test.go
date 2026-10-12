@@ -13,9 +13,13 @@ import (
 // usageWriterSpy accepts usage while request observers expose the updated summary.
 type usageWriterSpy struct{}
 
+// Create accepts the supplied usage row for lifecycle-observation tests and
+// returns successful creation without retaining or persisting any fixture data.
 func (usageWriterSpy) Create(context.Context, *UsageLog) (bool, error) { return true, nil }
 
-// TestWriteUsagePreservesRequestLifecycle covers background updates before and after HTTP and WS-turn completion.
+// TestWriteUsagePreservesRequestLifecycle supplements HTTP and child-turn captures
+// in running and terminal states. It checks unchanged timing, outcome, and status,
+// with client display model, provider identity, and billing/upstream aliases added by usage.
 func TestWriteUsagePreservesRequestLifecycle(t *testing.T) {
 	for _, state := range []string{"running", "completed", "failed", "canceled"} {
 		for _, child := range []bool{false, true} {
@@ -63,7 +67,9 @@ func TestWriteUsagePreservesRequestLifecycle(t *testing.T) {
 	}
 }
 
-// TestWriteUsageKeepsTaskSeparateFromPollingRequest checks that task usage cannot finish the polling request.
+// TestWriteUsageKeepsTaskSeparateFromPollingRequest supplies a task usage ID to
+// a different running polling capture. It checks a separate completed task record
+// and a still-running parent with no task financial aliases added.
 func TestWriteUsageKeepsTaskSeparateFromPollingRequest(t *testing.T) {
 	var parent, task telemetry.RequestRecord
 	ctx := telemetry.WithRequestCapture(t.Context(), telemetry.RequestRecord{RequestID: "poll", State: "running"}, func(record telemetry.RequestRecord) { parent = record })

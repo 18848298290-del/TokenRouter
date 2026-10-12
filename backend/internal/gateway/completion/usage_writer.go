@@ -8,6 +8,28 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry"
 )
 
+// Background usage contributes model and financial aliases to a request summary
+// that the entrypoint may already have finished. Matching capture updates therefore
+// leave its timing and terminal state intact. A different task ID instead receives
+// a related completion record through the bound observer, keeping polling traffic
+// separate from the task whose measured work is being logged.
+//
+// Usage persistence follows the funds attempt. Best-effort rejection triggers one
+// synchronous Create call, using a fresh detached context when the earlier budget
+// has expired. These writes keep the same analysis identity and never invoke
+// settlement again. Missing logs skip both persistence and summary supplementation;
+// configured write failures are reported through the recorder observer.
+
+// WriteUsage supplements request metadata and attempts analysis persistence.
+// Missing Logs or row returns immediately. ClientModel can override the row's
+// requested display name, and matching request capture receives provider/model
+// updates and aliases while keeping entrypoint timing and outcome.
+//
+// A nonmatching ID produces a completion record through RequestRecords. Storage
+// runs under detached fifteen-second contexts; best-effort errors cause a single
+// synchronous retry, with a renewed context when that budget has expired. Callers
+// own the row during these updates and use SnapshotLogWriter when repositories
+// may mutate their arguments. Write errors are observed and do not resubmit funds.
 func (s *Recorder) WriteUsage(ctx context.Context, usageLog *UsageLog, logKey string) {
 	if s.logs == nil || usageLog == nil {
 		return
@@ -34,7 +56,8 @@ func (s *Recorder) WriteUsage(ctx context.Context, usageLog *UsageLog, logKey st
 		if usageLog.UpstreamRequestID != nil {
 			record.Aliases = append(record.Aliases, telemetry.RequestAlias{Kind: "upstream", Value: *usageLog.UpstreamRequestID})
 		}
-		// Entrypoints own HTTP and WS-turn timing; background usage adds model and correlation data.
+		// A matched capture may already be failed or cancelled; supplement its model
+		// and aliases while retaining the entrypoint's terminal state, timing, and status.
 		if telemetry.UpdateRequestForID(ctx, record.RequestID, func(current *telemetry.RequestRecord) {
 			if record.Model != "" {
 				current.Model = record.Model
@@ -50,6 +73,8 @@ func (s *Recorder) WriteUsage(ctx context.Context, usageLog *UsageLog, logKey st
 				telemetry.AddRequestAlias(ctx, alias.Kind, alias.Value)
 			}
 		} else {
+			// A task or otherwise unmatched ID needs its own summary; submitting this
+			// record leaves the polling request's lifecycle and financial aliases unchanged.
 			s.requestRecords(record)
 		}
 	}
@@ -59,11 +84,12 @@ func (s *Recorder) WriteUsage(ctx context.Context, usageLog *UsageLog, logKey st
 	if writer, ok := s.logs.(BestEffortLogWriter); ok {
 		if err := writer.CreateBestEffort(usageCtx, usageLog); err != nil {
 			s.printf(logKey, "Create usage log failed: %v", err)
-			// Retry failed best-effort writes synchronously so settled and reconcilable requests retain usage logs.
-			// Failed settlements use ActualCost=0; deduplication handles billing keys and historical request IDs.
+			// Rejected analysis writes retry from the same row after the funds outcome
+			// is already known; this path performs persistence alone and can also fail.
 			fallbackCtx := usageCtx
 			if usageCtx.Err() != nil {
-				// Queue waiting exhausted the context; give the synchronous write a fresh timeout.
+				// An expired best-effort budget would reject the retry immediately; a fresh
+				// detached timeout lets synchronous persistence make one additional attempt.
 				var fallbackCancel context.CancelFunc
 				fallbackCtx, fallbackCancel = detachedBillingContext(context.Background())
 				defer fallbackCancel()
@@ -75,12 +101,22 @@ func (s *Recorder) WriteUsage(ctx context.Context, usageLog *UsageLog, logKey st
 		return
 	}
 
+	// A synchronous-only repository has no queue recovery path; report its failure
+	// while leaving the earlier funds outcome and captured analysis identity intact.
 	if _, err := s.logs.Create(usageCtx, usageLog); err != nil {
 		s.printf(logKey, "Create usage log failed: %v", err)
 	}
 }
 
-// applyProviderStatsCost resolves provider base costs independently of user charges.
+// applyProviderStatsCost attaches a provider base amount independently of user
+// charges. A configured price resolver takes precedence over the separate statistics
+// source, and no source leaves the existing field unchanged.
+//
+// The requested model substitutes for absent upstream evidence, with Qoder asking
+// the resolver to prefer its requested alias. ImageCount determines request units
+// when positive, otherwise one is used. The returned optional value distinguishes
+// no statistics price from an explicitly zero provider expense; settlement later
+// multiplies that selected base by the executing provider's rate.
 func (s *Recorder) applyProviderStatsCost(ctx context.Context, row *UsageLog, providerID, groupID int64, upstream, requested, mapped string, tokens UsageTokens) {
 	if upstream == "" {
 		upstream = requested
@@ -90,6 +126,8 @@ func (s *Recorder) applyProviderStatsCost(ctx context.Context, row *UsageLog, pr
 		count = row.ImageCount
 	}
 	source := s.stats
+	// The shared resolver combines current provider rules and catalogue pricing;
+	// use the separate statistics binding only when that resolver is unavailable.
 	if s.resolver != nil {
 		source = s.resolver
 	}

@@ -15,26 +15,37 @@ import (
 
 // recordStore counts settlement calls to detect duplicate settlement during log retries.
 type recordStore struct {
-	calls   int
-	err     error
-	command *billing.UsageBillingCommand
-	events  *[]string
+	calls   int                          // financial apply invocation count
+	err     error                        // configured settlement failure
+	command *billing.UsageBillingCommand // last supplied command
+	events  *[]string                    // shared serial event trace
 }
 
+// recordWriter retains attempted row pointers and write outcomes for ordering
+// assertions. rows, contexts, and events are updated serially by the tests; events
+// shares the same trace used by the funds and effects fixtures.
 type recordWriter struct {
-	rows               []*usage.UsageLog
+	rows []*usage.UsageLog // retained attempted row pointers
+	// bestErr: best-effort configured error. errorSync: synchronous configured error.
 	bestErr, errorSync error
-	events             *[]string
-	contexts           []error
+	events             *[]string // shared write event trace
+	contexts           []error   // observed write context errors
 }
 
-type recordEffects struct{ events *[]string }
+// recordEffects appends committed-effect observations to the shared serial test trace.
+type recordEffects struct {
+	events *[]string // shared committed event trace
+}
 
+// recordModels selects the supplied primary model for recorder pricing assertions.
 type recordModels struct{}
 
 // recordPriceCatalog supplies known prices for settlement and log-order tests.
 type recordPriceCatalog struct{}
 
+// Apply counts and retains one financial command before returning the configured
+// fixture result. A cancelled context returns its error; otherwise the synthetic
+// result carries Applied=true and the command's balance amount alongside the configured error.
 func (s *recordStore) Apply(ctx context.Context, c *billing.UsageBillingCommand) (*billing.UsageBillingApplyResult, error) {
 	s.calls++
 	s.command = c
@@ -45,6 +56,9 @@ func (s *recordStore) Apply(ctx context.Context, c *billing.UsageBillingCommand)
 	return &billing.UsageBillingApplyResult{Applied: true, BalanceAmountUSD: c.BillableAmountUSD}, s.err
 }
 
+// CreateBestEffort records the event, current context error, and supplied row
+// pointer before returning its configured queue error. This serial fixture performs
+// no persistence and lets tests inspect recorder ordering and retry inputs.
 func (w *recordWriter) CreateBestEffort(ctx context.Context, r *usage.UsageLog) error {
 	*w.events = append(*w.events, "best")
 	w.contexts = append(w.contexts, ctx.Err())
@@ -52,6 +66,9 @@ func (w *recordWriter) CreateBestEffort(ctx context.Context, r *usage.UsageLog) 
 	return w.bestErr
 }
 
+// Create records the synchronous event, context error, and supplied row pointer.
+// It returns true with the configured error, allowing tests to verify that a failed
+// analysis retry follows the funds result without another Apply invocation.
 func (w *recordWriter) Create(ctx context.Context, r *usage.UsageLog) (bool, error) {
 	*w.events = append(*w.events, "sync")
 	w.contexts = append(w.contexts, ctx.Err())
@@ -59,16 +76,23 @@ func (w *recordWriter) Create(ctx context.Context, r *usage.UsageLog) (bool, err
 	return true, w.errorSync
 }
 
+// ProviderUsed appends the provider-activity event to the serial shared trace.
 func (e recordEffects) ProviderUsed(int64) { *e.events = append(*e.events, "used") }
 
+// InvalidateAuth appends the authentication-expiry event to the serial shared trace.
 func (e recordEffects) InvalidateAuth(context.Context, string) { *e.events = append(*e.events, "auth") }
 
+// Settled appends the committed-effects event to the serial shared trace.
 func (e recordEffects) Settled(SettlementInput, *billing.UsageBillingApplyResult) {
 	*e.events = append(*e.events, "effects")
 }
 
+// Candidates returns the primary model as the recorder test pricing candidate.
 func (recordModels) Candidates(model string, _ ...string) []string { return []string{model} }
 
+// recordFixture builds serial funds, analysis, and effects spies around a fixed
+// native usage input. The returned event slice is shared by those spies; callers
+// configure failures and inspect completed recording calls through the retained objects.
 func recordFixture() (*Recorder, *recordStore, *recordWriter, *Input, *[]string) {
 	events := []string{}
 	funds := &recordStore{events: &events}
@@ -85,11 +109,17 @@ func recordFixture() (*Recorder, *recordStore, *recordWriter, *Input, *[]string)
 	return recorder, funds, logs, input, &events
 }
 
+// TestRecordSettlementFailureRetainsUnsettledFact records native and OpenAI usage
+// from a cancelled source while funds returns an error. It checks one funds call,
+// actor/payer attribution, protocol-specific input buckets, and a zero-ActualCost
+// row after settlement.
 func TestRecordSettlementFailureRetainsUnsettledFact(t *testing.T) {
 	for _, openAI := range []bool{false, true} {
 		t.Run(map[bool]string{false: "anthropic", true: "openai"}[openAI], func(t *testing.T) {
 			core, funds, logs, in, events := recordFixture()
 			funds.err = errors.New("settlement failed")
+			// Cancel before recording to distinguish the live detached funds/write budgets
+			// from the request context that has already ended in this failure scenario.
 			ctx, cancel := context.WithCancel(context.Background())
 			cancel()
 			err := core.Record(ctx, in, openAI)
@@ -110,6 +140,9 @@ func TestRecordSettlementFailureRetainsUnsettledFact(t *testing.T) {
 	}
 }
 
+// TestRecordLogFailureDoesNotResettle makes both analysis write attempts fail
+// after an applied funds result. It checks the funds/effects/write event order,
+// one financial invocation, and a retained positive charge in the attempted retry row.
 func TestRecordLogFailureDoesNotResettle(t *testing.T) {
 	core, funds, logs, in, events := recordFixture()
 	logs.bestErr = errors.New("queue full")
@@ -120,6 +153,9 @@ func TestRecordLogFailureDoesNotResettle(t *testing.T) {
 	require.Greater(t, logs.rows[1].ActualCost, 0.0)
 }
 
+// TestSnapshotIsolatesQueueInputs captures mutable scalar pointers, image
+// collections, notification data, and plan rates before changing their sources.
+// It checks the submitted values and fixed pricing instant retained by the snapshot.
 func TestSnapshotIsolatesQueueInputs(t *testing.T) {
 	threshold := 2.0
 	group := int64(7)
@@ -132,6 +168,8 @@ func TestSnapshotIsolatesQueueInputs(t *testing.T) {
 		Result:       &Result{ServiceTier: &tier, ImageOutputSizes: []string{"1K"}, ImageSizeBreakdown: map[string]int{"1K": 1}},
 		Subscription: &billing.UserSubscription{ID: 1, Plan: &billing.SubscriptionPlan{GroupIDs: []int64{7}, GroupRateMultipliers: map[int64]float64{7: 2}}},
 	}
+	// Mutate shared scalar fixtures, image collections, and the plan-rate map after
+	// Snapshot to expose storage sharing in the fields asserted below.
 	frozen := Snapshot(in)
 	threshold = 99
 	group = 8
@@ -149,6 +187,9 @@ func TestSnapshotIsolatesQueueInputs(t *testing.T) {
 	require.Equal(t, 2.0, frozen.Subscription.Plan.GroupRateMultipliers[7])
 }
 
+// GetModelPricing returns fixed input/output token prices for claude-sonnet-4.
+// Other names return nil, giving ordering tests a stable priced model and a
+// clear missing-price result without consulting a live catalogue.
 func (recordPriceCatalog) GetModelPricing(model string) *pricing.CatalogModelPricing {
 	if model != "claude-sonnet-4" {
 		return nil
@@ -156,9 +197,12 @@ func (recordPriceCatalog) GetModelPricing(model string) *pricing.CatalogModelPri
 	return &pricing.CatalogModelPricing{InputCostPerToken: 3e-6, OutputCostPerToken: 15e-6}
 }
 
+// ForceUpdate accepts the catalogue refresh interface while leaving fixed fixture prices unchanged.
 func (recordPriceCatalog) ForceUpdate() error { return nil }
 
-// TestRecordCyberRetainsFailureFactAndDoesNotResettleLogFailure checks Cyber classification and logs after settlement failure.
+// TestRecordCyberRetainsFailureFactAndDoesNotResettleLogFailure records Cyber
+// classification with either failed funds or failed analysis writes. It checks one
+// financial call, retained rows, zero charge on settlement failure, and the unchanged source flag.
 func TestRecordCyberRetainsFailureFactAndDoesNotResettleLogFailure(t *testing.T) {
 	for _, failed := range []bool{false, true} {
 		core, funds, logs, in, _ := recordFixture()
@@ -181,7 +225,9 @@ func TestRecordCyberRetainsFailureFactAndDoesNotResettleLogFailure(t *testing.T)
 	}
 }
 
-// TestRecordCyberPreservesZeroUsage checks that zero-usage audit records pass through settlement with zero charges.
+// TestRecordCyberPreservesZeroUsage supplies an eligible model with empty measured
+// usage to the Cyber recorder. It checks a zero financial command, a retained
+// zero-cost analysis row, and the Cyber request classification.
 func TestRecordCyberPreservesZeroUsage(t *testing.T) {
 	core, funds, logs, in, _ := recordFixture()
 	in.Result.Usage = TokenUsage{}

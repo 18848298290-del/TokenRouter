@@ -9,6 +9,31 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
+// Observed usage is recorded after entrypoints decide that an outcome qualifies
+// for completion. These routines accept that captured work, including caller-selected
+// partial failures and zero-usage records, and interpret either separate native
+// input/cache buckets or inclusive OpenAI input. They do not infer network success
+// from the presence of usage or repeat a provider attempt after a price failure.
+//
+// Calculated user charges and provider statistics use distinct model and rate
+// choices. Financial Apply runs before WriteUsage: committed allocations replace
+// provisional funding metadata, while a settlement error retains measured counts
+// and base costs with ActualCost zero for reconciliation. An analysis write failure
+// is observed after that outcome and cannot cause a second funds application.
+// Direct protocol methods normalize their input result in place; Record provides
+// the ordinary snapshotting entrypoint.
+
+// RecordAnthropic records usage whose ordinary input and cache buckets are already
+// separate. Callers provide complete nonnil input, result, key, payer, provider,
+// and pricing dependencies and own result mutation for normalization.
+//
+// Nil options are created locally; supplied options have PricingAt replaced by
+// the recorder's current clock. Cache switching and TTL overrides precede pricing,
+// then captured funding policy selects subscription or balance factors. Configured
+// model source chooses one price identity while row metadata retains the request
+// and outbound models. Funds are applied before analysis writes; settlement errors
+// return after an unsettled zero-ActualCost row is attempted, and log errors are
+// observed without replacing the funds result.
 func (s *Recorder) RecordAnthropic(ctx context.Context, input *Input, opts *PricingOptions) error {
 	if opts == nil {
 		opts = &PricingOptions{}
@@ -20,7 +45,8 @@ func (s *Recorder) RecordAnthropic(ctx context.Context, input *Input, opts *Pric
 	subscription := input.Subscription
 	s.normalizeResult(result, provider, false, provider, input.RequestID)
 
-	// Treat uncached input as cache reads when sticky-session switching requests cache billing.
+	// Sticky-switch billing reclassifies observed uncached input before pricing; add
+	// it to existing cache reads once and clear input so those tokens are not charged twice.
 
 	if input.ForceCacheBilling && result.Usage.InputTokens > 0 {
 		s.printf("service.gateway", "force_cache_billing: %d input_tokens → cache_read_input_tokens (provider=%d)",
@@ -29,14 +55,16 @@ func (s *Recorder) RecordAnthropic(ctx context.Context, input *Input, opts *Pric
 		result.Usage.InputTokens = 0
 	}
 
-	// Provider cache overrides take precedence. Global one-hour injection defaults eligible providers to five-minute billing.
+	// The selected override redistributes cache-write TTL detail before cost lookup;
+	// its logged marker reflects positive classified detail rather than the helper's change flag.
 	cacheTTLOverridden := false
 	if overrideTarget := s.cacheOverrideTarget(ctx, input); overrideTarget != "" {
 		applyCacheOverride(&result.Usage, overrideTarget)
 		cacheTTLOverridden = (result.Usage.CacheCreation5mTokens + result.Usage.CacheCreation1hTokens) > 0
 	}
 
-	// Balance multipliers prefer user overrides, then group and system defaults.
+	// Preliminary funding uses captured mode first: subscription rates come from
+	// the plan/group, while balance user overrides are resolved when no subscription is selected.
 	multiplier := s.defaultMultiplier
 	subscriptionMultiplier := multiplier
 	balanceMultiplier := multiplier
@@ -54,8 +82,9 @@ func (s *Recorder) RecordAnthropic(ctx context.Context, input *Input, opts *Pric
 	} else {
 		multiplier = ResolveUsageRateMultiplier(ctx, user.ID, apiKey.GroupID, apiKey.Group, multiplier, subscription, nil)
 	}
-	// Apply the peak factor to token billing, including image tokens, but not per-image billing.
-	// Compute it separately so the user/group multiplier cache does not retain a time-dependent value.
+	// Prepare peak and media candidates before the final card mode is known;
+	// RatesForMode later supplies the applicable peak scale for transaction allocation.
+	// The stored user/group base remains reusable across different recording instants.
 	rateNow := s.now()
 	opts.PricingAt = rateNow
 	multiplier, imageMultiplier := ComputePeakAwareMultipliers(apiKey, multiplier, rateNow)
@@ -71,7 +100,8 @@ func (s *Recorder) RecordAnthropic(ctx context.Context, input *Input, opts *Pric
 		billingModel = input.OriginalModel
 	}
 
-	// RequestedModel records the model before group mapping.
+	// Keep the pre-group requested model for analysis independently of the selected
+	// pricing source; WriteUsage can additionally apply captured client display evidence.
 	requestedModel := result.Model
 	if input.OriginalModel != "" {
 		requestedModel = input.OriginalModel
@@ -79,7 +109,8 @@ func (s *Recorder) RecordAnthropic(ctx context.Context, input *Input, opts *Pric
 
 	cost := s.CalculateRecordUsageCost(ctx, result, apiKey, provider, billingModel, requestedModel, input.BillingModelSource, input.GroupMappedModel, multiplier, imageMultiplier, opts)
 
-	// The settlement result replaces this provisional billing type.
+	// This preliminary subscription choice supplies row metadata before Apply; an
+	// applied transaction result replaces it with the allocation that actually funded usage.
 	isSubscriptionBilling := subscription != nil
 	billingType := BillingTypeBalance
 	if isSubscriptionBilling {
@@ -90,12 +121,13 @@ func (s *Recorder) RecordAnthropic(ctx context.Context, input *Input, opts *Pric
 	usageLog := s.BuildRecordUsageLog(ctx, input, result, apiKey, user, provider, subscription,
 		requestedModel, multiplier, imageMultiplier, providerRateMultiplier, billingType, cacheTTLOverridden, cost, opts)
 
-	// Qoder provider-cost rules prefer the requested alias, then the group-mapped and upstream models.
+	// Provider statistics use their own rule ordering and Qoder requested-alias
+	// preference; user pricing already selected its separate configured billing identity.
 	if apiKey.GroupID != nil {
 		s.applyProviderStatsCost(ctx, usageLog,
 			provider.ID, *apiKey.GroupID, result.UpstreamModel, requestedModel, input.GroupMappedModel,
-			// Anthropic's input_tokens excludes cache_read and cache_creation (billed separately);
-			// OpenAI gateway uses actualInputTokens which also excludes cache_read for the same reason.
+			// Native input excludes both cache buckets, so statistics receive those buckets
+			// separately; OpenAI recording constructs the analogous disjoint ordinary input.
 			UsageTokens{
 				InputTokens:         result.Usage.InputTokens,
 				OutputTokens:        result.Usage.OutputTokens,
@@ -107,6 +139,8 @@ func (s *Recorder) RecordAnthropic(ctx context.Context, input *Input, opts *Pric
 	}
 
 	subscriptionMultiplier, balanceMultiplier, subscriptionMultiplierScale := RatesForMode(apiKey, cost, subscriptionMultiplier, balanceMultiplier, rateNow)
+	// Commit or deduplicate the financial command before writing analysis, so a
+	// later log retry can reuse this row without submitting another funds operation.
 	_, billingErr := s.Apply(ctx, input.SettlementKey(), usageLog, &usageBillingParams{
 		Cost:                            cost,
 		User:                            user,
@@ -122,7 +156,8 @@ func (s *Recorder) RecordAnthropic(ctx context.Context, input *Input, opts *Pric
 	})
 
 	if billingErr != nil {
-		// Keep usage and calculated costs for reconciliation; zero ActualCost marks an unsuccessful settlement.
+		// The failed funds result leaves measured work and calculated base buckets useful
+		// for reconciliation; mark the unsuccessful charge zero before attempting its row write.
 		usageLog.ActualCost = 0
 		s.WriteUsage(ctx, usageLog, "service.gateway")
 		return billingErr
@@ -131,6 +166,17 @@ func (s *Recorder) RecordAnthropic(ctx context.Context, input *Input, opts *Pric
 	return nil
 }
 
+// BuildRecordUsageLog constructs native-bucket analysis metadata before settlement.
+// Callers supply nonnil input, result, key, payer, and provider values; optional
+// costs leave amount fields zero and an absent subscription leaves its ID nil.
+//
+// Actor and payer identities occupy separate columns, and SettlementKey remains
+// distinct from the diagnostic RequestID. The raw response declaration supplies
+// nullable mismatch evidence against the actual outbound model. Media counts and
+// the calculator mode choose the provisional rate, which ApplyResultToLog may later
+// replace with committed allocation data. Returned optional pointers and size maps
+// can remain shared with the captured arguments; persistence wrappers clone them.
+// CreatedAt uses current wall time independently of the pricing options or clock.
 func (s *Recorder) BuildRecordUsageLog(
 	ctx context.Context,
 	input *Input,
@@ -148,6 +194,7 @@ func (s *Recorder) BuildRecordUsageLog(
 	cost *CostBreakdown,
 	opts *PricingOptions,
 ) *UsageLog {
+	// Persist elapsed duration in whole milliseconds, discarding finer-resolution remainder.
 	durationMs := int(result.Duration.Milliseconds())
 	requestID := input.RequestID
 	usageLog := &UsageLog{
@@ -220,6 +267,22 @@ func (s *Recorder) BuildRecordUsageLog(
 	return usageLog
 }
 
+// RecordOpenAI splits inclusive input observations and records eligible captured
+// work. Missing input/result or required owner/provider snapshots returns an error;
+// a nonnil eligible provider can have forbidden evidence reset before later validation.
+// Callers own the input result during normalization or use Record to snapshot it.
+//
+// Credential-parent evidence controls OAuth tier and free-Fast eligibility while
+// attribution uses the executing provider. A nonzero PricingAt fixes this turn's
+// price instant; otherwise the recorder clock supplies it. Cache read and write
+// buckets are subtracted once from total input, with a zero floor for excess cache
+// counts. Missing-price errors retain a mode-tagged zero cost, whereas other price
+// errors stop before funds or analysis persistence.
+//
+// Free Fast recalculates the standard user base while retaining premium TotalCost
+// for provider statistics. Apply then resolves final funding before WriteUsage;
+// a settlement error writes measured work with ActualCost zero and is returned,
+// while log errors are observed after the financial result and do not resettle.
 func (s *Recorder) RecordOpenAI(ctx context.Context, input *Input) error {
 	if input == nil {
 		return errors.New("openai usage input is nil")
@@ -245,7 +308,8 @@ func (s *Recorder) RecordOpenAI(ctx context.Context, input *Input) error {
 	}
 	s.normalizeResult(result, billingProvider, true, provider, input.RequestID)
 
-	// Split OpenAI total input into uncached input, cache reads, and cache creation for separate billing.
+	// Cache reads and writes overlap inclusive OpenAI input; subtract both once,
+	// then floor excess cache observations at zero to prevent negative ordinary-input charges.
 	actualInputTokens := max(result.Usage.InputTokens-result.Usage.CacheReadInputTokens-result.Usage.CacheCreationInputTokens, 0)
 
 	tokens := UsageTokens{
@@ -273,8 +337,8 @@ func (s *Recorder) RecordOpenAI(ctx context.Context, input *Input) error {
 	} else {
 		multiplier = ResolveUsageRateMultiplier(ctx, user.ID, apiKey.GroupID, apiKey.Group, multiplier, subscription, nil)
 	}
-	// Apply peak factors to token billing, including image tokens, while retaining the per-image base multiplier.
-	// Keep time-dependent factors outside the user/group multiplier cache.
+	// Keep media and tool factors at the captured base while preparing a peak
+	// candidate for token mode; the final card mode supplies transaction allocation scale.
 	baseMultiplier := multiplier
 	rateNow := s.now()
 	if !input.PricingAt.IsZero() {
@@ -310,7 +374,8 @@ func (s *Recorder) RecordOpenAI(ctx context.Context, input *Input) error {
 			return err
 		}
 		s.observeEvent(BillingEvent{Kind: "pricing_missing", Component: "service.openai_gateway", Models: billingModels, RequestedModel: input.OriginalModel, MappedModel: input.GroupMappedModel, UpstreamModel: result.UpstreamModel, KeyID: apiKey.ID, ProviderID: provider.ID, Err: err})
-		// Retain media counts, dimensions, and duration when missing prices make charges zero.
+		// Missing selected-model pricing still leaves observed media and tokens to record;
+		// retain the attempted mode and continue with a zero-cost financial command.
 		mode := string(BillingModeToken)
 		if cost != nil && cost.BillingMode != "" {
 			mode = cost.BillingMode
@@ -318,8 +383,8 @@ func (s *Recorder) RecordOpenAI(ctx context.Context, input *Input) error {
 		cost = &CostBreakdown{BillingMode: mode}
 	}
 
-	// Free Fast uses standard prices for user charges while retaining Fast TotalCost for provider statistics.
-	// The standard base amount drives subscription and balance allocation.
+	// Recalculate a standard user base independently of the premium model cost,
+	// then pass that base to subscription/balance allocation while statistics retain TotalCost.
 	var billingBaseAmountUSD *float64
 	if GroupBillsOpenAIFastAtStandard(apiKey, billingProvider, serviceTier) && cost != nil {
 		standardCost, standardErr := s.CalculateOpenAIRecordUsageCostAt(
@@ -339,7 +404,8 @@ func (s *Recorder) RecordOpenAI(ctx context.Context, input *Input) error {
 			if !IsUsagePricingUnavailableError(standardErr) {
 				return standardErr
 			}
-			// Missing standard prices yield zero user charges while provider statistics retain Fast costs.
+			// A missing standard price makes the user allocation base zero; premium TotalCost
+			// remains available to provider statistics and its separate quota-cost calculation.
 			s.observeEvent(BillingEvent{Kind: "standard_pricing_missing", Component: "service.openai_gateway", RequestID: input.RequestID, Err: standardErr})
 			standardCost = &CostBreakdown{}
 		}
@@ -348,18 +414,21 @@ func (s *Recorder) RecordOpenAI(ctx context.Context, input *Input) error {
 		cost.ActualCost = standardCost.ActualCost
 	}
 
-	// The settlement result replaces this provisional billing type.
+	// This preliminary subscription choice supplies row metadata before Apply; an
+	// applied transaction result replaces it with the allocation that actually funded usage.
 	isSubscriptionBilling := subscription != nil
 	billingType := BillingTypeBalance
 	if isSubscriptionBilling {
 		billingType = BillingTypeSubscription
 	}
 
+	// Persist elapsed duration in whole milliseconds, discarding finer-resolution remainder.
 	durationMs := int(result.Duration.Milliseconds())
 	providerRateMultiplier := provider.RateMultiplier
 	requestID := input.RequestID
 
-	// RequestedModel records the model before group mapping.
+	// Keep the pre-group requested model for analysis independently of the selected
+	// pricing source; WriteUsage can additionally apply captured client display evidence.
 	requestedModel := result.Model
 	if input.OriginalModel != "" {
 		requestedModel = input.OriginalModel
@@ -402,6 +471,8 @@ func (s *Recorder) RecordOpenAI(ctx context.Context, input *Input) error {
 		ImageSizeBreakdown:  result.ImageSizeBreakdown,
 	}
 	isVideoUsage := IsGrokVideoUsageResult(result, billingModels)
+	// Video identity remains in the analysis row even when a configured token card
+	// priced its measured usage; normalized duration and resolution describe the completed output.
 	if isVideoUsage {
 		usageLog.VideoCount = result.VideoCount
 		usageLog.VideoResolution = OptionalTrimmedStringPtr(NormalizeVideoBillingResolutionOrDefault(result.VideoResolution))
@@ -441,6 +512,8 @@ func (s *Recorder) RecordOpenAI(ctx context.Context, input *Input) error {
 	usageLog.PricingConfigID = OptionalInt64Ptr(input.PricingConfigID)
 	usageLog.ModelMappingChain = OptionalTrimmedStringPtr(input.ModelMappingChain)
 
+	// A configured token card can price positive video/image quantities; retain that
+	// actual calculator mode before using media counts as an unpriced-row classification.
 	if cost != nil && cost.BillingMode != "" {
 		billingMode := cost.BillingMode
 		usageLog.BillingMode = &billingMode
@@ -473,7 +546,8 @@ func (s *Recorder) RecordOpenAI(ctx context.Context, input *Input) error {
 		usageLog.SubscriptionID = &subscription.ID
 	}
 
-	// Qoder provider-cost rules prefer the requested alias, then the group-mapped and upstream models.
+	// Provider statistics use their own rule ordering and Qoder requested-alias
+	// preference; user pricing already selected its separate configured billing identity.
 	if apiKey.GroupID != nil {
 		s.applyProviderStatsCost(ctx, usageLog,
 			provider.ID, *apiKey.GroupID, result.UpstreamModel, requestedModel, input.GroupMappedModel,
@@ -481,6 +555,8 @@ func (s *Recorder) RecordOpenAI(ctx context.Context, input *Input) error {
 	}
 
 	subscriptionMultiplier, balanceMultiplier, subscriptionMultiplierScale := RatesForMode(apiKey, cost, subscriptionMultiplier, balanceMultiplier, rateNow)
+	// Financial application precedes the analysis write even for zero-cost or partial
+	// records; only an applied transaction can replace provisional allocation metadata.
 	billingErr := func() error {
 		_, err := s.Apply(ctx, input.SettlementKey(), usageLog, &usageBillingParams{
 			Cost:                            cost,
@@ -500,7 +576,8 @@ func (s *Recorder) RecordOpenAI(ctx context.Context, input *Input) error {
 	}()
 
 	if billingErr != nil {
-		// Keep usage and calculated costs for reconciliation; zero ActualCost marks an unsuccessful settlement.
+		// The failed funds result leaves measured work and calculated base buckets useful
+		// for reconciliation; mark the unsuccessful charge zero before attempting its row write.
 		usageLog.ActualCost = 0
 		s.WriteUsage(ctx, usageLog, "service.openai_gateway")
 		return billingErr
@@ -509,8 +586,15 @@ func (s *Recorder) RecordOpenAI(ctx context.Context, input *Input) error {
 	return nil
 }
 
-// RecordCyber records eligible error usage through the normal billing path with the Cyber request classification.
-// Callers snapshot Input before queue submission.
+// RecordCyber snapshots eligible Cyber inputs and invokes ordinary completion
+// with CyberBlocked set. Missing required snapshots/result or a blank model skips
+// the call; zero measured usage can still produce a priced or zero-cost row.
+//
+// The usual CaptureCyber result uses ordinary OpenAI buckets, whose row construction
+// writes the Cyber classification. A caller-supplied NativeUsage result instead
+// selects RecordAnthropic, whose current row construction does not copy that flag.
+// The source input remains unchanged, and any returned recording error is reported
+// through printf rather than returned from this method.
 func (s *Recorder) RecordCyber(ctx context.Context, in *Input) {
 	if s == nil || in == nil || in.APIKey == nil || in.User == nil || in.Provider == nil || in.Result == nil || strings.TrimSpace(in.Result.Model) == "" {
 		return
@@ -518,6 +602,9 @@ func (s *Recorder) RecordCyber(ctx context.Context, in *Input) {
 	snapshot := Snapshot(in)
 	snapshot.Result.Model = strings.TrimSpace(snapshot.Result.Model)
 	snapshot.CyberBlocked = true
+	// Cyber reporting retains its independently captured input and normal funds/log
+	// ordering. A funds error can follow a reconciliation write attempt; provider or
+	// pricing errors can return earlier and are observed here as well.
 	if err := s.Record(ctx, snapshot, true); err != nil {
 		s.printf("service.openai_gateway", "cyber usage record failed: request_id=%s err=%v", snapshot.RequestID, err)
 	}

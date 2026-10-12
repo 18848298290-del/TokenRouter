@@ -10,6 +10,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestUsageRecordWorkerPool_SubmitEnqueued submits one callback to available
+// capacity and observes its completion signal. It checks enqueued mode and eventual
+// pond submitted/successful callback counters after the callback returns.
 func TestUsageRecordWorkerPool_SubmitEnqueued(t *testing.T) {
 	pool := NewUsageRecordWorkerPoolWithOptions(UsageRecordWorkerPoolOptions{
 		WorkerCount:           1,
@@ -21,6 +24,8 @@ func TestUsageRecordWorkerPool_SubmitEnqueued(t *testing.T) {
 	pool.Start()
 	t.Cleanup(pool.Stop)
 
+	// The callback signal can arrive before pond publishes completion metrics; wait
+	// for both observations so the test distinguishes execution from counter publication.
 	done := make(chan struct{})
 	mode := pool.Submit(func(ctx context.Context) {
 		close(done)
@@ -39,6 +44,9 @@ func TestUsageRecordWorkerPool_SubmitEnqueued(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 }
 
+// TestUsageRecordWorkerPool_OverflowDrop holds one worker and one queued callback
+// before a third submission. It checks ordinary dropped mode, later queued execution,
+// and the full-queue rejection counter after the worker is released.
 func TestUsageRecordWorkerPool_OverflowDrop(t *testing.T) {
 	pool := NewUsageRecordWorkerPoolWithOptions(UsageRecordWorkerPoolOptions{
 		WorkerCount:           1,
@@ -50,6 +58,8 @@ func TestUsageRecordWorkerPool_OverflowDrop(t *testing.T) {
 	pool.Start()
 	t.Cleanup(pool.Stop)
 
+	// Wait for one blocked worker before filling its queue; later closing block
+	// releases both accepted callbacks after the overflow policy has been observed.
 	block := make(chan struct{})
 	started := make(chan struct{})
 	secondDone := make(chan struct{})
@@ -77,6 +87,9 @@ func TestUsageRecordWorkerPool_OverflowDrop(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 }
 
+// TestUsageRecordWorkerPool_OverflowSync fills worker and queue capacity before
+// submitting another callback. It checks inline execution before Submit returns,
+// the sync mode, and the completion-specific inline counter after queued work is released.
 func TestUsageRecordWorkerPool_OverflowSync(t *testing.T) {
 	pool := NewUsageRecordWorkerPoolWithOptions(UsageRecordWorkerPoolOptions{
 		WorkerCount:           1,
@@ -88,6 +101,8 @@ func TestUsageRecordWorkerPool_OverflowSync(t *testing.T) {
 	pool.Start()
 	t.Cleanup(pool.Stop)
 
+	// Wait for one blocked worker before filling its queue; later closing block
+	// releases both accepted callbacks after the overflow policy has been observed.
 	block := make(chan struct{})
 	started := make(chan struct{})
 	secondDone := make(chan struct{})
@@ -121,6 +136,9 @@ func TestUsageRecordWorkerPool_OverflowSync(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 }
 
+// TestUsageRecordWorkerPool_OverflowSample fills capacity under a one-percent
+// sample policy. It checks that the first overflow executes inline and the next
+// is dropped, with both diagnostic counters visible after releasing the queued callbacks.
 func TestUsageRecordWorkerPool_OverflowSample(t *testing.T) {
 	pool := NewUsageRecordWorkerPoolWithOptions(UsageRecordWorkerPoolOptions{
 		WorkerCount:           1,
@@ -132,6 +150,8 @@ func TestUsageRecordWorkerPool_OverflowSample(t *testing.T) {
 	pool.Start()
 	t.Cleanup(pool.Stop)
 
+	// Wait for one blocked worker before filling its queue; later closing block
+	// releases both accepted callbacks after the overflow policy has been observed.
 	block := make(chan struct{})
 	started := make(chan struct{})
 	secondDone := make(chan struct{})
@@ -169,6 +189,9 @@ func TestUsageRecordWorkerPool_OverflowSample(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 }
 
+// TestUsageRecordWorkerPool_SubmitAfterStop drains a constructed pool before
+// submitting new work. It checks the distinct stopped rejection, drop predicates
+// for all four modes, and the stopped-pool rejection counter.
 func TestUsageRecordWorkerPool_SubmitAfterStop(t *testing.T) {
 	pool := NewUsageRecordWorkerPoolWithOptions(UsageRecordWorkerPoolOptions{
 		WorkerCount:           1,
@@ -189,6 +212,9 @@ func TestUsageRecordWorkerPool_SubmitAfterStop(t *testing.T) {
 	require.GreaterOrEqual(t, pool.Stats().DroppedPoolStopped, uint64(1))
 }
 
+// TestUsageRecordWorkerPool_AutoScaleUpAndDown holds eight admitted callbacks
+// while a short-interval scaler observes queue pressure. It checks growth to at
+// least three, completion of the released work, and eventual shrinkage to the minimum.
 func TestUsageRecordWorkerPool_AutoScaleUpAndDown(t *testing.T) {
 	pool := NewUsageRecordWorkerPoolWithOptions(UsageRecordWorkerPoolOptions{
 		WorkerCount:           2,
@@ -211,7 +237,8 @@ func TestUsageRecordWorkerPool_AutoScaleUpAndDown(t *testing.T) {
 
 	block := make(chan struct{})
 
-	// Fill running slots and the queue to trigger growth.
+	// Hold admitted callbacks until queue pressure causes growth, then release them
+	// so the same scaler can observe idle capacity and shrink toward its minimum.
 	for range 8 {
 		require.Equal(t, UsageRecordSubmitModeEnqueued, pool.Submit(func(ctx context.Context) {
 			<-block
@@ -233,6 +260,9 @@ func TestUsageRecordWorkerPool_AutoScaleUpAndDown(t *testing.T) {
 	}, 2*time.Second, 20*time.Millisecond)
 }
 
+// TestUsageRecordWorkerPool_AutoScaleDownRequiresLowRunningUtilization occupies
+// both workers with blocked callbacks and no waiting work. It checks unchanged
+// capacity during observation and eventual shrinkage after those callbacks are released.
 func TestUsageRecordWorkerPool_AutoScaleDownRequiresLowRunningUtilization(t *testing.T) {
 	pool := NewUsageRecordWorkerPoolWithOptions(UsageRecordWorkerPoolOptions{
 		WorkerCount:           2,
@@ -260,7 +290,8 @@ func TestUsageRecordWorkerPool_AutoScaleDownRequiresLowRunningUtilization(t *tes
 		}))
 	}
 
-	// An empty queue with fully occupied workers must not trigger shrinkage.
+	// Allow repeated scaler observations while both callbacks remain blocked; capacity
+	// should stay fixed until release makes their worker occupancy fall below the threshold.
 	time.Sleep(200 * time.Millisecond)
 	require.Equal(t, 2, pool.Stats().MaxConcurrency)
 
@@ -270,6 +301,9 @@ func TestUsageRecordWorkerPool_AutoScaleDownRequiresLowRunningUtilization(t *tes
 	}, 2*time.Second, 20*time.Millisecond)
 }
 
+// TestUsageRecordWorkerPool_SubmitNilReceiverAndNilTask invokes submission with
+// a nil pool and then a nil callback on a constructed pool. It checks the ordinary
+// dropped mode for both invalid submission inputs.
 func TestUsageRecordWorkerPool_SubmitNilReceiverAndNilTask(t *testing.T) {
 	var nilPool *UsageRecordWorkerPool
 	require.Equal(t, UsageRecordSubmitModeDropped, nilPool.Submit(func(ctx context.Context) {}))
@@ -288,6 +322,9 @@ func TestUsageRecordWorkerPool_SubmitNilReceiverAndNilTask(t *testing.T) {
 	require.Equal(t, UsageRecordSubmitModeDropped, pool.Submit(nil))
 }
 
+// TestUsageRecordWorkerPool_AutoScaleDisabledKeepsFixedConcurrency supplies
+// otherwise valid scaling settings but disables the scaler. It checks fixed worker
+// capacity before and during blocked admitted work over the observation interval.
 func TestUsageRecordWorkerPool_AutoScaleDisabledKeepsFixedConcurrency(t *testing.T) {
 	pool := NewUsageRecordWorkerPoolWithOptions(UsageRecordWorkerPoolOptions{
 		WorkerCount:           2,
@@ -317,11 +354,16 @@ func TestUsageRecordWorkerPool_AutoScaleDisabledKeepsFixedConcurrency(t *testing
 		}))
 	}
 
+	// Keep accepted callbacks blocked over the observation period; disabled scaling
+	// leaves configured concurrency fixed even while worker and queue capacity are occupied.
 	time.Sleep(120 * time.Millisecond)
 	require.Equal(t, 2, pool.Stats().MaxConcurrency)
 	close(block)
 }
 
+// TestUsageRecordWorkerPool_StringHelpers formats one submission mode and a
+// captured statistics value. It checks the exact enqueued label and the running
+// and waiting values included in the compact summary.
 func TestUsageRecordWorkerPool_StringHelpers(t *testing.T) {
 	require.Equal(t, "enqueued", UsageRecordSubmitModeEnqueued.String())
 	stats := UsageRecordWorkerPoolStats{RunningWorkers: 2, WaitingTasks: 3, SubmittedTasks: 5, DroppedTasks: 1}
@@ -329,6 +371,9 @@ func TestUsageRecordWorkerPool_StringHelpers(t *testing.T) {
 	require.Contains(t, stats.String(), "waiting=3")
 }
 
+// TestUsageRecordWorkerPool_NormalizeOptions_BoundsAndDefaults supplies missing
+// capacities, an unknown policy, and out-of-range sampling or scaling values.
+// It checks the selected defaults and bounded percentage used by the normalized pool.
 func TestUsageRecordWorkerPool_NormalizeOptions_BoundsAndDefaults(t *testing.T) {
 	opts := NormalizeOptions(UsageRecordWorkerPoolOptions{
 		WorkerCount:           0,
@@ -362,6 +407,10 @@ func TestUsageRecordWorkerPool_NormalizeOptions_BoundsAndDefaults(t *testing.T) 
 	require.Equal(t, defaultUsageRecordAutoScaleCooldown, opts.AutoScaleCooldown)
 }
 
+// TestUsageRecordWorkerPool_NormalizeOptions_SampleAndAutoScaleDisabled supplies
+// zero sample percentage and conflicting enabled scaling bounds, then a disabled
+// configuration. It checks default sampling, repaired bounds/thresholds, and the
+// fixed disabled range.
 func TestUsageRecordWorkerPool_NormalizeOptions_SampleAndAutoScaleDisabled(t *testing.T) {
 	sampleOpts := NormalizeOptions(UsageRecordWorkerPoolOptions{
 		WorkerCount:           32,
@@ -393,6 +442,9 @@ func TestUsageRecordWorkerPool_NormalizeOptions_SampleAndAutoScaleDisabled(t *te
 	require.Equal(t, 20, fixedOpts.AutoScaleMaxWorkers)
 }
 
+// TestUsageRecordWorkerPool_ShouldSyncFallbackEdgeCases calls the sampler directly
+// with zero and then full percentage. It checks rejection without a positive
+// percentage and inline selection on repeated full-percentage observations.
 func TestUsageRecordWorkerPool_ShouldSyncFallbackEdgeCases(t *testing.T) {
 	pool := &UsageRecordWorkerPool{overflowSamplePercent: 0}
 	require.False(t, pool.shouldSyncFallback())
@@ -402,6 +454,9 @@ func TestUsageRecordWorkerPool_ShouldSyncFallbackEdgeCases(t *testing.T) {
 	require.True(t, pool.shouldSyncFallback())
 }
 
+// TestUsageRecordWorkerPool_StatsAndStop_NilBranches inspects nil and empty pool
+// values. It checks zero diagnostic structures and nonpanicking stop calls when
+// no pond pool was constructed, without starting or admitting work.
 func TestUsageRecordWorkerPool_StatsAndStop_NilBranches(t *testing.T) {
 	var nilPool *UsageRecordWorkerPool
 	require.Equal(t, UsageRecordWorkerPoolStats{}, nilPool.Stats())
@@ -412,15 +467,22 @@ func TestUsageRecordWorkerPool_StatsAndStop_NilBranches(t *testing.T) {
 	require.NotPanics(t, func() { emptyPool.Stop() })
 }
 
+// TestUsageRecordWorkerPool_Execute_PanicAndTimeout invokes the execution helper
+// directly with a panic and a callback waiting for context expiry. It checks panic
+// consumption and cooperative timeout completion rather than forced callback interruption.
 func TestUsageRecordWorkerPool_Execute_PanicAndTimeout(t *testing.T) {
 	pool := &UsageRecordWorkerPool{taskTimeout: 30 * time.Millisecond}
 
+	// Direct execution recovers task panic even without pond or an observer, which
+	// keeps this assertion separate from the later context-timeout callback below.
 	require.NotPanics(t, func() {
 		pool.execute(func(ctx context.Context) {
 			panic("boom")
 		})
 	})
 
+	// This callback cooperates by waiting on its supplied context; completing it
+	// demonstrates timeout signalling without relying on forcible interruption of work.
 	done := make(chan struct{})
 	pool.execute(func(ctx context.Context) {
 		<-ctx.Done()
@@ -433,6 +495,9 @@ func TestUsageRecordWorkerPool_Execute_PanicAndTimeout(t *testing.T) {
 	}
 }
 
+// TestUsageRecordWorkerPool_ResizeAndLogDropBranches calls an unchanged resize
+// and seeds the recent-log timestamp before drop reporting. It checks unchanged
+// capacity and nonpanicking diagnostics, with no assertion about emitted log count.
 func TestUsageRecordWorkerPool_ResizeAndLogDropBranches(t *testing.T) {
 	pool := NewUsageRecordWorkerPoolWithOptions(UsageRecordWorkerPoolOptions{
 		WorkerCount:      1,
@@ -444,31 +509,41 @@ func TestUsageRecordWorkerPool_ResizeAndLogDropBranches(t *testing.T) {
 	pool.Start()
 	t.Cleanup(pool.Stop)
 
-	// An unchanged target is a no-op.
+	// Equal capacities exercise the early-return path before pond receives any resize.
+	// The assertion below concerns capacity and does not observe diagnostic callbacks.
 	pool.resizePool(1, 1, 0, 0, 0, 8, "noop")
 	require.Equal(t, 1, pool.Stats().MaxConcurrency)
 
-	// Suppress repeated drop logging within the rate-limit window.
+	// Seed a recent wall-clock timestamp to enter the suppression path when invoked
+	// promptly; the assertion protects nonpanicking behavior rather than emitted message count.
 	pool.lastDropLogNanos.Store(time.Now().UnixNano())
 	require.NotPanics(t, func() {
 		pool.logDrop("full")
 	})
 }
 
-// TestStopWaitsForSynchronousOverflow checks that stopping waits for queued and inline overflow tasks.
+// TestStopWaitsForSynchronousOverflow blocks accepted queued and inline callbacks,
+// then releases queued work while inline work remains active. It checks a bounded
+// stop error, inline completion after release, and successful continuation of the same drain.
 func TestStopWaitsForSynchronousOverflow(t *testing.T) {
 	pool := NewUsageRecordWorkerPoolWithOptions(UsageRecordWorkerPoolOptions{WorkerCount: 1, QueueSize: 1, TaskTimeout: time.Second, OverflowPolicy: "sync"})
+	// Startup signals establish occupied capacity before each later submission; the
+	// two release channels let queued and inline work finish at separate test-selected times.
 	first, releaseQueue := make(chan struct{}), make(chan struct{})
 	inline, releaseInline := make(chan struct{}), make(chan struct{})
 	submitted := make(chan UsageRecordSubmitMode, 1)
 	require.Equal(t, UsageRecordSubmitModeEnqueued, pool.Submit(func(context.Context) { close(first); <-releaseQueue }))
 	<-first
 	require.Equal(t, UsageRecordSubmitModeEnqueued, pool.Submit(func(context.Context) { <-releaseQueue }))
+	// Submit inline overflow from another goroutine so this test can time out its
+	// stop wait while that accepted callback remains blocked on releaseInline.
 	go func() { submitted <- pool.Submit(func(context.Context) { close(inline); <-releaseInline }) }()
 	<-inline
 	close(releaseQueue)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
+	// Expiry limits this caller's wait, while the accepted inline callback continues;
+	// releasing it allows the second caller to observe completion of the same drain.
 	err := pool.StopContext(ctx)
 	close(releaseInline)
 	require.Equal(t, UsageRecordSubmitModeSync, <-submitted)
@@ -477,10 +552,14 @@ func TestStopWaitsForSynchronousOverflow(t *testing.T) {
 	require.Contains(t, err.Error(), "unfinished tasks")
 }
 
-// TestStartAfterStopDoesNotCreateWorker checks that repeated and concurrent calls cannot restart a stopped pool.
+// TestStartAfterStopDoesNotCreateWorker stops the pool before sixteen joined
+// concurrent Start/Stop calls. It checks that no scaler cancel handle was published
+// and later submission retains the stopped rejection without executing its callback.
 func TestStartAfterStopDoesNotCreateWorker(t *testing.T) {
 	pool := NewUsageRecordWorkerPoolWithOptions(UsageRecordWorkerPoolOptions{WorkerCount: 1, QueueSize: 1, AutoScaleEnabled: true, AutoScaleMinWorkers: 1, AutoScaleMaxWorkers: 2})
 	pool.Stop()
+	// Join all repeated lifecycle calls before inspecting the shared scaler handle,
+	// so the assertion covers post-stop calls that may overlap under stateMu.
 	var wg sync.WaitGroup
 	for range 16 {
 		wg.Go(func() { ; pool.Start(); pool.Stop() })

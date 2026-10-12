@@ -5,23 +5,49 @@ import (
 	"time"
 )
 
+// Completion queue rejection can occur because capacity is exhausted or because
+// the pool is stopping. Mandatory work retries either rejection inline, while an
+// ordinary task follows the configured overflow policy unless its entrypoint opts
+// into stopped-pool fallback. A missing pool also executes directly in the caller.
+//
+// Correlation values are captured before submission. Inline execution gets a
+// ten-second context detached from source cancellation, optionally retaining all
+// source values, and optional panic recovery reports the failure to the observer.
+// Pool-accepted work uses the pool's own timeout and panic handling. The inline
+// retry runs after the pool reports rejection and belongs to the submitting caller.
+
 // SubmissionEvent describes synchronous fallback or a panic for the app logging callback.
 type SubmissionEvent struct {
-	Mandatory bool
-	Panic     any
+	Mandatory bool // mandatory submission flag
+	// Panic holds a recovered inline-task value; nil identifies the earlier
+	// fallback notice emitted after the pool rejects this submission.
+	Panic any
 }
 
 // SubmissionOptions controls stopped-pool fallback, source values, and panic recovery.
-// The supplied worker pool executes asynchronous tasks.
+// The supplied worker pool selects queued or synchronous overflow execution.
 type SubmissionOptions struct {
-	FallbackWhenStopped  bool
+	// FallbackWhenStopped executes ordinary stopped-pool rejections inline;
+	// mandatory tasks take that path for either stopped or full-queue rejection.
+	FallbackWhenStopped bool
+	// PreserveSourceValues retains arbitrary source values during inline
+	// execution; the normal wrapper already carries selected completion values.
 	PreserveSourceValues bool
-	RecoverPanic         bool
-	Observe              func(SubmissionEvent)
+	// RecoverPanic consumes an inline task panic and reports it when Observe
+	// is configured; pool execution has its own independent panic handling.
+	RecoverPanic bool
+	Observe      func(SubmissionEvent) // synchronous fallback observer
 }
 
-// SubmitTask snapshots request correlation data and submits the task.
-// Mandatory dropped tasks run synchronously; ordinary overflow follows the configured drop or sample policy.
+// SubmitTask captures request correlation and submits eligible completion work.
+// Nil tasks are ignored. An accepted task runs according to the pool's policy,
+// which can include synchronous overflow execution before this function returns.
+//
+// Mandatory rejected tasks and opted-in stopped-pool rejections run inline under
+// a detached ten-second budget; with no pool, every task runs inline. The observer
+// first receives a fallback notice after rejection and can later receive a
+// recovered task panic. Callers snapshot mutable task inputs before submission
+// and wait for their own inline work during shutdown.
 func SubmitTask(pool *UsageRecordWorkerPool, source context.Context, task UsageRecordTask, mandatory bool, options SubmissionOptions) {
 	if task == nil {
 		return
@@ -29,6 +55,8 @@ func SubmitTask(pool *UsageRecordWorkerPool, source context.Context, task UsageR
 	task = WrapTaskContext(source, task)
 	if pool != nil {
 		mode := pool.Submit(task)
+		// Distinguish shutdown from configured congestion loss: ordinary drop/sample
+		// rejections stay rejected unless mandatory completion requires an inline retry.
 		fallback := mandatory && mode.Dropped() || options.FallbackWhenStopped && mode == UsageRecordSubmitModeDroppedStopped
 		if !fallback {
 			return
@@ -37,12 +65,16 @@ func SubmitTask(pool *UsageRecordWorkerPool, source context.Context, task UsageR
 			options.Observe(SubmissionEvent{Mandatory: mandatory})
 		}
 	}
+	// Inline work can follow a cancelled request, so give it a separate budget.
+	// Optional source-value retention changes values while detaching cancellation.
 	base := context.Background()
 	if options.PreserveSourceValues && source != nil {
 		base = context.WithoutCancel(source)
 	}
 	ctx, cancel := context.WithTimeout(base, 10*time.Second)
 	defer cancel()
+	// Inline panics have no pond worker to recover them; an enabled policy consumes
+	// them here and emits the captured value when an observer is available.
 	if options.RecoverPanic {
 		defer func() {
 			if value := recover(); value != nil && options.Observe != nil {

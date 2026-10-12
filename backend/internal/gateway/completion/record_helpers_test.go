@@ -11,6 +11,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
+// TestApplyClientModelOnlyChangesRequestedModel supplies a client display alias
+// for a row with distinct internal, outbound, and mapping-chain data. It checks
+// the requested display name changes while those routing observations retain their values.
 func TestApplyClientModelOnlyChangesRequestedModel(t *testing.T) {
 	upstreamModel := "gpt-5.6-luna-upstream"
 	mappingChain := "codex-auto-review→gpt-5.6-luna→gpt-5.6-luna-upstream"
@@ -30,6 +33,9 @@ func TestApplyClientModelOnlyChangesRequestedModel(t *testing.T) {
 	require.Equal(t, mappingChain, *log.ModelMappingChain)
 }
 
+// TestResolveUsageRateMultiplier_SubscriptionUsesPlanGroupRate supplies a covered
+// subscription plan with a positive group override. It checks that preliminary
+// pricing selects that factor over the smaller group and system defaults.
 func TestResolveUsageRateMultiplier_SubscriptionUsesPlanGroupRate(t *testing.T) {
 	t.Parallel()
 
@@ -58,6 +64,9 @@ func TestResolveUsageRateMultiplier_SubscriptionUsesPlanGroupRate(t *testing.T) 
 	}
 }
 
+// TestResolveUsageRateMultiplier_SubscriptionFallsBackToGroupRateWhenPlanGroupRateMissing
+// supplies a covered plan with no group-rate entry. It checks that preliminary
+// subscription pricing uses the group rate when the plan has no positive override.
 func TestResolveUsageRateMultiplier_SubscriptionFallsBackToGroupRateWhenPlanGroupRateMissing(t *testing.T) {
 	t.Parallel()
 
@@ -84,6 +93,9 @@ func TestResolveUsageRateMultiplier_SubscriptionFallsBackToGroupRateWhenPlanGrou
 	}
 }
 
+// TestSubscriptionPlanIncludesGroup_EmptyGroupIDsIsGlobal supplies a plan with
+// no declared group list and a positive selected group. It checks global coverage
+// for completion's preliminary subscription multiplier decision.
 func TestSubscriptionPlanIncludesGroup_EmptyGroupIDsIsGlobal(t *testing.T) {
 	t.Parallel()
 
@@ -92,6 +104,9 @@ func TestSubscriptionPlanIncludesGroup_EmptyGroupIDsIsGlobal(t *testing.T) {
 	}
 }
 
+// TestResolveUsageRateMultiplier_GlobalSubscriptionFallsBackToGroupRate supplies
+// a global plan with no group-specific override and differing group/system rates.
+// It checks that coverage selects the group factor for preliminary subscription pricing.
 func TestResolveUsageRateMultiplier_GlobalSubscriptionFallsBackToGroupRate(t *testing.T) {
 	t.Parallel()
 
@@ -114,11 +129,16 @@ func TestResolveUsageRateMultiplier_GlobalSubscriptionFallsBackToGroupRate(t *te
 	}
 }
 
-// TestResponseModelMismatchUsesOutboundIdentity checks comparison against the model actually sent upstream.
+// TestResponseModelMismatchUsesOutboundIdentity compares sent and raw response
+// models across case, whitespace, versions, prefixes, and absent evidence. It checks
+// nullable mismatch results and retains the separate billing model for every fixture.
 func TestResponseModelMismatchUsesOutboundIdentity(t *testing.T) {
 	for _, tc := range []struct {
+		// name: comparison scenario label. sent: actual outbound model.
+		// response: raw upstream declaration.
 		name, sent, response string
-		known, want          bool
+		// known: declaration presence expectation. want: expected mismatch result.
+		known, want bool
 	}{
 		{"same", "runtime", "runtime", true, false},
 		{"case and whitespace", " Runtime ", "runtime", true, false},
@@ -141,6 +161,9 @@ func TestResponseModelMismatchUsesOutboundIdentity(t *testing.T) {
 	}
 }
 
+// TestForwardResultBillingModelPrefersRequestedModel supplies a logical model
+// and a different outbound route key, then omits the logical name. It checks the
+// logical candidate first and the outbound candidate only for missing logical evidence.
 func TestForwardResultBillingModelPrefersRequestedModel(t *testing.T) {
 	require.Equal(t, "claude-opus-4-6", ForwardResultBillingModel("claude-opus-4-6", "ultimate"))
 	require.Equal(t, "ultimate", ForwardResultBillingModel("", "ultimate"))

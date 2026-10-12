@@ -9,7 +9,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestCacheOverrideProjection checks that cache bucket updates leave other usage counts intact.
+// TestCacheOverrideProjection starts with aggregate cache writes and then
+// selects each TTL bucket. It checks the initialization return value, subsequent
+// reclassification, and retained aggregate, ordinary-input, and image-input counts.
 func TestCacheOverrideProjection(t *testing.T) {
 	value := TokenUsage{InputTokens: 2, ImageInputTokens: 8, CacheCreationInputTokens: 12}
 	require.False(t, applyCacheOverride(&value, "5m"))
@@ -22,7 +24,9 @@ func TestCacheOverrideProjection(t *testing.T) {
 	require.Equal(t, 2, value.InputTokens)
 }
 
-// TestNormalizeResultUsesDecodedImageDimensions checks that decoded output dimensions determine billing metadata.
+// TestNormalizeResultUsesDecodedImageDimensions supplies a large input hint
+// and smaller decoded output dimensions. It checks that output evidence determines
+// the stored billing tier, dimensions, and source classification.
 func TestNormalizeResultUsesDecodedImageDimensions(t *testing.T) {
 	result := &Result{ImageCount: 1, ImageInputSize: "3840x2160", ImageOutputSizes: []string{"1672x941"}}
 	(&Recorder{}).normalizeResult(result, &ProviderSnapshot{OAuthLike: true}, true, nil, "local-request")
@@ -31,13 +35,16 @@ func TestNormalizeResultUsesDecodedImageDimensions(t *testing.T) {
 	require.Equal(t, pricing.ImageSizeSourceOutput, result.ImageSizeSource)
 }
 
+// TestResolveBillingServiceTier compares requested and observed tier names
+// across missing, unknown, equivalent, cheaper, and more expensive responses.
+// It protects normalized charge selection and the downgrade flag for each fixture.
 func TestResolveBillingServiceTier(t *testing.T) {
 	tests := []struct {
-		name       string
-		requested  string
-		observed   string
-		billing    string
-		downgraded bool
+		name       string // tier scenario label
+		requested  string // outbound tier evidence
+		observed   string // response tier evidence
+		billing    string // expected charge tier
+		downgraded bool   // expected downgrade decision
 	}{
 		{name: "openai priority served as default", requested: "priority", observed: "default", billing: "default", downgraded: true},
 		{name: "anthropic fast served as standard", requested: "fast", observed: "standard", billing: "standard", downgraded: true},
@@ -59,6 +66,9 @@ func TestResolveBillingServiceTier(t *testing.T) {
 	}
 }
 
+// TestApplyServiceTierBillingResolutionOnlyRewritesDowngrades exercises generic
+// and OAuth-like response evidence on captured results. It checks accepted cheaper
+// tiers, retained request pointers or nil, default-echo exemption, and nil-result handling.
 func TestApplyServiceTierBillingResolutionOnlyRewritesDowngrades(t *testing.T) {
 	t.Run("codex exception only covers OpenAI default", func(t *testing.T) {
 		require.True(t, CodexOAuthResponseTierIsNonAuthoritative("default"))

@@ -9,11 +9,20 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 )
 
+// A missing price and a tier downgrade explain different completion outcomes.
+// BillingEvent chooses a stable diagnostic name, severity, and identifying fields
+// for each recognized case, while the legacy observer accepts recorder messages
+// that already carry their component and text.
+
+// ObserveCompletion sends a recorder message through the component-aware legacy
+// logger using the message as data rather than a formatting template.
 func ObserveCompletion(component, message string) {
 	logging.LegacyPrintf(component, "%s", message)
 }
 
-// CompletionBillingEvent logs missing prices, free searches, and tier downgrades with event-specific fields and levels.
+// CompletionBillingEvent emits event-specific billing diagnostics synchronously.
+// Missing prices use warnings, explicit free searches use informational logs, and
+// tier downgrades use slog. Unrecognized event kinds produce no log entry.
 func CompletionBillingEvent(e completion.BillingEvent) {
 	switch e.Kind {
 	case "pricing_missing":

@@ -20,13 +20,15 @@ import (
 	routingtestkit "github.com/TokenFlux/TokenRouter/internal/routing/testkit"
 )
 
-// TestOpenAIUsageBillingModelPreservesImagePricingModel checks that the upstream text model cannot replace an image billing model.
+// TestOpenAIUsageBillingModelPreservesImagePricingModel varies captured image
+// billing identity and configured model source. It checks the image-model exception
+// for upstream or unmapped group evidence and overrides from requested or changed group models.
 func TestOpenAIUsageBillingModelPreservesImagePricingModel(t *testing.T) {
 	tests := []struct {
-		name   string
-		result forwardcore.OpenAIResult
-		fields routing.PricingUsageFields
-		want   string
+		name   string                     // billing-source scenario label
+		result forwardcore.OpenAIResult   // captured execution result
+		fields routing.PricingUsageFields // configured model source
+		want   string                     // expected billing identity
 	}{
 		{
 			name: "上游计费保留图片模型",
@@ -98,6 +100,9 @@ func TestOpenAIUsageBillingModelPreservesImagePricingModel(t *testing.T) {
 	}
 }
 
+// TestGatewayServiceCalculateRecordUsageCost_PricingConfigImageBillingUsesImageCount
+// supplies two outputs and a shared image card with different text/image factors.
+// It checks that image units use the supplied image factor and configured per-image rate.
 func TestGatewayServiceCalculateRecordUsageCost_PricingConfigImageBillingUsesImageCount(t *testing.T) {
 	groupID := int64(126)
 	billingService := NewBillingService(nil)
@@ -120,10 +125,14 @@ func TestGatewayServiceCalculateRecordUsageCost_PricingConfigImageBillingUsesIma
 
 	require.NotNil(t, cost)
 	require.Equal(t, string(routing.BillingModeImage), cost.BillingMode)
+	// Allow arithmetic rounding in the configured image-charge comparison.
 	require.InDelta(t, 0.5, cost.TotalCost, 1e-12)
 	require.InDelta(t, 0.5, cost.ActualCost, 1e-12)
 }
 
+// TestGatewayServiceCalculateRecordUsageCost_PricingConfigImageBillingUsesSizeTier
+// supplies a 4K result alongside default and 4K card prices. It checks the labeled
+// size price multiplied by two images in both base and actual costs.
 func TestGatewayServiceCalculateRecordUsageCost_PricingConfigImageBillingUsesSizeTier(t *testing.T) {
 	groupID := int64(127)
 	defaultPrice := 0.10
@@ -161,10 +170,14 @@ func TestGatewayServiceCalculateRecordUsageCost_PricingConfigImageBillingUsesSiz
 
 	require.NotNil(t, cost)
 	require.Equal(t, string(routing.BillingModeImage), cost.BillingMode)
+	// Allow arithmetic rounding in the configured image-charge comparison.
 	require.InDelta(t, 0.80, cost.TotalCost, 1e-12)
 	require.InDelta(t, 0.80, cost.ActualCost, 1e-12)
 }
 
+// TestGatewayServiceCalculateRecordUsageCost_UsesSharedImagePrice supplies two
+// image outputs and one shared configured image rate. It checks that the selected
+// card produces the same expected base and actual dollar amount at factor one.
 func TestGatewayServiceCalculateRecordUsageCost_UsesSharedImagePrice(t *testing.T) {
 	groupID := int64(129)
 	pricingConfigPrice := 0.25
@@ -191,10 +204,14 @@ func TestGatewayServiceCalculateRecordUsageCost_UsesSharedImagePrice(t *testing.
 
 	require.NotNil(t, cost)
 	require.Equal(t, string(routing.BillingModeImage), cost.BillingMode)
+	// Allow arithmetic rounding in the configured image-charge comparison.
 	require.InDelta(t, 0.50, cost.TotalCost, 1e-12)
 	require.InDelta(t, 0.50, cost.ActualCost, 1e-12)
 }
 
+// TestGatewayServiceCalculateRecordUsageCost_PricingConfigImageBillingNormalizesMissingSizeTier
+// supplies blank dimensions and a labeled 2K price above the default card rate.
+// It checks the normalized billing category prices both image outputs at that label.
 func TestGatewayServiceCalculateRecordUsageCost_PricingConfigImageBillingNormalizesMissingSizeTier(t *testing.T) {
 	groupID := int64(128)
 	defaultPrice := 0.10
@@ -232,11 +249,14 @@ func TestGatewayServiceCalculateRecordUsageCost_PricingConfigImageBillingNormali
 
 	require.NotNil(t, cost)
 	require.Equal(t, string(routing.BillingModeImage), cost.BillingMode)
+	// Allow arithmetic rounding in the configured image-charge comparison.
 	require.InDelta(t, 0.44, cost.TotalCost, 1e-12)
 	require.InDelta(t, 0.44, cost.ActualCost, 1e-12)
 }
 
-// TestGroupBillsOpenAIFastAtStandardRequiresOpenAIProvider checks platform, provider, and tier eligibility for standard-priced Fast.
+// TestGroupBillsOpenAIFastAtStandardRequiresOpenAIProvider supplies an enabled
+// capable group and varies provider platform plus billed tier. It checks priority
+// and normalized fast eligibility, with standard and Grok evidence declining the rule.
 func TestGroupBillsOpenAIFastAtStandardRequiresOpenAIProvider(t *testing.T) {
 	apiKey := &completion.KeySnapshot{Group: &completion.GroupSnapshot{FreeOpenAIFast: true, SupportsOpenAIFast: true}}
 
