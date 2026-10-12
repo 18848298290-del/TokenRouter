@@ -9,13 +9,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// settingReadFunc controls reads to test races between refresh and publication.
+// settingReadFunc supplies controlled storage reads for runtime publication and
+// failure tests.
 type settingReadFunc func(context.Context, []string) (map[string]string, error)
 
+// GetMultiple forwards the requested keys and context to the test-controlled
+// storage callback.
 func (f settingReadFunc) GetMultiple(ctx context.Context, keys []string) (map[string]string, error) {
 	return f(ctx, keys)
 }
 
+// TestParametersPartialUpdateAndReset combines deployment defaults, retained
+// overrides, explicit zero and false, and null resets. It checks effective
+// values, repairs malformed storage through reset, and rejects the listed
+// invalid patches.
 func TestParametersPartialUpdateAndReset(t *testing.T) {
 	defaults := DefaultParameters()
 	defaults.ReadTimeoutSeconds = 77
@@ -39,7 +46,9 @@ func TestParametersPartialUpdateAndReset(t *testing.T) {
 	}
 }
 
-// TestRuntimeAcceptsZeroIdleConnections covers zero idle connections in defaults, overrides, and reset.
+// TestRuntimeAcceptsZeroIdleConnections exercises zero idle counts in
+// deployment defaults, stored overrides, and resets. It checks publication
+// retains zero and rejects negative or inconsistent idle settings.
 func TestRuntimeAcceptsZeroIdleConnections(t *testing.T) {
 	defaults := DefaultParameters()
 	defaults.MinIdlePerProvider = 0
@@ -59,7 +68,12 @@ func TestRuntimeAcceptsZeroIdleConnections(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestRuntimeLateRefreshCannotOverwriteSavedSettings pauses an older storage
+// read while publishing a newer value. The released refresh keeps the saved
+// snapshot, and stopping the runtime prevents further publication.
 func TestRuntimeLateRefreshCannotOverwriteSavedSettings(t *testing.T) {
+	// Pause storage after the refresh captures its generation, allowing local
+	// publication to advance that generation before the older result is returned.
 	started, release := make(chan struct{}), make(chan struct{})
 	source := settingReadFunc(func(context.Context, []string) (map[string]string, error) {
 		close(started)
@@ -78,6 +92,9 @@ func TestRuntimeLateRefreshCannotOverwriteSavedSettings(t *testing.T) {
 	require.Error(t, runtime.Publish(`{}`))
 }
 
+// TestRuntimeReadOrApplyFailureKeepsLastSnapshot injects both storage failure
+// and an apply callback error. Each operation returns an error while the
+// previously published read-timeout value remains available.
 func TestRuntimeReadOrApplyFailureKeepsLastSnapshot(t *testing.T) {
 	runtime := NewRuntime(DefaultParameters(), settingReadFunc(func(context.Context, []string) (map[string]string, error) { return nil, errors.New("offline") }), nil)
 	require.NoError(t, runtime.Publish(`{"read_timeout_seconds":60}`))
@@ -88,6 +105,9 @@ func TestRuntimeReadOrApplyFailureKeepsLastSnapshot(t *testing.T) {
 	require.Equal(t, 60, runtime.Snapshot().ReadTimeoutSeconds)
 }
 
+// TestSettingsParticipantValidatesBeforePublishing omits the WS field and then
+// proposes a merged capacity conflict. The participant returns no prepared
+// values for omission or failed validation.
 func TestSettingsParticipantValidatesBeforePublishing(t *testing.T) {
 	p := SettingsParticipant(DefaultParameters())
 	change, err := p.Prepare(context.Background(), nil, nil)

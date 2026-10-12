@@ -7,6 +7,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestWSPassthroughUsageMeta_InitFromFirstFrame_MappedModelCandidate supplies
+// explicit max effort with the sol model label. First-frame capture returns a
+// nonnil max value; this test exercises metadata extraction directly.
 func TestWSPassthroughUsageMeta_InitFromFirstFrame_MappedModelCandidate(t *testing.T) {
 	body := []byte(`{"type":"response.create","model":"sol","reasoning":{"effort":"max"}}`)
 
@@ -18,6 +21,9 @@ func TestWSPassthroughUsageMeta_InitFromFirstFrame_MappedModelCandidate(t *testi
 	require.Equal(t, "max", *got, "mapped model gpt-5.6-sol should preserve max")
 }
 
+// TestWSPassthroughUsageMeta_InitFromFirstFrame_NonGPT56RecordsExplicitMax
+// supplies max with a non-GPT model. Both accepted and original requested
+// effort remain max in their separate optional metadata values.
 func TestWSPassthroughUsageMeta_InitFromFirstFrame_NonGPT56RecordsExplicitMax(t *testing.T) {
 	body := []byte(`{"type":"response.create","model":"deepseek-v4-flash","reasoning":{"effort":"max"}}`)
 
@@ -33,6 +39,9 @@ func TestWSPassthroughUsageMeta_InitFromFirstFrame_NonGPT56RecordsExplicitMax(t 
 	require.Equal(t, "max", *requested, "策略改写前的档位必须单独保留")
 }
 
+// TestWSPassthroughUsageMeta_CaptureRequestedReasoningEffortPreservesNone
+// supplies an explicitly requested none effort. Capture retains a nonnil none
+// value so omission and that client choice remain distinguishable.
 func TestWSPassthroughUsageMeta_CaptureRequestedReasoningEffortPreservesNone(t *testing.T) {
 	body := []byte(`{"type":"response.create","model":"gpt-6-astra","reasoning":{"effort":"none"}}`)
 
@@ -44,6 +53,9 @@ func TestWSPassthroughUsageMeta_CaptureRequestedReasoningEffortPreservesNone(t *
 	require.Equal(t, "none", *requested, "映射前的 none 必须保留为客户端原始档位")
 }
 
+// TestWSPassthroughUsageMeta_UpdateFromResponseCreate_MappedModelCandidate
+// supplies an accepted response.create with max effort. Updating the per-turn
+// metadata returns a nonnil max value for subsequent completion capture.
 func TestWSPassthroughUsageMeta_UpdateFromResponseCreate_MappedModelCandidate(t *testing.T) {
 	body := []byte(`{"type":"response.create","model":"sol","reasoning":{"effort":"max"}}`)
 
@@ -55,12 +67,17 @@ func TestWSPassthroughUsageMeta_UpdateFromResponseCreate_MappedModelCandidate(t 
 	require.Equal(t, "max", *got, "mapped model should preserve max on multi-turn update")
 }
 
-// TestWSUsageModelConcurrentDirections starts session-model reads and writes from the same barrier.
+// TestWSUsageModelConcurrentDirections starts repeated session-model writes and
+// omitted-frame reads from one barrier. Both workers finish under the wait
+// group; the fixture exercises the atomic access paths for race-enabled
+// verification.
 func TestWSUsageModelConcurrentDirections(t *testing.T) {
 	m := NewUsageMeta("first", nil, nil)
 	start := make(chan struct{})
 	var wg sync.WaitGroup
 	wg.Add(2)
+	// Let both relay-direction workers proceed from the same barrier, allowing
+	// race-enabled runs to inspect their atomic reads and repeated model stores.
 	go func() {
 		defer wg.Done()
 		<-start

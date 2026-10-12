@@ -13,11 +13,44 @@ import (
 	wire "github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// A Responses connection must retain the correct request history and upstream
+// connection while later turns refer to earlier response IDs. The first
+// normalized payload fixes HTTP-bridge versus pooled execution for this Run
+// invocation; both paths keep the client model and requested effort with each
+// forwarded turn.
+//
+// HTTP bridging expands ordinary replay history and a separate
+// replacement-provider history from immutable item bodies. Pooled execution
+// holds one lease, preferring response affinity and store-disabled session
+// affinity at startup, then evaluates strict continuation before reusing it.
+// Missing-response recovery and pre-output transport retry can replay a turn
+// without reacquiring admission, while idle ping failure has its own
+// context-coverage checks. Replay mutation is published only after required
+// continuation and input edits succeed. Completion precedes affinity writes,
+// and lease cleanup marks unfinished relay work broken while retaining
+// independently marked transport failures.
+
+// payloadString returns the trimmed gjson string form at key for ingress
+// decisions. Missing values produce empty; this helper does not validate the
+// complete document, and nonstring values can have nonempty string forms.
 func payloadString(body []byte, key string) string {
 	return strings.TrimSpace(gjson.GetBytes(body, key).String())
 }
 
-// Run owns the ingress connection's turn loop; adapters parse, acquire leases, and forward individual turns.
+// Run executes the first normalized turn and every later client request through
+// HTTP bridge or one held provider pool lease. State, Port, and Codec are
+// required; callers serialize the session and retain immutable request bytes
+// referenced by replay histories.
+//
+// The initial payload determines the execution path. Bridge completion updates
+// separate normal and provider-failover histories; a later classified provider
+// failure carries a replay-safe current request for entry replacement. Pooled
+// turns preserve strict connection affinity when store is disabled and
+// continuation is present. A missing-response error or pre-output transport
+// failure can use its bounded recovery path while skipping repeated admission
+// callbacks. Idle ping recovery separately requires sufficient tool-call
+// context before dropping continuation. AfterTurn observes final local outcomes
+// before affinity writes; deferred cleanup releases any held lease.
 func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 	p, codec, o, state := s.Port, s.Codec, s.Options, s.State
 	refresh := func() {
@@ -26,6 +59,7 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 		}
 		value := s.Refresh()
 		o.PreviousRecovery = value.IngressPreviousResponseRecoveryEnabled
+		// Convert snapshot TTL seconds into durations for subsequent affinity writes.
 		o.ResponseStickyTTL = time.Duration(value.StickyResponseIDTTLSeconds) * time.Second
 		o.SessionStickyTTL = time.Duration(value.StickySessionTTLSeconds) * time.Second
 	}
@@ -37,11 +71,17 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 		return err
 	}
 	state.SessionHash = p.GenerateHash(firstPayload.RawForHash)
+	// Load cached turn metadata only when no current value was supplied, letting
+	// an existing handshake value remain the session's selected continuation
+	// header.
 	if state.TurnState == "" && stateStore != nil && state.SessionHash != "" {
 		if value, ok := stateStore.GetSessionTurnState(groupID, state.SessionHash); ok {
 			state.TurnState = value
 		}
 	}
+	// Recompute startup connection preference from response affinity, then
+	// store-disabled session affinity when no continuation is supplied, so
+	// unrelated caller preference does not select this lease.
 	state.PreferredConnID = ""
 	if stateStore != nil && firstPayload.PreviousResponseID != "" {
 		if value, ok := stateStore.GetResponseConn(firstPayload.PreviousResponseID); ok {
@@ -65,7 +105,8 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 			state.StoreDisabled,
 		))
 		currentBridgePayload := firstPayload
-		// The first request seeds the session; each later turn resolves its model and corresponding cache identity.
+		// Keep the first payload as the Grok session seed while later turns select
+		// their routing model, so cache identity can separate model-specific history.
 		grokCacheSeedPayload := firstPayload.PayloadRaw
 		var bridgeReplayInput []json.RawMessage
 		bridgeReplayInputExists := false
@@ -94,8 +135,8 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 				}
 			}
 			p.SetRequestState(state.TurnState, state.SessionHash)
-			// Strip known-invalid ciphertext so replayed history does not trigger the same upstream rejection.
-			// Strip history as well to keep prefix matching aligned with the current input.
+			// Strip known-invalid ciphertext from current and retained input together,
+			// so replay prefix matching compares the same surviving history items.
 			if invalidDigests := p.InvalidDigests(groupID, state.SessionHash); len(invalidDigests) > 0 {
 				strippedPayload, strippedCount := p.StripInvalid(
 					currentBridgePayload.PayloadRaw, invalidDigests, "ingress_ws_http_bridge_invalid_encrypted_lineage_strip", o.ProviderID, turn,
@@ -116,7 +157,9 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 			toolOutputCoverage := wire.AnalyzeToolCallOutputContextCoverageBytes(currentBridgePayload.PayloadRaw)
 			needsBridgeReplay := currentBridgePayload.PreviousResponseID != "" ||
 				(toolOutputCoverage.HasFunctionCallOutput && !toolOutputCoverage.ContextCoversAllCallIDs)
-			// Parse input once and share immutable item bodies between normal and provider-failover replay.
+			// Build ordinary and replacement-provider histories from the same parsed
+			// current items. Their arrays or item bytes can be shared, so later history
+			// extension uses Combine rather than in-place append.
 			bridgeCurrentItems, bridgeCurrentItemsExist, extractErr := codec.Extract(
 				currentBridgePayload.PayloadRaw,
 			)
@@ -137,6 +180,9 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 				bridgeCurrentItemsExist,
 				needsBridgeReplay,
 			)
+			// A continuation or uncovered tool output needs the retained full input on
+			// the HTTP path; install that sequence only when replay input presence is
+			// known.
 			if needsBridgeReplay && turnReplayInputExists {
 				updatedPayload, setInputErr := codec.SetInput(
 					currentBridgePayload.PayloadRaw,
@@ -158,6 +204,9 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 				))
 			}
 			grokCacheIdentity := ""
+			// Use the first request as the stable Grok session seed while deriving each
+			// turn's cache identity with its current routing model, keeping
+			// model-specific histories distinct.
 			if o.Platform == "grok" {
 				grokCacheIdentity, err = p.BridgeIdentity(grokCacheSeedPayload, currentBridgePayload.RoutingModel, turn)
 				if err != nil {
@@ -166,6 +215,9 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 			}
 			result, bridgeErr := p.Bridge(ctx, currentBridgePayload, bridgePayloadRaw, grokCacheIdentity, turn)
 
+			// Attach the client's pre-policy effort to the bridge result before
+			// completion observes it, since HTTP execution received the already
+			// normalized request body.
 			if result != nil {
 				result.RequestedReasoningEffort = currentBridgePayload.RequestedReasoningEffort
 			}
@@ -182,6 +234,9 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 				})
 			}
 			if bridgeErr != nil {
+				// A later bridge failure cannot reuse the initial request for provider
+				// replacement. Build a self-contained current payload and retain an empty
+				// unsafe result for entry to reject.
 				if turn > 1 && p.IsFailover(bridgeErr) {
 					retryPayload, retrySafe, retryPayloadErr := codec.RetryPayload(
 						currentBridgePayload.ProviderIdentitySourceRaw,
@@ -202,8 +257,9 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 			if result == nil {
 				return errors.New("websocket http bridge turn result is nil")
 			}
-			// Both replay slices can share the array transferred from bridgeCurrentItems.
-			// Use Combine to create a new slice array when extending history; do not append in place.
+			// Both histories can share bridgeCurrentItems' array. Extend them through
+			// Combine so appending one output sequence cannot overwrite the other
+			// history's stored item references.
 			bridgeReplayInput = turnReplayInput
 			bridgeReplayInputExists = turnReplayInputExists
 			if result.WSReplayInputExists {
@@ -219,6 +275,9 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 				)
 				bridgeProviderFailoverInputExists = true
 			}
+			// Publish successful bridge continuation metadata after its completion
+			// callback, then write session and response affinity independently; failed
+			// persistent affinity writes remain observable through BindWarning.
 			if bridgeTurnState := strings.TrimSpace(result.ResponseTurnState); bridgeTurnState != "" {
 				state.TurnState = bridgeTurnState
 				if stateStore != nil && state.SessionHash != "" {
@@ -254,6 +313,9 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 	if err := p.OpenPool(firstPayload); err != nil {
 		return err
 	}
+	// Permit one provider-identity recovery across this session's acquisitions;
+	// mark it consumed before recovery so a failed repair cannot reopen the same
+	// dial loop.
 	credentialRecovered := false
 	acquireTurnLease := func(turn int, preferred string, force bool) (ConnLease, error) {
 		for {
@@ -291,6 +353,9 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 		if connID == "" || pinnedSessionConnID != connID {
 			return
 		}
+		// Release only the locally tracked pin for this exact connection, clearing
+		// its tracking before a replacement lease or ordinary release can reuse the
+		// session reservation.
 		p.UnpinConn(o.ProviderID, connID)
 		pinnedSessionConnID = ""
 	}
@@ -302,6 +367,8 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 		if connID == "" || pinnedSessionConnID == connID {
 			return
 		}
+		// Return any older connection reservation before pinning a new one, so the
+		// store-disabled session does not retain two tracked pool pins.
 		if pinnedSessionConnID != "" {
 			p.UnpinConn(o.ProviderID, pinnedSessionConnID)
 			pinnedSessionConnID = ""
@@ -310,14 +377,17 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 			pinnedSessionConnID = connID
 		}
 	}
-	// lastTurnClean records a terminal response completed without client disconnection.
-	// Error paths can mark the lease broken before cleanup.
-	// Cleanup also marks the lease broken whenever the last turn did not finish cleanly.
+	// lastTurnClean records a nil Relay error, including a returned failure
+	// terminal. Relay can mark the connection broken independently; cleanup also
+	// marks any unfinished relay work broken before release.
 	lastTurnClean := false
 	releaseSessionLease := func() {
 		if sessionLease == nil {
 			return
 		}
+		// An acquired lease with unfinished or failed relay work cannot return as a
+		// reusable connection; keep any earlier broken mark and dispose it on
+		// release.
 		if !lastTurnClean {
 			sessionLease.MarkBroken()
 		}
@@ -363,6 +433,9 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 		sessionConnID = ""
 		state.PreferredConnID = ""
 	}
+	// Missing-response recovery consumes one opportunity before payload mutation,
+	// retains tool-dependent continuation, and skips repeated admission only after
+	// both dropping the anchor and installing replay succeed.
 	recoverIngressPrevResponseNotFound := func(relayErr error, turn int, connID string) bool {
 		if !IsPreviousResponseNotFound(relayErr) {
 			return false
@@ -370,9 +443,9 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 		if turnPrevRecoveryTried || !o.PreviousRecovery {
 			return false
 		}
-		// Keep previous_response_id when tool outputs need the upstream response chain
-		// to match each function_call_output to its function call.
-		// Dropping the chain can cause a 400 "No tool call found for function call output" response.
+		// Keep continuation whenever current or replay input contains a tool output;
+		// this recovery path does not use the idle-ping path's complete-call-context
+		// exception when deciding whether that output can lose its anchor.
 		if hasCurrentOrReplayFunctionCallOutput(currentPayload) {
 			return false
 		}
@@ -389,6 +462,9 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 		}
 		turnPrevRecoveryTried = true
 		updatedPayload, removed, dropErr := codec.DropPrevious(currentPayload)
+		// A failed or ineffective anchor removal leaves the current request unchanged
+		// and ends this recovery attempt; its consumed budget cannot repeat the same
+		// mutation.
 		if dropErr != nil || !removed {
 			reason := "not_removed"
 			if dropErr != nil {
@@ -408,6 +484,9 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 			currentTurnReplayInput,
 			currentTurnReplayInputExists,
 		)
+		// Retain the current anchored payload if full-input reconstruction fails,
+		// because dropping continuation without replay would lose the earlier context
+		// required by this turn.
 		if setInputErr != nil {
 			p.Log(fmt.Sprintf(
 				"ingress_ws_prev_response_recovery_skip provider_id=%d turn=%d conn_id=%s reason=set_full_input_error cause=%s",
@@ -430,6 +509,9 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 		skipBeforeTurn = true
 		return true
 	}
+	// Retry only one pre-output transport failure when continuation does not force
+	// the held connection; preserve turn admission by skipping its callbacks after
+	// resetting the broken lease.
 	retryIngressTurn := func(relayErr error, turn int, connID string) bool {
 		if !IsIngressTurnRetryable(relayErr) || turnRetry >= 1 {
 			return false
@@ -500,12 +582,17 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 		}
 		if toolSignals.HasFunctionCallOutput {
 			var currentReqBody map[string]any
+			// Use detailed tool signals when decoding succeeds; otherwise retain the
+			// earlier tool-output presence observation for the codec's continuation
+			// inference decision.
 			if err := json.Unmarshal(currentPayload, &currentReqBody); err == nil {
 				toolSignals = wire.AnalyzeToolContinuationSignals(currentReqBody)
 			}
 		}
 		hasFunctionCallOutput := toolSignals.HasFunctionCallOutput
-		// For store=false tool output, infer the previous response ID when needed so upstream can associate call_id.
+		// For a later store-disabled tool output lacking actual call context, the
+		// codec may infer the last completed response ID so upstream can associate
+		// its call_id.
 		if codec.ShouldInfer(
 			state.StoreDisabled,
 			turn,
@@ -514,6 +601,9 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 			expectedPrev,
 		) {
 			updatedPayload, setPrevErr := codec.SetPrevious(currentPayload, expectedPrev)
+			// Inference failure is logged while retaining the supplied request bytes,
+			// allowing the normal protocol path to handle its available continuation and
+			// tool context.
 			if setPrevErr != nil {
 				p.Log(fmt.Sprintf(
 					"ingress_ws_function_call_output_prev_infer_skip provider_id=%d turn=%d conn_id=%s reason=set_previous_response_id_error cause=%s expected_previous_response_id=%s",
@@ -542,6 +632,9 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 			currentPayload,
 			currentPreviousResponseID != "",
 		)
+		// Unavailable replay does not erase the direct request: clear optional
+		// recovery history and forward current bytes, limiting later recovery to the
+		// context that remains known.
 		if replayInputErr != nil {
 			p.Log(fmt.Sprintf(
 				"ingress_ws_replay_input_skip provider_id=%d turn=%d conn_id=%s reason=build_error cause=%s",
@@ -559,6 +652,9 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 		replayHasFunctionCallOutput := currentTurnReplayInputExists &&
 			codec.ItemsHaveOutput(currentTurnReplayInput)
 		hasFunctionCallOutput = hasFunctionCallOutput || replayHasFunctionCallOutput
+		// Strict store-disabled continuation compares the last accepted non-input
+		// context. Any current or replay tool output forces retention so removing the
+		// anchor cannot orphan its call.
 		if state.StoreDisabled && turn > 1 && currentPreviousResponseID != "" {
 			shouldKeepPreviousResponseID := false
 			strictReason := ""
@@ -577,6 +673,8 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 					hasFunctionCallOutput,
 				)
 			}
+			// A comparison failure does not establish safe reconstruction, so keep the
+			// supplied continuation and log the unavailable strict-evaluation reason.
 			if strictErr != nil {
 				p.Log(fmt.Sprintf(
 					"ingress_ws_prev_response_strict_eval provider_id=%d turn=%d conn_id=%s action=keep_previous_response_id reason=%s cause=%s previous_response_id=%s expected_previous_response_id=%s has_function_call_output=%v",
@@ -590,6 +688,9 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 					hasFunctionCallOutput,
 				))
 			} else if !shouldKeepPreviousResponseID {
+				// Publish a full unanchored request only after both anchor removal and
+				// input installation succeed; either mutation failure keeps the original
+				// continuation bytes.
 				updatedPayload, removed, dropErr := codec.DropPrevious(currentPayload)
 				if dropErr != nil || !removed {
 					dropReason := "not_removed"
@@ -657,6 +758,9 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 				unpinSessionConn(sessionConnID)
 			}
 		}
+		// Health-check a reused lease only between turns when idle ping is supported
+		// and no transport retry is active; the idle threshold suppresses checks soon
+		// after completion.
 		shouldPreflightPing := turn > 1 && sessionLease != nil && sessionLease.SupportsIdlePingWithoutReader() && turnRetry == 0
 		if shouldPreflightPing && o.PreflightPingIdle > 0 && !lastTurnFinishedAt.IsZero() {
 			if time.Since(lastTurnFinishedAt) < o.PreflightPingIdle {
@@ -673,6 +777,9 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 					p.TruncateLog(pingErr.Error(), 160),
 				))
 				if forcePreferredConn {
+					// Ping recovery has its own context-coverage gate, independent of the
+					// missing-response recovery setting. A forced continuation cannot move
+					// safely unless replay covers every required tool call.
 					// Tool outputs need previous_response_id to recover their calls from the chain,
 					// unless replay input supplies every matching function call.
 					// Only that complete context makes dropping the continuation safe.
@@ -751,6 +858,9 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 						pingErr,
 					)
 				}
+				// An ordinary failed idle ping permits a new compatible lease, so discard
+				// the broken transport and acquire again before forwarding this
+				// still-admitted turn.
 				resetSessionLease(true)
 
 				acquiredLease, acquireErr := acquireTurnLease(turn, state.PreferredConnID, forcePreferredConn)
@@ -789,6 +899,9 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 
 		result, relayErr := p.Relay(turn, sessionLease, ClientPayload{PayloadRaw: currentPayload, PayloadBytes: currentPayloadBytes, OriginalModel: currentOriginalModel, RoutingModel: currentRoutingModel, ImageBillingModel: currentImageBillingModel, ImageSizeTier: currentImageSizeTier, ImageInputSize: currentImageInputSize, RequestedReasoningEffort: currentRequestedReasoningEffort})
 		if relayErr != nil {
+			// Try bounded local recovery before reporting final completion, preserving
+			// the same admission resources and logical turn while its transport is
+			// replaced.
 			lastTurnClean = false
 			if recoverIngressPrevResponseNotFound(relayErr, turn, connID) {
 				continue
@@ -845,7 +958,9 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 		nextStrictState, strictStateErr := codec.BuildStrict(currentPayload)
 		if strictStateErr != nil {
 			lastTurnStrictState = nil
-			// Retain the full previous payload for comparison when strict state cannot be built.
+			// Keep immutable full request bytes when compact comparison state cannot be
+			// built, so the next turn can use the codec's raw-payload strict comparison
+			// path.
 			lastTurnPayload = currentPayload
 			p.Log(fmt.Sprintf(
 				"ingress_ws_prev_response_strict_state_skip provider_id=%d turn=%d conn_id=%s reason=build_error cause=%s",
@@ -855,10 +970,16 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 				p.TruncateLog(strictStateErr.Error(), 160),
 			))
 		} else {
+			// Successful construction selects its returned comparison state and releases
+			// full request bytes. A nil returned state therefore leaves no raw-payload
+			// comparison source for the next turn.
 			lastTurnStrictState = nextStrictState
 			lastTurnPayload = nil
 		}
 
+		// Write response-to-provider, response-to-connection, and owner observations
+		// after completion. These writes are separate, and a provider-binding error
+		// is reported while local affinity publication continues.
 		if responseID != "" && stateStore != nil {
 			ttl := o.ResponseStickyTTL
 			p.BindWarning(groupID, o.ProviderID, responseID, stateStore.BindResponseProvider(ctx, groupID, responseID, o.ProviderID, ttl))
@@ -914,6 +1035,9 @@ func (s *IngressSession) Run(ctx context.Context, firstMessage []byte) error {
 		}
 		if stateStore != nil && nextPayload.PreviousResponseID != "" {
 			if stickyConnID, ok := stateStore.GetResponseConn(nextPayload.PreviousResponseID); ok {
+				// Keep the currently held lease when cached response affinity points
+				// elsewhere; this loop does not transfer an active session to that cached
+				// connection.
 				if sessionConnID != "" && stickyConnID != "" && stickyConnID != sessionConnID {
 					p.Log(fmt.Sprintf(
 						"ingress_ws_keep_session_conn provider_id=%d turn=%d conn_id=%s sticky_conn_id=%s previous_response_id=%s",

@@ -18,11 +18,44 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// Run relays both directions and handles per-turn policy, completion, and failure.
+// A dedicated WebSocket relays client frames and upstream events concurrently,
+// so completion can consume request metadata before terminal delivery opens the
+// next turn. PassthroughSession queues copied turn bodies and policy values,
+// then retains the dequeued snapshot for the response terminal write instead of
+// relying only on mutable session defaults.
+//
+// Admission and terminal delivery share TurnLifecycle. The client filter
+// reserves response.create before validation and cancels that reservation on
+// preforward rejection; a successful terminal write publishes idle state and
+// releases admission. Request timing and per-turn read/write parameters are
+// captured for accepted turns, while session.update separately changes the
+// omitted-model default. A provider handshake gets one eligible identity
+// recovery attempt. Upstream first-output and active-read timeouts are managed
+// by DeadlineConn; first-turn pre-output timeout can fail over, but later
+// timeout closes for reconnection because entry's ordinary replay bytes belong
+// to the initial request.
+
+// Run filters and relays a dedicated provider connection while capturing
+// accepted-turn completion metadata. Callers supply initialized Port, a usable
+// client socket and context, and an embedded IngressHooks pointer whenever
+// Hooks is present.
+//
+// The first request is normalized and written through DeadlineConn before
+// bidirectional relay starts. Later response.create reservations reject
+// overlap, apply current model and policy rules, acquire turn admission, and
+// publish copied snapshots before upstream forwarding. Terminal observation
+// dequeues metadata before client delivery, so the saved snapshot and paired
+// lifecycle writes order that delivery with the next admission. Runtime read
+// and write budgets refresh on accepted turns; client idle budget refreshes on
+// each wait. Non-control relay failures report a still-queued turn; parent
+// control causes return before that completion path. Initial pre-output timeout
+// can replace the provider, while later timeout requires reconnection.
 func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, firstClientMessage []byte) error {
 	p, o, hooks := s.Port, s.Options, s.Hooks
 	var turnParameters atomic.Pointer[Parameters]
 	initial := DefaultParameters()
+	// Truncate static durations to whole-second fallback parameters, dropping
+	// sub-second remainders before accepted-turn budget readers consume them.
 	initial.ReadTimeoutSeconds = int(o.IdleTimeout / time.Second)
 	initial.WriteTimeoutSeconds = int(o.WriteTimeout / time.Second)
 	if s.Parameters != nil {
@@ -67,7 +100,9 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 	if hooks != nil {
 		initialRequestModel = hooks.InitialRequestModel
 	}
-	// Capture client model R before rewriting the payload to upstream model U.
+	// Initialize the shared omitted-model default from entry or first-frame
+	// metadata, then capture requested effort before reasoning and provider-model
+	// rewrites affect accounting inputs.
 	usageMeta := NewUsageMeta(initialRequestModel, firstClientMessage, p)
 	usageMeta.CaptureRequestedReasoningEffort(originalFirstClientMessage)
 	p.Log(fmt.Sprintf(
@@ -79,9 +114,10 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 		len(firstClientMessage),
 	))
 
-	// Apply Fast policy to the first response.create here and to later frames in the FrameConn filter.
-	// Retain group and upstream models when later frames omit model; session.update can change them.
-	// Policy matching needs the resolved model to evaluate administrator whitelists.
+	// Resolve first-turn routing and provider models before Fast policy, so
+	// administrator model rules see the actual upstream identifier. Later requests
+	// inherit UsageMeta's client default, and session.update can replace that
+	// default before resolving new routing and provider forms.
 	firstRoutingModel, firstUpstreamModel, resolveModelErr := p.Models(1, requestModel, firstClientMessage)
 	if resolveModelErr != nil {
 		return resolveModelErr
@@ -90,7 +126,9 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 	if resolveModelErr != nil {
 		return resolveModelErr
 	}
-	// Upstream and downstream relays run in separate goroutines; publish session model values atomically.
+	// Opposite relay directions read these model defaults concurrently. Publish
+	// each pointer atomically, while TurnPayloadQueue captures the combined values
+	// for a specific accepted request.
 	var capturedSessionRequestedModel atomic.Pointer[string]
 	var capturedSessionRoutingModel atomic.Pointer[string]
 	var capturedSessionUpstreamModel atomic.Pointer[string]
@@ -127,7 +165,9 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 	} else if compatibilityChanged {
 		firstClientMessage = normalized
 	}
-	// API Key compatibility removes parallel_tool_calls without tools; Lite normalization sets it back to false.
+	// Compatibility can remove parallel_tool_calls when tools are absent. Reapply
+	// marked Lite requirements afterward so this request still sends its required
+	// false value.
 	if firstMessageResponsesLite {
 		liteFirstMessage, liteErr := p.NormalizeLite(firstClientMessage)
 		if liteErr != nil {
@@ -135,6 +175,8 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 		}
 		firstClientMessage = liteFirstMessage
 	}
+	// Scope first-request identity after compatibility processing, so handshake
+	// preparation receives this selected provider's namespace for session reuse.
 	providerScopedFirst, providerScoped, scopeErr := p.ScopeIdentity(firstClientMessage)
 	if scopeErr != nil {
 		return p.CloseError(1008, "invalid websocket identity metadata", scopeErr)
@@ -161,10 +203,10 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 	}
 	firstClientMessage = updatedFirst
 
-	// Read service_tier and reasoning_effort after policy filtering; a removed tier is recorded as nil.
-	// Keep the response-declared tier separately for completion-time billing.
-	// Each response.create can choose a different tier.
-	// Turn snapshots freeze these values; atomics retain session defaults and final aggregate metadata.
+	// Capture accepted service tier and recorded effort after policy filtering;
+	// field removal becomes nil metadata rather than an earlier turn's value.
+	// Queue snapshots retain each turn's choices, while the terminal response tier
+	// remains separate for completion-time billing.
 	usageMeta.InitFromFirstFrame(firstClientMessage)
 	promptCacheKey := strings.TrimSpace(gjson.GetBytes(firstClientMessage, "prompt_cache_key").String())
 	turnPayloads := NewTurnPayloadQueue()
@@ -184,6 +226,9 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 	if err := p.PrepareDial(ctx, firstClientMessage, promptCacheKey); err != nil {
 		return err
 	}
+	// Give an eligible handshake failure one provider-identity repair opportunity,
+	// consuming that opportunity before repair so another failed handshake cannot
+	// reopen the same recovery loop.
 	agentTaskRecoveryTried := false
 	var dialResult DialResult
 	var dialErr error
@@ -208,6 +253,8 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 	if upstreamFrameConn == nil {
 		return errors.New("openai ws passthrough upstream connection does not support frame relay")
 	}
+	// Close the dedicated upstream transport on every later exit. Cleanup is best
+	// effort and its error does not replace the selected relay or policy result.
 	defer func() { _ = upstreamFrameConn.Close() }()
 	handshakeHeaders := dialResult.Headers
 
@@ -218,6 +265,9 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 				reasoningEffort = *current
 			}
 			timeout := p.FirstOutputTimeout(reasoningEffort)
+			// Use this accepted turn's read budget when effort-specific first-output
+			// timing is disabled, retaining the separate active-read budget for after
+			// qualifying output.
 			if timeout <= 0 {
 				timeout = time.Duration(turnParameters.Load().ReadTimeoutSeconds) * time.Second
 			}
@@ -273,7 +323,8 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 			if msgType != TextFrame && msgType != 2 {
 				return payload, nil, nil
 			}
-			// Apply prompt replacement before policy checks and upstream forwarding on later frames.
+			// Apply user replacements before later-frame policy checks, so moderation
+			// and provider normalization inspect the content selected for forwarding.
 			payload = p.PromptReplace(ctx, payload)
 			eventType := strings.TrimSpace(gjson.GetBytes(payload, "type").String())
 			isResponseCreate := eventType == "response.create"
@@ -283,6 +334,9 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 			}
 			acceptedTurn := false
 			if isResponseCreate {
+				// Reserve admission before validating this frame, preventing another
+				// response.create from entering while preforward checks run; rejection
+				// releases only that provisional reservation.
 				if !turnLifecycle.BeginResponseCreate(clientFrameConn.markTurnStarted) {
 					err := errors.New("overlapping response.create is not supported")
 					return payload, nil, p.CloseError(1008, err.Error(), err)
@@ -308,6 +362,9 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 					payload = normalized
 				}
 				if responsesLite {
+					// Restore Lite-required fields after per-turn provider compatibility,
+					// because its field removal can otherwise erase parameters required by
+					// this marked request.
 					litePayload, liteErr := p.NormalizeLite(payload)
 					if liteErr != nil {
 						return payload, nil, p.CloseError(1008, liteErr.Error(), liteErr)
@@ -315,6 +372,8 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 					payload = litePayload
 				}
 			}
+			// Scope response and session identity with this provider's namespace so
+			// shared client identity does not select another provider's upstream state.
 			if isResponseCreate || eventType == "session.update" {
 				providerScopedPayload, providerScoped, scopeErr := p.ScopeIdentity(payload)
 				if scopeErr != nil {
@@ -324,6 +383,9 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 					payload = providerScopedPayload
 				}
 			}
+			// Retain requested effort before applying group reasoning rules on this
+			// frame, keeping completion's client intent separate from its accepted
+			// recorded effort.
 			originalResponseCreate := payload
 			if isResponseCreate {
 				requestModelForPolicy := usageMeta.RequestModelForFrame(payload)
@@ -352,7 +414,9 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 				}
 			}
 
-			// Save client model R before writing U so omitted models can be remapped from R on later turns.
+			// Publish a session.update default before mapping and later policy checks;
+			// rejection does not roll back that atomic value. Each response.create uses
+			// its explicit model or this default before provider-model serialization.
 			usageMeta.UpdateSessionRequestModel(payload)
 			requestModelForThisFrame := usageMeta.RequestModelForFrame(payload)
 			routingModel := loadCapturedModel(&capturedSessionRoutingModel)
@@ -391,9 +455,9 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 				out, policyErr = p.ModelAttributes(ctx, turnNo, model, out)
 			}
 
-			// Successful response.create frames update usage from the filtered payload, as the first frame does.
-			// Other events and rejected frames leave prior metadata intact.
-			// An omitted service_tier stores nil to represent the upstream default.
+			// Publish accepted tier and recorded effort only after policy and admission
+			// succeed. Rejected frames retain those two fields, while requested effort
+			// was captured earlier and can already reflect this rejected request.
 			if policyErr == nil && blocked == nil && isResponseCreate {
 				if hooks != nil && hooks.BeforeTurn != nil {
 					if err := hooks.BeforeTurn(turnNo); err != nil {
@@ -401,10 +465,16 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 					}
 				}
 				usageMeta.UpdateFromResponseCreate(out)
+				// Capture one parameter value after later-turn admission succeeds, so relay
+				// write selection and upstream read timing use this accepted turn's
+				// effective budgets.
 				if s.Parameters != nil {
 					next := s.Parameters()
 					turnParameters.Store(&next)
 				}
+				// Queue accepted bytes and optional accounting values before the relay
+				// forwards the request, allowing upstream completion to consume an
+				// immutable snapshot for that same turn.
 				turnPayloads.Push(TurnPayload{
 					StartedAt:                responseCreateAt,
 					RequestBody:              out,
@@ -426,7 +496,9 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 			}
 			return out, blocked, policyErr
 		},
-		// Client events show the turn's requested model R; result and usage metadata retain upstream model U.
+		// Select this filter's model rewrite from queued turn metadata. The inner
+		// clientFrameConn subsequently applies its separate session-default model
+		// restoration, while completion retains the queue's upstream identity.
 		writeFilter: func(msgType int, payload []byte) ([]byte, error) {
 			if msgType != TextFrame {
 				return payload, nil
@@ -434,6 +506,9 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 			eventType := p.EventType(payload)
 			turnPayload := turnPayloads.Peek()
 			if p.IsTerminal(eventType) {
+				// Terminal observation already removed this turn from the queue. Consume
+				// its saved write snapshot so response metadata uses that completed turn
+				// rather than the next queued request.
 				if completed := terminalWritePayload.Swap(nil); completed != nil {
 					turnPayload = *completed
 				}
@@ -456,7 +531,8 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 		},
 		onBlock: func(blocked *PolicyBlocked) {
 			p.PolicyDenied()
-			// Attempt the synchronous error write before returning the policy close.
+			// Attempt the policy event before returning its close instruction, ignoring
+			// write failure because the local block still requires the request to end.
 			eventBytes := p.BlockedEvent(blocked)
 			if eventBytes == nil {
 				return
@@ -466,6 +542,9 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 			cancel()
 		},
 	}
+	// Write the first request through DeadlineConn before starting relay, arming
+	// first-output timing and setting FirstMessageSent so the relay does not send
+	// that request again.
 	upstreamFirstMessageSent := false
 	firstWriteCtx, cancelFirstWrite := context.WithTimeout(ctx, o.WriteTimeout)
 	firstWriteErr := relayUpstreamFrameConn.WriteFrame(firstWriteCtx, TextFrame, firstClientMessage)
@@ -479,6 +558,9 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 	}
 	upstreamFirstMessageSent = true
 
+	// Forward auxiliary client events while waiting for the next response.create.
+	// Only an accepted request returns to the relay's per-turn timing and request
+	// write path.
 	readNextClientFrame := func(readCtx context.Context, conn FrameConn) (int, []byte, error) {
 		for {
 			msgType, payload, readErr := conn.ReadFrame(readCtx)
@@ -533,6 +615,9 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 				}
 			},
 			OnTurnComplete: func(turn RelayTurnResult) {
+				// Completion observation precedes terminal delivery. Dequeue its request
+				// snapshot now, retain that snapshot for the write filter, and let the
+				// paired write callbacks control next-turn admission.
 				turnNo := int(completedTurns.Add(1))
 				turnPayload := turnPayloads.Pop()
 				if !turn.StartedAt.IsZero() {
@@ -591,6 +676,9 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 					})
 				}
 			},
+			// Bracket response terminal delivery with the shared admission mutex. Failed
+			// delivery keeps inFlight set, while success publishes the idle flag before
+			// unlocking the next request.
 			BeforeClientWrite: func(msgType int, payload []byte) {
 				if msgType == TextFrame && IsTerminalOutput(payload) {
 					turnLifecycle.BeginTerminalWrite()
@@ -602,6 +690,9 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 				}
 			},
 			BeforeRelayCancel: func(exit RelayExit) {
+				// Parent control cancellation has its own lease-aware close handling after
+				// relay returns; skip this ordinary exit close so it cannot replace that
+				// control reason.
 				if context.Cause(ctx) != nil {
 					return
 				}
@@ -609,7 +700,8 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 				if !ok {
 					return
 				}
-				// Cap the close reason to fit a control frame; an oversized reason can cause a TCP close with no close frame.
+				// Cap the close reason before transport closure, because an oversized
+				// control-frame payload can prevent delivery of the selected close status.
 				reason = p.TruncateReason(reason, 120)
 				_ = clientConn.Close(status, reason)
 				_ = clientConn.CloseNow()
@@ -641,6 +733,9 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 			},
 		},
 	})
+	// After relay stops, give parent control cause precedence over aggregate
+	// success, using the ingress-lease reconnect status when that specific
+	// cancellation is retained.
 	if cause := context.Cause(ctx); cause != nil {
 		status := 1001
 		reason := "websocket request canceled"
@@ -689,7 +784,9 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 			relayResult.DroppedDownstreamFrames,
 			turnCount,
 		))
-		// Terminal events invoke turn callbacks; invoke one here if the relay completed zero turns.
+		// A graceful relay can return without observing a terminal turn. Report its
+		// aggregate result once through the retained first snapshot when no
+		// completion callback consumed it.
 		if turnCount == 0 && hooks != nil && hooks.AfterTurn != nil {
 			turnPayload := turnPayloads.Pop()
 			hooks.AfterTurn(TurnCapture{
@@ -720,13 +817,15 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 	relayErr := relayExit.Err
 	if firstOutputTimeoutErr, ok := errors.AsType[*FirstOutputTimeoutError](relayErr); ok {
 		deadline := firstOutputTimeoutErr.Deadline
+		// Record timeout observations and provider effects before choosing the
+		// returned error. Later-turn reconnect presentation still keeps those effects.
 		failoverErr := p.FirstOutputFailure(ctx, deadline, handshakeHeaders)
 
 		if turnCount == 0 && !relayExit.WroteDownstream {
 			relayErr = failoverErr
 		} else {
-			// Entry retries retain the first response.create. Replaying it after a later-turn timeout
-			// would repeat turn one, so close the client session on later-turn timeouts.
+			// Entry's ordinary replay retains the first request. A later timeout closes
+			// the session because sending those bytes again would repeat turn one.
 			relayErr = p.CloseError(
 				1001,
 				"upstream produced no semantic output; please reconnect",
@@ -753,6 +852,9 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 		relayErr,
 		relayExit.WroteDownstream,
 	)
+	// Report only a still-queued accepted turn on final failure, so already
+	// observed terminal completions are not submitted again from the relay exit
+	// path.
 	if hooks != nil && hooks.AfterTurn != nil && turnPayloads.Len() > 0 {
 		turnPayload := turnPayloads.Pop()
 		hooks.AfterTurn(TurnCapture{
@@ -768,6 +870,10 @@ func (s *PassthroughSession) Run(ctx context.Context, clientConn ClientSocket, f
 	return turnErr
 }
 
+// replaceRequestModel writes model into session.model for session.update and
+// top-level model otherwise. The caller supplies the resolved provider
+// identifier and closeError constructor; mutation failure returns a local
+// invalid-payload close instruction.
 func replaceRequestModel(payload []byte, eventType, model string, closeError func(int, string, error) error) ([]byte, error) {
 	path := "model"
 	if eventType == "session.update" {
@@ -780,6 +886,9 @@ func replaceRequestModel(payload []byte, eventType, model string, closeError fun
 	return out, nil
 }
 
+// cloneHeaders copies the header map and each value slice for completion
+// snapshots. Nil headers return nil; returned map and slice edits are
+// independent of the handshake map, while immutable string values are reused.
 func cloneHeaders(headers map[string][]string) map[string][]string {
 	if headers == nil {
 		return nil
@@ -791,6 +900,9 @@ func cloneHeaders(headers map[string][]string) map[string][]string {
 	return out
 }
 
+// firstTokenForLog returns the supplied elapsed millisecond value for relay
+// diagnostics. Nil returns the unobserved sentinel minus one; other pointed
+// values are returned unchanged rather than normalized or clamped.
 func firstTokenForLog(value *int) int {
 	if value == nil {
 		return -1
@@ -798,6 +910,9 @@ func firstTokenForLog(value *int) int {
 	return *value
 }
 
+// errorText returns the supplied error's message for relay failure diagnostics.
+// Nil returns empty, and callers apply their own truncation to the returned
+// text before including it in log fields.
 func errorText(err error) string {
 	if err == nil {
 		return ""

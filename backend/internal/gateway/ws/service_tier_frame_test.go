@@ -10,8 +10,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/tierpolicy"
 )
 
-// TestBuildOpenAIFastPolicyBlockedWSEvent_HasEventIDAndCode checks a non-empty
-// correlation ID and the stable policy_violation code in the emitted error.
+// TestBuildOpenAIFastPolicyBlockedWSEvent_HasEventIDAndCode builds two local
+// policy rejection events. It checks the selected message, stable error fields,
+// evt_ prefix, and distinct returned identifiers for these two calls.
 func TestBuildOpenAIFastPolicyBlockedWSEvent_HasEventIDAndCode(t *testing.T) {
 	bytes := BuildFastPolicyBlockedEvent(&tierpolicy.BlockedError{Message: "blocked because reasons"})
 	require.NotNil(t, bytes)
@@ -31,7 +32,9 @@ func TestBuildOpenAIFastPolicyBlockedWSEvent_HasEventIDAndCode(t *testing.T) {
 	require.NotEqual(t, eventID, otherID, "event_id must be random per-event")
 }
 
-// TestBuildOpenAIFastPolicyBlockedWSEvent_NilSafe checks the nil-error guard.
+// TestBuildOpenAIFastPolicyBlockedWSEvent_NilSafe supplies no policy rejection
+// to the event builder. The returned nil bytes let callers skip writing a
+// policy event when no rejection exists.
 func TestBuildOpenAIFastPolicyBlockedWSEvent_NilSafe(t *testing.T) {
 	require.Nil(t, BuildFastPolicyBlockedEvent(nil))
 }

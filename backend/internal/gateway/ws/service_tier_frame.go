@@ -13,10 +13,22 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/gateway/tierpolicy"
 )
 
-// ApplyServiceTierFrame applies HTTP Fast policy rules to upstream response.create frames.
-// Pass normalizes fast to priority; filter removes the tier; force actions set the tier; block returns a policy rejection.
-// Valid JSON frames first undergo reasoning-effort validation. Other frame types then pass through unchanged.
-// The tier is a top-level field; callers supply this turn's upstream model for policy matching.
+// WebSocket response.create carries the same top-level service_tier choices
+// used by HTTP Fast policy. ApplyServiceTierFrame validates reasoning first,
+// then asks tierpolicy to pass, normalize, remove, force, or block that tier;
+// rejected choices can be rendered as a correlated Realtime-style error event.
+
+// ApplyServiceTierFrame applies Fast policy to a response.create using the
+// turn's resolved upstream model. Empty or invalid JSON passes through; valid
+// JSON first receives reasoning validation, including for other frame types.
+//
+// Only response.create enters tier selection. tierpolicy.Resolve interprets the
+// supplied policy inputs and tier presence, returning a block, field removal,
+// or accepted tier. The returned block is separate from encoding errors so the
+// caller can emit a policy event and close locally. Callers supply
+// model-resolved DecisionInput callbacks: Evaluate and KeyPolicy are required
+// when their Resolve paths run, and ForceOnSupported is needed for key force_on.
+// The caller forwards the accepted frame or writes the selected policy event.
 func ApplyServiceTierFrame(frame []byte, model string, input tierpolicy.DecisionInput) ([]byte, *tierpolicy.BlockedError, error) {
 	if len(frame) == 0 {
 		return frame, nil, nil
@@ -24,12 +36,15 @@ func ApplyServiceTierFrame(frame []byte, model string, input tierpolicy.Decision
 	if !gjson.ValidBytes(frame) {
 		return frame, nil, nil
 	}
-	// Validate reasoning effort on each frame because session parameters can change between frames.
+	// Valid frames share reasoning validation before event dispatch, so even a
+	// non-response.create frame can fail this local check before passthrough.
 	if err := requeststate.ValidateOpenAIReasoningEffort(frame, model); err != nil {
 		return frame, nil, err
 	}
 	frameType := strings.TrimSpace(gjson.GetBytes(frame, "type").String())
-	// Apply Fast policy to response.create; leave other event types to upstream validation.
+	// Tier mutation applies to response.create; other valid frame types retain
+	// their bytes after reasoning validation so upstream can process their
+	// event-specific fields.
 	if frameType != "response.create" {
 		return frame, nil, nil
 	}
@@ -38,6 +53,8 @@ func ApplyServiceTierFrame(frame []byte, model string, input tierpolicy.Decision
 	if decision.Blocked != nil {
 		return frame, decision.Blocked, nil
 	}
+	// Filtering or force_off removes the requested tier, letting
+	// upstream apply its omitted-field behavior after the policy decision succeeds.
 	if decision.DeleteField {
 		trimmed, err := sjson.DeleteBytes(frame, "service_tier")
 		if err != nil {
@@ -45,6 +62,8 @@ func ApplyServiceTierFrame(frame []byte, model string, input tierpolicy.Decision
 		}
 		return trimmed, nil, nil
 	}
+	// Write the selected canonical or forced tier into outgoing bytes, so the
+	// provider receives the accepted policy value even when the client used an alias.
 	if decision.Tier != "" && (!tierResult.Exists() || decision.Tier != tierResult.String()) {
 		updated, err := sjson.SetBytes(frame, "service_tier", decision.Tier)
 		if err != nil {
@@ -55,31 +74,24 @@ func ApplyServiceTierFrame(frame []byte, model string, input tierpolicy.Decision
 	return frame, nil, nil
 }
 
-// newOpenAIFastPolicyWSEventID returns an evt_-prefixed random identifier
-// for correlating a server-emitted policy error in client logs.
+// newOpenAIFastPolicyWSEventID returns an evt_-prefixed correlation identifier
+// for a local rejection. Random generation failure uses the fixed
+// evt_openai_fast_policy label, so uniqueness is conditional on successful UUID
+// creation.
 func newOpenAIFastPolicyWSEventID() string {
 	id, err := uuid.NewRandom()
 	if err != nil {
-		// Keep the identifier non-empty if random generation fails.
+		// The client error still needs an event_id when randomness fails; use a fixed
+		// nonempty label while giving up per-event uniqueness on that path.
 		return "evt_openai_fast_policy"
 	}
 	// Use a compact hexadecimal UUID after the event prefix.
 	return "evt_" + strings.ReplaceAll(id.String(), "-", "")
 }
 
-// BuildFastPolicyBlockedEvent renders a Realtime-style error for a Fast policy rejection.
-// The event ID supports log correlation and policy_violation gives clients a stable error code.
-// It returns nil when err is nil.
-//
-//	{
-//	  "event_id": "evt_<random>",
-//	  "type": "error",
-//	  "error": {
-//	    "type": "invalid_request_error",
-//	    "code": "policy_violation",
-//	    "message": "..."
-//	  }
-//	}
+// BuildFastPolicyBlockedEvent encodes a policy rejection as a Realtime-style
+// error with event_id. Nil err returns nil; the stable policy_violation code
+// and supplied message let clients classify the locally blocked request.
 func BuildFastPolicyBlockedEvent(err *tierpolicy.BlockedError) []byte {
 	if err == nil {
 		return nil
@@ -95,7 +107,9 @@ func BuildFastPolicyBlockedEvent(err *tierpolicy.BlockedError) []byte {
 		},
 	})
 	if mErr != nil {
-		// Return a minimal event if encoding fails.
+		// If encoding fails, return the same stable policy code and correlation
+		// identifier with a fixed safe message so rejection presentation can still
+		// proceed.
 		return []byte(`{"event_id":"` + eventID + `","type":"error","error":{"type":"invalid_request_error","code":"policy_violation","message":"openai fast policy blocked this request"}}`)
 	}
 	return payload

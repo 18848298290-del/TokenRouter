@@ -22,9 +22,37 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
-// RunEntry handles admission, provider attempts, and per-turn scheduling, funding, moderation, and completion after upgrade.
+// An upgraded Responses connection contains logical turns that can outlive a
+// provider attempt. User and provider slots are released between turns, while
+// the Key request reservation stays held across a classified retry of the same
+// logical request and is released after that request finishes.
+//
+// RunEntry performs first-frame prompt, model, moderation, funding, and
+// isolation checks before selecting a provider. Execution hooks reacquire
+// later-turn resources, reauthenticate after user admission, preserve risk
+// evidence by turn, and capture completion before background submission. A lost
+// Key lease triggers an internal session abort that also reaches HTTP bridge
+// work detached from ordinary client cancellation. Provider replacement retains
+// request-record identity and requires a safe current-turn payload after a
+// later failure; local policy and preemption exits keep their distinct close
+// and health-reporting behavior.
+
+// RunEntry performs upgraded connection admission, provider attempts, and
+// per-turn completion through the supplied bindings. Callers supply a nonnil
+// context, complete EntryKey, subject, and initialized ports after
+// authenticating and reading the first client frame.
+//
+// Initial checks precede provider execution. The first turn owns user, Key, and
+// provider reservations; later turns reauthenticate after user acquisition and
+// reacquire their own slots. Classified provider retries retain the Key
+// reservation and logical child request identity, release the old provider
+// slot, and obey switch and OAuth-429 budgets. AfterTurn releases resources and
+// captures accounting or risk outcomes, skipping normal submission for local
+// warmup. Later-turn failover requires a self-contained retry payload so
+// replacement cannot repeat the initial request.
 func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSocket, firstMessage []byte) {
-	// A lost turn lease aborts the session, including HTTP bridge work detached from client cancellation.
+	// A lost Key turn lease signals the separate session abort, reaching HTTP
+	// bridge work that detached itself from ordinary client cancellation.
 	ctx, abortSession := requestcontext.WithAbort(ctx)
 	defer abortSession()
 	requestRecords := newEntryRequestRecords(ctx)
@@ -32,7 +60,9 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 	apiKey, subject, reqLog := in.Key, in.Subject, p.Logger()
 	clientLifecycleCtx, firstTurnStartedAt := in.ClientLifecycleContext, in.FirstTurnStartedAt
 	var err error
-	// Apply prompt replacement before model parsing, moderation, and session hashing, as in the HTTP entry path.
+	// Apply user replacements before model parsing and moderation, then rewrite
+	// additional tool models with Key rules so session hashing sees the same
+	// accepted first request.
 	firstMessage = p.Prompt(ctx, firstMessage)
 	firstMessage, err = modeltrace.RewriteAPIKeyAdditionalModels(firstMessage, apiKey.ModelMapping)
 	if err != nil {
@@ -55,6 +85,9 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 		p.Close(1008, "previous_response_id must be a response.id (resp_*), not a message id")
 		return
 	}
+	// Continuation can move between providers only when each supplied tool output
+	// has its call context; otherwise that output still needs the prior upstream
+	// chain.
 	firstMessageToolCoverage := wire.AnalyzeToolCallOutputContextCoverageBytes(firstMessage)
 	previousResponseCanMove := !firstMessageToolCoverage.HasFunctionCallOutput || firstMessageToolCoverage.ContextCoversAllCallIDs
 	reqLog = reqLog.With(
@@ -66,7 +99,9 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 	p.SetLogger(reqLog)
 	p.ObserveFirst(clientReqModel)
 	firstCyber := p.CaptureCyber(firstMessage)
-	// Client-frame and upstream-event callbacks can run concurrently, so protect the per-turn prompt snapshots.
+	// Client-frame and upstream-event callbacks can run concurrently. Keep each
+	// turn's excerpt and moderation input under one lock so warning capture reads
+	// its selected turn's stored evidence.
 	cyberPromptExcerptByTurn := map[int]string{}
 	cyberSnapshotByTurn := map[int]moderation.ContentModerationInput{}
 	var cyberPromptExcerptMu sync.RWMutex
@@ -102,7 +137,8 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 		p.Close(1008, decision.Message)
 		return
 	}
-	// Check both explicit and derived session blocks after receiving the first frame and before connecting upstream.
+	// Check explicit and derived session blocks before provider admission, so a
+	// previously blocked conversation ends before reserving upstream resources.
 	if cyberBlockKey := p.BlockedSession(ctx, firstMessage); cyberBlockKey != "" {
 		p.BlockedError(ctx)
 		p.Close(1008, p.BlockedMessage())
@@ -110,13 +146,16 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 		return
 	}
 
-	// Check image capability against the group-mapped model G and save the group mapping in the request plan.
+	// Save the group mapping before detecting image intent, so group-level model
+	// eligibility decides the permission check rather than a later provider alias.
 	ctx, groupMappingWS := p.Plan(ctx, reqModel)
 	mappedFirstMessage, routingModelWS, _ := p.ImageIntent(reqModel, firstMessage, groupMappingWS)
 	imageIntent := p.ExplicitImage(routingModelWS, mappedFirstMessage)
 	initialSchedulingCtx := ctx
 	if imageIntent {
-		// Include model-level image rate limits in first-turn selection.
+		// Attach the image admission scope before provider selection, so explicit
+		// first-turn image intent participates in model-level rate-limit eligibility
+		// for that selection.
 		initialSchedulingCtx = p.ImageContext(initialSchedulingCtx)
 	}
 	if imageIntent && !p.ImagesAllowed() {
@@ -140,7 +179,9 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 			currentUserRelease = nil
 		}
 	}
-	// Register cleanup before acquiring slots so early returns release them.
+	// Register provider-then-user cleanup before admission begins, so every later
+	// return releases acquired turn resources even when no execution callback
+	// reports completion.
 	defer releaseTurnSlots()
 
 	userReleaseFunc, userAcquired, err := p.AcquireUser(ctx)
@@ -180,7 +221,9 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 		return
 	}
 
-	// Release Key slots between turns; retain the slot across retries until that turn finishes.
+	// Serialize Key reservation updates across turn callbacks, releasing the slot
+	// while idle but retaining it through provider retries of the same logical
+	// turn.
 	var keyMu sync.Mutex
 	var keyRelease func()
 	acquireKey := func() error {
@@ -193,14 +236,21 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 		if err != nil {
 			return err
 		}
+		// Connect this Key lease's internal abort to session abort, so lost admission
+		// also ends detached bridge work instead of leaving its generation running.
 		stop := requestcontext.AfterAbort(admitted, abortSession)
 		keyRelease = func() {
+			// Stop a pending lease-abort callback before normal release signals that
+			// lease; an already-started abort still represents the competing loss path.
 			stop()
 			release()
 		}
 		return nil
 	}
 	releaseKey := func() {
+		// Remove the callback under the Key mutex and invoke it after unlocking,
+		// allowing later admission or abort handling to inspect reservation state
+		// without recursive locking.
 		keyMu.Lock()
 		release := keyRelease
 		keyRelease = nil
@@ -244,6 +294,9 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 	var lastFailoverErr *EntryFailure
 	var oauth429FailoverState failover.OAuth429State
 	wsAttemptMessage := append([]byte(nil), firstMessage...)
+	// Provider replacement releases its slot before another selection but
+	// preserves the logical request's Key reservation; cancellation and the switch
+	// budget decide whether selection continues.
 	handleWSFailover := func(selection *EntrySelection, provider *EntryProvider, failoverErr *EntryFailure) bool {
 		if ctx.Err() != nil {
 			return false
@@ -283,8 +336,9 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 		return ensureUserSlotHeld()
 	}
 
-	// Image requests require Responses API support, as in the HTTP entry path (#4417).
-	// Detect first-turn image intent from group model G; passive namespaces remain ordinary requests (#4476).
+	// Explicit image intent in the OpenAI platform requires Responses capability.
+	// Group-model detection keeps passive tool namespaces on ordinary text
+	// eligibility rather than treating every namespace as image generation.
 	requiredCapability := imageIntent && requestPlatform == "openai"
 
 	for {
@@ -342,6 +396,9 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 			providerReleaseFunc = fastReleaseFunc
 		}
 		currentProviderRelease = p.WrapRelease(ctx, providerReleaseFunc)
+		// Affinity persistence is advisory for future requests: record its failure
+		// while continuing the already admitted selection and its acquired provider
+		// slot.
 		if err := p.BindSticky(ctx, sessionHash, provider.ID); err != nil {
 			reqLog.Warn("openai.websocket_bind_sticky_session_failed", EntryInt64("provider_id", provider.ID), EntryError(err))
 		}
@@ -374,9 +431,13 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 			EntryInt("candidate_count", scheduleDecision.CandidateCount),
 		)
 
-		// Keep client model R in the first frame; the turn executor applies R -> G -> U for each turn.
+		// Retain first-request bytes for completion when a turn capture omits its
+		// body. The executor resolves each client model through group and provider
+		// mapping separately.
 		wsFirstMessageForUsageFallback := append([]byte(nil), firstMessage...)
-		// Refresh policy from the authentication cache each turn; retain the last valid value on read failure.
+		// Initialize policy from the authenticated Key and publish refreshed usable
+		// values per turn; cache-read failure retains the last accepted value in this
+		// provider attempt.
 		var currentFastModePolicy atomic.Value
 		currentFastModePolicy.Store(apiKey.FastModePolicy)
 		maxReasoningEffort := ""
@@ -403,6 +464,8 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 					return fallback
 				}
 				policy, ok := p.RefreshFast(ctx)
+				// An unsuccessful refresh supplies no usable policy, so keep this attempt's
+				// last accepted value for its per-frame Fast decision.
 				if !ok {
 					return fallback
 				}
@@ -416,7 +479,9 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 					requestedModel = clientReqModel
 				}
 				turnCtx, redirectedModel := p.Redirect(ctx, requestedModel)
-				// Save this turn's group and mapping in its request plan.
+				// Build this turn's route plan after Key redirection, so image intent and
+				// selected-provider eligibility use the current group model while the
+				// client identifier remains separate.
 				turnCtx, turnMapping := p.Plan(turnCtx, redirectedModel)
 				mappedPayload, turnRoutingModel, _ := p.ImageIntent(redirectedModel, payload, turnMapping)
 				turnImageIntent := p.ExplicitImage(turnRoutingModel, mappedPayload)
@@ -430,7 +495,9 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 					)
 				}
 				if turnImageIntent {
-					// Include this turn's image rate-limit scope in provider eligibility checks.
+					// Attach this turn's explicit image scope before rechecking the already
+					// selected provider, so model-level image admission follows its current
+					// payload intent.
 					turnCtx = p.ImageContext(turnCtx)
 				}
 				turnCapability := turnImageIntent && requestPlatform == "openai"
@@ -492,9 +559,10 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 				if turn == 1 {
 					return nil
 				}
-				// Release held slots before replacing their release callbacks.
+				// Clear provider and user ownership before reacquiring later-turn slots, so
+				// replacing stored callbacks cannot abandon an earlier reservation during
+				// this admission sequence.
 				releaseTurnSlots()
-				// Acquire concurrency slots for each later turn and release them while idle.
 				userReleaseFunc, userAcquired, err := p.AcquireUser(ctx)
 				if err != nil {
 					return p.CloseError(1011, "failed to acquire user concurrency slot", err)
@@ -502,13 +570,18 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 				if !userAcquired {
 					return p.CloseError(1013, "too many concurrent requests, please retry later", nil)
 				}
-				// Recheck identity and funding before admission; release the user slot if verification fails.
+				// After waiting for the user slot, reauthenticate identity, protocol
+				// permission, and funding before Key or provider admission; release that
+				// user slot if verification fails.
 				if err := p.AuthorizeTurn(ctx); err != nil {
 					if userReleaseFunc != nil {
 						userReleaseFunc()
 					}
 					return p.CloseError(1008, "API key or billing eligibility changed; reconnect required", err)
 				}
+				// Key admission follows successful reauthorization. If later provider
+				// acquisition fails, deferred connection cleanup releases this Key
+				// reservation while the immediate branch returns the user slot.
 				if err := acquireKey(); err != nil {
 					if userReleaseFunc != nil {
 						userReleaseFunc()
@@ -543,6 +616,9 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 				turn := capture.Turn
 				result := capture.Result
 				turnErr := capture.Err
+				// Record retry classification before releasing the Key reservation: a
+				// failed attempt that can select another provider retains the same logical
+				// turn identity and allowance.
 				_, requestRetry := p.Failover(turnErr)
 				requestCtx := attemptRecords.finish(ctx, capture, provider.ID, provider.Platform, turnErr != nil && requestRetry)
 				if turnErr == nil || !requestRetry {
@@ -553,11 +629,16 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 					turnClientModel = clientReqModel
 				}
 				turnCtx, turnModel := p.Redirect(requestCtx, turnClientModel)
-				// Save this turn's group and mapping in its completion plan.
+				// Resolve completion from this turn's client model and request context, so
+				// its group billing source and redirect trace do not borrow another turn's
+				// mapped identity.
 				turnCtx, turnGroupMapping := p.Plan(turnCtx, turnModel)
 				releaseTurnSlots()
 				defer p.ClearCyber()
 				turnRequestBodyForCyber := capture.RequestBody
+				// A capture without request bytes uses the retained first-request body for
+				// risk recording, preserving an available payload hash and policy input on
+				// that path.
 				if len(turnRequestBodyForCyber) == 0 {
 					turnRequestBodyForCyber = wsFirstMessageForUsageFallback
 				}
@@ -580,25 +661,39 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 						EntryError(turnErr),
 					)
 				}
+				// A local warmup supplies no billable upstream exchange. After releasing
+				// resources and risk state, skip quota refresh, health feedback, and normal
+				// usage submission for it.
 				if result == nil || result.LocalWarmup {
 					return
 				}
-				// Resolve the turn's group billing-model override before recording usage.
+				// Select this turn's billing identity before completion capture, allowing
+				// the group's requested or mapped source to override the result's initial
+				// billing candidate.
 				result.BillingModel = EntryBillingModel(result, turnGroupMapping, turnModel, result.UpstreamModel)
-				// Spark shadow providers update codex_* through QueryUsage (/wham/usage bengalfox).
+				// Ordinary OAuth targets accept header quota observations here. Shadow
+				// targets use their separate quota refresh path, so the parent-like headers
+				// are not written to the shadow snapshot.
 				if provider.Type == "oauth" && !provider.Shadow {
 					selection.Target.UpdateUsage(ctx, result.ResponseHeaders)
 				}
 				scheduleModel := strings.TrimSpace(result.UpstreamModel)
+				// Use provider mapping when the result omits its upstream model, keeping
+				// health feedback attached to the selected turn's scheduling identity.
 				if scheduleModel == "" {
 					scheduleModel = selection.Target.MappedModel(turnGroupMapping.MappedModel)
 				}
 				selection.Target.Report(scheduleModel, entrySucceeded(result), result.FirstTokenMs)
 
 				turnRequestBody := capture.RequestBody
+				// When capture omits its body, completion uses the retained first-request
+				// bytes, matching the risk and payload-hash source available on this path.
 				if len(turnRequestBody) == 0 {
 					turnRequestBody = wsFirstMessageForUsageFallback
 				}
+				// Prepare HTTP-backed completion data and capture the recorder and error
+				// observer before submission, so background work uses this logical turn's
+				// identity and accounting inputs.
 				completionInput := selection.Target.PrepareCompletion(turnCtx, result, capture, turnModel, turnGroupMapping, turnRequestBody, cyberPolicyHandled)
 				recorder, report := p.CompletionRecorder(), p.CompletionObserver()
 				p.SubmitCompletion(result, completion.WrapTaskContext(turnCtx, func(taskCtx context.Context) {
@@ -609,11 +704,13 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 			},
 		}
 
-		// The turn executor maps group and provider models when parsing the frame; prepare continuation fields here.
+		// Prepare an attempt-owned continuation payload while leaving client-model
+		// mapping to frame normalization, so the next provider can apply its own
+		// route and identity policies.
 		wsFirstMessage := append([]byte(nil), wsAttemptMessage...)
-		// A previous_response_id without a sticky hit may belong to a different provider or group.
-		// Forwarding that continuation can fail upstream authorization.
-		// Strip it from the first frame when context is movable; the forwarding layer handles later turns.
+		// A continuation without a matching sticky hit can belong to another target.
+		// Strip its anchor when tool context permits moving the first request, so
+		// the selected provider receives a request it can execute independently.
 		if previousResponseID != "" && !scheduleDecision.StickyPreviousHit && previousResponseCanMove {
 			wsFirstMessage = p.RemovePrevious(wsFirstMessage)
 			reqLog.Debug("openai.websocket_previous_response_id_stripped_cross_group",
@@ -632,6 +729,9 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 				return
 			}
 			if failoverErr, ok := p.Failover(err); ok {
+				// Extract later-turn replay separately from initial request bytes; an empty
+				// recognized current-turn payload closes the request rather than repeating
+				// an earlier turn.
 				retryPayload, retryCurrentTurn := CurrentTurnRetryPayload(err)
 				nextAttemptMessage, retrySafe := EntryNextAttemptMessage(wsAttemptMessage, retryPayload, retryCurrentTurn)
 				if !retrySafe {
@@ -676,9 +776,9 @@ func RunEntry(ctx context.Context, p EntryPorts, in EntryInput, client ClientSoc
 					closedFields = append(closedFields, EntryError(err))
 				}
 				reqLog.Info("openai.websocket_ingress_closed_normally", closedFields...)
-				// A bare coderws.CloseError or a plain cancellation carries no
-				// gateway-chosen close frame; mirror the client's clean 1000
-				// rather than the 1011 the proxy-failure tail would have sent.
+				// A clean untyped client exit has no gateway-selected close instruction;
+				// send normal 1000 so it does not receive the proxy-failure status used by
+				// the tail below.
 				if hasClientCloseErr {
 					p.Close(closeErr.Status, closeErr.Reason)
 				} else {
