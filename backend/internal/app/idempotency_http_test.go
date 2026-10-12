@@ -24,8 +24,15 @@ import (
 	usagehttp "github.com/TokenFlux/TokenRouter/internal/usage/httpapi/admin"
 )
 
-// TestIdempotencyHTTPUsesExplicitApplicationCoordinator checks shared coordination and independent processing
-// deadlines across application instances.
+// Participating handler executors receive one coordinator during application
+// construction. The fixture checks each consumer's retention settings, replays
+// a command when execution switches from provider to group handlers, and
+// compares a second coordinator's write TTL.
+
+// TestIdempotencyHTTPUsesExplicitApplicationCoordinator binds multiple handler
+// types to one coordinator. Their write and maintenance TTLs must match that
+// instance, provider/group requests must replay one command, and another
+// binding must retain its own default TTL.
 func TestIdempotencyHTTPUsesExplicitApplicationCoordinator(t *testing.T) {
 	options := idempotency.DefaultIdempotencyConfig()
 	options.DefaultTTL = 2 * time.Hour
@@ -44,13 +51,22 @@ func TestIdempotencyHTTPUsesExplicitApplicationCoordinator(t *testing.T) {
 	usage := &usagehttp.UsageHandler{}
 	provideIdempotencyHTTP(coordinator, providers, archive, codex, keys, redeem, subscriptions, proxies, users, groups, system, usage)
 	for _, handler := range []interface {
+		// DefaultWriteIdempotencyTTL returns write-record retention from the bound
+		// coordinator. Nil coordinators and nonpositive configured periods use that
+		// accessor's default, letting standalone handlers report a usable duration.
 		DefaultWriteIdempotencyTTL() time.Duration
+		// DefaultSystemOperationIdempotencyTTL returns maintenance retention from
+		// this handler's coordinator. Nil coordinators and nonpositive maintenance
+		// periods use that accessor's default, keeping this retention setting
+		// separate from the normal write period.
 		DefaultSystemOperationIdempotencyTTL() time.Duration
 	}{providers, archive, codex, keys, redeem, subscriptions, proxies, users, groups, system, usage} {
 		require.Equal(t, 2*time.Hour, handler.DefaultWriteIdempotencyTTL())
 		require.Equal(t, 17*time.Minute, handler.DefaultSystemOperationIdempotencyTTL())
 	}
-	// Two handlers for the same route share claims and can replay responses.
+	// Unauthenticated fixture requests use actor admin:0. Their method, route,
+	// scope, key, and payload stay fixed while the executor changes, so the shared
+	// coordinator replays the stored command and executes its callback once.
 	calls := 0
 	router := gin.New()
 	request := 0

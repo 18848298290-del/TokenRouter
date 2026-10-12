@@ -5,6 +5,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/infra/telemetry/logging"
 )
 
+// Process logging uses configuration for sink selection, rotation limits, and
+// sampling rates. OptionsFromConfig copies those settings into
+// logging.InitOptions, including megabyte and day limits, so initialization
+// receives the values selected during configuration loading.
+
+// OptionsFromConfig converts process log configuration into logger initialization options.
 func OptionsFromConfig(cfg config.LogConfig) logging.InitOptions {
 	return logging.InitOptions{
 		Level:           cfg.Level,

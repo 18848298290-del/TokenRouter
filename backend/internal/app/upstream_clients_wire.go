@@ -13,7 +13,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
-// upstreamClientProviders binds platform clients and the shared transport adapter.
+// Platform adapters depend on provider interfaces for Claude OAuth, Grok
+// authorization, and Gemini CodeAssist requests. The set binds those interfaces
+// to platform clients and binds QoderTransport to the gateway transport client,
+// alongside request fingerprinting and Claude usage fetching.
+
+// upstreamClientProviders supplies platform clients and binds authorization
+// and Qoder transport interfaces to their selected implementations.
 var upstreamClientProviders = wire.NewSet(
 	anthropic.NewRequestFingerprint,
 	provideClaudeUsageFetcher,

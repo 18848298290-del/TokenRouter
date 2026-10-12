@@ -9,7 +9,14 @@ import (
 	providerhttp "github.com/TokenFlux/TokenRouter/internal/provider/httpapi"
 )
 
-// providerAuthorizationHTTPProviders groups platform authorization HTTP constructors.
+// Gemini and Antigravity OAuth handlers consume authorization interfaces
+// resolved by the provider bindings. This HTTP set also supplies Claude and
+// Qoder authorization handlers and Codex invite reset for administrator route
+// mounting, alongside the identity user-attribute handler.
+
+// providerAuthorizationHTTPProviders supplies platform authorization, Codex
+// invite-reset, and identity attribute HTTP constructors used by administrator
+// routes.
 var providerAuthorizationHTTPProviders = wire.NewSet(
 	provideClaudeAuthorizationHTTP,
 	provideQoderAuthorizationHTTP,

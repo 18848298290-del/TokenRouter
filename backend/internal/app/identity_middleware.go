@@ -10,9 +10,19 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/middleware"
 )
 
-// identityAuthAudit converts authentication events to queued audit records.
-type identityAuthAudit struct{ audit *audit.AuditLogService }
+// JWT and administrator authentication use the same assembled session and user
+// services, with binding mismatches submitted to the audit recorder. Step-up
+// middleware receives TOTP and runtime settings separately, while management
+// audit middleware receives the shared redactor.
 
+// identityAuthAudit converts authentication events to queued audit records.
+type identityAuthAudit struct {
+	audit *audit.AuditLogService /* authentication event audit sink */
+}
+
+// RecordBindingMismatch submits JWT binding-mismatch details to the audit
+// service. It ignores the request context and uses the recorder's queue
+// lifecycle; stopped or full recorders may discard the observation.
 func (a identityAuthAudit) RecordBindingMismatch(_ context.Context, event identityhttp.BindingMismatchEvent) {
 	a.audit.Record(&audit.AuditLog{ActorUserID: &event.UserID, ActorEmail: event.Email, ActorRole: event.Role, AuthMethod: audit.AuditAuthMethodJWT, Action: audit.AuditActionSessionBindingMismatch, Method: event.Method, Path: event.Path, ClientIP: event.ClientIP, UserAgent: event.UserAgent, StatusCode: 401})
 }
@@ -22,7 +32,7 @@ func provideJWTAuth(graph *identityAuthGraph, users *identity.UserService, setti
 	return identityhttp.JWTAuthMiddleware(identityhttp.JWTAuth(graph.Core, users, users, settings, identityAuthAudit{recorder}))
 }
 
-// provideAdminAuth shares identity services with JWT middleware.
+// provideAdminAuth constructs administrator authentication with shared identity services and audit recording.
 func provideAdminAuth(graph *identityAuthGraph, users *identity.UserService, settings *identity.RuntimeSettings, recorder *audit.AuditLogService) identityhttp.AdminAuthMiddleware {
 	return identityhttp.AdminAuthMiddleware(identityhttp.AdminAuth(graph.Core, users, settings, identityAuthAudit{recorder}))
 }
@@ -32,7 +42,8 @@ func provideStepUpAuth(totp *identity.TotpService, users *identity.UserService, 
 	return identityhttp.StepUpAuthMiddleware(identityhttp.StepUpAuth(totp, users, settings))
 }
 
-// provideAuditMiddleware injects shared redaction into audit middleware.
+// provideAuditMiddleware constructs management audit logging with the shared
+// recorder and redactor.
 func provideAuditMiddleware(recorder *audit.AuditLogService, redactor *audit.Redactor) middleware.AuditLogMiddleware {
 	return audithttp.NewAuditLogMiddleware(recorder, redactor)
 }

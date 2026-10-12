@@ -13,8 +13,13 @@ import (
 	routingpostgres "github.com/TokenFlux/TokenRouter/internal/routing/postgres"
 )
 
-// moduleStorageProviders groups module storage constructors that share application database and cache
-// dependencies.
+// Creative runs keep persistent metadata and outbox actions in PostgreSQL and
+// temporary payloads in Redis. This storage set supplies both kinds of
+// construction, together with batch queues, download limiting, and billing
+// repository bindings consumed by their task and funding services.
+
+// moduleStorageProviders supplies task and billing storage constructors and
+// binds the billing repository interfaces to PostgreSQL implementations.
 var moduleStorageProviders = wire.NewSet(
 	provideCreativeQueue,
 	provideCreativeTransientStore,

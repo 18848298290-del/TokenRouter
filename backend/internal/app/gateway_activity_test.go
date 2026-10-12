@@ -11,8 +11,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/app/lifecycle"
 )
 
-// TestGatewayRequestActivityTimeoutKeepsCompletionAndStorageOpen checks that unfinished requests or attempts
-// keep completion queues and storage open.
+// Gateway activity must finish before completion queues and Redis shut down.
+// Two entered operations reproduce a drain timeout, and a completed operation
+// exercises successful shutdown ordering so both retained dependencies and
+// normal cleanup remain observable to the application.
+
+// TestGatewayRequestActivityTimeoutKeepsCompletionAndStorageOpen enters two
+// operations that remain active during shutdown. A deadline must leave
+// completion and Redis stop hooks uncalled, reject new activity, and remain
+// the manager's repeated Stop result after the operations finish.
 func TestGatewayRequestActivityTimeoutKeepsCompletionAndStorageOpen(t *testing.T) {
 	manager := lifecycle.New()
 	activity := provideGatewayRequestActivity(manager)
@@ -23,6 +30,8 @@ func TestGatewayRequestActivityTimeoutKeepsCompletionAndStorageOpen(t *testing.T
 	require.NoError(t, err)
 	defer attemptDone()
 	var completionStopped, redisClosed atomic.Bool
+	// Stop hooks can publish observations during shutdown. Atomic flags let the
+	// test inspect completion and storage cleanup safely after the drain deadline.
 	manager.Register(lifecycle.Hook{Name: "completion", StopOrder: 40, Stop: func(context.Context) error { completionStopped.Store(true); return nil }})
 	manager.Register(lifecycle.Hook{Name: "redis", StopOrder: 900, Stop: func(context.Context) error { redisClosed.Store(true); return nil }})
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
@@ -43,6 +52,9 @@ func TestGatewayRequestActivityTimeoutKeepsCompletionAndStorageOpen(t *testing.T
 	require.ErrorIs(t, manager.Stop(context.Background()), context.DeadlineExceeded)
 }
 
+// TestGatewayRequestActivityFinishesBeforeCompletionAndStorage releases its
+// entered operation before stopping the manager. Shutdown must succeed and run
+// the completion hook before the Redis hook in their configured stop order.
 func TestGatewayRequestActivityFinishesBeforeCompletionAndStorage(t *testing.T) {
 	manager := lifecycle.New()
 	activity := provideGatewayRequestActivity(manager)

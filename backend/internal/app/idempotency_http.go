@@ -14,10 +14,19 @@ import (
 	usagehttp "github.com/TokenFlux/TokenRouter/internal/usage/httpapi/admin"
 )
 
+// Idempotent panel commands share an application coordinator across
+// their handler executors. Binding finishes before HTTP serving because the
+// executors store that coordinator pointer without synchronization; the
+// readiness marker makes Wire resolve these bindings before application startup.
+
+// idempotencyHTTPReady marks assignment of the application coordinator to handler executors.
 type idempotencyHTTPReady struct{}
 
-// provideIdempotencyHTTP binds all idempotent endpoints to the application's coordinator before HTTP starts.
-// Each application instance has its own coordinator binding.
+// provideIdempotencyHTTP assigns the supplied coordinator to each assembled
+// command handler and returns a Wire readiness marker. Supply all handler
+// instances and call before serving HTTP: executor binding is unsynchronized
+// with requests, and each consumer stores the same coordinator pointer. A nil
+// coordinator selects the executors' direct-callback fixture behavior.
 func provideIdempotencyHTTP(
 	coordinator *idempotency.IdempotencyCoordinator,
 	providers *providerhttp.ManagementHandler,
@@ -32,7 +41,14 @@ func provideIdempotencyHTTP(
 	system *opshttp.SystemHandler,
 	usage *usagehttp.UsageHandler,
 ) *idempotencyHTTPReady {
+	// Bind every consumer before endpoints read its unsynchronized executor
+	// pointer. A configured coordinator supplies shared storage, while command
+	// scopes still determine which requests can replay the same record.
 	for _, consumer := range []interface {
+		// BindIdempotency assigns the coordinator for subsequent command execution.
+		// Assignment is performed during construction because it is unsynchronized
+		// with requests, and another binding replaces the executor's current pointer.
+		// Nil clears the binding for standalone direct-callback fixtures.
 		BindIdempotency(*idempotency.IdempotencyCoordinator)
 	}{providers, archive, codex, keys, redeem, subscriptions, proxies, users, groups, system, usage} {
 		consumer.BindIdempotency(coordinator)

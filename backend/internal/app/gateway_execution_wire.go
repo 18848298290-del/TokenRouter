@@ -8,7 +8,13 @@ import (
 	gatewayadapter "github.com/TokenFlux/TokenRouter/internal/gateway/provider"
 )
 
-// gatewayExecutionProviders binds executors, credentials, health feedback, and session state constructors.
+// Gateway text and media entry points need platform executors with request
+// credentials and response-state adapters. Wire supplies those executors
+// alongside provider route planning and the separate Forward and OpenAI rate
+// resolvers used by completion recording.
+
+// gatewayExecutionProviders supplies platform execution, credentials, response
+// state, and rate-reader constructors used by the gateway graph.
 var gatewayExecutionProviders = wire.NewSet(
 	provideCodexTurnStateHeaders,
 	provideGrokCredentialRecovery,

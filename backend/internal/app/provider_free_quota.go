@@ -11,15 +11,27 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/usage"
 )
 
-// selectionFreeQuotaGates holds separate free-quota caches for generic and compatible selection,
-// and a cache factory for advanced selectors.
+// Free-quota decisions are cached per selection scope, so loading usage into
+// one gate does not populate another gate's cache. Construction gives generic
+// and compatible selection separate gates and advanced selection a factory,
+// with usage loading, task tracking, and observations shared among them.
+
+// selectionFreeQuotaGates supplies separately cached gates and an advanced-selection gate factory.
 type selectionFreeQuotaGates struct {
-	Generic    *provider.FreeQuotaGate
-	Compatible *provider.FreeQuotaGate
-	Advanced   func() *provider.FreeQuotaGate
+	// Generic, Compatible, and gates returned by Advanced share the options
+	// getter, usage loader, task tracker, and metrics. Each gate owns its cache
+	// and in-flight refresh state; every Advanced call constructs a fresh gate.
+	Generic    *provider.FreeQuotaGate        // generic selection quota
+	Compatible *provider.FreeQuotaGate        // compatible selection quota
+	Advanced   func() *provider.FreeQuotaGate // advanced gate factory
 }
 
-// provideSelectionFreeQuota binds quota configuration and usage reads to gates that own their caches and refresh tasks.
+// provideSelectionFreeQuota constructs independent quota gates using cfg and
+// the usage reader. The gates use tasks.Go for on-demand refresh work. Nil cfg
+// supplies disabled settings, and a nil reader leaves loading unset; either
+// case lets gate checks return no blocked providers. Supply the application
+// task tracker to own requested refreshes and coordinate cfg writes with gate
+// checks because the options getter retains cfg.
 func provideSelectionFreeQuota(cfg *config.Config, reader usage.UsageLogRepository, tasks *lifecycle.Tasks) *selectionFreeQuotaGates {
 	metrics := &provider.FreeQuotaMetrics{}
 	options := func() provider.FreeQuotaOptions {
@@ -47,6 +59,5 @@ func provideSelectionFreeQuota(cfg *config.Config, reader usage.UsageLogReposito
 			}
 		}, metrics)
 	}
-	// Each advanced selector receives its own cache, as do the generic and compatible selectors.
 	return &selectionFreeQuotaGates{Generic: factory(), Compatible: factory(), Advanced: factory}
 }

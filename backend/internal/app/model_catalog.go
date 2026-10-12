@@ -12,6 +12,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/postgres"
 )
 
+// Model attribute administration reads capability and attribute snapshots from
+// the catalog service and stores overrides through routing. Construction also
+// passes catalog storage and URL-security options from configuration; the
+// catalog lifecycle hooks perform initial loading and later synchronization.
+
 // provideModelAttributes supplies model attributes for administration and display.
 func provideModelAttributes(repo *postgres.ModelAttributeStore, catalog *provider.Service, invalidator apikey.APIKeyAuthCacheInvalidator, catalogue *routing.RequestableCatalogue) *routing.ModelAttributeService {
 	return &routing.ModelAttributeService{
@@ -35,9 +40,10 @@ func provideModelAttributes(repo *postgres.ModelAttributeStore, catalog *provide
 	}
 }
 
-// provideModelCatalogService extracts catalogue options from bootstrap configuration.
-// ModelCatalogInitialization and ModelCatalogService hooks manage initialization and periodic updates,
-// respectively.
+// provideModelCatalogService constructs a catalog from startup storage and
+// security options, cloning the configured pricing-host slice. It returns an
+// uninitialized service and a nil error; catalog lifecycle hooks load data and
+// start synchronization.
 func provideModelCatalogService(cfg *config.Config, remote provider.RemoteClient) (*provider.Service, error) {
 	options := provider.Options{
 		DataDir:               cfg.Pricing.DataDir,
@@ -53,7 +59,10 @@ func provideModelCatalogService(cfg *config.Config, remote provider.RemoteClient
 	return provider.NewService(options, remote), nil
 }
 
-// provideModelCatalogRemoteClient configures the update proxy and direct-connection fallback.
+// provideModelCatalogRemoteClient delegates catalog HTTP construction with the
+// configured update proxy and proxy-error policy. Proxy initialization errors
+// produce a failing client unless AllowDirectOnError permits a standard HTTP
+// client, whose environment proxy settings can still apply.
 func provideModelCatalogRemoteClient(cfg *config.Config) provider.RemoteClient {
 	return provider.NewRemoteClient(cfg.Update.ProxyURL, cfg.Security.ProxyFallback.AllowDirectOnError)
 }
