@@ -5,7 +5,21 @@ import (
 	"slices"
 )
 
-// Clone returns an independent copy, including nested conditions, media options, and translations.
+// Request attributes contain nested slices and pointers that consumers may
+// change after resolving a route. Copying each populated value keeps those
+// changes separate from the catalog and from other requests, including empty
+// lists that record an administrator's cleared capability.
+//
+// Media patches distinguish leaving a field unset from replacing it with an
+// empty list. Their intermediate result can borrow values from either input,
+// and Merge detaches those values before exposing its result. Source tracking
+// uses populated field names so an explicit clear receives the patch's source
+// label just as a populated list does.
+
+// Clone returns independently mutable attributes, including nested conditions,
+// media options, reasoning choices, and string translations. Nil values and
+// populated empty slices retain their distinct meanings for inheritance and
+// explicit administrator overrides.
 func (a Attributes) Clone() Attributes {
 	a.DisplayName = clonePointer(a.DisplayName)
 	a.Context = clonePointer(a.Context)
@@ -70,6 +84,9 @@ func (a Attributes) Clone() Attributes {
 	return a
 }
 
+// clonePointer copies a populated pointed value and preserves nil inputs.
+// The copy is shallow for T values containing references; callers copy their
+// nested collections separately when independent mutation is needed.
 func clonePointer[T any](value *T) *T {
 	if value == nil {
 		return nil
@@ -77,6 +94,15 @@ func clonePointer[T any](value *T) *T {
 	return valuePointer(*value)
 }
 
+// mergeMedia applies populated media fields, keeping inherited fields from
+// base when the patch omits them. A supplied empty slice replaces the prior
+// choices, so clearing supported sizes remains distinct from leaving sizes
+// unchanged.
+//
+// A nil input can return the other input directly, and populated inputs
+// contribute their slice and pointer values to a shallow result. Merge calls
+// Clone afterward to detach those references before returning attributes to
+// consumers that modify their request or display data.
 func mergeMedia(base, patch *MediaCapabilities) *MediaCapabilities {
 	if patch == nil {
 		return base
@@ -118,6 +144,9 @@ func mergeMedia(base, patch *MediaCapabilities) *MediaCapabilities {
 	return &result
 }
 
+// fieldNames returns populated attribute JSON names for resolution source
+// tracking. Explicit false values and empty slices still contribute a name,
+// while nil fields inherit their existing sources during patching.
 func (a Attributes) fieldNames() []string {
 	var names []string
 	if a.DisplayNameLocalization != nil {
@@ -174,6 +203,9 @@ func (a Attributes) fieldNames() []string {
 	return names
 }
 
+// fieldNames returns populated media JSON names for per-field source tracking.
+// Empty slices contribute their names because they clear capabilities, while
+// nil slices and pointers leave the inherited media fields unchanged.
 func (m MediaCapabilities) fieldNames() []string {
 	var names []string
 	if m.VideoOperations != nil {

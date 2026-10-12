@@ -6,8 +6,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestAttributeSupplementPreservesCatalog checks that supplements fill missing attributes while catalog prices
-// remain intact.
+// Supplements and route aggregation treat explicit false values and empty
+// lists as meaningful capabilities. The fixtures compare those values with
+// missing fields, conflicting route conditions, and nested copies so display
+// consumers receive the intended restrictions.
+
+// TestAttributeSupplementPreservesCatalog supplies attributes that conflict
+// with catalog values and adds one missing modality. Catalog false values,
+// empty lists, names, and prices must remain authoritative after supplementation.
 func TestAttributeSupplementPreservesCatalog(t *testing.T) {
 	catalog, err := Parse([]byte(`{"providers":{"typesafe":{"models":{"jev-preview":{"name":"Catalog preview","modalities":{"input":[]},"structured_output":false,"cost":{"input":0,"output":0}}}}}}`))
 	require.NoError(t, err)
@@ -22,7 +28,9 @@ func TestAttributeSupplementPreservesCatalog(t *testing.T) {
 	require.Zero(t, *catalog.Entries["jev-preview"].Cost.Input)
 }
 
-// TestAttributeSupplementRejectsInvalidData checks invalid attributes and conflicting provider identities.
+// TestAttributeSupplementRejectsInvalidData supplies another provider's
+// metadata to a relay entry and then submits an invalid modality. The relay's
+// attributes remain intact, and invalid input adds no catalog entry.
 func TestAttributeSupplementRejectsInvalidData(t *testing.T) {
 	catalog, err := Parse([]byte(`{"providers":{"relay":{"models":{"jev-preview":{"modalities":{"input":["image"]}}}}}}`))
 	require.NoError(t, err)
@@ -36,6 +44,9 @@ func TestAttributeSupplementRejectsInvalidData(t *testing.T) {
 	require.Len(t, catalog.Entries, count)
 }
 
+// TestAttributeMergeAndCommon combines explicit clears with a smaller limit
+// and an unknown modality list. Merge must retain cleared values, while Common
+// returns the restrictive capability, smallest known limit, and unknown modalities.
 func TestAttributeMergeAndCommon(t *testing.T) {
 	yes, no := true, false
 	context, smaller := 100, 50
@@ -53,6 +64,9 @@ func TestAttributeMergeAndCommon(t *testing.T) {
 	require.Nil(t, common.InputModalities)
 }
 
+// TestCommonContradictoryConditions combines routes with incompatible effort
+// or thinking requirements for temperature. The aggregate must disable
+// temperature and remove its unsatisfiable condition from the returned attributes.
 func TestCommonContradictoryConditions(t *testing.T) {
 	for name, conditions := range map[string][2]ParameterCondition{
 		"effort":   {{Efforts: []string{"none"}}, {Efforts: []string{"high"}}},
@@ -69,6 +83,9 @@ func TestCommonContradictoryConditions(t *testing.T) {
 	}
 }
 
+// TestMergeMediaEmptyOverrides clears image sizes while retaining the base
+// reference limit. The result must keep an explicit empty list and leave the
+// base sizes available to subsequent callers.
 func TestMergeMediaEmptyOverrides(t *testing.T) {
 	base := Attributes{Media: &MediaCapabilities{ImageSizes: []string{"1K", "2K"}, MaxReferenceImages: valuePointer(3)}}
 	result := Merge(base, Attributes{Media: &MediaCapabilities{ImageSizes: []string{}}})
@@ -78,6 +95,9 @@ func TestMergeMediaEmptyOverrides(t *testing.T) {
 	require.Equal(t, []string{"1K", "2K"}, base.Media.ImageSizes)
 }
 
+// TestCommonOwnsNestedValues aggregates one route and two equal routes before
+// mutating the result's nested values. Both cases must leave their input
+// attributes unchanged and retain nil effort choices and explicit empty lists.
 func TestCommonOwnsNestedValues(t *testing.T) {
 	for _, count := range []int{1, 2} {
 		source := Attributes{

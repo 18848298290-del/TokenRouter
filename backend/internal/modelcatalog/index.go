@@ -7,26 +7,47 @@ import (
 	"strings"
 )
 
-// Index fixes a supplemented catalog version. Queries copy only the selected entries.
-type Index struct{ data *attributeIndex }
+// Catalog searches count every matching identity before returning a page,
+// including qualified names and their bare aliases. Attribute text and provider
+// lists are prepared once for the publication, while each query copies the
+// selected entries for callers that edit display or price values.
 
+// Index fixes supplemented catalog rows for repeated attribute searches.
+type Index struct {
+	data *attributeIndex // immutable prepared attribute search data
+}
+
+// attributeIndex stores sorted rows and parallel search text for one publication.
 type attributeIndex struct {
-	entries                  []Entry
-	names, providers, search []string
+	// entries, names, and search share model ordering so searches can test text
+	// before copying selected rows. providers is the sorted distinct list across
+	// the entire publication, including providers outside one query's matches.
+	entries                  []Entry  // catalog rows sorted by identity
+	names, providers, search []string // ordered model lookup names, sorted known provider names, normalized row search text
 }
 
 // AttributeQuery uses a zero-based Offset. A zero Limit returns all remaining matches.
 type AttributeQuery struct {
-	Search, Provider, Capability string
-	Offset, Limit                int
+	// Search matches trimmed, case-insensitive model and display-name text.
+	// Provider uses an exact service identity, and Capability requires a known
+	// true flag from Supports. Empty strings leave their corresponding filters
+	// unrestricted; supplied filters are combined for each catalog row.
+	Search, Provider, Capability string // text, provider, and capability filters
+	// Offset and Limit select a page after filtering. Negative offsets act as
+	// zero, and nonpositive limits include every match from the selected offset.
+	Offset, Limit int // zero based offset and maximum item count
 }
 
+// AttributePage contains copied query rows, publication providers, and the match count.
 type AttributePage struct {
-	Items     []Entry
-	Providers []string
-	Total     int
+	Items     []Entry  // selected matching model entries
+	Providers []string // complete publication provider list
+	Total     int      // matching rows before pagination
 }
 
+// NewIndex prepares rows and search text for repeated attribute queries.
+// A nil catalog produces an empty index; the supplied catalog's price data
+// remains read-only after construction because prepared rows can share it.
 func NewIndex(catalog *Catalog) Index {
 	data := &attributeIndex{names: []string{}, providers: []string{}}
 	if catalog == nil {
@@ -50,6 +71,9 @@ func NewIndex(catalog *Catalog) Index {
 	return Index{data: data}
 }
 
+// ModelIDs returns a copied, sorted list of prepared lookup identities.
+// The zero-value index returns an empty slice, and callers can modify the
+// returned list independently of later searches.
 func (index Index) ModelIDs() []string {
 	if index.data == nil {
 		return []string{}
@@ -57,6 +81,10 @@ func (index Index) ModelIDs() []string {
 	return slices.Clone(index.data.names)
 }
 
+// Search filters the fixed index and returns an independently mutable page.
+// Total counts every match before pagination, and Providers lists every
+// provider in the publication even when the query selects one service.
+// Nonpositive limits return all matches from the clamped offset.
 func (index Index) Search(query AttributeQuery) AttributePage {
 	result := AttributePage{Items: []Entry{}, Providers: []string{}}
 	if index.data == nil {
@@ -68,6 +96,8 @@ func (index Index) Search(query AttributeQuery) AttributePage {
 		if query.Provider != "" && entry.Provider != query.Provider || search != "" && !strings.Contains(index.data.search[i], search) || query.Capability != "" && !entry.Attributes.Supports(query.Capability) {
 			continue
 		}
+		// Count every filtered match before applying page limits so Total still
+		// describes the complete query when some matching rows are omitted from Items.
 		matched := result.Total
 		result.Total++
 		if matched < max(0, query.Offset) || query.Limit > 0 && len(result.Items) >= query.Limit {
@@ -89,6 +119,9 @@ func (index Index) Search(query AttributeQuery) AttributePage {
 	return result
 }
 
+// Supports reports whether the named capability has an explicit true
+// declaration. Unknown capability names, missing declarations, and explicit
+// false values all fail the filter used by Index.Search.
 func (a Attributes) Supports(capability string) bool {
 	var value *bool
 	switch capability {
@@ -108,6 +141,7 @@ func (a Attributes) Supports(capability string) bool {
 	return value != nil && *value
 }
 
+// Len returns the number of prepared identities in this index.
 func (index Index) Len() int {
 	if index.data == nil {
 		return 0
@@ -115,6 +149,7 @@ func (index Index) Len() int {
 	return len(index.data.entries)
 }
 
+// cloneCost copies populated price pointers for independently mutable query results.
 func cloneCost(cost Cost) Cost {
 	cost.Input = clonePointer(cost.Input)
 	cost.Output = clonePointer(cost.Output)

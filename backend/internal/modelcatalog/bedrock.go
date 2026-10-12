@@ -2,10 +2,18 @@ package modelcatalog
 
 import "strings"
 
-// BedrockExecutionRules returns registered cache, tool-search, and thinking encodings for Bedrock models.
-// Model IDs follow the AWS catalog. Add matching request fixtures when registering a model.
+// Bedrock Claude identifiers can include a catalog provider and an inference
+// region before the model name. Encoding rules are selected from complete
+// registered identities after removing those routing prefixes, so unregistered
+// versions retain unknown cache, tool search, and thinking settings.
+
+// BedrockExecutionRules returns registered cache, tool search, and thinking
+// encodings for a Bedrock model. Unknown identities return empty rules; add
+// matching request fixtures when registering a supported encoding.
 func BedrockExecutionRules(model string) ExecutionRules {
 	model = strings.TrimPrefix(normalize(model), "amazon-bedrock/")
+	// Regional and global inference IDs address the same registered encoding.
+	// Strip one recognized routing prefix while keeping model version suffixes for exact selection.
 	for _, prefix := range []string{"us.", "eu.", "apac.", "jp.", "au.", "us-gov.", "global."} {
 		if name, found := strings.CutPrefix(model, prefix); found {
 			model = name

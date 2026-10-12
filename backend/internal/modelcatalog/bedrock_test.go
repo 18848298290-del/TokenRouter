@@ -6,10 +6,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Bedrock encoding registration distinguishes exact Claude versions from
+// lookalike names and future suffixes. Region prefixed fixtures exercise the
+// same thinking and cache choices as their underlying model while unknown
+// identities remain empty.
+
+// TestBedrockExecutionRules checks registered regional Claude identities and
+// unsupported variants. Known identities must retain their thinking modes,
+// cache lifetimes, and tool search flags; unknown identities return empty rules.
 func TestBedrockExecutionRules(t *testing.T) {
 	for _, tc := range []struct {
-		model, mode string
-		toolSearch  bool
+		model, mode string // model ID and expected thinking mode
+		toolSearch  bool   // expected tool search support
 	}{
 		{"us.anthropic.claude-sonnet-4-5-20250929-v1:0", "budget", true},
 		{"eu.anthropic.claude-opus-4-6-v1", "adaptive_or_budget", true},

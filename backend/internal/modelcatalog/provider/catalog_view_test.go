@@ -10,6 +10,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 )
 
+// Captured model and price views remain available while a service publishes
+// newer supplement data. Removing disk inputs and returning invalid remote
+// bytes exercises their independence from subsequent I/O and failed update
+// attempts.
+
+// TestPublishedCatalogViewsTrackSupplementsAndPreserveOldData updates a
+// supplement after capturing index and price views. Old views must retain their
+// values, queries perform no remote reads, and an invalid update retains the
+// latest published attributes and error status.
 func TestPublishedCatalogViewsTrackSupplementsAndPreserveOldData(t *testing.T) {
 	dir := t.TempDir()
 	supplement := filepath.Join(dir, "supplement.json")

@@ -7,6 +7,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Attribute copies are used by requests that change reasoning, localization,
+// and media data independently. Mutating the fixture's populated nested
+// representations in one copy checks that its source values, including nil and
+// empty lists, retain their serialized content.
+
+// TestAttributesCloneOwnsNestedValues mutates localization, reasoning,
+// conditions, and media values returned by Clone. The source JSON must remain
+// unchanged, with empty image sizes distinct from missing output formats.
 func TestAttributesCloneOwnsNestedValues(t *testing.T) {
 	var source Attributes
 	require.NoError(t, json.Unmarshal([]byte(`{"display_name":"sample","display_name_localization":{"source":"sample","source_locale":"en","translations":{"zh":{"value":"示例","source_revision":1}},"reviewed_locales":["zh"]},"input_modalities":["text"],"reasoning_options":[{"type":"effort","values":[null,"high"]},{"type":"budget_tokens","min":1,"max":100}],"conditions":{"temperature":{"thinking":false,"efforts":["none"]}},"media":{"image_sizes":[],"max_reference_images":3,"input_fidelity":false}}`), &source))

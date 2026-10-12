@@ -6,6 +6,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Indexed pages include bare and qualified aliases, so match counts can exceed
+// the selected page size. Mutating a returned page and name list verifies that
+// later searches retain their prepared attributes, providers, and lookup
+// names.
+
+// TestIndexQueriesCopyOnlyReturnedValues filters alias rows and mutates the
+// selected page's values. Later queries must retain their prepared names and
+// providers, and an offset beyond the matching rows returns no items.
 func TestIndexQueriesCopyOnlyReturnedValues(t *testing.T) {
 	catalog, err := Parse([]byte(`{"providers":{"openai":{"models":{"one":{"name":"First","reasoning":true},"two":{"name":"Second","reasoning":false}}}}}`))
 	require.NoError(t, err)
@@ -24,6 +32,9 @@ func TestIndexQueriesCopyOnlyReturnedValues(t *testing.T) {
 	require.Empty(t, index.Search(AttributeQuery{Offset: 100, Limit: 1}).Items)
 }
 
+// BenchmarkIndexPage measures repeated twenty-row queries against a parsed
+// offline publication. Every iteration must return the requested page size,
+// while catalog loading and index construction remain outside the timer.
 func BenchmarkIndexPage(b *testing.B) {
 	body, err := Offline()
 	require.NoError(b, err)

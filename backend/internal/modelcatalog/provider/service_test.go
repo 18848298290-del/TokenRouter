@@ -19,6 +19,20 @@ import (
 	xai "github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// Complete catalog identities keep their own prices and modality declarations
+// through resource-path lookup, supplement reload, and failed candidates.
+// Fixtures compare returned values with retained source data and capture the
+// warnings generated when a candidate's context rules are incomplete.
+//
+// Scheduled-loop tests join Wait after the configured lifecycle stops, while
+// concurrent query tests join their readers before fixture teardown. Captured
+// logging uses a separate global mutex because its sink is replaced for each
+// capture. The sink copies event records and top-level field maps, leaving
+// nested field values shared with their producer, so assertions use retained
+// messages and levels rather than mutating those values.
+
+// hotReloadCatalogJSON and fallbackOriginFixture supply base cache records and
+// competing source prices for reload and complete-identity assertions.
 const (
 	hotReloadCatalogJSON = `{"providers":{"openai":{"models":{"remote-model":{"cost":{"input":1,"output":2}}}}}}`
 
@@ -36,17 +50,35 @@ const (
 }}`
 )
 
+// structuredLogCaptureMu serializes captures that install and clear the global
+// logging sink across these fixtures.
 var structuredLogCaptureMu sync.Mutex
 
+// inMemoryLogSink retains event copies for message and level assertions.
 type inMemoryLogSink struct {
-	mu     sync.Mutex
-	events []*logging.LogEvent
+	// mu guards events while writers append and assertion helpers scan them.
+	// Stored records own their top-level Fields maps, while referenced values
+	// inside those maps remain shared with the logging producer.
+	mu     sync.Mutex          // captured event access lock
+	events []*logging.LogEvent // retained log message records
 }
 
-type stubCatalogRemoteClient struct{ body string }
+// stubCatalogRemoteClient supplies configured catalog JSON for forced download
+// fixtures.
+type stubCatalogRemoteClient struct {
+	body string // configured catalog fixture JSON
+}
 
-type lifecyclePricingRemote struct{ calls atomic.Int64 }
+// lifecyclePricingRemote counts scheduler fetches while returning a fixed
+// catalog body.
+type lifecyclePricingRemote struct {
+	calls atomic.Int64 // observed catalog fetch count
+}
 
+// TestParsePricingData_WarnsOrphanCacheTierFields loads cache tier fields with
+// and without their required base prices. Orphan fields must produce warning
+// messages, while the complete cache record remains absent from those
+// diagnostics.
 func TestParsePricingData_WarnsOrphanCacheTierFields(t *testing.T) {
 	logSink, restore := captureStructuredLog(t)
 	defer restore()
@@ -74,6 +106,10 @@ func TestParsePricingData_WarnsOrphanCacheTierFields(t *testing.T) {
 	require.False(t, logSink.ContainsMessage("gemini-complete"))
 }
 
+// TestParsePricingData_WarnsLopsidedLongContextLadder compares a one-sided
+// surcharge with a model whose input and output both increase. The asymmetric
+// model must produce the asserted warning, while the consistent record does
+// not.
 func TestParsePricingData_WarnsLopsidedLongContextLadder(t *testing.T) {
 	logSink, restore := captureStructuredLog(t)
 	defer restore()
@@ -94,7 +130,9 @@ func TestParsePricingData_WarnsLopsidedLongContextLadder(t *testing.T) {
 	require.False(t, logSink.ContainsMessage("consistent"))
 }
 
-// TestDefaultCatalogSnapshot_CacheTierContract checks published context tiers and cache prices.
+// TestDefaultCatalogSnapshot_CacheTierContract reads GPT-5.6 Sol from the
+// embedded publication. Its single context tier must retain the asserted
+// threshold and distinct base and above-tier cache-read prices.
 func TestDefaultCatalogSnapshot_CacheTierContract(t *testing.T) {
 	service := newOfflinePricingFixture(t)
 	price := service.GetModelPricing("gpt-5.6-sol")
@@ -105,6 +143,10 @@ func TestDefaultCatalogSnapshot_CacheTierContract(t *testing.T) {
 	require.InDelta(t, 0.8e-6, price.ContextPrices[0].Pricing.CacheReadInputTokenCost, 1e-12)
 }
 
+// TestCatalogLookupGeminiThinkingTiers queries complete Gemini IDs through
+// recognized resource paths, case folding, and suffix variants. Base identities
+// must retain their configured price and modalities; missing suffix entries
+// remain unresolved.
 func TestCatalogLookupGeminiThinkingTiers(t *testing.T) {
 	for _, base := range []string{
 		"gemini-3.1-pro", "gemini-3.5-flash", "gemini-3.6-flash",
@@ -133,6 +175,9 @@ func TestCatalogLookupGeminiThinkingTiers(t *testing.T) {
 	}
 }
 
+// TestCatalogLookupExactEntryWinsWithoutMerging configures a base entry and a
+// separately priced high identity. Exact high lookups must return that record
+// and derive its text modalities instead of borrowing the base capabilities.
 func TestCatalogLookupExactEntryWinsWithoutMerging(t *testing.T) {
 	for _, base := range []string{"gemini-3.1-pro", "gemini-3.8-flash", "gpt-5.6-terra"} {
 		t.Run(base, func(t *testing.T) {
@@ -151,6 +196,10 @@ func TestCatalogLookupExactEntryWinsWithoutMerging(t *testing.T) {
 	}
 }
 
+// TestCatalogLookupGeminiRejectsUnknownAliases queries unconfigured Gemini
+// suffixes around several known identities. Each unsupported complete name must
+// return missing prices and modality lists even when a nearby base record
+// exists.
 func TestCatalogLookupGeminiRejectsUnknownAliases(t *testing.T) {
 	svc := newModelCatalogFixture(modelCatalogFixture{pricingData: map[string]*billingpricing.CatalogModelPricing{
 		"gemini-3.8-flash":       catalogLookupTestPricing(1e-6, "text", "video"),
@@ -169,6 +218,10 @@ func TestCatalogLookupGeminiRejectsUnknownAliases(t *testing.T) {
 	}
 }
 
+// TestCatalogLookupClaudeEquivalentVersions compares dot, hyphen, thinking, and
+// dated Claude spellings. A different spelling remains unresolved until
+// separately configured, after which its exact price and input modalities take
+// precedence.
 func TestCatalogLookupClaudeEquivalentVersions(t *testing.T) {
 	for _, names := range [][2]string{
 		{"claude-opus-4.6", "claude-opus-4-6"},
@@ -190,7 +243,8 @@ func TestCatalogLookupClaudeEquivalentVersions(t *testing.T) {
 			require.Equal(t, []string{"text"}, input)
 		}
 	}
-	// Dated model IDs have independent prices and capabilities.
+	// Different date and version spellings leave input and output modalities
+	// unknown when only the nearby complete identities have configured records.
 	svc := newModelCatalogFixture(modelCatalogFixture{pricingData: map[string]*billingpricing.CatalogModelPricing{
 		"claude-sonnet-4.20250514": catalogLookupTestPricing(1e-6, "video"),
 		"claude-opus-4-6":          catalogLookupTestPricing(2e-6, "image"),
@@ -202,6 +256,9 @@ func TestCatalogLookupClaudeEquivalentVersions(t *testing.T) {
 	}
 }
 
+// TestCatalogLookupOpenAIProductIdentity configures concrete OpenAI products
+// alongside generic entries. Effort suffixes must have missing prices and input
+// modalities; date and Compact suffixes must also have missing output modalities.
 func TestCatalogLookupOpenAIProductIdentity(t *testing.T) {
 	for _, model := range []string{
 		"gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.5-pro", "gpt-5.5",
@@ -231,6 +288,10 @@ func TestCatalogLookupOpenAIProductIdentity(t *testing.T) {
 	}
 }
 
+// TestCatalogLookupOpenAIDedicatedFallbackBeforeGenericBase supplies generic
+// GPT family prices and queries concrete products and versions. Every
+// unconfigured identity must remain unresolved for prices and modalities,
+// preventing generic family inheritance.
 func TestCatalogLookupOpenAIDedicatedFallbackBeforeGenericBase(t *testing.T) {
 	svc := newModelCatalogFixture(modelCatalogFixture{pricingData: map[string]*billingpricing.CatalogModelPricing{
 		"gpt-5.4": catalogLookupTestPricing(99e-6, "text"),
@@ -248,8 +309,10 @@ func TestCatalogLookupOpenAIDedicatedFallbackBeforeGenericBase(t *testing.T) {
 	}
 }
 
-// TestCatalogLookupOpenAIPriceFallbackKeepsDynamicProduct checks that preview and latest IDs require their own
-// prices and capabilities.
+// TestCatalogLookupOpenAIPriceFallbackKeepsDynamicProduct configures an exact
+// product then queries preview and chat-latest variants. Those complete variant
+// names must return missing prices and modalities despite the configured base
+// record.
 func TestCatalogLookupOpenAIPriceFallbackKeepsDynamicProduct(t *testing.T) {
 	for _, model := range []string{"gpt-5.4", "gpt-5.5", "gpt-5.5-pro", "gpt-5.6-terra", "gpt-6-astra"} {
 		pricing := catalogLookupTestPricing(17e-6, "text", "image")
@@ -263,6 +326,10 @@ func TestCatalogLookupOpenAIPriceFallbackKeepsDynamicProduct(t *testing.T) {
 	}
 }
 
+// TestCatalogLookupBareGPT56DoesNotBorrowOtherPrices queries bare GPT-5.6
+// variants with concrete Sol and older products available. Billing must return
+// pricing-unavailable with either source fixture, and bare modality lookup
+// remains unknown.
 func TestCatalogLookupBareGPT56DoesNotBorrowOtherPrices(t *testing.T) {
 	svc := newModelCatalogFixture(modelCatalogFixture{pricingData: map[string]*billingpricing.CatalogModelPricing{
 		"gpt-5.6-sol":   catalogLookupTestPricing(5e-6, "text", "image"),
@@ -282,6 +349,10 @@ func TestCatalogLookupBareGPT56DoesNotBorrowOtherPrices(t *testing.T) {
 	require.Nil(t, output)
 }
 
+// TestCatalogLookupSparkBillingPolicyDoesNotSupplyCapabilities configures an
+// exact Spark price alongside an older audio-capable Codex record. Exact Spark
+// selects its own entry, while an unconfigured high suffix retains missing
+// prices and modalities.
 func TestCatalogLookupSparkBillingPolicyDoesNotSupplyCapabilities(t *testing.T) {
 	legacy := catalogLookupTestPricing(1e-6, "audio")
 	spark := catalogLookupTestPricing(9e-6, "text")
@@ -295,7 +366,13 @@ func TestCatalogLookupSparkBillingPolicyDoesNotSupplyCapabilities(t *testing.T) 
 	require.Nil(t, output)
 }
 
+// TestCatalogLookupGrokUsesKnownRuntimeAliases changes the runtime text default
+// across case and prefix forms. Catalog aliases remain unresolved until given
+// their own price, and unrelated names acquire no Grok modalities.
 func TestCatalogLookupGrokUsesKnownRuntimeAliases(t *testing.T) {
+	// Runtime defaults are process state shared with other request fixtures.
+	// Save and restore this value around the alias checks so subsequent tests
+	// retain their configured default.
 	previous := xai.RuntimeDefaultTextModel()
 	t.Cleanup(func() { xai.SetRuntimeDefaultTextModel(previous) })
 	text := catalogLookupTestPricing(1e-6, "text")
@@ -310,7 +387,9 @@ func TestCatalogLookupGrokUsesKnownRuntimeAliases(t *testing.T) {
 		input, _ := svc.GetModelModalities(alias)
 		require.Nil(t, input)
 	}
-	// Changing the runtime default, including its prefix or case, must not resolve catalog aliases.
+	// Vary the process default's prefix and case while keeping catalog entries
+	// fixed, isolating whether runtime model selection can supply an unconfigured
+	// catalog price.
 	for _, target := range []string{"GROK-4.6", "xai/grok-4.6", "X-AI/GROK-4.6", "grok-4.6-latest"} {
 		xai.SetRuntimeDefaultTextModel(target)
 		for _, alias := range []string{"grok", "grok-latest"} {
@@ -319,7 +398,9 @@ func TestCatalogLookupGrokUsesKnownRuntimeAliases(t *testing.T) {
 			require.Nil(t, input, target)
 		}
 	}
-	// An explicit alias can carry its own price; unknown and unrelated IDs have no inherited Grok capabilities.
+	// Supply the alias as its own exact record after the unresolved checks.
+	// Its price then resolves while unrelated identities retain their unknown
+	// modality results.
 	mutatePricingFixture(svc, func(data map[string]*billingpricing.CatalogModelPricing) { data["grok-latest"] = text })
 	require.Same(t, text, svc.GetModelPricing("grok-latest"))
 	for _, model := range []string{"grok-unknown", "gpt-5.4", "claude-sonnet-4"} {
@@ -329,9 +410,13 @@ func TestCatalogLookupGrokUsesKnownRuntimeAliases(t *testing.T) {
 	}
 }
 
-// TestCatalogLookupGrokDefaultAliasCycle checks unknown catalog IDs even when the runtime default forms an
-// alias cycle.
+// TestCatalogLookupGrokDefaultAliasCycle sets runtime defaults to alias-like
+// Grok identities with an empty price map. Catalog lookup must remain
+// unresolved for both prices and modalities as those defaults change.
 func TestCatalogLookupGrokDefaultAliasCycle(t *testing.T) {
+	// Restore the process default after alias-like values have been exercised.
+	// The catalog fixture stays empty throughout, making missing identity results
+	// independent of later tests' defaults.
 	previous := xai.RuntimeDefaultTextModel()
 	t.Cleanup(func() { xai.SetRuntimeDefaultTextModel(previous) })
 	svc := newModelCatalogFixture(modelCatalogFixture{pricingData: map[string]*billingpricing.CatalogModelPricing{}})
@@ -344,6 +429,10 @@ func TestCatalogLookupGrokDefaultAliasCycle(t *testing.T) {
 	}
 }
 
+// TestCatalogLookupModalityFieldCompatibility combines legacy input fields,
+// primary declarations, and video support flags. Repeated queries must return
+// sanitized modality lists while the stored source list keeps its declared
+// contents.
 func TestCatalogLookupModalityFieldCompatibility(t *testing.T) {
 	svc := newStubCatalogFromJSON(t, `{
 		"legacy-input": {"input_cost_per_token": 1, "mode": "chat", "supported_modalities": [],
@@ -364,6 +453,10 @@ func TestCatalogLookupModalityFieldCompatibility(t *testing.T) {
 	require.Equal(t, []string{"audio", "text", "audio", "file"}, svc.Snapshot().Data["legacy-input"].SupportedModalities)
 }
 
+// TestPricingHotReload_FallbackChangeRebuildsWithoutTouchingSyncAnchor edits an
+// existing custom rate and adds another model. Reload must publish those prices
+// and a new supplement fingerprint while retaining remote prices, raw hash, and
+// update time.
 func TestPricingHotReload_FallbackChangeRebuildsWithoutTouchingSyncAnchor(t *testing.T) {
 	svc := newHotReloadCatalog(t, `{`+hotReloadModelJSON("custom-a", 4e-6, 8e-6)+`}`)
 	require.InDelta(t, 4e-6, svc.Snapshot().Data["custom-a"].InputCostPerToken, 1e-12)
@@ -384,6 +477,10 @@ func TestPricingHotReload_FallbackChangeRebuildsWithoutTouchingSyncAnchor(t *tes
 	require.Equal(t, svc.customPricingFilesFingerprint(), svc.Snapshot().CustomFilesHash)
 }
 
+// TestPricingHotReload_InvalidFileKeepsCurrentDataUntilFixed writes incomplete
+// custom JSON and then repairs it. Rejection must retain prices and the
+// successful fingerprint, while the repaired candidate replaces both on the
+// next reload.
 func TestPricingHotReload_InvalidFileKeepsCurrentDataUntilFixed(t *testing.T) {
 	svc := newHotReloadCatalog(t, `{`+hotReloadModelJSON("custom-a", 4e-6, 8e-6)+`}`)
 	before := svc.Snapshot().CustomFilesHash
@@ -399,8 +496,10 @@ func TestPricingHotReload_InvalidFileKeepsCurrentDataUntilFixed(t *testing.T) {
 	require.NotEqual(t, before, svc.Snapshot().CustomFilesHash)
 }
 
-// TestPricingHotReload_DownloadRefreshesFingerprint checks that remote publication records the current
-// supplement fingerprint.
+// TestPricingHotReload_DownloadRefreshesFingerprint downloads a catalog after
+// replacing its custom supplement content. Publication must record the new
+// fingerprint, and an unchanged local check must leave an inserted sentinel
+// price intact.
 func TestPricingHotReload_DownloadRefreshesFingerprint(t *testing.T) {
 	svc := newHotReloadCatalog(t, `{`+hotReloadModelJSON("custom-a", 4e-6, 8e-6)+`}`)
 	svc.options.RemoteURL = "https://example.com/pricing.json"
@@ -420,8 +519,10 @@ func TestPricingHotReload_DownloadRefreshesFingerprint(t *testing.T) {
 	require.Contains(t, svc.Snapshot().Data, "sentinel", "下载已消化文件变化，不得再次重建")
 }
 
-// TestPricingSchedulerStartsForCustomFilesWithoutRemoteURL checks that a supplement path starts the loop
-// without a remote URL.
+// TestPricingSchedulerStartsForCustomFilesWithoutRemoteURL configures a
+// supplement watch with remote downloads disabled. Wait must remain blocked
+// while the scheduler is active, then complete within the asserted deadline
+// after Stop.
 func TestPricingSchedulerStartsForCustomFilesWithoutRemoteURL(t *testing.T) {
 	svc := NewService(Options{
 		RemoteURL:    "",
@@ -430,11 +531,17 @@ func TestPricingSchedulerStartsForCustomFilesWithoutRemoteURL(t *testing.T) {
 
 	svc.startUpdateScheduler()
 	done := make(chan struct{})
+	// Join the scheduler in another goroutine so the test can observe it
+	// staying active before Stop, then use the same completion signal after
+	// its registered work ends.
 	go func() {
 		svc.Wait()
 		close(done)
 	}()
 
+	// A custom watch keeps the loop registered even with no remote fetch.
+	// The observation window distinguishes that active lifetime from an
+	// immediate Wait completion.
 	select {
 	case <-done:
 		t.Fatal("custom file watch must keep the scheduler running")
@@ -442,6 +549,9 @@ func TestPricingSchedulerStartsForCustomFilesWithoutRemoteURL(t *testing.T) {
 	}
 
 	svc.Stop()
+	// Stop has joined the scheduler; allow the separate waiter to publish its
+	// completion signal before treating a missing signal as a failed lifecycle
+	// observation.
 	select {
 	case <-done:
 	case <-time.After(time.Second):
@@ -449,8 +559,9 @@ func TestPricingSchedulerStartsForCustomFilesWithoutRemoteURL(t *testing.T) {
 	}
 }
 
-// TestSupplementRemovalAndRecreation checks catalog data and conditional-request identity across supplement
-// edits and deletion.
+// TestSupplementRemovalAndRecreation updates, deletes, and recreates a custom
+// model with zero prices. Reload must follow those layers while retaining the
+// remote hash and timestamp and accepting the explicit free record.
 func TestSupplementRemovalAndRecreation(t *testing.T) {
 	svc := newHotReloadCatalog(t, `{"custom-model":{"input_cost_per_token":0.000004,"output_cost_per_token":0.000008}}`)
 	before := svc.Snapshot()
@@ -471,12 +582,18 @@ func TestSupplementRemovalAndRecreation(t *testing.T) {
 	require.Zero(t, svc.GetModelPricing("custom-model").InputCostPerToken)
 }
 
+// TestPricingSchedulerBlankRemoteURLDoesNotStart uses a blank remote URL with
+// no custom watch. Wait must return within the asserted observation window
+// because no scheduled loop was registered for that configuration.
 func TestPricingSchedulerBlankRemoteURLDoesNotStart(t *testing.T) {
 	svc := NewService(Options{RemoteURL: "  \t  "}, nil)
 	defer svc.Stop()
 
 	svc.startUpdateScheduler()
 	done := make(chan struct{})
+	// Observe Wait from another goroutine so an incorrectly registered
+	// scheduler becomes a bounded assertion failure, with the deferred Stop
+	// available for fixture cleanup.
 	go func() {
 		svc.Wait()
 		close(done)
@@ -489,6 +606,10 @@ func TestPricingSchedulerBlankRemoteURLDoesNotStart(t *testing.T) {
 	}
 }
 
+// TestPricingNonEmptyInvalidRemoteURLStillReturnsValidationError configures a
+// malformed populated remote URL. ForceUpdate must return an error containing
+// the pricing URL diagnostic before the absent downloader can supply a
+// candidate.
 func TestPricingNonEmptyInvalidRemoteURLStillReturnsValidationError(t *testing.T) {
 	svc := NewService(Options{
 		RemoteURL: "://invalid",
@@ -501,7 +622,10 @@ func TestPricingNonEmptyInvalidRemoteURLStillReturnsValidationError(t *testing.T
 	require.Contains(t, err.Error(), "invalid pricing url")
 }
 
-// TestCatalogService_ExplicitCatalogEntryDoesNotRedirectToSol checks prices and rules by complete model ID.
+// TestCatalogService_ExplicitCatalogEntryDoesNotRedirectToSol configures bare
+// GPT-5.6 and its separate concrete products. Repeated catalog and billing
+// queries must retain the bare entry price and its asserted cache price rather
+// than selecting Sol.
 func TestCatalogService_ExplicitCatalogEntryDoesNotRedirectToSol(t *testing.T) {
 	pricingSvc := newModelCatalogFixture(modelCatalogFixture{pricingData: map[string]*billingpricing.CatalogModelPricing{
 		"gpt-5.6":       {InputCostPerToken: 4e-6},
@@ -528,13 +652,19 @@ func TestCatalogService_ExplicitCatalogEntryDoesNotRedirectToSol(t *testing.T) {
 	}
 }
 
-// TestCatalogService_MergesFallbackOnlyModels checks supplement-only models and catalog price precedence.
+// TestCatalogService_MergesFallbackOnlyModels supplements an existing remote
+// identity and introduces another exact model. Catalog pricing must win for the
+// existing record, while the newly supplied model retains its custom price.
 func TestCatalogService_MergesFallbackOnlyModels(t *testing.T) {
 	svc := newHotReloadCatalog(t, `{"remote-model":{"input_cost_per_token":9,"output_cost_per_token":9},"local-model":{"input_cost_per_token":0.000004,"output_cost_per_token":0.000008}}`)
 	require.InDelta(t, 1e-6, svc.GetModelPricing("remote-model").InputCostPerToken, 1e-12)
 	require.InDelta(t, 4e-6, svc.GetModelPricing("local-model").InputCostPerToken, 1e-12)
 }
 
+// TestGetModelPricing_Gpt53CodexSparkUsesGpt51CodexPricing provides older Codex
+// and generic GPT-5.3 prices while requesting Spark. The unconfigured complete
+// Spark identity must remain unresolved instead of selecting either supplied
+// record.
 func TestGetModelPricing_Gpt53CodexSparkUsesGpt51CodexPricing(t *testing.T) {
 	sparkPricing := &billingpricing.CatalogModelPricing{InputCostPerToken: 1}
 	gpt53Pricing := &billingpricing.CatalogModelPricing{InputCostPerToken: 9}
@@ -550,6 +680,9 @@ func TestGetModelPricing_Gpt53CodexSparkUsesGpt51CodexPricing(t *testing.T) {
 	require.Nil(t, got)
 }
 
+// TestGetModelPricing_Gpt53CodexFallbackStillUsesGpt52Codex supplies only a
+// GPT-5.2 Codex price and requests GPT-5.3 Codex. The lookup must return nil
+// because that distinct complete identity has no configured price.
 func TestGetModelPricing_Gpt53CodexFallbackStillUsesGpt52Codex(t *testing.T) {
 	gpt52CodexPricing := &billingpricing.CatalogModelPricing{InputCostPerToken: 2}
 
@@ -563,6 +696,9 @@ func TestGetModelPricing_Gpt53CodexFallbackStillUsesGpt52Codex(t *testing.T) {
 	require.Nil(t, got)
 }
 
+// TestGetModelPricing_OpenAIFallbackMatchedLoggedAsInfo queries an unconfigured
+// GPT-5.3 Codex identity while capturing logs. Lookup must remain nil, and the
+// asserted cross-model match message must be absent at both checked levels.
 func TestGetModelPricing_OpenAIFallbackMatchedLoggedAsInfo(t *testing.T) {
 	logSink, restore := captureStructuredLog(t)
 	defer restore()
@@ -581,6 +717,10 @@ func TestGetModelPricing_OpenAIFallbackMatchedLoggedAsInfo(t *testing.T) {
 	require.False(t, logSink.ContainsMessageAtLevel("[Pricing] OpenAI fallback matched gpt-5.3-codex -> gpt-5.2-codex", "warn"))
 }
 
+// TestGetModelPricing_UnknownCompactAliasIsUnpriced queries unconfigured
+// spelling, Compact, and preview identities against an empty map. Every
+// complete requested name must return nil rather than acquire an implicit
+// product price.
 func TestGetModelPricing_UnknownCompactAliasIsUnpriced(t *testing.T) {
 	svc := newModelCatalogFixture(modelCatalogFixture{pricingData: map[string]*billingpricing.CatalogModelPricing{}})
 	for _, model := range []string{"openai/gpt5.5", "gpt-5.5-openai-compact", "gpt-5.5-preview"} {
@@ -588,6 +728,9 @@ func TestGetModelPricing_UnknownCompactAliasIsUnpriced(t *testing.T) {
 	}
 }
 
+// TestCatalogService_Gemini36FlashThinkingTiersUseBasePricing supplies the
+// exact Gemini 3.6 Flash base price and queries its thinking suffixes. The base
+// entry must resolve, while each missing suffixed identity returns nil.
 func TestCatalogService_Gemini36FlashThinkingTiersUseBasePricing(t *testing.T) {
 	basePricing := &billingpricing.CatalogModelPricing{
 		InputCostPerToken:       1.5e-6,
@@ -615,7 +758,10 @@ func TestCatalogService_Gemini36FlashThinkingTiersUseBasePricing(t *testing.T) {
 	}
 }
 
-// TestCatalogService_Gemini35FlashThinkingTiersUseBasePricing checks that suffixed IDs require their own prices.
+// TestCatalogService_Gemini35FlashThinkingTiersUseBasePricing supplies the
+// exact Gemini 3.5 Flash base price and queries its thinking suffixes. Base
+// lookup must retain the supplied record, and unconfigured suffixed identities
+// remain unresolved.
 func TestCatalogService_Gemini35FlashThinkingTiersUseBasePricing(t *testing.T) {
 	basePricing := &billingpricing.CatalogModelPricing{
 		InputCostPerToken:       1.5e-6,
@@ -643,6 +789,10 @@ func TestCatalogService_Gemini35FlashThinkingTiersUseBasePricing(t *testing.T) {
 	}
 }
 
+// TestCatalogService_Gemini36FlashTierSpecificPricingTakesPrecedence configures
+// separate base and low identities for Gemini 3.6 Flash. A resource-prefixed
+// low request must return that exact tier record with its independently
+// supplied price.
 func TestCatalogService_Gemini36FlashTierSpecificPricingTakesPrecedence(t *testing.T) {
 	basePricing := &billingpricing.CatalogModelPricing{InputCostPerToken: 1.5e-6}
 	tierPricing := &billingpricing.CatalogModelPricing{InputCostPerToken: 2e-6}
@@ -654,8 +804,10 @@ func TestCatalogService_Gemini36FlashTierSpecificPricingTakesPrecedence(t *testi
 	require.Same(t, tierPricing, svc.GetModelPricing("models/gemini-3.6-flash-low"))
 }
 
-// TestCatalogService_Gemini35FlashTierSpecificPricingTakesPrecedence checks exact lookup of a configured
-// tier-specific price.
+// TestCatalogService_Gemini35FlashTierSpecificPricingTakesPrecedence configures
+// separate base and low identities for Gemini 3.5 Flash. Its resource-prefixed
+// low request must select the independently configured tier entry rather than
+// the base record.
 func TestCatalogService_Gemini35FlashTierSpecificPricingTakesPrecedence(t *testing.T) {
 	basePricing := &billingpricing.CatalogModelPricing{InputCostPerToken: 1.5e-6}
 	tierPricing := &billingpricing.CatalogModelPricing{InputCostPerToken: 2e-6}
@@ -667,11 +819,13 @@ func TestCatalogService_Gemini35FlashTierSpecificPricingTakesPrecedence(t *testi
 	require.Same(t, tierPricing, svc.GetModelPricing("models/gemini-3.5-flash-low"))
 }
 
+// TestDefaultPricingIncludesGemini36FlashRates loads the embedded Gemini 3.6
+// Flash price. Suffixed identities absent from the published map must also
+// remain absent from lookup, preserving the complete-name distinction.
 func TestDefaultPricingIncludesGemini36FlashRates(t *testing.T) {
 	svc := NewService(Options{DataDir: t.TempDir()}, nil)
 	require.NoError(t, svc.Initialize())
 	require.NotNil(t, svc.GetModelPricing("gemini-3.6-flash"))
-	// Suffixed IDs query prices by their complete model identity.
 	for _, suffix := range []string{"high", "low", "medium", "tiered"} {
 		model := "gemini-3.6-flash-" + suffix
 		if _, exists := svc.pricingData[model]; !exists {
@@ -680,12 +834,13 @@ func TestDefaultPricingIncludesGemini36FlashRates(t *testing.T) {
 	}
 }
 
-// TestDefaultPricingIncludesGemini35FlashRates checks prices for registered complete IDs in the embedded snapshot.
+// TestDefaultPricingIncludesGemini35FlashRates loads the embedded Gemini 3.5
+// Flash price. Lookup must not supply prices for thinking suffixes that have no
+// complete entry in the retained price map.
 func TestDefaultPricingIncludesGemini35FlashRates(t *testing.T) {
 	svc := NewService(Options{DataDir: t.TempDir()}, nil)
 	require.NoError(t, svc.Initialize())
 	require.NotNil(t, svc.GetModelPricing("gemini-3.5-flash"))
-	// Suffixed IDs query prices by their complete model identity.
 	for _, suffix := range []string{"high", "low", "medium", "tiered"} {
 		model := "gemini-3.5-flash-" + suffix
 		if _, exists := svc.pricingData[model]; !exists {
@@ -694,13 +849,18 @@ func TestDefaultPricingIncludesGemini35FlashRates(t *testing.T) {
 	}
 }
 
-// TestDefaultCatalogRequiresConfiguredAutoReviewPricing checks that the internal ID has no implicit catalog price.
+// TestDefaultCatalogRequiresConfiguredAutoReviewPricing loads the embedded
+// publication and queries the internal auto-review identity. That name must be
+// absent from both the copied price map and direct price lookup.
 func TestDefaultCatalogRequiresConfiguredAutoReviewPricing(t *testing.T) {
 	service := newOfflinePricingFixture(t)
 	require.NotContains(t, service.Snapshot().Data, "codex-auto-review")
 	require.Nil(t, service.GetModelPricing("codex-auto-review"))
 }
 
+// TestGetModelPricing_ImageModelDoesNotFallbackToTextModel provides a known
+// image price and a text product price. A different unconfigured image identity
+// must return nil rather than selecting either of those records.
 func TestGetModelPricing_ImageModelDoesNotFallbackToTextModel(t *testing.T) {
 	imagePricing := &billingpricing.CatalogModelPricing{InputCostPerToken: 3}
 	textPricing := &billingpricing.CatalogModelPricing{InputCostPerToken: 9}
@@ -716,6 +876,10 @@ func TestGetModelPricing_ImageModelDoesNotFallbackToTextModel(t *testing.T) {
 	require.Nil(t, got)
 }
 
+// TestListModelNamesByProvider_ReturnsMatchingModels queries one provider from
+// mixed-provider fixture records. The result must contain exactly its two model
+// identities and retain their asserted alphabetical order for administrative
+// listing.
 func TestListModelNamesByProvider_ReturnsMatchingModels(t *testing.T) {
 	svc := newModelCatalogFixture(modelCatalogFixture{
 		pricingData: map[string]*billingpricing.CatalogModelPricing{
@@ -728,11 +892,13 @@ func TestListModelNamesByProvider_ReturnsMatchingModels(t *testing.T) {
 
 	got := svc.ListModelNamesByProvider("anthropic")
 	require.ElementsMatch(t, []string{"claude-opus-4-5-20251101", "claude-sonnet-4-5"}, got)
-	// Names are returned in alphabetical order.
 	require.Equal(t, "claude-opus-4-5-20251101", got[0])
 	require.Equal(t, "claude-sonnet-4-5", got[1])
 }
 
+// TestListModelNamesByProvider_CaseInsensitive stores a mixed-case provider
+// identity and queries lower and upper case. Both queries must return the same
+// model list, protecting provider matching across those spellings.
 func TestListModelNamesByProvider_CaseInsensitive(t *testing.T) {
 	svc := newModelCatalogFixture(modelCatalogFixture{
 		pricingData: map[string]*billingpricing.CatalogModelPricing{
@@ -747,6 +913,9 @@ func TestListModelNamesByProvider_CaseInsensitive(t *testing.T) {
 	require.Equal(t, []string{"gpt-4o"}, got2)
 }
 
+// TestListModelNamesByProvider_NoMatch queries another provider from a
+// populated fixture catalog. The unmatched result must be a nonnil empty list,
+// allowing callers to enumerate it without a missing-result distinction.
 func TestListModelNamesByProvider_NoMatch(t *testing.T) {
 	svc := newModelCatalogFixture(modelCatalogFixture{
 		pricingData: map[string]*billingpricing.CatalogModelPricing{
@@ -759,6 +928,9 @@ func TestListModelNamesByProvider_NoMatch(t *testing.T) {
 	require.Empty(t, got)
 }
 
+// TestListModelNamesByProvider_EmptyCatalog queries a provider from an empty
+// price map. The result must remain a nonnil empty list, matching the
+// collection shape returned for populated maps with no matches.
 func TestListModelNamesByProvider_EmptyCatalog(t *testing.T) {
 	svc := newModelCatalogFixture(modelCatalogFixture{
 		pricingData: map[string]*billingpricing.CatalogModelPricing{},
@@ -769,13 +941,17 @@ func TestListModelNamesByProvider_EmptyCatalog(t *testing.T) {
 	require.Empty(t, got)
 }
 
+// TestGetModelModalities combines explicit modality fields, compatibility
+// modes, media prices, and support flags. Sanitized results must match each
+// fixture, while unknown identities and different version spellings retain nil
+// lists.
 func TestGetModelModalities(t *testing.T) {
 	tests := []struct {
-		name    string
-		model   string
-		data    map[string]*billingpricing.CatalogModelPricing
-		wantIn  []string
-		wantOut []string
+		name    string                                         // named modality lookup scenario
+		model   string                                         // complete requested model identity
+		data    map[string]*billingpricing.CatalogModelPricing // configured catalog price entries
+		wantIn  []string                                       // expected input modality list
+		wantOut []string                                       // expected output modality list
 	}{
 		{
 			name:  "supported_modalities 优先且按固定顺序输出",
@@ -878,7 +1054,10 @@ func TestGetModelModalities(t *testing.T) {
 	}
 }
 
-// TestCatalogQueryFreezesOneCandidateFactory checks one identity-candidate generator per query.
+// TestCatalogQueryFreezesOneCandidateFactory injects counters into identity
+// factory construction and lookup with a price-only snapshot. One price query
+// must call each once and leave the unconfigured dated identity unresolved
+// despite another base-like candidate rule.
 func TestCatalogQueryFreezesOneCandidateFactory(t *testing.T) {
 	factories, lookups := 0, 0
 	options := Options{ModelLookupCandidates: func() func(string) []string {
@@ -898,7 +1077,9 @@ func TestCatalogQueryFreezesOneCandidateFactory(t *testing.T) {
 	require.Equal(t, 1, lookups)
 }
 
-// TestCatalogSnapshotIsIndependent checks independent mutation and the distinction between nil and empty slices.
+// TestCatalogSnapshotIsIndependent mutates and removes copied price data after
+// taking a snapshot. Stored scalar and modality values must remain intact, with
+// empty output modalities and a nil price map retaining their shapes.
 func TestCatalogSnapshotIsIndependent(t *testing.T) {
 	service := NewServiceFromSnapshot(Options{}, nil, Snapshot{Data: map[string]*CatalogModelPricing{"model": {InputCostPerToken: 1, SupportedModalities: []string{"text"}, SupportedOutputModalities: []string{}}}})
 	snapshot := service.Snapshot()
@@ -913,7 +1094,10 @@ func TestCatalogSnapshotIsIndependent(t *testing.T) {
 	require.Nil(t, empty.Snapshot().Data)
 }
 
-// TestPricingConstructionAndLifecycle checks explicit startup and repeated Stop calls waiting for the same work.
+// TestPricingConstructionAndLifecycle observes the remote call count before
+// initialization and after repeated Start and Stop. Construction and
+// initialization perform no fetch, and one scheduled fetch leaves its prices
+// queryable after both Stop calls.
 func TestPricingConstructionAndLifecycle(t *testing.T) {
 	remote := &lifecyclePricingRemote{}
 	service := NewService(Options{DataDir: t.TempDir(), RemoteURL: "https://pricing.invalid/catalog"}, remote)
@@ -928,15 +1112,17 @@ func TestPricingConstructionAndLifecycle(t *testing.T) {
 	require.NotNil(t, service.GetModelPricing("remote-model"))
 }
 
-// TestDeepseekDefaultCatalogUsesNativeEntries checks first-party prices while allowing separate historical
-// relay IDs.
+// TestDeepseekDefaultCatalogUsesNativeEntries reads complete DeepSeek provider
+// records from the embedded publication. Each asserted rate must retain its
+// models.dev source, DeepSeek provider identity, and separate input, output,
+// and cached values.
 func TestDeepseekDefaultCatalogUsesNativeEntries(t *testing.T) {
 	pricingService := newOfflinePricingFixture(t)
 	pricingData := pricingService.Snapshot().Data
 
 	for _, tc := range []struct {
-		model                 string
-		input, output, cached float64
+		model                 string  // complete original model identity
+		input, output, cached float64 // USD/token
 	}{
 		{"deepseek-v4-flash", 0.15e-6, 0.6e-6, 0.003e-6},
 		{"deepseek-v4-flash-vision-exp", 0.15e-6, 0.6e-6, 0.003e-6},
@@ -953,8 +1139,10 @@ func TestDeepseekDefaultCatalogUsesNativeEntries(t *testing.T) {
 	}
 }
 
-// TestEmbeddedSupplementsCustomLayer checks catalog precedence, custom zero prices, and restoration after
-// deletion.
+// TestEmbeddedSupplementsCustomLayer overrides missing model fields and
+// operation defaults with explicit custom zero prices. Catalog values remain
+// authoritative, invalid defaults retain the publication, and deletion restores
+// embedded model and operation values.
 func TestEmbeddedSupplementsCustomLayer(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "custom.json")
@@ -991,8 +1179,10 @@ func TestEmbeddedSupplementsCustomLayer(t *testing.T) {
 	require.Equal(t, 0.01, *service.BillingDefaults().WebSearchPricePerCall)
 }
 
-// TestEmbeddedSupplementsSurviveInvalidCustomFile checks official supplements remain available after invalid
-// startup input.
+// TestEmbeddedSupplementsSurviveInvalidCustomFile initializes with malformed
+// custom supplement JSON. Startup must retain embedded media and operation
+// prices while exposing the configured candidate failure in its attribute
+// status.
 func TestEmbeddedSupplementsSurviveInvalidCustomFile(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "custom.json")
@@ -1004,7 +1194,9 @@ func TestEmbeddedSupplementsSurviveInvalidCustomFile(t *testing.T) {
 	require.Equal(t, 0.01, *service.BillingDefaults().WebSearchPricePerCall)
 }
 
-// TestModelsCatalogFallbackIsStable checks complete first-party IDs for prices and attributes.
+// TestModelsCatalogFallbackIsStable queries complete embedded Claude identities
+// and unconfigured future dates. Exact identities retain prices, while dated
+// variants acquire neither a price nor an inferred context limit.
 func TestModelsCatalogFallbackIsStable(t *testing.T) {
 	service := NewService(Options{DataDir: t.TempDir()}, nil)
 	require.NoError(t, service.Initialize())
@@ -1015,6 +1207,10 @@ func TestModelsCatalogFallbackIsStable(t *testing.T) {
 	}
 }
 
+// TestModelsCatalogFallbackOriginAndSupplements compares original-provider and
+// relay prices through live and copied query services. Unknown variants remain
+// unresolved, catalog fields resist supplement replacement, and an exact new
+// supplement model becomes priced.
 func TestModelsCatalogFallbackOriginAndSupplements(t *testing.T) {
 	dir := t.TempDir()
 	patch := filepath.Join(dir, "supplement.json")
@@ -1047,20 +1243,26 @@ func TestModelsCatalogFallbackOriginAndSupplements(t *testing.T) {
 	require.NoError(t, service.ForceUpdate())
 	check(service, 5e-6)
 	check(service.ReadOnlySnapshot(), 5e-6)
-	// Local supplements can add exact model IDs; existing catalog prices take precedence.
 	require.InDelta(t, 8e-6, service.GetModelPricing("claude-opus-4-7").InputCostPerToken, 1e-12)
 }
 
+// TestModelsCatalogFallbackDoesNotBorrowRelayOnlyModel publishes one relay
+// record for a bare Claude identity. Its exact name can resolve that sole
+// price, while a thinking suffix remains unresolved in live and snapshot
+// queries.
 func TestModelsCatalogFallbackDoesNotBorrowRelayOnlyModel(t *testing.T) {
 	remote := &catalogRemoteFixture{body: []byte(`{"providers":{"relay":{"models":{"claude-opus-4-6":{"cost":{"input":1,"output":2}}}}}}`)}
 	service := NewService(Options{DataDir: t.TempDir(), RemoteURL: "https://models.dev/catalog.json"}, remote)
 	require.NoError(t, service.ForceUpdate())
-	// A complete ID with one source can resolve relay pricing; unknown variants remain unpriced.
 	require.NotNil(t, service.GetModelPricing("claude-opus-4-6"))
 	require.Nil(t, service.GetModelPricing("claude-opus-4-6-thinking"))
 	require.Nil(t, service.ReadOnlySnapshot().GetModelPricing("claude-opus-4-6-thinking"))
 }
 
+// TestModelsCatalogExactMediaSupplementKeepsExplicitZero supplies different
+// media prices at bare and qualified first-party keys. Both exact supplements
+// must retain their own values, including the qualified explicit-zero presence
+// flag.
 func TestModelsCatalogExactMediaSupplementKeepsExplicitZero(t *testing.T) {
 	dir := t.TempDir()
 	supplement := filepath.Join(dir, "supplement.json")
@@ -1076,6 +1278,10 @@ func TestModelsCatalogExactMediaSupplementKeepsExplicitZero(t *testing.T) {
 	require.Zero(t, qualified.InputCostPerImageToken)
 }
 
+// TestModelsCatalogInvalidPricePatchKeepsPublishedSnapshot submits malformed
+// base, tier, and threshold fields with changed remote metadata. Rejection
+// retains prices, attributes, version, timestamp, and disk body; a valid
+// follow-up clears the diagnostic.
 func TestModelsCatalogInvalidPricePatchKeepsPublishedSnapshot(t *testing.T) {
 	dir := t.TempDir()
 	patch := filepath.Join(dir, "supplement.json")
@@ -1088,9 +1294,9 @@ func TestModelsCatalogInvalidPricePatchKeepsPublishedSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	remote.body = []byte(strings.ReplaceAll(modelsCatalogFixture, `"name":"Claude"`, `"name":"Changed"`))
 	for _, tc := range []struct {
-		name  string
-		patch string
-		field string
+		name  string // named invalid price scenario
+		patch string // malformed supplement object JSON
+		field string // expected invalid field diagnostic
 	}{
 		{"base price", `{"input_cost_per_token":"invalid"}`, "input_cost_per_token"},
 		{"tier price", `{"context_prices":[{"threshold":100,"pricing":{"input_cost_per_token":"invalid","output_cost_per_token":0.000015}}]}`, "input_cost_per_token"},
@@ -1113,7 +1319,9 @@ func TestModelsCatalogInvalidPricePatchKeepsPublishedSnapshot(t *testing.T) {
 			require.Equal(t, beforeFile, afterFile)
 		})
 	}
-	// A valid zero-price supplement can publish and clear an earlier error.
+	// Repair the invalid field with a zero input rate. The catalog's populated
+	// input rate still wins, while accepting the supplement clears the prior
+	// update diagnostic.
 	require.NoError(t, os.WriteFile(patch, []byte(`{"claude-test":{"input_cost_per_token":0}}`), 0o600))
 	require.NoError(t, service.ForceUpdate())
 	require.InDelta(t, 3e-6, service.GetModelPricing("claude-test").InputCostPerToken, 1e-12)
@@ -1121,6 +1329,10 @@ func TestModelsCatalogInvalidPricePatchKeepsPublishedSnapshot(t *testing.T) {
 	require.NotNil(t, service.ModelAttributes("attributes-only").DisplayName)
 }
 
+// TestModelsCatalogInvalidLocalReloadReportsError changes a custom price field
+// to an invalid type before an unchanged remote response. Both conditional
+// refresh and local reload must report the field error while retaining
+// published prices.
 func TestModelsCatalogInvalidLocalReloadReportsError(t *testing.T) {
 	dir := t.TempDir()
 	patch := filepath.Join(dir, "supplement.json")
@@ -1129,7 +1341,9 @@ func TestModelsCatalogInvalidLocalReloadReportsError(t *testing.T) {
 	require.NoError(t, service.ForceUpdate())
 	before := service.Snapshot().Data
 	require.NoError(t, os.WriteFile(patch, []byte(`{"claude-test":{"input_cost_per_token":"invalid"}}`), 0o600))
-	// A 304 still reports local supplement validation errors.
+	// Hold the remote body unchanged while rejecting the modified local layer.
+	// This makes the following failure depend on supplement validation during
+	// the 304 path.
 	remote.unchanged = true
 	require.ErrorContains(t, service.syncWithRemote(), "input_cost_per_token")
 	service.reloadIfCustomFilesChanged()
@@ -1137,6 +1351,9 @@ func TestModelsCatalogInvalidLocalReloadReportsError(t *testing.T) {
 	require.Equal(t, before, service.Snapshot().Data)
 }
 
+// TestModelsCatalogMistralNativeAlias compares bare and qualified original
+// Mistral identities with a relay record. Original metadata and prices must
+// agree across its aliases, while the relay retains its distinct input price.
 func TestModelsCatalogMistralNativeAlias(t *testing.T) {
 	service := NewService(Options{DataDir: t.TempDir()}, nil)
 	require.NoError(t, service.Initialize())
@@ -1146,17 +1363,21 @@ func TestModelsCatalogMistralNativeAlias(t *testing.T) {
 	require.Equal(t, qualified, plain)
 	require.Equal(t, service.ModelAttributes("mistral/devstral-latest"), service.ModelAttributes("devstral-latest"))
 	require.NotNil(t, service.ModelAttributes("devstral-latest").Context)
-	// Relay records retain their own prices and attributes.
+	// The qualified relay ID selects its separate input rate.
 	require.InDelta(t, 0.44e-6, catalogPriceForTest(t, service, "requesty/devstral-latest").InputPricePerToken, 1e-12)
 }
 
-// TestModelsCatalogOfflineManualUpdate checks that manual reload can use the in-memory catalog when disk cache
-// is unavailable.
+// TestModelsCatalogOfflineManualUpdate uses a regular file where the cache
+// directory should be and edits a custom rate. Memory-backed reload must
+// publish valid changes, retain data on invalid input, and clear errors after
+// repair.
 func TestModelsCatalogOfflineManualUpdate(t *testing.T) {
 	dir := t.TempDir()
 	cache := filepath.Join(dir, "cache")
 	patch := filepath.Join(dir, "supplement.json")
-	// Use a regular file as the cache directory so failure is independent of process permissions.
+	// Use a regular file at the cache directory path to make persistence fail
+	// regardless of process permissions, exercising memory-backed reload even
+	// for privileged test runs.
 	require.NoError(t, os.WriteFile(cache, []byte("unwritable cache"), 0o600))
 	require.NoError(t, os.WriteFile(patch, []byte(`{"custom-model":{"input_cost_per_token":0.000007}}`), 0o600))
 	service := NewService(Options{DataDir: cache, FallbackFile: patch}, nil)
@@ -1167,7 +1388,9 @@ func TestModelsCatalogOfflineManualUpdate(t *testing.T) {
 	require.InDelta(t, 9e-6, service.GetModelPricing("custom-model").InputCostPerToken, 1e-12)
 	require.NotEqual(t, before.Version, service.AttributesSnapshot().Version)
 	require.Empty(t, service.AttributesSnapshot().LastError)
-	// A failed local update retains the last successfully published prices and attributes.
+	// Reject this changed local price type after a successful memory-backed
+	// reload. The invalid candidate must leave the retained price and metadata
+	// available for the following assertions.
 	require.NoError(t, os.WriteFile(patch, []byte(`{"custom-model":{"input_cost_per_token":"invalid"}}`), 0o600))
 	require.Error(t, service.ForceUpdate())
 	require.InDelta(t, 9e-6, service.GetModelPricing("custom-model").InputCostPerToken, 1e-12)
@@ -1179,6 +1402,10 @@ func TestModelsCatalogOfflineManualUpdate(t *testing.T) {
 	require.Empty(t, service.AttributesSnapshot().LastError)
 }
 
+// TestModelsCatalogAtomicUpdateAndUnpricedAttributes publishes metadata-only
+// attributes and tiered prices before returning invalid catalog bytes.
+// Rejection retains version, timestamp, and price; a subsequent 304 uses the
+// saved validator and clears the error.
 func TestModelsCatalogAtomicUpdateAndUnpricedAttributes(t *testing.T) {
 	remote := &catalogRemoteFixture{body: []byte(modelsCatalogFixture), etag: "v1"}
 	s := NewService(Options{RemoteURL: "https://models.dev/catalog.json", DataDir: t.TempDir()}, remote)
@@ -1203,6 +1430,10 @@ func TestModelsCatalogAtomicUpdateAndUnpricedAttributes(t *testing.T) {
 	require.Empty(t, s.AttributesSnapshot().LastError)
 }
 
+// TestModelsCatalogSupplementAndConcurrentReaders registers metadata and
+// snapshot queries before forcing supplemented publications. Each update must
+// succeed, the supplement price must be present, and every reader finishes
+// before the test returns.
 func TestModelsCatalogSupplementAndConcurrentReaders(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "supplement.json")
@@ -1212,6 +1443,9 @@ func TestModelsCatalogSupplementAndConcurrentReaders(t *testing.T) {
 	require.NoError(t, s.ForceUpdate())
 	require.InDelta(t, 12e-6, s.GetModelPricing("claude-test").CacheCreationInputTokenCostAbove1hr, 1e-12)
 	var wg sync.WaitGroup
+	// Register metadata reader work before the forced replacements. Their
+	// queries can overlap publication, and the join below keeps the fixture
+	// alive until every registered reader finishes.
 	for range 4 {
 		wg.Go(func() {
 			for range 10 {
@@ -1224,9 +1458,15 @@ func TestModelsCatalogSupplementAndConcurrentReaders(t *testing.T) {
 	for range 3 {
 		require.NoError(t, s.ForceUpdate())
 	}
+	// Join all metadata readers after the updates finish, preventing
+	// unfinished fixture queries from extending into the temporary directory's
+	// cleanup or the next test.
 	wg.Wait()
 }
 
+// TestModelsCatalogOfflineFirstStart initializes an empty cache directory from
+// the embedded catalog. The retained Claude context must be available, and
+// initialization must create the configured disk catalog file.
 func TestModelsCatalogOfflineFirstStart(t *testing.T) {
 	s := NewService(Options{DataDir: t.TempDir()}, nil)
 	require.NoError(t, s.Initialize())
@@ -1234,6 +1474,10 @@ func TestModelsCatalogOfflineFirstStart(t *testing.T) {
 	require.FileExists(t, s.catalogFilePath())
 }
 
+// TestModelsCatalogBrokenSupplementBootAndRecovery starts with broken custom
+// bytes and then supplies a valid model price. Embedded metadata remains usable
+// with an error, and successful reload clears it while publishing the custom
+// rate.
 func TestModelsCatalogBrokenSupplementBootAndRecovery(t *testing.T) {
 	dir := t.TempDir()
 	patch := filepath.Join(dir, "supplement.json")
@@ -1249,6 +1493,9 @@ func TestModelsCatalogBrokenSupplementBootAndRecovery(t *testing.T) {
 	require.InDelta(t, 7e-6, s.GetModelPricing("custom-model").InputCostPerToken, 1e-12)
 }
 
+// TestModelsCatalogReadOnlyCacheStillServesOfflineData places a regular file at
+// the configured cache directory path. Initialization must still succeed and
+// retain an embedded model context through the memory publication path.
 func TestModelsCatalogReadOnlyCacheStillServesOfflineData(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "not-a-directory")
 	require.NoError(t, os.WriteFile(path, []byte("file"), 0o600))
@@ -1257,8 +1504,10 @@ func TestModelsCatalogReadOnlyCacheStillServesOfflineData(t *testing.T) {
 	require.NotNil(t, s.ModelAttributes("claude-sonnet-4-5").Context)
 }
 
-// TestModelsCatalogConditionalUpdate checks ETag use, forced requests, and local supplement application after
-// a 304.
+// TestModelsCatalogConditionalUpdate records forced and conditional request
+// validators before editing a supplement under 304 responses. Custom zero
+// prices and deletion must apply while the raw hash and update time remain
+// fixed.
 func TestModelsCatalogConditionalUpdate(t *testing.T) {
 	dir := t.TempDir()
 	patch := filepath.Join(dir, "supplement.json")
@@ -1281,8 +1530,10 @@ func TestModelsCatalogConditionalUpdate(t *testing.T) {
 	require.Nil(t, service.GetModelPricing("custom-model"))
 }
 
-// TestModelsCatalogRejectsLegacyRemote checks that legacy remote input leaves disk and memory unchanged and
-// reports a migration error.
+// TestModelsCatalogRejectsLegacyRemote downloads legacy price JSON after
+// publishing a valid catalog. Rejection must report the legacy-format
+// diagnostic and retain prices, metadata, raw hash, update time, and cached
+// body bytes.
 func TestModelsCatalogRejectsLegacyRemote(t *testing.T) {
 	remote := &catalogRemoteFixture{body: []byte(modelsCatalogFixture)}
 	service := NewService(Options{RemoteURL: "https://custom.example/prices.json", DataDir: t.TempDir()}, remote)
@@ -1299,7 +1550,9 @@ func TestModelsCatalogRejectsLegacyRemote(t *testing.T) {
 	require.Equal(t, disk, readCatalogTestFile(t, service.catalogFilePath()))
 }
 
-// TestModelsCatalogDroppedAbsoluteTierWarns checks warnings when context tiers disappear during an update.
+// TestModelsCatalogDroppedAbsoluteTierWarns publishes context tiers and then
+// replaces the same model with base prices alone. The retained-key comparison
+// must emit the asserted warning about lost context surcharge data.
 func TestModelsCatalogDroppedAbsoluteTierWarns(t *testing.T) {
 	sink, restore := captureStructuredLog(t)
 	defer restore()
@@ -1311,7 +1564,9 @@ func TestModelsCatalogDroppedAbsoluteTierWarns(t *testing.T) {
 	require.True(t, sink.ContainsMessageAtLevel("Long-context ladder dropped", "warn"))
 }
 
-// TestModelsCatalogAttributesOnlyWithUnknownPatch checks that valid attributes publish without fabricated prices.
+// TestModelsCatalogAttributesOnlyWithUnknownPatch adds a threshold-only
+// supplement to an attribute-only catalog. The unknown patch must produce no
+// price record, while the declared model remains displayable and unpriced.
 func TestModelsCatalogAttributesOnlyWithUnknownPatch(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "supplement.json")
@@ -1324,7 +1579,10 @@ func TestModelsCatalogAttributesOnlyWithUnknownPatch(t *testing.T) {
 	require.Equal(t, "No prices", *service.ModelAttributes("attributes-only").DisplayName)
 }
 
-// TestIncompleteCatalogFieldsAreNotReplaced checks that a partial catalog price retains its existing fields.
+// TestIncompleteCatalogFieldsAreNotReplaced supplements a partial catalog price
+// with another input price and free output. The existing input rate, false
+// reasoning, and empty output modalities remain authoritative while missing
+// output pricing is filled.
 func TestIncompleteCatalogFieldsAreNotReplaced(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "prices.json")
@@ -1340,8 +1598,10 @@ func TestIncompleteCatalogFieldsAreNotReplaced(t *testing.T) {
 	require.Empty(t, *service.ModelAttributes("partial").OutputModalities)
 }
 
-// TestSupplementRejectsInvalidOperationAndRule checks validation even for entries without base prices or with
-// catalog precedence.
+// TestSupplementRejectsInvalidOperationAndRule supplies invalid operation
+// defaults, multipliers, media dimensions, and time rules. Local supplement
+// validation must reject every asserted candidate before its values can
+// participate in publication.
 func TestSupplementRejectsInvalidOperationAndRule(t *testing.T) {
 	for _, body := range []string{
 		`{"_billing_defaults":{"web_search_price_per_call":-1}}`,
@@ -1363,16 +1623,25 @@ func TestSupplementRejectsInvalidOperationAndRule(t *testing.T) {
 	}
 }
 
+// mutatePricingFixture copies a fixture price map, applies the supplied
+// mutation, and installs it for later queries. Callers use this helper before
+// concurrent readers or scheduled updates start accessing the fixture.
 func mutatePricingFixture(service *Service, change func(map[string]*billingpricing.CatalogModelPricing)) {
 	data := service.Snapshot().Data
 	change(data)
 	setPricingFixtureData(service, data)
 }
 
+// setPricingFixtureRemote replaces a fixture downloader before its update work
+// runs. Callers serialize that setup with fixture operations because the
+// service field assignment itself uses no lifecycle or update lock.
 func setPricingFixtureRemote(service *Service, remote RemoteClient) {
 	service.remoteClient = remote
 }
 
+// WriteLogEvent records a shallow event copy and a copied top-level Fields map
+// under the sink mutex. Nested field values remain shared; nil events are
+// ignored, and callers keep referenced nested values read-only.
 func (s *inMemoryLogSink) WriteLogEvent(event *logging.LogEvent) {
 	if event == nil {
 		return
@@ -1382,11 +1651,17 @@ func (s *inMemoryLogSink) WriteLogEvent(event *logging.LogEvent) {
 		cloned.Fields = make(map[string]any, len(event.Fields))
 		maps.Copy(cloned.Fields, event.Fields)
 	}
+	// Append the copied record under the same mutex used by message scans so
+	// assertions cannot traverse a slice while another logging callback
+	// changes its length.
 	s.mu.Lock()
 	s.events = append(s.events, &cloned)
 	s.mu.Unlock()
 }
 
+// ContainsMessage reports whether a captured event message contains the
+// supplied substring. It locks the event list during scanning, skips nil
+// events, and treats an empty substring as matching any nonnil event.
 func (s *inMemoryLogSink) ContainsMessage(substr string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1398,6 +1673,9 @@ func (s *inMemoryLogSink) ContainsMessage(substr string) bool {
 	return false
 }
 
+// ContainsMessageAtLevel matches a message substring and a normalized level
+// within captured events. Event-list reads use the sink mutex, while level case
+// and surrounding whitespace are ignored for the comparison.
 func (s *inMemoryLogSink) ContainsMessageAtLevel(substr, level string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1413,8 +1691,20 @@ func (s *inMemoryLogSink) ContainsMessageAtLevel(substr, level string) bool {
 	return false
 }
 
+// captureStructuredLog configures global debug JSON logging and installs a test
+// sink while holding the capture mutex. The caller invokes the returned cleanup
+// exactly once after its observations.
+//
+// The mutex serializes captures that replace the global sink. Cleanup clears
+// that sink and releases the mutex; the initialized logger configuration
+// remains installed. Initialization failures fail the test before cleanup is
+// returned, so this helper's successful callers own the cleanup lifetime
+// through their deferred function.
 func captureStructuredLog(t *testing.T) (*inMemoryLogSink, func()) {
 	t.Helper()
+	// Serialize logger configuration and sink replacement until the returned
+	// cleanup clears this capture, keeping another capture from replacing its
+	// sink during assertions.
 	structuredLogCaptureMu.Lock()
 
 	err := logging.Init(logging.InitOptions{
@@ -1433,13 +1723,22 @@ func captureStructuredLog(t *testing.T) (*inMemoryLogSink, func()) {
 	sink := &inMemoryLogSink{}
 	logging.SetSink(sink)
 	return sink, func() {
+		// Clear this sink while its capture lock is still held, then release
+		// that lock so the next capture installs its own sink before observing
+		// new events.
 		logging.SetSink(nil)
 		structuredLogCaptureMu.Unlock()
 	}
 }
 
-// catalogLookupTestPricing uses distinct prices to identify which model entry a lookup selects.
+// catalogLookupTestPricing constructs distinct fixture rates and text output
+// modalities for identity selection assertions. The supplied input modality
+// slice remains shared, so callers complete its mutations before using the
+// retained fixture concurrently.
 func catalogLookupTestPricing(input float64, modalities ...string) *billingpricing.CatalogModelPricing {
+	// Distinct output and cache ratios identify the selected fixture record.
+	// The fixed context threshold also exposes accidental inheritance of that
+	// record's surcharge rules.
 	return &billingpricing.CatalogModelPricing{
 		InputCostPerToken: input, OutputCostPerToken: input * 5,
 		CacheCreationInputTokenCost: input * 1.25, CacheReadInputTokenCost: input / 10,
@@ -1449,17 +1748,28 @@ func catalogLookupTestPricing(input float64, modalities ...string) *billingprici
 	}
 }
 
+// hotReloadModelJSON builds one fixture object member containing input and
+// output rates. Callers supply a JSON-safe model key and finite numbers because
+// the helper inserts the key literally into the object text.
 func hotReloadModelJSON(name string, input, output float64) string {
 	return `"` + name + `": {"provider": "test", "mode": "chat",
 		"input_cost_per_token": ` + formatFloat(input) + `, "output_cost_per_token": ` + formatFloat(output) + `}`
 }
 
+// formatFloat formats a fixture float using the shortest float64
+// representation. Callers supply finite values when inserting the result into
+// JSON, since nonfinite spellings are not valid JSON numbers.
 func formatFloat(v float64) string {
+	// Keep fixture prices round-trippable so parser assertions can compare
+	// their initial float64 values after the shortest number spelling is
+	// decoded.
 	return strconv.FormatFloat(v, 'g', -1, 64)
 }
 
-// newHotReloadCatalog prepares a cache and supplement file, then loads the initial catalog.
-// An empty supplement body leaves the supplement path unconfigured.
+// newHotReloadCatalog prepares a cached base catalog and optional custom
+// supplement in a temporary directory, then initializes the service. An empty
+// supplement body leaves the path unconfigured, and initialization failures
+// fail the test.
 func newHotReloadCatalog(t *testing.T, fallbackJSON string) *Service {
 	t.Helper()
 	dir := t.TempDir()
@@ -1474,11 +1784,20 @@ func newHotReloadCatalog(t *testing.T, fallbackJSON string) *Service {
 	return svc
 }
 
+// FetchCatalog returns fresh bytes from the configured string body with no ETag
+// or failure. Request URL, validator, and context are ignored because this
+// fixture supplies unconditional test responses.
 func (c stubCatalogRemoteClient) FetchCatalog(context.Context, string, string) ([]byte, string, bool, error) {
 	return []byte(c.body), "", false, nil
 }
 
+// FetchCatalog atomically counts each fixture fetch and returns fresh catalog
+// bytes for lifecycle assertions. Request inputs are ignored, so the test
+// observes constructor and scheduler dispatches without network work.
 func (r *lifecyclePricingRemote) FetchCatalog(context.Context, string, string) ([]byte, string, bool, error) {
+	// Count the dispatch before returning its candidate so Stop's joined
+	// scheduler result can be compared with the atomic call count after
+	// lifecycle completion.
 	r.calls.Add(1)
 	return []byte(hotReloadCatalogJSON), "", false, nil
 }

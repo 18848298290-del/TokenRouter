@@ -16,7 +16,21 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 )
 
-// supplementFields maps permitted local pricing fields to their source labels.
+// Catalog publication combines one downloaded body with custom and embedded
+// supplements. Model fields keep catalog values first, custom missing-field
+// additions second, and embedded additions last; operation defaults start with
+// embedded values and accept custom overrides. Attributes, prices, and indexes
+// are prepared from those same layers before readers receive a replacement.
+//
+// Persistent updates write and close a temporary body before renaming it into
+// the cache path, then replace in-memory data under the query lock. Supplement
+// fingerprints sampled around construction detect observed content changes and
+// permit bounded retries. Loading can use retained body bytes or embedded data
+// when disk inputs fail, while first startup can publish a usable base and keep
+// the failed candidate's diagnostic for later repair.
+
+// supplementFields names permitted missing-price and rule additions together
+// with the source labels recorded when supplements fill them.
 var supplementFields = map[string]string{
 	"input_cost_per_token": "input", "output_cost_per_token": "output",
 	"input_cost_per_token_priority": "priority_input", "output_cost_per_token_priority": "priority_output",
@@ -31,22 +45,27 @@ var supplementFields = map[string]string{
 	"time_pricing": "time_pricing", "source_url": "source_url", "verified_at": "verified_at",
 }
 
-// AttributeSnapshot contains administrative display data published under the same lock as prices.
+// AttributeSnapshot contains administrative display data published under the
+// same lock as prices.
 type AttributeSnapshot struct {
-	Items       []modelcatalog.Entry `json:"items"`
-	Version     string               `json:"version"`
-	LastUpdated time.Time            `json:"last_updated"`
-	LastError   string               `json:"last_error,omitempty"`
+	Items       []modelcatalog.Entry `json:"items"`                // copied administrative metadata entries
+	Version     string               `json:"version"`              // retained catalog content version
+	LastUpdated time.Time            `json:"last_updated"`         // retained catalog update time
+	LastError   string               `json:"last_error,omitempty"` // latest candidate failure message
 }
 
-// CapabilityView fixes the published catalog version for subsequent lock-free lookups.
+// CapabilityView captures the retained catalog under the read lock for
+// subsequent metadata lookups. Updates publish different catalog data, and a
+// capture before publication behaves as an empty modelcatalog.View.
 func (s *Service) CapabilityView() modelcatalog.View {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.modelCatalog.View()
 }
 
-// AttributesSnapshot returns an independent copy of the current in-memory attributes.
+// AttributesSnapshot copies all prepared catalog entries and captures their
+// update status under the read lock. Returned attributes and price values can
+// be modified independently; the initial empty index returns no items.
 func (s *Service) AttributesSnapshot() AttributeSnapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -57,14 +76,21 @@ func (s *Service) AttributesSnapshot() AttributeSnapshot {
 	return result
 }
 
-// BillingDefaults returns a copy of the published operation prices.
+// BillingDefaults returns copied operation default price pointers and source
+// labels from the retained publication. Callers can adjust their returned
+// values independently; a service awaiting publication returns its unset
+// defaults.
 func (s *Service) BillingDefaults() pricing.OperationPrices {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.billingDefaults.Clone()
 }
 
-// ModelAttributes reads attributes using the complete model identity.
+// ModelAttributes resolves copied attributes for a complete model identity
+// using one candidate generator from the injected factory. Recognized provider
+// qualification remains intact, and unresolved metadata returns unknown
+// attribute fields for the caller. A configured candidate factory must return
+// a callable function.
 func (s *Service) ModelAttributes(model string) modelcatalog.Attributes {
 	candidates := []string{model}
 	if s.options.ModelLookupCandidates != nil {
@@ -76,13 +102,25 @@ func (s *Service) ModelAttributes(model string) modelcatalog.Attributes {
 	return attributes
 }
 
+// buildModelsCatalog prepares metadata, prices, and operation defaults from
+// one catalog body and its supplement layers. Invalid model, supplement, or
+// price fields reject the candidate; a valid attribute-only catalog may return
+// an empty price map.
+//
+// Model supplements fill custom gaps before embedded gaps, retaining existing
+// catalog fields including explicit zero prices. Operation defaults use the
+// opposite layering order so custom fields can override embedded defaults.
+// Both paths are validated before return, and price diagnostics record orphan
+// cache tiers or one-sided context surcharges for administrative inspection.
 func (s *Service) buildModelsCatalog(body []byte) (*modelcatalog.Catalog, map[string]*CatalogModelPricing, pricing.OperationPrices, error) {
 	catalog, err := modelcatalog.Parse(body)
 	if err != nil {
 		return nil, nil, pricing.OperationPrices{}, err
 	}
 	raw := pricing.ModelsDevPrices(catalog)
-	// Custom supplements fill gaps before official supplements. Existing catalog values take precedence.
+	// Fill custom model gaps before embedded gaps so declared catalog values
+	// and explicit custom additions remain authoritative when the next layer
+	// is applied.
 	custom, err := loadLocalPricingEntries(s.options.FallbackFile)
 	if err != nil {
 		return nil, nil, pricing.OperationPrices{}, err
@@ -96,7 +134,9 @@ func (s *Service) buildModelsCatalog(body []byte) (*modelcatalog.Catalog, map[st
 			return nil, nil, pricing.OperationPrices{}, err
 		}
 	}
-	// Operation prices start with official defaults; custom fields override them, including explicit zeros.
+	// Operation defaults are overrides rather than missing-field supplements.
+	// Apply embedded values first so populated custom fields, including zero
+	// prices, replace those defaults.
 	var defaults pricing.OperationPrices
 	for _, supplement := range []map[string]json.RawMessage{builtin, custom} {
 		if body := supplement[pricing.BillingDefaultsKey]; len(body) > 0 {
@@ -115,7 +155,9 @@ func (s *Service) buildModelsCatalog(body []byte) (*modelcatalog.Catalog, map[st
 	if validationErr := diagnostics.ValidationError(); validationErr != nil {
 		return nil, nil, pricing.OperationPrices{}, validationErr
 	}
-	// A valid attributes-only catalog or patch may publish an empty price set.
+	// Missing prices alone are valid for metadata records. Accept that parser
+	// outcome while retaining validation failures so attribute-only candidates
+	// can still be published.
 	if err != nil && !errors.Is(err, pricing.ErrNoPricingEntries) {
 		return nil, nil, pricing.OperationPrices{}, err
 	}
@@ -127,8 +169,18 @@ func (s *Service) buildModelsCatalog(body []byte) (*modelcatalog.Catalog, map[st
 	return catalog, prices, defaults, nil
 }
 
-// applyModelSupplements applies exact keys before filling equivalent first-party lookup keys.
-// Exact settings take precedence over alias propagation regardless of map iteration order.
+// applyModelSupplements mutates unpublished metadata and raw price candidates
+// by applying exact supplement keys before equivalent first party aliases.
+// For distinct exact keys, their supplied values are applied before another
+// key's supplement can fill the remaining gaps.
+//
+// Alias propagation uses the same provider and complete model record, keeping
+// dated identities and relay records separate. Operation defaults are skipped
+// for their independent override path. An error can leave these candidate maps
+// partially prepared, so buildModelsCatalog discards them instead of exposing
+// the partial work as a publication.
+// Raw price keys are compared as supplied, while metadata keys are normalized;
+// callers use consistently spelled keys when supplementing the same identity.
 func applyModelSupplements(raw map[string]json.RawMessage, catalog *modelcatalog.Catalog, supplement map[string]json.RawMessage) error {
 	for model, entry := range supplement {
 		if model == pricing.BillingDefaultsKey {
@@ -141,6 +193,9 @@ func applyModelSupplements(raw map[string]json.RawMessage, catalog *modelcatalog
 			return err
 		}
 	}
+	// Fill equivalent lookup keys after exact settings have been applied, so
+	// each qualified record's explicit zero or populated field blocks later
+	// additions from its bare alias.
 	for model, entry := range supplement {
 		if model == pricing.BillingDefaultsKey {
 			continue
@@ -160,7 +215,15 @@ func applyModelSupplements(raw map[string]json.RawMessage, catalog *modelcatalog
 	return nil
 }
 
-// mergePricingSupplement fills permitted pricing fields while keeping existing catalog values, including zeros.
+// mergePricingSupplement merges one JSON supplement into an unpublished raw
+// price map. An existing record receives permitted fields only when their keys
+// are missing, retaining explicit zero values and populated compound fields.
+//
+// Newly introduced records keep the decoded supplement object with local
+// source labels. Existing records retain their data source and add local
+// labels only for filled fields. Source label maps are serialized before the
+// completed object replaces its raw entry; malformed objects or labels reject
+// this candidate merge.
 func mergePricingSupplement(raw map[string]json.RawMessage, model string, entry json.RawMessage) error {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(entry, &fields); err != nil {
@@ -178,6 +241,9 @@ func mergePricingSupplement(raw map[string]json.RawMessage, model string, entry 
 				sources[label] = "local_supplement"
 			}
 		}
+		// Source labels contain string keys and values, which JSON can encode
+		// directly. Serialize those labels alongside the new object's supplied
+		// fields before installing its raw body.
 		fields["price_sources"], _ = json.Marshal(sources)
 		body, err := json.Marshal(fields)
 		if err != nil {
@@ -208,6 +274,9 @@ func mergePricingSupplement(raw map[string]json.RawMessage, model string, entry 
 			sources[label] = "local_supplement"
 		}
 	}
+	// The label map has a string-only JSON representation. Store its encoded
+	// values before replacing this candidate's raw object so filled fields
+	// retain their local source.
 	combined["price_sources"], _ = json.Marshal(sources)
 	body, err := json.Marshal(combined)
 	if err != nil {
@@ -217,13 +286,28 @@ func mergePricingSupplement(raw map[string]json.RawMessage, model string, entry 
 	return nil
 }
 
-// publishModelsCatalog replaces prices and attributes after a successful build. The caller holds updateMu.
+// publishModelsCatalog builds and publishes one catalog body with its
+// current supplement layers; production loaders hold updateMu for the attempt.
+// Isolated fixtures serialize their own publication calls when scheduled
+// updates cannot overlap them.
+// Fingerprints before and after construction permit up to three builds when
+// their sampled values differ, rejecting continued observed changes.
+//
+// Matching samples do not detect a file changed and restored between them.
+// Accepted candidates append the supplement fingerprint to metadata version,
+// retain the raw body's hash separately, and prepare indexes before publication.
+// When persist is true, write, close, and rename finish first; failures leave
+// the retained in-memory publication intact. A final mu-protected replacement
+// gives query captures the prepared attributes, prices, defaults, and status
+// together.
 func (s *Service) publishModelsCatalog(body []byte, updated time.Time, persist bool) error {
 	var catalog *modelcatalog.Catalog
 	var prices map[string]*CatalogModelPricing
 	var fingerprint string
 	var defaults pricing.OperationPrices
-	// Check fingerprints around the build to detect supplement edits made during catalog synchronization.
+	// Compare content samples around each build to detect observed supplement
+	// changes. Rebuild a changed candidate before assigning its version and
+	// exposing its attributes and prices together.
 	for attempt := range 3 {
 		before := s.customPricingFilesFingerprint()
 		var err error
@@ -255,7 +339,13 @@ func (s *Service) publishModelsCatalog(body []byte, updated time.Time, persist b
 			return err
 		}
 		name := temp.Name()
+		// Remove an unrenamed temporary file when writing or replacement fails.
+		// A successful rename consumes this path, and cleanup errors leave the
+		// publication result unchanged.
 		defer func() { _ = os.Remove(name) }()
+		// Close the written body before rename, returning write failure first.
+		// Readers receive the in-memory replacement only after this persistent
+		// cache replacement has completed.
 		_, writeErr := temp.Write(body)
 		closeErr := temp.Close()
 		if writeErr != nil {
@@ -268,6 +358,9 @@ func (s *Service) publishModelsCatalog(body []byte, updated time.Time, persist b
 			return err
 		}
 	}
+	// Replace all prepared publication data under the same lock used by query
+	// captures, so one captured view cannot mix this candidate's prices with
+	// the previous metadata.
 	s.mu.Lock()
 	warnDroppedLongContextLadders(s.pricingData, prices)
 	s.modelCatalog, s.pricingData = catalog, prices
@@ -281,6 +374,18 @@ func (s *Service) publishModelsCatalog(body []byte, updated time.Time, persist b
 	return nil
 }
 
+// loadModelsCatalog serializes a local rebuild from disk, retained body
+// bytes, or the embedded catalog. A readable invalid candidate is rejected
+// when a current publication exists, leaving that publication available and
+// recording the candidate error.
+//
+// Disk read failures can reuse retained body bytes. A rejected embedded
+// candidate is retried with persistence disabled, allowing cache write
+// failures to recover in memory. On first startup, a separate candidate
+// without the configured custom layer can supply usable metadata while the
+// initial candidate error remains in status.
+// Later successful publication clears that diagnostic and replaces the complete
+// retained version.
 func (s *Service) loadModelsCatalog() (err error) {
 	s.updateMu.Lock()
 	defer s.updateMu.Unlock()
@@ -290,6 +395,9 @@ func (s *Service) loadModelsCatalog() (err error) {
 	s.mu.RLock()
 	hasCurrent := s.modelCatalog != nil
 	if readErr != nil && len(s.catalogBody) > 0 {
+		// Retained raw bytes allow custom-layer rebuilding when the disk cache
+		// cannot be read. Copy them under the query lock before constructing a
+		// fresh candidate.
 		body = append([]byte(nil), s.catalogBody...)
 		readErr = nil
 	}
@@ -316,14 +424,18 @@ func (s *Service) loadModelsCatalog() (err error) {
 	if candidateErr == nil {
 		return nil
 	}
-	// Publish in memory when the cache cannot be written so queries can still use the catalog.
+	// Retry the embedded candidate with persistence disabled. A cache write
+	// failure can then recover in memory; parsing and supplement errors still
+	// reject the candidate during the repeated build.
 	if err := s.publishModelsCatalog(body, time.Now(), false); err == nil {
 		return nil
 	}
 	if hasCurrent {
 		return candidateErr
 	}
-	// On first startup, retain a usable catalog and the supplement error until hot reload succeeds.
+	// First startup has no publication to retain. Try base catalog candidates
+	// with embedded supplements and record the failed configured candidate's
+	// diagnostic for subsequent repair.
 	bootstrap := NewService(Options{DataDir: s.options.DataDir}, nil)
 	for _, candidate := range [][]byte{cachedBody, body} {
 		if len(candidate) == 0 {
@@ -334,6 +446,9 @@ func (s *Service) loadModelsCatalog() (err error) {
 				continue
 			}
 		}
+		// Install the usable bootstrap data and its initial failure diagnostic
+		// under the query lock so status readers can explain the retained base
+		// publication.
 		s.mu.Lock()
 		s.modelCatalog, s.pricingData = bootstrap.modelCatalog, bootstrap.pricingData
 		s.attributeIndex = bootstrap.attributeIndex
@@ -348,7 +463,10 @@ func (s *Service) loadModelsCatalog() (err error) {
 	return candidateErr
 }
 
-// recordCatalogError stores remote-update and local-reload failures for the administration page.
+// recordCatalogError stores a candidate failure under the administrative
+// status lock while retaining its current publication. Nil errors leave the
+// diagnostic unchanged; successful publication clears errors in its
+// replacement sequence.
 func (s *Service) recordCatalogError(err error) {
 	if err == nil {
 		return
@@ -358,9 +476,22 @@ func (s *Service) recordCatalogError(err error) {
 	s.mu.Unlock()
 }
 
-// updateModelsCatalog uses conditional requests and retains the published version on network or parsing errors.
+// updateModelsCatalog serializes a remote candidate update or delegates to
+// local rebuilding when RemoteURL is blank. Remote work validates the URL,
+// uses a thirty-second request context, and clears the outgoing ETag when
+// force requests an unconditional download.
+//
+// A 304 retains raw bytes and checks supplement content for a local rebuild;
+// it fails when no retained bytes exist. Unchanged body and supplement hashes
+// can skip publication, while force still rebuilds a downloaded same-body
+// candidate. Network, validation, and persistence errors retain the current
+// publication and retained validator. Downloaded candidates and non-304
+// same-content responses install new validators after acceptance; a 304 keeps
+// the existing validator.
 func (s *Service) updateModelsCatalog(force bool) (err error) {
-	// Local reload acquires updateMu itself and can use the catalog already in memory.
+	// Dispatch local rebuilding before acquiring updateMu because that loader
+	// owns its serialization and can reuse retained raw bytes when the disk
+	// cache is unavailable.
 	if strings.TrimSpace(s.options.RemoteURL) == "" {
 		return s.loadModelsCatalog()
 	}
@@ -372,6 +503,9 @@ func (s *Service) updateModelsCatalog(force bool) (err error) {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// Release this download's context timer on every return path. When the
+	// scheduler invokes this update, its stop signal waits for the attempt;
+	// it does not cancel the independent request context.
 	defer cancel()
 	if s.remoteClient == nil {
 		return fmt.Errorf("model catalog remote client is not configured")
@@ -385,7 +519,9 @@ func (s *Service) updateModelsCatalog(force bool) (err error) {
 		return err
 	}
 	if unchanged {
-		// A 304 still requires local supplement validation before clearing an outstanding error.
+		// A remote 304 leaves the body unchanged but custom content can differ.
+		// Compare its fingerprint and validate a changed layer before clearing
+		// the retained update diagnostic.
 		s.mu.RLock()
 		current := append([]byte(nil), s.catalogBody...)
 		updated, fingerprint := s.lastUpdated, s.customFilesHash
@@ -398,6 +534,9 @@ func (s *Service) updateModelsCatalog(force bool) (err error) {
 				return err
 			}
 		}
+		// The retained body and any changed supplement layer were accepted.
+		// Clear the failure under the status lock before readers inspect this
+		// successful unchanged-body result.
 		s.mu.Lock()
 		s.lastCatalogError = ""
 		s.mu.Unlock()
@@ -408,6 +547,9 @@ func (s *Service) updateModelsCatalog(force bool) (err error) {
 	same := s.localHash == hex.EncodeToString(hash[:]) && s.customFilesHash == s.customPricingFilesFingerprint()
 	s.mu.RUnlock()
 	if same && !force {
+		// Both fingerprints match the retained publication, so a conditional
+		// refresh can keep its existing data and timestamp while accepting the
+		// response's current validator.
 		s.catalogETag = etag
 		s.mu.Lock()
 		s.lastCatalogError = ""
@@ -421,14 +563,20 @@ func (s *Service) updateModelsCatalog(force bool) (err error) {
 	return nil
 }
 
-// ModelIDs returns complete catalog IDs, including provider-qualified names.
+// ModelIDs returns a copied sorted list from the prepared metadata index,
+// including bare aliases and qualified identities. Callers can modify the
+// list independently; an unprepared index returns an empty slice.
 func (s *Service) ModelIDs() []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.attributeIndex.ModelIDs()
 }
 
-// ModelEntry resolves metadata using catalog identity rules and retains the requested ID for unknown models.
+// ModelEntry resolves metadata with the catalog's qualified identity rules
+// and one query candidate generator. Attributes and source labels are copied,
+// while found entry prices can remain shared; unresolved names retain the
+// requested ID and any known public attributes. A configured candidate factory
+// must return a callable function.
 func (s *Service) ModelEntry(model string) modelcatalog.Entry {
 	candidates := []string{model}
 	if s.options.ModelLookupCandidates != nil {
@@ -447,7 +595,9 @@ func (s *Service) ModelEntry(model string) modelcatalog.Entry {
 	return entry
 }
 
-// ModelVersion returns the published catalog version, or an empty string before publication.
+// ModelVersion returns the retained catalog's content version. A service with
+// no retained metadata catalog returns an empty string; successful catalog
+// publication replaces the version together with the queryable model identities.
 func (s *Service) ModelVersion() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -457,8 +607,9 @@ func (s *Service) ModelVersion() string {
 	return s.modelCatalog.Version
 }
 
-// AttributeIndex returns an index and status from the same publication. Later updates leave the returned index
-// intact.
+// AttributeIndex captures the prepared index and its administrative status
+// under one read lock. Later publications leave the retained index available,
+// and index searches copy their selected entries for caller mutation.
 func (s *Service) AttributeIndex() (modelcatalog.Index, AttributeSnapshot) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

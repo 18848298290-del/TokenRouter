@@ -11,7 +11,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestPricingConcurrentReadAndReload checks that concurrent readers see complete prices and can query after Stop.
+// Catalog queries can run while publication replaces the retained price map.
+// Readers compare related input and output rates from each returned record,
+// while metadata fixtures verify that successful updates replace identities
+// and rejected candidates retain the last publication.
+//
+// The concurrent case registers readers before alternating publications and
+// joins their work before stopping the service. Its atomic failure flag records
+// any mixed or missing price observed by a reader. Other cases keep canonical
+// metadata fallback separate from qualified prices and use declared modalities
+// instead of inferring them from model names.
+
+// TestPricingConcurrentReadAndReload registers readers before alternating two
+// price publications. Each observed price must retain its input/output
+// difference, and Stop must leave the retained publication queryable.
 func TestPricingConcurrentReadAndReload(t *testing.T) {
 	dir := t.TempDir()
 	first := filepath.Join(dir, "first.json")
@@ -22,6 +35,10 @@ func TestPricingConcurrentReadAndReload(t *testing.T) {
 	require.NoError(t, service.publishModelsCatalog(readCatalogTestFile(t, first), time.Now(), false))
 	var readers sync.WaitGroup
 	var inconsistent atomic.Bool
+	// Register readers before the alternating publication calls. Their atomic
+	// flag records mixed or missing rates if queries run across those
+	// replacements, and the fixture joins every registered reader before
+	// inspecting the flag.
 	for range 4 {
 		readers.Go(func() {
 			for range 200 {
@@ -41,14 +58,19 @@ func TestPricingConcurrentReadAndReload(t *testing.T) {
 		}
 		require.NoError(t, service.publishModelsCatalog(readCatalogTestFile(t, file), time.Now(), false))
 	}
+	// Join every reader before inspecting its recorded result and stopping the
+	// fixture, so the final flag check includes all queries completed by those
+	// registered readers.
 	readers.Wait()
 	require.False(t, inconsistent.Load())
 	service.Stop()
 	require.NotNil(t, service.GetModelPricing("model"))
 }
 
-// TestModelAttributesCanonicalFallbackKeepsPricing checks that public attribute lookup keeps provider prices
-// separate.
+// TestModelAttributesCanonicalFallbackKeepsPricing supplies relays sharing a
+// public author identity with different prices. Bare attributes must resolve
+// publicly while token prices remain unpriced until qualified, and exact relay
+// attributes retain their omissions.
 func TestModelAttributesCanonicalFallbackKeepsPricing(t *testing.T) {
 	remote := &catalogRemoteFixture{body: []byte(`{
 		"models":{"openai/gpt-image-2.5-flare":{
@@ -76,8 +98,9 @@ func TestModelAttributesCanonicalFallbackKeepsPricing(t *testing.T) {
 	require.InDelta(t, 1e-6, s.GetModelPricing("azure/gpt-image-2.5-flare").InputCostPerToken, 1e-12)
 }
 
-// TestDirectoryReaderTracksPublishedVersion checks successful metadata updates and retention after invalid
-// catalog input.
+// TestDirectoryReaderTracksPublishedVersion publishes another model identity
+// and then submits invalid bytes. Successful updates must replace names and
+// version, while rejection retains the last version and its model metadata.
 func TestDirectoryReaderTracksPublishedVersion(t *testing.T) {
 	remote := &catalogRemoteFixture{body: []byte(modelsCatalogFixture), etag: "v1"}
 	service := NewService(Options{RemoteURL: "https://models.dev/catalog.json", DataDir: t.TempDir()}, remote)
@@ -87,6 +110,9 @@ func TestDirectoryReaderTracksPublishedVersion(t *testing.T) {
 	require.Equal(t, "Claude", *service.ModelEntry("claude-test").Attributes.DisplayName)
 	require.Nil(t, service.ModelEntry("unknown-model").Attributes.DisplayName)
 	remote.mu.Lock()
+	// Replace response bytes and validator together before the next
+	// synchronous update reads them, keeping the fixture's downloaded identity
+	// tied to that response version.
 	remote.body = []byte(`{"providers":{"anthropic":{"models":{"claude-new":{"name":"New name"}}}}}`)
 	remote.etag = "v2"
 	remote.mu.Unlock()
@@ -103,7 +129,9 @@ func TestDirectoryReaderTracksPublishedVersion(t *testing.T) {
 	require.Equal(t, "New name", *service.ModelEntry("claude-new").Attributes.DisplayName)
 }
 
-// TestOutputModalityMetadata checks full-ID modality lookup and unknown values for missing metadata.
+// TestOutputModalityMetadata uses explicit image and text declarations on
+// arbitrarily named models. Returned modalities must follow catalog fields,
+// and a record with no declaration must retain an unknown output list.
 func TestOutputModalityMetadata(t *testing.T) {
 	remote := &catalogRemoteFixture{body: []byte(`{"providers":{"google":{"models":{"arbitrary-output":{"name":"Image","modalities":{"output":["image"]}},"gemini-text-image-name":{"name":"Text","modalities":{"output":["text"]}},"unknown":{"name":"Unknown"}}}}}`)}
 	service := NewService(Options{RemoteURL: "https://models.dev/catalog.json", DataDir: t.TempDir()}, remote)

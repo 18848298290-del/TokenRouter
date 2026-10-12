@@ -8,7 +8,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/modelcatalog"
 )
 
-// OfflineView returns a fixed test snapshot built from the embedded catalog and supplements.
+// Tests can share the embedded catalog when they need real metadata, or use
+// an editable fixture for controlled model identities. The shared view is
+// built once with attribute supplements, while fixture entries and versions
+// remain under each test's control.
+
+// OfflineView returns a fixed test view built once from embedded catalog and
+// official attribute supplements, panicking on invalid inputs.
 var OfflineView = sync.OnceValue(func() modelcatalog.View {
 	body, err := modelcatalog.Offline()
 	if err != nil {
@@ -22,6 +28,9 @@ var OfflineView = sync.OnceValue(func() modelcatalog.View {
 	if err := json.Unmarshal(modelcatalog.Supplements(), &supplements); err != nil {
 		panic(err)
 	}
+	// Apply exact supplement keys before equivalent first party aliases, giving
+	// each explicitly named entry priority before missing fields on its aliases
+	// are filled.
 	for model, value := range supplements {
 		if err := catalog.ApplyAttributeSupplement(model, value); err != nil {
 			panic(err)
@@ -39,11 +48,13 @@ var OfflineView = sync.OnceValue(func() modelcatalog.View {
 
 // Catalog supplies test entries and a replaceable version for catalog consumers.
 type Catalog struct {
-	Entries map[string]modelcatalog.Entry
-	Version string
+	Entries map[string]modelcatalog.Entry // editable test model metadata
+	Version string                        // test controlled publication version
 }
 
-// New constructs a catalog containing the supplied IDs, using each ID as its display name.
+// New constructs an editable fixture containing the supplied exact IDs.
+// Each ID also supplies its initial display name, and the initial version is
+// test; callers can replace entries or the version afterward.
 func New(ids ...string) *Catalog {
 	c := &Catalog{Entries: map[string]modelcatalog.Entry{}, Version: "test"}
 	for _, id := range ids {
@@ -53,7 +64,9 @@ func New(ids ...string) *Catalog {
 	return c
 }
 
-// ModelIDs returns fixture candidates sorted by ID.
+// ModelIDs returns a fresh list of fixture identities sorted by ID.
+// Callers can mutate that slice independently, and its strings reflect the
+// fixture entries present when this method runs.
 func (c *Catalog) ModelIDs() []string {
 	ids := []string{}
 	for id := range c.Entries {
@@ -63,8 +76,10 @@ func (c *Catalog) ModelIDs() []string {
 	return ids
 }
 
-// ModelEntry returns the metadata declared by the test.
+// ModelEntry returns the exact fixture entry or a zero entry when missing.
+// Mutable values are shared with Entries, so tests that change returned data
+// also change the stored fixture.
 func (c *Catalog) ModelEntry(id string) modelcatalog.Entry { return c.Entries[id] }
 
-// ModelVersion returns the version controlled by the test.
+// ModelVersion returns the catalog publication version controlled by the test.
 func (c *Catalog) ModelVersion() string { return c.Version }

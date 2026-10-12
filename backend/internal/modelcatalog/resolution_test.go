@@ -6,6 +6,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Route metadata changes with authentication, endpoint, site, and protocol
+// even when a model name stays the same. The fixtures exercise platform
+// patches, conditional request state, administrator overrides, converter
+// restrictions, complete identity lookup, and cache key inputs together.
+
+// TestViewResolvePlatformCapabilities resolves known models across service
+// variants and one unknown model. Each route must return its asserted controls,
+// limits, and encoding flags from the retained catalog and platform rules.
 func TestViewResolvePlatformCapabilities(t *testing.T) {
 	body, err := Offline()
 	require.NoError(t, err)
@@ -13,9 +21,9 @@ func TestViewResolvePlatformCapabilities(t *testing.T) {
 	require.NoError(t, err)
 	view := catalog.View()
 	tests := []struct {
-		name   string
-		target Target
-		check  func(*testing.T, Resolution)
+		name   string                       // named service capability scenario
+		target Target                       // input model route fields
+		check  func(*testing.T, Resolution) // scenario specific attribute assertions
 	}{
 		{"openai max", Target{Platform: "openai", ProviderType: "apikey", Model: "gpt-5.6-sol"}, func(t *testing.T, result Resolution) {
 			require.Equal(t, valuePointer(true), result.Attributes.EffortSupport("max"))
@@ -94,6 +102,10 @@ func TestViewResolvePlatformCapabilities(t *testing.T) {
 	}
 }
 
+// TestViewResolveConditionsAndOverride changes request effort and then clears
+// the condition through administrator attributes. Display attributes remain
+// reusable, configured output limits retain their source, and later default
+// resolutions retain the catalog value.
 func TestViewResolveConditionsAndOverride(t *testing.T) {
 	body, err := Offline()
 	require.NoError(t, err)
@@ -112,6 +124,10 @@ func TestViewResolveConditionsAndOverride(t *testing.T) {
 	require.Equal(t, 128000, *catalog.View().Resolve(target, Attributes{}).Attributes.OutputLimit)
 }
 
+// TestViewResolveQoderRoutes resolves public aliases through their site route
+// keys and compares a shared key across sites. Input limits, reasoning controls,
+// and text modalities must follow the route, while unknown keys retain default
+// input limits and unknown catalog metadata.
 func TestViewResolveQoderRoutes(t *testing.T) {
 	body, err := Offline()
 	require.NoError(t, err)
@@ -141,6 +157,10 @@ func TestViewResolveQoderRoutes(t *testing.T) {
 	require.Nil(t, unknown.Attributes.ReasoningOptions)
 }
 
+// TestViewServiceIdentityAndPublicSupplements uses Google resource paths and
+// supplemented public TypeSafe metadata. Vertex service limits and outbound
+// spellings must remain intact, while a returned context mutation leaves
+// subsequent context lookups unchanged.
 func TestViewServiceIdentityAndPublicSupplements(t *testing.T) {
 	catalog, err := Parse([]byte(`{"providers":{"google":{"models":{"gemini-sample":{"limit":{"context":100},"reasoning_options":[]}}},"google-vertex":{"models":{"gemini-sample":{"limit":{"context":50}}}},"relay":{"models":{"typesafe/jev-latest":{"limit":{"context":2},"structured_output":false}}}},"models":{"typesafe/jev-latest":{"limit":{"context":64},"structured_output":true}}}`))
 	require.NoError(t, err)
@@ -161,6 +181,10 @@ func TestViewServiceIdentityAndPublicSupplements(t *testing.T) {
 	require.Nil(t, view.Resolve(Target{Platform: "gemini", Model: "custom/models/gemini-sample"}, Attributes{}).Attributes.Context)
 }
 
+// TestViewPlatformRulesDoNotInferFutureModels resolves unregistered future
+// names from a fixed embedded catalog version. Context, reasoning, media, cache,
+// and tool search declarations must remain unknown despite recognizable model
+// family prefixes.
 func TestViewPlatformRulesDoNotInferFutureModels(t *testing.T) {
 	body, err := Offline()
 	require.NoError(t, err)
@@ -186,6 +210,10 @@ func TestViewPlatformRulesDoNotInferFutureModels(t *testing.T) {
 	}
 }
 
+// TestViewAdapterLimitsIntersectOverrides supplies broad or cleared modalities
+// before selecting converter routes. Qoder, text, image, and batch restrictions
+// must narrow those values, and OAuth image input fidelity remains disabled
+// after an administrator override.
 func TestViewAdapterLimitsIntersectOverrides(t *testing.T) {
 	view := View{}
 	for _, modalities := range [][]string{{"text", "image"}, {"image"}, {}} {
@@ -208,12 +236,18 @@ func TestViewAdapterLimitsIntersectOverrides(t *testing.T) {
 	require.Equal(t, valuePointer(false), oauthImage.Attributes.Media.InputFidelity)
 }
 
+// TestViewRecognizesOfficialCompatibleServices presents official endpoints
+// through the OpenAI API-compatible platform. Resolved service identities, sites,
+// limits, and modalities must match their own catalog entries, while a custom
+// Kimi relay has no recognized service.
 func TestViewRecognizesOfficialCompatibleServices(t *testing.T) {
 	body, err := Offline()
 	require.NoError(t, err)
 	catalog, err := Parse(body)
 	require.NoError(t, err)
-	for _, tc := range []struct{ url, mode, model, service, site string }{
+	for _, tc := range []struct {
+		url, mode, model, service, site string /* configured endpoint URL, configured provider mode, complete outbound model, expected catalog service, expected service site */
+	}{
 		{"https://api.kimi.com/coding/v1", "", "k3-256k", "kimi-code-plan-cn", "cn"},
 		{"https://api.kimi.ai/coding/v1", "", "kimi-for-coding-highspeed", "kimi-code-plan-global", "global"},
 		{"https://api.moonshot.ai/v1", "", "kimi-k3", "moonshotai", "global"},
@@ -240,6 +274,10 @@ func TestViewRecognizesOfficialCompatibleServices(t *testing.T) {
 	require.Nil(t, legacy.Attributes.Conditions)
 }
 
+// TestTargetAttributeKeyPreservesServiceAndExecutionRules changes route fields
+// after comparing two unknown relay addresses. Attribute keys can share unknown
+// relay metadata, while service recognition and every asserted execution input
+// keep distinct attribute resolutions separate.
 func TestTargetAttributeKeyPreservesServiceAndExecutionRules(t *testing.T) {
 	base := Target{Platform: "openai", ProviderType: "apikey", Model: "model", BaseURL: "https://relay-a.example/v1"}
 	otherRelay := base

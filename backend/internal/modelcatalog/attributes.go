@@ -10,46 +10,75 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/locale"
 )
 
-// Attributes describes model properties and configurable capabilities. Pointers distinguish unknown, false,
-// and empty values.
+// Model attributes distinguish an unknown capability from an explicit false or
+// empty value. Supplements fill missing fields, while administrator patches
+// replace populated fields and return copies for request and display consumers.
+// An empty modality list therefore remains a meaningful restriction after a
+// merge and blocks values from a lower priority source.
+//
+// A displayed model can have several requestable routes with different limits
+// and conditions. Common combines their restrictions, retains the smallest
+// known limits, and disables a conditional capability when the routes have no
+// compatible request state. Its difference flag records any disagreement with
+// the first route, even when the displayed common values remain unchanged.
+
+// Attributes describes model properties and capabilities with optional overrides.
 // @project-doc docs/interfaces/model_catalog_and_marketplace.md#model_attributes
 type Attributes struct {
-	DisplayNameLocalization *locale.Update[string] `json:"display_name_localization,omitempty"`
-	DisplayName             *string                `json:"display_name,omitempty"`
-	Context                 *int                   `json:"context,omitempty"`
-	InputLimit              *int                   `json:"input_limit,omitempty"`
-	OutputLimit             *int                   `json:"output_limit,omitempty"`
-	InputModalities         *[]string              `json:"input_modalities,omitempty"`
-	OutputModalities        *[]string              `json:"output_modalities,omitempty"`
-	Reasoning               *bool                  `json:"reasoning,omitempty"`
-	ToolCall                *bool                  `json:"tool_call,omitempty"`
-	StructuredOutput        *bool                  `json:"structured_output,omitempty"`
-	Temperature             *bool                  `json:"temperature,omitempty"`
-	Attachment              *bool                  `json:"attachment,omitempty"`
-	TopP                    *bool                  `json:"top_p,omitempty"`
-	ReasoningOptions        *[]ReasoningOption     `json:"reasoning_options,omitempty"`
-	Interleaved             *Interleaved           `json:"interleaved,omitempty"`
-	Conditions              *ParameterConditions   `json:"conditions,omitempty"`
-	Media                   *MediaCapabilities     `json:"media,omitempty"`
+	// DisplayNameLocalization, DisplayName, Context, InputLimit, OutputLimit,
+	// InputModalities, OutputModalities, Reasoning, ToolCall, StructuredOutput,
+	// Temperature, Attachment, TopP, ReasoningOptions, Interleaved, Conditions,
+	// and Media distinguish missing information from supplied values. Merge
+	// inherits nil fields and preserves explicit false values and empty lists.
+	// Validate requires supplied Context, InputLimit, and OutputLimit to be
+	// positive token counts.
+	DisplayNameLocalization *locale.Update[string] `json:"display_name_localization,omitempty"` // localized display name edits
+	DisplayName             *string                `json:"display_name,omitempty"`              // default model display name
+	Context                 *int                   `json:"context,omitempty"`                   // tokens
+	InputLimit              *int                   `json:"input_limit,omitempty"`               // tokens
+	OutputLimit             *int                   `json:"output_limit,omitempty"`              // tokens
+	InputModalities         *[]string              `json:"input_modalities,omitempty"`          // accepted input modality names
+	OutputModalities        *[]string              `json:"output_modalities,omitempty"`         // produced output modality names
+	Reasoning               *bool                  `json:"reasoning,omitempty"`                 // model reasoning capability flag
+	ToolCall                *bool                  `json:"tool_call,omitempty"`                 // tool call capability flag
+	StructuredOutput        *bool                  `json:"structured_output,omitempty"`         // structured output capability flag
+	Temperature             *bool                  `json:"temperature,omitempty"`               // temperature parameter capability flag
+	Attachment              *bool                  `json:"attachment,omitempty"`                // attachment input capability flag
+	TopP                    *bool                  `json:"top_p,omitempty"`                     // top_p parameter capability flag
+	ReasoningOptions        *[]ReasoningOption     `json:"reasoning_options,omitempty"`         // configurable reasoning control choices
+	Interleaved             *Interleaved           `json:"interleaved,omitempty"`               // interleaved reasoning representation choice
+	Conditions              *ParameterConditions   `json:"conditions,omitempty"`                // request state capability restrictions
+	Media                   *MediaCapabilities     `json:"media,omitempty"`                     // media adapter parameter capabilities
 }
 
 // Presentation contains model metadata for display; it does not authorize gateway requests.
 type Presentation struct {
-	SearchTerms            []string           `json:"search_terms,omitempty"`
-	LocalizationResolution *locale.Resolution `json:"localization_resolution,omitempty"`
-	Attributes
-	RouteDifferences bool `json:"route_differences,omitempty"`
+	SearchTerms            []string           `json:"search_terms,omitempty"`            // alternate model search terms
+	LocalizationResolution *locale.Resolution `json:"localization_resolution,omitempty"` // selected display name language
+	Attributes                                // effective model display attributes
+	RouteDifferences       bool               `json:"route_differences,omitempty"` // differing requestable route attributes
 }
 
-// fields copies optional values through JSON so display consumers cannot mutate the catalog snapshot.
+// fields serializes populated attributes into separate JSON field values for
+// supplement precedence checks. The fixed scalar, string, slice, and map field
+// types are JSON encodable, so encoding and decoding errors are discarded here.
 func (a Attributes) fields() map[string]json.RawMessage {
+	// Compare JSON field presence so explicit false values and empty lists still
+	// block a supplement from replacing information supplied by the catalog.
 	body, _ := json.Marshal(a)
 	var fields map[string]json.RawMessage
 	_ = json.Unmarshal(body, &fields)
 	return fields
 }
 
-// Merge applies populated patch fields and inherits missing fields. Lists are replaced as a whole.
+// Merge applies populated patch fields and returns attributes whose mutable
+// values are copied from both inputs. Nil patch fields inherit their base
+// values, while explicit false values and empty lists replace them.
+//
+// Media has its own field merge so a patch can replace image sizes while
+// retaining an existing reference limit. The final clone separates pointers,
+// slices, condition maps, and localization edits from the inputs before a
+// request or display consumer receives the result.
 func Merge(base, patch Attributes) Attributes {
 	if patch.DisplayNameLocalization != nil {
 		base.DisplayNameLocalization = patch.DisplayNameLocalization
@@ -103,12 +132,19 @@ func Merge(base, patch Attributes) Attributes {
 	return base.Clone()
 }
 
-// ApplyAttributeSupplement fills missing attributes from a model supplement.
-// Catalog false values and empty lists take precedence. Relay entries retain their own attributes.
+// ApplyAttributeSupplement fills missing metadata from a validated supplement
+// and records local_supplement as each newly populated field's source. Catalog
+// false values and empty lists remain authoritative because their fields are
+// present in the serialized attributes.
+//
+// The supplement's provider must match an existing entry when specified.
+// Ambiguous bare names are skipped, while a matching public entry can still
+// receive missing metadata. A previously unknown, unambiguous model gains an
+// attribute entry so it can be displayed even when no price is supplied.
 func (c *Catalog) ApplyAttributeSupplement(model string, body json.RawMessage) error {
 	var supplement struct {
-		Provider   string      `json:"provider"`
-		Attributes *Attributes `json:"attributes"`
+		Provider   string      `json:"provider"`   // optional owning catalog provider
+		Attributes *Attributes `json:"attributes"` // supplemental model capability values
 	}
 	if err := json.Unmarshal(body, &supplement); err != nil {
 		return fmt.Errorf("invalid model supplement %s: %w", model, err)
@@ -125,6 +161,8 @@ func (c *Catalog) ApplyAttributeSupplement(model string, body json.RawMessage) e
 		c.publicEntries[key] = public
 	}
 	entry, exists := c.Entries[key]
+	// Provider conflicts and ambiguous bare names have no unique metadata owner.
+	// Keep their existing attributes so a supplement cannot attach another service's capabilities.
 	if c.Ambiguous[key] || (exists && supplement.Provider != "" && entry.Provider != supplement.Provider) {
 		return nil
 	}
@@ -135,6 +173,9 @@ func (c *Catalog) ApplyAttributeSupplement(model string, body json.RawMessage) e
 	return nil
 }
 
+// fillAttributeSupplement fills missing entry attributes and copies source
+// labels before updating them. Populated catalog fields keep their labels, and
+// the merged attributes are independently mutable by the returned entry.
 func fillAttributeSupplement(entry Entry, attributes Attributes) Entry {
 	known := entry.Attributes.fields()
 	entry.AttributeSources = maps.Clone(entry.AttributeSources)
@@ -150,7 +191,10 @@ func fillAttributeSupplement(entry Entry, attributes Attributes) Entry {
 	return entry
 }
 
-// Validate checks administrator input. The catalog parser converts zero limits to unknown values.
+// Validate rejects invalid administrator capabilities, nonpositive token
+// limits, and duplicate or unsupported modalities. Nil fields and empty
+// modality lists are valid inputs that retain their inheritance and clearing
+// meanings during Merge.
 func (a Attributes) Validate() error {
 	if err := validateCapabilities(a); err != nil {
 		return err
@@ -175,8 +219,19 @@ func (a Attributes) Validate() error {
 	return nil
 }
 
-// Common returns shared capabilities and the smallest known limits across requestable routes for display and
-// export.
+// Common combines requestable route capabilities and reports whether any
+// route differs from the first. Empty input returns unknown attributes and a
+// false difference flag; the result's mutable values are copied.
+//
+// Known limits contribute their minimum even when another route's limit is
+// unknown. Capabilities use false when any route rejects them, and otherwise
+// remain unknown when a route has no information. Contradictory conditions
+// disable their parameter, while modality and reasoning choices retain their
+// intersection for display and configuration export.
+//
+// A display name survives when every route supplies the same name, and
+// interleaving survives when its representations are equal. Localization edits
+// retain the first route's value; callers resolve the display language separately.
 func Common(values []Attributes) (Attributes, bool) {
 	if len(values) == 0 {
 		return Attributes{}, false
@@ -198,6 +253,8 @@ func Common(values []Attributes) (Attributes, bool) {
 		result.ReasoningOptions = commonReasoningOptions(result.ReasoningOptions, value.ReasoningOptions)
 		var unavailable []string
 		result.Conditions, unavailable = commonConditions(result.Conditions, value.Conditions)
+		// Contradictory request conditions leave no state supported by both routes.
+		// Disable those parameters so exports cannot promise an unusable shared capability.
 		for _, field := range unavailable {
 			switch field {
 			case "temperature":
@@ -221,6 +278,9 @@ func Common(values []Attributes) (Attributes, bool) {
 	return result.Clone(), different
 }
 
+// minimum selects the smaller known limit, borrowing the selected input
+// pointer. Nil means unknown; callers that expose mutable results copy the
+// pointer before returning it to consumers.
 func minimum(a, b *int) *int {
 	if a == nil {
 		return b
@@ -231,6 +291,9 @@ func minimum(a, b *int) *int {
 	return a
 }
 
+// commonBool combines support declarations, with false taking precedence over
+// unknown. A supported result borrows a's pointer, so consumers that mutate
+// aggregate attributes use Clone before exposing them.
 func commonBool(a, b *bool) *bool {
 	if a != nil && !*a || b != nil && !*b {
 		value := false
@@ -242,6 +305,9 @@ func commonBool(a, b *bool) *bool {
 	return a
 }
 
+// intersection returns shared choices in the left input's order using a new
+// slice. An unknown input returns nil; known inputs with no shared choice
+// produce an explicitly empty list.
 func intersection(a, b *[]string) *[]string {
 	if a == nil || b == nil {
 		return nil

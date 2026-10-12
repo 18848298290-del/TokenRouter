@@ -9,44 +9,86 @@ import (
 	"slices"
 )
 
-// ReasoningOption describes a reasoning toggle, effort level, or token budget. A nil level selects the
-// provider default.
+// Capability lists can be unknown or explicitly empty, and JSON must retain
+// that difference when administrator rules are stored and returned. Media list
+// encoding restores empty arrays omitted by ordinary omitempty serialization;
+// interleaved reasoning accepts either a boolean declaration or a named field
+// representation used by adapters.
+//
+// Shared route capabilities depend on both control choices and their request
+// conditions. Effort choices are intersected, budget ranges use the largest
+// minimum and smallest maximum, and incompatible ranges disappear. Conditions
+// combine thinking state and effort restrictions; contradictory states mark
+// the affected parameter unavailable so Common can disable its capability.
+
+// ReasoningOption describes a configurable toggle, effort choice, or token budget.
 type ReasoningOption struct {
-	Type   string    `json:"type"`
+	Type string `json:"type"` // toggle, effort, or budget_tokens
+	// Values enumerates effort levels; a nil element represents the provider's
+	// default choice. Validate rejects Values for toggles and token budgets.
 	Values []*string `json:"values,omitempty"`
-	Min    *int      `json:"min,omitempty"`
-	Max    *int      `json:"max,omitempty"`
+	// Min and Max bound budget_tokens options and are absent for other control
+	// types. Validate accepts Min down to -1, rejects negative Max, and checks
+	// the ordering when both endpoints are supplied.
+	Min *int `json:"min,omitempty"` // tokens
+	Max *int `json:"max,omitempty"` // tokens
 }
 
-// Interleaved represents catalog true values or a named reasoning field.
+// Interleaved represents a boolean declaration or named reasoning output field.
 type Interleaved struct {
+	// Field names reasoning_content or reasoning_details in object encodings.
+	// An empty field marshals as true to retain the catalog's boolean representation.
 	Field string `json:"field,omitempty"`
 }
 
-// ParameterCondition limits a parameter to request states satisfying all supplied conditions.
+// ParameterCondition limits a parameter to request states satisfying all
+// supplied conditions.
 type ParameterCondition struct {
-	Efforts  []string `json:"efforts,omitempty"`
-	Thinking *bool    `json:"thinking,omitempty"`
+	// Efforts and Thinking restrict the same request state and are combined
+	// conjunctively by ForRequest. An empty Efforts list leaves effort
+	// unrestricted; a nil Thinking value leaves the thinking state unrestricted.
+	Efforts  []string `json:"efforts,omitempty"`  // allowed request effort values
+	Thinking *bool    `json:"thinking,omitempty"` // required request thinking state
 }
 
+// ParameterConditions maps configurable sampling and tool parameters to
+// request restrictions.
 type ParameterConditions map[string]ParameterCondition
 
-// MediaCapabilities contains media operations and parameters implemented by the adapters.
+// MediaCapabilities contains media operations and parameters implemented by
+// the adapters.
 type MediaCapabilities struct {
-	VideoOperations    []string `json:"video_operations,omitempty"`
-	VideoParameters    []string `json:"video_parameters,omitempty"`
-	ImageSizes         []string `json:"image_sizes,omitempty"`
-	AspectRatios       []string `json:"aspect_ratios,omitempty"`
-	Qualities          []string `json:"qualities,omitempty"`
-	BackgroundOptions  []string `json:"background_options,omitempty"`
-	OutputFormats      []string `json:"output_formats,omitempty"`
-	MaxReferenceImages *int     `json:"max_reference_images,omitempty"`
-	MaxOutputCount     *int     `json:"max_output_count,omitempty"`
-	InputFidelity      *bool    `json:"input_fidelity,omitempty"`
+	// VideoOperations, VideoParameters, ImageSizes, AspectRatios, Qualities,
+	// BackgroundOptions, and OutputFormats inherit when nil. Populated empty lists
+	// clear the corresponding choices during Merge, and MarshalJSON retains those
+	// clears as empty arrays for administrator rule round trips.
+	VideoOperations    []string `json:"video_operations,omitempty"`     // supported video operation names
+	VideoParameters    []string `json:"video_parameters,omitempty"`     // supported video parameter names
+	ImageSizes         []string `json:"image_sizes,omitempty"`          // supported image size labels
+	AspectRatios       []string `json:"aspect_ratios,omitempty"`        // supported image aspect ratios
+	Qualities          []string `json:"qualities,omitempty"`            // supported image quality names
+	BackgroundOptions  []string `json:"background_options,omitempty"`   // supported image background choices
+	OutputFormats      []string `json:"output_formats,omitempty"`       // supported media output formats
+	MaxReferenceImages *int     `json:"max_reference_images,omitempty"` // maximum input image count
+	MaxOutputCount     *int     `json:"max_output_count,omitempty"`     // maximum output item count
+	// InputFidelity declares whether the image parameter is supported. A false
+	// value makes PrepareModelAttributeParameters remove input_fidelity from
+	// OpenAI image tools.
+	InputFidelity *bool `json:"input_fidelity,omitempty"`
 }
 
-// MarshalJSON distinguishes unset lists from lists explicitly cleared by an administrator.
+// MarshalJSON encodes media capabilities while retaining populated empty
+// lists as JSON arrays. Nil lists remain absent so persisted rules can inherit
+// from their catalog or platform source on their next merge.
+//
+// Ordinary omitempty encoding removes both kinds of empty list. The encoder
+// first produces the scalar representation, then restores arrays for each
+// supplied empty list, including video controls. This lets administrator clears
+// survive serialization and subsequent attribute resolution.
 func (m MediaCapabilities) MarshalJSON() ([]byte, error) {
+	// plain is the media representation used before restoring explicit empty lists.
+	// Its distinct type prevents recursive marshaling while retaining the same
+	// fields for the initial omitempty encoding.
 	type plain MediaCapabilities
 	body, err := json.Marshal(plain(m))
 	if err != nil {
@@ -56,6 +98,8 @@ func (m MediaCapabilities) MarshalJSON() ([]byte, error) {
 	if err := json.Unmarshal(body, &fields); err != nil {
 		return nil, err
 	}
+	// Restore lists deliberately cleared by the administrator after omitempty
+	// encoding, so their next merge replaces inherited choices with an empty set.
 	for name, values := range map[string][]string{
 		"image_sizes": m.ImageSizes, "aspect_ratios": m.AspectRatios,
 		"qualities": m.Qualities, "background_options": m.BackgroundOptions, "output_formats": m.OutputFormats, "video_operations": m.VideoOperations, "video_parameters": m.VideoParameters,
@@ -67,22 +111,28 @@ func (m MediaCapabilities) MarshalJSON() ([]byte, error) {
 	return json.Marshal(fields)
 }
 
+// MarshalJSON encodes interleaving as true when no output field is named.
+// A named field produces an object representation so adapters can select the
+// corresponding reasoning output format after decoding.
 func (v Interleaved) MarshalJSON() ([]byte, error) {
 	if v.Field == "" {
 		return []byte("true"), nil
 	}
 	return json.Marshal(struct {
-		Field string `json:"field"`
+		Field string `json:"field"` // named reasoning output field
 	}{v.Field})
 }
 
+// UnmarshalJSON reads the catalog's boolean true or a supported reasoning
+// field object. False, null, and unknown field names are rejected; the receiver
+// is updated after a recognized representation is decoded.
 func (v *Interleaved) UnmarshalJSON(body []byte) error {
 	if bytes.Equal(bytes.TrimSpace(body), []byte("true")) {
 		v.Field = ""
 		return nil
 	}
 	var value struct {
-		Field string `json:"field"`
+		Field string `json:"field"` // decoded reasoning output field
 	}
 	if err := json.Unmarshal(body, &value); err != nil {
 		return err
@@ -94,7 +144,15 @@ func (v *Interleaved) UnmarshalJSON(body []byte) error {
 	return nil
 }
 
-// EffortSupport reports declared support for an effort level; nil means support is unknown.
+// EffortSupport reports declared support for an effort level using the
+// reasoning flag and available control options together. An explicit false
+// reasoning flag rejects every effort, including choices still present in the
+// option list.
+//
+// Nil ReasoningOptions returns unknown support, while an explicit empty list
+// rejects the effort. A populated list accepts an exact nonnil effort value
+// from an effort option; nil values denote provider defaults and therefore do
+// not match an effort string.
 func (a Attributes) EffortSupport(effort string) *bool {
 	if a.Reasoning != nil && !*a.Reasoning {
 		return valuePointer(false)
@@ -115,6 +173,9 @@ func (a Attributes) EffortSupport(effort string) *bool {
 	return valuePointer(false)
 }
 
+// Efforts returns configured nonnil effort strings in their declared order.
+// Explicitly disabled reasoning returns nil, and provider default choices
+// represented by nil pointers are omitted from the returned list.
 func (a Attributes) Efforts() []string {
 	if a.Reasoning != nil && !*a.Reasoning {
 		return nil
@@ -134,6 +195,9 @@ func (a Attributes) Efforts() []string {
 	return result
 }
 
+// ReasoningBudget returns the first budget_tokens option's endpoints, or nil
+// endpoints when no such option exists. The pointers belong to the attributes;
+// callers treat them as read-only or clone before mutation.
 func (a Attributes) ReasoningBudget() (minimum, maximum *int) {
 	if a.ReasoningOptions != nil {
 		for _, option := range *a.ReasoningOptions {
@@ -145,10 +209,16 @@ func (a Attributes) ReasoningBudget() (minimum, maximum *int) {
 	return nil, nil
 }
 
+// HasReasoningOption reports whether the configured controls include the
+// requested kind.
 func (a Attributes) HasReasoningOption(kind string) bool {
 	return a.ReasoningOptions != nil && slices.ContainsFunc(*a.ReasoningOptions, func(option ReasoningOption) bool { return option.Type == kind })
 }
 
+// validateCapabilities rejects duplicate controls, unsupported effort names,
+// inconsistent budgets, unknown conditional parameters, and negative media
+// counts. Optional fields can remain unset, while explicit empty control lists
+// and zero media counts are valid.
 func validateCapabilities(a Attributes) error {
 	if a.ReasoningOptions != nil {
 		seen := map[string]bool{}
@@ -208,6 +278,15 @@ func validateCapabilities(a Attributes) error {
 	return nil
 }
 
+// commonReasoningOptions intersects controls declared by both routes and
+// returns nil when either control list is unknown. An explicit empty list
+// remains known and produces an empty intersection.
+//
+// Effort values retain the left route's order, including shared nil defaults.
+// Budget endpoints are narrowed to the largest known minimum and smallest
+// known maximum, and an empty budget range removes that control. Returned
+// endpoint pointers and effort values can borrow their inputs; Common clones
+// the final attributes before exposing mutable aggregate data.
 func commonReasoningOptions(a, b *[]ReasoningOption) *[]ReasoningOption {
 	if a == nil || b == nil {
 		return nil
@@ -231,6 +310,9 @@ func commonReasoningOptions(a, b *[]ReasoningOption) *[]ReasoningOption {
 				option.Min = maximum(left.Min, right.Min)
 				option.Max = minimum(left.Max, right.Max)
 				if option.Min != nil && option.Max != nil && *option.Min > *option.Max {
+					// Disjoint budget ranges offer no value executable on both
+					// routes. Omit this control so the common attributes cannot
+					// advertise an impossible budget.
 					continue
 				}
 			}
@@ -240,6 +322,15 @@ func commonReasoningOptions(a, b *[]ReasoningOption) *[]ReasoningOption {
 	return &result
 }
 
+// commonConditions combines parameter restrictions and returns the names
+// whose restrictions cannot coexist. With two unknown inputs it returns nil
+// conditions; a restriction supplied by either known route is retained.
+//
+// Shared thinking requirements must agree, and populated effort requirements
+// use their intersection. An empty effort requirement is unrestricted, so it
+// adopts the other route's restriction. Contradictions remove the parameter's
+// condition and report its name separately, allowing Common to disable that
+// capability rather than interpreting a missing condition as unrestricted.
 func commonConditions(a, b *ParameterConditions) (*ParameterConditions, []string) {
 	result := ParameterConditions{}
 	if a != nil {
@@ -254,6 +345,9 @@ func commonConditions(a, b *ParameterConditions) (*ParameterConditions, []string
 				continue
 			}
 			if prior.Thinking != nil && condition.Thinking != nil && *prior.Thinking != *condition.Thinking {
+				// Opposite thinking requirements cannot be satisfied by one
+				// request. Report the parameter as unavailable so Common also
+				// disables its capability flag.
 				unavailable = append(unavailable, key)
 				delete(result, key)
 				continue
@@ -267,6 +361,9 @@ func commonConditions(a, b *ParameterConditions) (*ParameterConditions, []string
 				} else {
 					condition.Efforts = commonStrings(prior.Efforts, condition.Efforts)
 					if len(condition.Efforts) == 0 {
+						// Both routes constrain effort but have no accepted value
+						// in common. Report the parameter for disabling instead of
+						// leaving an unrestricted empty condition.
 						unavailable = append(unavailable, key)
 						delete(result, key)
 						continue
@@ -282,6 +379,9 @@ func commonConditions(a, b *ParameterConditions) (*ParameterConditions, []string
 	return &result, unavailable
 }
 
+// commonMedia combines known media choices and limits through the same
+// helpers used by Common. Either unknown media input returns nil; the result
+// can borrow count pointers until the final attribute clone.
 func commonMedia(a, b *MediaCapabilities) *MediaCapabilities {
 	if a == nil || b == nil {
 		return nil
@@ -295,6 +395,9 @@ func commonMedia(a, b *MediaCapabilities) *MediaCapabilities {
 	}
 }
 
+// commonStrings intersects known lists in the left input's order using new
+// slice storage. Either nil input makes the result unknown; populated lists
+// with no common value retain an empty result.
 func commonStrings(a, b []string) []string {
 	if a == nil || b == nil {
 		return nil
@@ -302,6 +405,9 @@ func commonStrings(a, b []string) []string {
 	return *intersection(&a, &b)
 }
 
+// maximum selects the larger known endpoint, borrowing its input pointer.
+// A nil endpoint is unknown, so the other endpoint wins; callers copy the
+// selected pointer before exposing mutable attributes.
 func maximum(a, b *int) *int {
 	if a == nil || b != nil && *b > *a {
 		return b
@@ -309,4 +415,5 @@ func maximum(a, b *int) *int {
 	return a
 }
 
+// valuePointer returns a pointer to a copied value for optional attributes.
 func valuePointer[T any](value T) *T { return &value }

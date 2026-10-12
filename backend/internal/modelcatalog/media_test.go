@@ -6,11 +6,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Registered media models expose different image sizes and reference limits.
+// Platform fixtures cover those differences together with input fidelity,
+// video operations, and unknown Gemini and Grok suffixes that must remain
+// outside their parameter registrations.
+
+// TestMediaForModelRegisteredParameters checks image and video registrations
+// across supported platforms. The returned sizes, reference counts, and special
+// flags must match each model, while unregistered suffixes return nil.
 func TestMediaForModelRegisteredParameters(t *testing.T) {
 	for _, tc := range []struct {
-		platform, model string
-		sizes           []string
-		references      int
+		platform, model string   // platform and exact model identity
+		sizes           []string // expected supported image sizes
+		references      int      // expected reference image limit
 	}{
 		{"openai", "gpt-image-1", []string{"1K", "2K"}, 16},
 		{"openai", "gpt-image-1-mini", []string{"1K", "2K"}, 16},
