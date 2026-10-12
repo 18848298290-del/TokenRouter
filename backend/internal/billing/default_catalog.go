@@ -7,7 +7,23 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 )
 
-// WithPriceCatalog reuses calculation options with a separate catalog snapshot.
+// Administrator catalog display needs unit prices that follow the same token
+// and service-tier arithmetic as charging. Synthetic token usage selects
+// long-context rules, and the resulting input cost is normalized back to one
+// token before million-token display conversion. Optional buckets keep their
+// absent values separate from configured or catalog free amounts.
+//
+// Media tables expose recognized image sizes and video resolutions with
+// per-unit source labels. Token context intervals use their own price records
+// and service-tier choices, while root catalog presence flags still identify
+// optional buckets. WithPriceCatalog fixes one clock instant for a catalog
+// query, keeping current-time quotes within that result on the same
+// observation.
+
+// WithPriceCatalog returns a calculator copy bound to the supplied catalog and
+// one captured clock instant. The receiver and supplied catalog remain
+// available to their owners; the copy shares the existing location loader and
+// uses that frozen instant for every later current-time pricing observation.
 func (s *Calculator) WithPriceCatalog(catalog PriceCatalog) *Calculator {
 	out := *s
 	out.catalog = catalog
@@ -16,7 +32,17 @@ func (s *Calculator) WithPriceCatalog(catalog PriceCatalog) *Calculator {
 	return &out
 }
 
-// DefaultModelPrice returns base billing rules for display; an explicit zero price counts as priced.
+// DefaultModelPrice builds catalog display amounts for the full model with the
+// supplied platform/mode metadata. Known video tables return the recognized
+// resolution quotes first; eligible image prices can coexist with token
+// quotes. Source maps and displayed amount storage are built for this
+// response.
+//
+// Token display uses the calculation rules for standard, Fast, Flex and
+// long-context amounts, preserving missing optional buckets as absent values
+// and known zero amounts as priced. Context intervals retain their own amounts
+// and tier choices. A media table establishes priced status even when none of
+// the recognized displayed sizes has a quote.
 func (s *Calculator) DefaultModelPrice(model, platform, mode string) pricing.DefaultModelPrice {
 	result := pricing.DefaultModelPrice{Model: model, Platform: platform, BillingMode: "token", PriceStatus: "unpriced", Prices: []pricing.DefaultPriceValue{}}
 	add := func(key string, value float64, unit string) {
@@ -33,6 +59,9 @@ func (s *Calculator) DefaultModelPrice(model, platform, mode string) pricing.Def
 		if result.PriceSources == nil {
 			result.PriceSources = map[string]string{}
 		}
+		// Quote recognized video resolutions independently; unavailable keys are
+		// omitted while the nonempty video table still determines this row's media
+		// classification.
 		for _, size := range []string{"480p", "720p", "1080p"} {
 			price, ok := pricing.DefaultVideoPrice(raw, size)
 			if !ok {
@@ -50,7 +79,9 @@ func (s *Calculator) DefaultModelPrice(model, platform, mode string) pricing.Def
 	}
 	knownImage := raw != nil && len(raw.ImagePrices) > 0
 	imageModel := mode == "image" || pricing.HasExplicitImageGenerationPricing(raw) || pricing.LooksLikeImageModel(model)
-	// Chat image metadata keeps token billing. Per-image rates and image models use media units.
+	// Chat metadata can mention a per-image amount while retaining token pricing;
+	// select image display units when catalog media tables or image/token-absence
+	// classification establish that path.
 	hasImagePrice := knownImage || pricing.HasImageUnitPrice(raw) && (imageModel || raw.TokenPricingAbsent)
 	if hasImagePrice {
 		if result.PriceSources == nil {
@@ -65,6 +96,9 @@ func (s *Calculator) DefaultModelPrice(model, platform, mode string) pricing.Def
 				imageSource = source
 			}
 		}
+		// Quote recognized image dimensions independently; missing size-map entries
+		// remain absent instead of borrowing a flat amount outside that table's
+		// available dimensions.
 		for _, size := range []string{"1K", "2K", "4K"} {
 			price, ok := pricing.DefaultImagePrice(raw, size)
 			if !ok {
@@ -79,6 +113,9 @@ func (s *Calculator) DefaultModelPrice(model, platform, mode string) pricing.Def
 	}
 	base, err := pricing.ResolveModelPricing(model, raw)
 	if err != nil || base == nil {
+		// Token conversion can fail while independent image amounts are already
+		// available; retain those collected media quotes and their current
+		// availability status.
 		return result
 	}
 	result.PriceStatus = "priced"
@@ -96,7 +133,9 @@ func (s *Calculator) DefaultModelPrice(model, platform, mode string) pricing.Def
 	if base.MaxReasoningEffortMultiplier != nil {
 		add("max_reasoning", *base.MaxReasoningEffortMultiplier, "multiplier")
 	}
-	// Long-context rates include Fast/Flex multipliers. Show the tier when either long-context multiplier exceeds one.
+	// Publish long-context quotes only for a positive threshold and an increased
+	// input or output factor; each service-tier quote then evaluates that same
+	// long-context choice.
 	if base.LongContextInputThreshold > 0 && (base.LongContextInputMultiplier > 1 || base.LongContextOutputMultiplier > 1) {
 		result.LongContextThreshold = base.LongContextInputThreshold
 		result.LongContextThresholdInclusive = base.LongContextThresholdInclusive
@@ -137,13 +176,24 @@ func (s *Calculator) DefaultModelPrice(model, platform, mode string) pricing.Def
 	return result
 }
 
-// defaultTokenPrices computes display rates using token billing rules, including cache and image token price defaults.
+// defaultTokenPrices returns token-unit display amounts from a non-nil
+// normalized price record. raw supplies root presence and modality hints,
+// prefix labels the returned keys, and tier selects service pricing. Caller
+// thresholds and synthetic token sums must fit int.
+//
+// For long-context quotes, synthetic input reaches the configured threshold
+// and crosses an exclusive threshold by one extra token. Input cost is divided
+// by the complete synthetic count before conversion to USD per million tokens.
+// Optional cache/image buckets retain absent versus known-zero amounts using
+// both calculated rates and raw presence hints.
 func defaultTokenPrices(base *pricing.ModelPricing, raw *pricing.CatalogModelPricing, prefix, tier string, applyLongCtx bool) []pricing.DefaultPriceValue {
 	prices := make([]pricing.DefaultPriceValue, 0, 7)
 	add := func(key string, value float64, unit string) {
 		prices = append(prices, pricing.DefaultPriceValue{Key: key, Value: &value, Unit: unit})
 	}
-	// Quote usage must reach the catalog threshold; exclusive thresholds require one extra input token.
+	// Synthetic input selects the long-context tier before other bucket quotes;
+	// an exclusive threshold needs an extra token so the displayed rates exercise
+	// that increased-price rule.
 	gate := 0
 	if applyLongCtx && base.LongContextInputThreshold > 0 {
 		gate = base.LongContextInputThreshold
@@ -156,16 +206,23 @@ func defaultTokenPrices(base *pricing.ModelPricing, raw *pricing.CatalogModelPri
 		return pricing.ComputeTokenBreakdown(base, tokens, 1, tier, applyLongCtx)
 	}
 	perMTok := func(cost float64, tokens int) float64 {
+		// Average the synthetic input charge before million-token display
+		// conversion.
 		return cost / float64(tokens) * 1e6
 	}
 	addOptional := func(key string, value float64, applicable bool) {
 		if applicable {
+			// Display the single-token amount in million-token units.
 			add(prefix+key, value*1e6, "USD/MTok")
 		} else {
+			// An unavailable optional bucket retains a nil Value in JSON,
+			// distinguishing missing amounts from explicit zero prices in administrator
+			// display.
 			prices = append(prices, pricing.DefaultPriceValue{Key: prefix + key, Unit: "USD/MTok"})
 		}
 	}
 	add(prefix+"input", perMTok(quote(UsageTokens{InputTokens: 1}).InputCost, 1+gate), "USD/MTok")
+	// Output display uses the same million-token amount unit.
 	add(prefix+"output", quote(UsageTokens{OutputTokens: 1}).OutputCost*1e6, "USD/MTok")
 	readPresent := base.CacheReadPricePerToken > 0 || raw != nil && raw.CacheReadPricePresent
 	writePresent := base.CacheCreationPricePerToken > 0 || base.SupportsCacheBreakdown || raw != nil && raw.CacheCreationPricePresent

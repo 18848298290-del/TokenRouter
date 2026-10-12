@@ -9,6 +9,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
+// TestUserSubscriptionFromService_MapsRevokedAt supplies a revoked grant with
+// a soft-deletion timestamp. It checks the response exposes that same
+// timestamp as RevokedAt for user consumption.
 func TestUserSubscriptionFromService_MapsRevokedAt(t *testing.T) {
 	ts := time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC)
 

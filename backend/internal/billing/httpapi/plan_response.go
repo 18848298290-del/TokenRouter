@@ -6,31 +6,56 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
-// PlanRecordResponse is the JSON representation returned by administrator plan endpoints.
+// Administrator plan responses combine editable sale terms with versioned
+// display content. PlanContent supplies stored localization or a source
+// revision from legacy text, while the record response retains the plan's
+// optional amounts and group collections for read-only serialization.
+
+// PlanRecordResponse carries editable plan terms and localized source data for
+// administrator endpoints.
 type PlanRecordResponse struct {
-	Localization         billing.PlanLocalization `json:"localization"`
-	ID                   int64                    `json:"id,omitempty"`
-	Name                 string                   `json:"name,omitempty"`
-	Description          string                   `json:"description,omitempty"`
-	Price                float64                  `json:"price,omitempty"`
-	OriginalPrice        *float64                 `json:"original_price,omitempty"`
-	Currency             string                   `json:"currency,omitempty"`
-	ValidityDays         int                      `json:"validity_days,omitempty"`
-	DailyLimitUSD        *float64                 `json:"daily_limit_usd,omitempty"`
-	WeeklyLimitUSD       *float64                 `json:"weekly_limit_usd,omitempty"`
-	MonthlyLimitUSD      *float64                 `json:"monthly_limit_usd,omitempty"`
-	ValidityUnit         string                   `json:"validity_unit,omitempty"`
-	GroupIDs             []int64                  `json:"group_ids,omitempty"`
-	GroupRateMultipliers map[int64]float64        `json:"group_rate_multipliers,omitempty"`
-	Features             string                   `json:"features,omitempty"`
-	ProductName          string                   `json:"product_name,omitempty"`
-	ForSale              bool                     `json:"for_sale,omitempty"`
-	SortOrder            int                      `json:"sort_order,omitempty"`
-	CreatedAt            time.Time                `json:"created_at,omitempty"`
-	UpdatedAt            time.Time                `json:"updated_at,omitempty"`
-	Edges                struct{}                 `json:"edges"`
+	// Localization carries PlanContent's revisions and translations to the
+	// editor. Existing content retains its translation map, so response consumers
+	// keep that shared data unchanged.
+	Localization billing.PlanLocalization `json:"localization"`          // versioned plan display content
+	ID           int64                    `json:"id,omitempty"`          // local subscription plan identifier
+	Name         string                   `json:"name,omitempty"`        // stored plan display name
+	Description  string                   `json:"description,omitempty"` // stored plan description text
+	Price        float64                  `json:"price,omitempty"`       // configured plan sale amount
+	// OriginalPrice retains the plan's optional comparison amount pointer.
+	// Serialization consumers keep that shared amount unchanged while reading
+	// this administrator response.
+	OriginalPrice *float64 `json:"original_price,omitempty"` // optional comparison display amount
+	Currency      string   `json:"currency,omitempty"`       // configured sale currency code
+	// ValidityDays retains the quantity interpreted together with ValidityUnit.
+	// Grant computation converts configured weeks and months to day counts when
+	// issuing subscriptions.
+	ValidityDays int `json:"validity_days,omitempty"` // configured validity quantity
+	// DailyLimitUSD, WeeklyLimitUSD and MonthlyLimitUSD retain the plan's
+	// optional template pointers. Nil or nonpositive values represent unlimited
+	// quotas, and serialization consumers leave the shared amounts unchanged.
+	DailyLimitUSD   *float64 `json:"daily_limit_usd,omitempty"`   // USD
+	WeeklyLimitUSD  *float64 `json:"weekly_limit_usd,omitempty"`  // USD
+	MonthlyLimitUSD *float64 `json:"monthly_limit_usd,omitempty"` // USD
+	ValidityUnit    string   `json:"validity_unit,omitempty"`     // configured validity quantity unit
+	// GroupIDs and GroupRateMultipliers retain the plan's group collections for
+	// this administrator record. The mapper shares their storage, so callers
+	// leave them unchanged during serialization.
+	GroupIDs             []int64           `json:"group_ids,omitempty"`              // applicable subscription group identifiers
+	GroupRateMultipliers map[int64]float64 `json:"group_rate_multipliers,omitempty"` // plan group rate overrides
+	Features             string            `json:"features,omitempty"`               // stored plan feature text
+	ProductName          string            `json:"product_name,omitempty"`           // stored payment product name
+	ForSale              bool              `json:"for_sale,omitempty"`               // new purchase availability flag
+	SortOrder            int               `json:"sort_order,omitempty"`             // plan display sort order
+	CreatedAt            time.Time         `json:"created_at,omitempty"`             // plan record creation time
+	UpdatedAt            time.Time         `json:"updated_at,omitempty"`             // plan record update time
+	Edges                struct{}          `json:"edges"`                            // empty response edges object
 }
 
+// planRecord builds the administrator record response or returns nil for nil
+// input. Localization comes from PlanContent, including its legacy text
+// revision; optional amount pointers and group collections remain shared with
+// the plan for read-only serialization.
 func planRecord(plan *billing.SubscriptionPlan) *PlanRecordResponse {
 	if plan == nil {
 		return nil

@@ -1,4 +1,7 @@
-// Package billing calculates request costs and manages balances, subscriptions, and redemption codes.
+// Package billing calculates request costs and manages balances,
+// subscriptions, and redemption codes. Gateway callers check funding through
+// Eligibility and resolve prices before Funds settles the selected
+// subscription and balance allocations through persistence adapters.
 //
 // Reading entry points:
 //   - calculator.go: calculates costs from model price cards and request usage.

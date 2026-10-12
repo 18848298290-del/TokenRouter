@@ -9,6 +9,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 )
 
+// TestDefaultPriceUsesCatalogAndPreservesZero supplies free input and priced
+// output with Fast, Flex and long-context rules. It checks displayed amounts
+// follow those factors and unknown full model identities remain unpriced.
 func TestDefaultPriceUsesCatalogAndPreservesZero(t *testing.T) {
 	catalog := defaultCatalogStub{entries: map[string]*pricing.CatalogModelPricing{
 		"custom": {CatalogRules: pricing.CatalogRules{FlexMultiplier: newFloatForCatalogTest(0.5)}, InputCostPerToken: 0, OutputCostPerToken: 0.000004, SupportsServiceTier: true, InputCostPerTokenPriority: 0, OutputCostPerTokenPriority: 0.000008, LongContextInputTokenThreshold: 100000, LongContextInputCostMultiplier: 2, LongContextOutputCostMultiplier: 1.5},
@@ -39,6 +42,9 @@ func TestDefaultPriceUsesCatalogAndPreservesZero(t *testing.T) {
 	require.Equal(t, "unpriced", calculator.DefaultModelPrice("claude-sonnet-4", "anthropic", "token").PriceStatus)
 }
 
+// TestDefaultPriceContextIntervalsUseInclusiveBoundary supplies an xAI
+// absolute context tier. It checks shifted display endpoints, unchanged raw
+// threshold data and identical repeated queries for that catalog fixture.
 func TestDefaultPriceContextIntervalsUseInclusiveBoundary(t *testing.T) {
 	catalog := defaultCatalogStub{entries: map[string]*pricing.CatalogModelPricing{
 		"grok-test": {
@@ -61,6 +67,10 @@ func TestDefaultPriceContextIntervalsUseInclusiveBoundary(t *testing.T) {
 	require.Equal(t, row, calculator.DefaultModelPrice("grok-test", "xai", "token"))
 }
 
+// TestDefaultMediaPriceRequiresKnownUnits supplies free and priced image
+// entries plus text-priced chat metadata. It checks known media units/source
+// labels, unknown-media unpriced results and retained token classification for
+// the chat entry.
 func TestDefaultMediaPriceRequiresKnownUnits(t *testing.T) {
 	entries, _, err := pricing.ParsePricingEntries(map[string]json.RawMessage{
 		"free-image":   json.RawMessage(`{"source":"local_override","mode":"image_generation","output_cost_per_image":0}`),
@@ -99,6 +109,10 @@ func TestDefaultMediaPriceRequiresKnownUnits(t *testing.T) {
 	}
 }
 
+// TestDefaultPriceContextIntervalsKeepRootAndTierQuotesIndependent combines
+// different root and interval service-tier rules. It checks complete quote
+// values, then mutates one interval to verify root, other intervals and later
+// results retain their amounts.
 func TestDefaultPriceContextIntervalsKeepRootAndTierQuotesIndependent(t *testing.T) {
 	for _, rootSupportsTier := range []bool{false, true} {
 		name := "root_flex_multiplier"
@@ -180,6 +194,10 @@ func TestDefaultPriceContextIntervalsKeepRootAndTierQuotesIndependent(t *testing
 	}
 }
 
+// TestDefaultPriceLongContextQuotesCrossProviderThreshold exercises exclusive
+// OpenAI and inclusive xAI context gates. It checks standard, Fast and Flex
+// display buckets receive the expected input/cache and output long-context
+// factors.
 func TestDefaultPriceLongContextQuotesCrossProviderThreshold(t *testing.T) {
 	for _, provider := range []string{"openai", "xai"} {
 		t.Run(provider, func(t *testing.T) {
@@ -213,6 +231,10 @@ func TestDefaultPriceLongContextQuotesCrossProviderThreshold(t *testing.T) {
 	}
 }
 
+// expectedCatalogTokenQuotes builds expected seven-bucket rows for the
+// supplied prefix and factor. values must contain seven entries in
+// token/cache/image order; nil entries remain missing, and present amounts
+// receive freshly allocated scaled values.
 func expectedCatalogTokenQuotes(prefix string, multiplier float64, values []*float64) []pricing.DefaultPriceValue {
 	keys := []string{"input", "output", "cache_read", "cache_write", "cache_write_1h", "image_input", "image_output"}
 	prices := make([]pricing.DefaultPriceValue, len(keys))
@@ -225,6 +247,10 @@ func expectedCatalogTokenQuotes(prefix string, multiplier float64, values []*flo
 	return prices
 }
 
+// assertCatalogTokenQuotes checks ordered keys, units, amount presence and
+// numeric quote values. It requires equal lengths before indexing; present
+// amounts use a small floating-point tolerance, while missing expected buckets
+// require nil values.
 func assertCatalogTokenQuotes(t *testing.T, expected, actual []pricing.DefaultPriceValue) {
 	t.Helper()
 	require.Len(t, actual, len(expected))
@@ -236,9 +262,14 @@ func assertCatalogTokenQuotes(t *testing.T, expected, actual []pricing.DefaultPr
 			require.Nil(t, got.Value, want.Key)
 		} else {
 			require.NotNil(t, got.Value, want.Key)
+			// Decimal rates and multiplicative quote factors use binary floating point;
+			// this tolerance distinguishes arithmetic rounding from a changed unit
+			// amount.
 			require.InDelta(t, *want.Value, *got.Value, 1e-12, want.Key)
 		}
 	}
 }
 
+// newFloatForCatalogTest returns separately allocated storage for a catalog
+// display amount.
 func newFloatForCatalogTest(value float64) *float64 { return &value }

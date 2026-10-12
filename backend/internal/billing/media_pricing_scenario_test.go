@@ -1,7 +1,5 @@
 package billing
 
-// These cases check quote and settlement consistency across calculator.go, media_pricing.go, and public_quote.go.
-
 import (
 	"context"
 	"fmt"
@@ -12,7 +10,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing/pricing"
 )
 
-// TestMediaUnitPriceRejectsMissingPrice checks that missing per-image rates do not produce a guessed unit price.
+// Media cases compare configured unit quotes and calculated quantities across
+// calculator.go, media_pricing.go and public_quote.go.
+
+// TestMediaUnitPriceRejectsMissingPrice supplies missing image/video
+// identities and one known video entry. It checks unavailable errors and nil
+// charge results for missing units, then checks the known video cost.
 func TestMediaUnitPriceRejectsMissingPrice(t *testing.T) {
 	calculator := NewCalculator(defaultCatalogStub{entries: map[string]*pricing.CatalogModelPricing{
 		"grok-imagine-video-1.5": {CatalogRules: pricing.CatalogRules{VideoPrices: map[string]float64{"480p": 0.08}}, TokenPricingAbsent: true},
@@ -33,10 +36,15 @@ func TestMediaUnitPriceRejectsMissingPrice(t *testing.T) {
 	}
 	video, err := calculator.CalculateVideoCost("grok-imagine-video-1.5", "480p", 1, 5, 1)
 	require.NoError(t, err)
+	// Decimal rates and multiplicative quote factors use binary floating point;
+	// this tolerance distinguishes arithmetic rounding from a changed unit
+	// amount.
 	require.InDelta(t, 0.4, video.ActualCost, 1e-12)
 }
 
-// TestPartialImageCardQuoteMatchesReservation checks that displayed sizes use the task reservation unit prices.
+// TestPartialImageCardQuoteMatchesReservation configures a free or priced 1K
+// override beside a catalog 2K amount. It checks public quotes, fixed unit
+// lookup and quantity charges agree while missing 4K stays unavailable.
 func TestPartialImageCardQuoteMatchesReservation(t *testing.T) {
 	for _, oneK := range []float64{0, 0.1} {
 		t.Run(fmt.Sprint(oneK), func(t *testing.T) {
@@ -49,12 +57,21 @@ func TestPartialImageCardQuoteMatchesReservation(t *testing.T) {
 			quote := resolver.PublicQuote(context.Background(), PublicQuoteInput{PricingInput: input, RateMultiplier: 2})
 			require.Equal(t, "priced", quote.PriceStatus)
 			require.ElementsMatch(t, []string{"1K", "2K"}, quote.ImagePriceSizes)
+			// Decimal rates and multiplicative quote factors use binary floating point;
+			// this tolerance distinguishes arithmetic rounding from a changed unit
+			// amount.
 			require.InDelta(t, oneK*2, quote.ImagePrice1K, 1e-12)
 			unit, err := resolver.ResolveImageUnitPrice(context.Background(), input, "2K")
 			require.NoError(t, err)
+			// Decimal rates and multiplicative quote factors use binary floating point;
+			// this tolerance distinguishes arithmetic rounding from a changed unit
+			// amount.
 			require.InDelta(t, unit*2, quote.ImagePrice2K, 1e-12)
 			cost, err := calculator.CalculateCostUnified(CostInput{Ctx: context.Background(), Model: input.Model, GroupID: input.GroupID, RequestCount: 3, SizeTier: "2K", RateMultiplier: 2, Resolver: resolver})
 			require.NoError(t, err)
+			// Decimal rates and multiplicative quote factors use binary floating point;
+			// this tolerance distinguishes arithmetic rounding from a changed unit
+			// amount.
 			require.InDelta(t, quote.ImagePrice2K*3, cost.ActualCost, 1e-12)
 			_, err = resolver.ResolveImageUnitPrice(context.Background(), input, "4K")
 			require.ErrorIs(t, err, pricing.ErrModelPricingUnavailable)
@@ -62,7 +79,10 @@ func TestPartialImageCardQuoteMatchesReservation(t *testing.T) {
 	}
 }
 
-// TestPerRequestMediaPathsShareCardPrices compares public quotes, task unit prices, and request settlement.
+// TestPerRequestMediaPathsShareCardPrices combines image/request cards with
+// missing, free and priced defaults. It checks displayed sizes, fixed units
+// and quantity charges agree for the exercised sizes and two input-context
+// counts.
 func TestPerRequestMediaPathsShareCardPrices(t *testing.T) {
 	for _, mode := range []pricing.BillingMode{pricing.BillingModePerRequest, pricing.BillingModeImage} {
 		for _, defaultValue := range []*float64{nil, requestTestPrice(0), requestTestPrice(0.3)} {
@@ -83,6 +103,9 @@ func TestPerRequestMediaPathsShareCardPrices(t *testing.T) {
 				input := PricingInput{Model: "custom-image", GroupID: &groupID}
 				quote := resolver.PublicQuote(context.Background(), PublicQuoteInput{PricingInput: input, RateMultiplier: 2})
 				require.Contains(t, quote.ImagePriceSizes, "1K")
+				// Decimal rates and multiplicative quote factors use binary floating
+				// point; this tolerance distinguishes arithmetic rounding from a changed
+				// unit amount.
 				require.InDelta(t, 0.2, quote.ImagePrice1K, 1e-12)
 				for _, size := range []string{"1K", "2K", "4K"} {
 					fixed, priceErr := resolver.ResolveImageUnitPrice(context.Background(), input, size)
@@ -100,8 +123,14 @@ func TestPerRequestMediaPathsShareCardPrices(t *testing.T) {
 						}
 						require.NoError(t, err)
 						require.Contains(t, quote.ImagePriceSizes, size)
+						// Decimal rates and multiplicative quote factors use binary floating
+						// point; this tolerance distinguishes arithmetic rounding from a changed
+						// unit amount.
 						require.InDelta(t, fixed*6, cost.ActualCost, 1e-12)
 						displayed := map[string]float64{"1K": quote.ImagePrice1K, "2K": quote.ImagePrice2K, "4K": quote.ImagePrice4K}[size]
+						// Decimal rates and multiplicative quote factors use binary floating
+						// point; this tolerance distinguishes arithmetic rounding from a changed
+						// unit amount.
 						require.InDelta(t, fixed*2, displayed, 1e-12)
 					}
 				}
@@ -113,10 +142,13 @@ func TestPerRequestMediaPathsShareCardPrices(t *testing.T) {
 	}
 }
 
-// TestContextRequestCardHasNoFixedImageQuote checks that unknown context prevents treating a default or interval
-// rate as a fixed image price.
+// TestContextRequestCardHasNoFixedImageQuote supplies context-dependent
+// per-request amounts with a default. It checks fixed-image lookup remains
+// unavailable while actual requests select the default and inclusive context
+// interval prices.
 func TestContextRequestCardHasNoFixedImageQuote(t *testing.T) {
 	low, high, base := 0.03, 0.10, 0.05
+	// Equality at this context endpoint remains in the lower price tier.
 	maxTokens := 128000
 	calc := NewCalculator(defaultCatalogStub{entries: map[string]*pricing.CatalogModelPricing{
 		"custom-image": {CatalogRules: pricing.CatalogRules{ImagePrices: pricing.MediaPrices{"2K": 0.2}}, TokenPricingAbsent: true},
@@ -135,13 +167,18 @@ func TestContextRequestCardHasNoFixedImageQuote(t *testing.T) {
 	_, err := resolver.ResolveImageUnitPrice(context.Background(), input, "2K")
 	require.ErrorIs(t, err, pricing.ErrModelPricingUnavailable)
 	for _, tc := range []struct {
-		tokens int
-		want   float64
+		tokens int     // reported context token count
+		want   float64 // expected quoted USD amount
 	}{{0, 0.05}, {128000, 0.03}, {128001, 0.10}} {
 		cost, err := calc.CalculateCostUnified(CostInput{Ctx: context.Background(), Model: input.Model, GroupID: input.GroupID, Tokens: UsageTokens{InputTokens: tc.tokens}, SizeTier: "2K", RequestCount: 1, RateMultiplier: 1, Resolver: resolver})
 		require.NoError(t, err)
+		// Decimal rates and multiplicative quote factors use binary floating point;
+		// this tolerance distinguishes arithmetic rounding from a changed unit
+		// amount.
 		require.InDelta(t, tc.want, cost.ActualCost, 1e-12)
 	}
 }
 
+// requestTestPrice returns separately allocated storage for a configured test
+// amount.
 func requestTestPrice(value float64) *float64 { return &value }

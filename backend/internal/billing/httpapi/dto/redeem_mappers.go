@@ -4,6 +4,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/billing"
 )
 
+// User redemption history needs visible adjustment reasons while internal
+// notes remain available to administrators. The common mapping selects
+// user-visible notes by record type, and the administrator wrapper supplies
+// its separate full notes field from the same service record.
+
+// RedeemCodeFromService maps a redemption record for user consumption and
+// returns nil for nil input. Notes are included for nonempty administrator
+// balance/concurrency adjustments. Date and ID pointers and the visible Notes
+// pointer remain shared with the service record for read-only response use.
 func RedeemCodeFromService(rc *billing.RedeemCode) *RedeemCode {
 	if rc == nil {
 		return nil
@@ -12,8 +21,10 @@ func RedeemCodeFromService(rc *billing.RedeemCode) *RedeemCode {
 	return &out
 }
 
-// RedeemCodeFromServiceAdmin converts a service RedeemCode to DTO for admin users.
-// It exposes all internal notes; user-facing endpoints use RedeemCodeFromService.
+// RedeemCodeFromServiceAdmin maps a redemption record with its full notes for
+// administrator consumption. Nil input returns nil; the common mapping retains
+// date, ID and any visible adjustment-note pointers for read-only use, while
+// the outer administrator Notes string is copied by value.
 func RedeemCodeFromServiceAdmin(rc *billing.RedeemCode) *AdminRedeemCode {
 	if rc == nil {
 		return nil
@@ -24,6 +35,10 @@ func RedeemCodeFromServiceAdmin(rc *billing.RedeemCode) *AdminRedeemCode {
 	}
 }
 
+// RedeemCodeFromServiceBase builds the common response from a non-nil service
+// record. It maps hydrated user data and retains optional date and ID pointers.
+// Nonempty administrator balance/concurrency reasons use a pointer to rc.Notes;
+// callers keep those shared fields unchanged while consuming the response.
 func RedeemCodeFromServiceBase(rc *billing.RedeemCode) RedeemCode {
 	out := RedeemCode{
 		RequiresPayment: rc.RequiresPayment,
@@ -42,8 +57,9 @@ func RedeemCodeFromServiceBase(rc *billing.RedeemCode) RedeemCode {
 		User:            UserSummaryFromBilling(rc.User),
 	}
 
-	// For admin_balance/admin_concurrency types, include notes so users can see
-	// why they were charged or credited by admin
+	// Administrator adjustment reasons refer to the record's Notes field so the
+	// user response displays that stored reason. Other types leave user notes
+	// absent while the administrator wrapper adds its own string value.
 	if (rc.Type == "admin_balance" || rc.Type == "admin_concurrency") && rc.Notes != "" {
 		out.Notes = &rc.Notes
 	}
