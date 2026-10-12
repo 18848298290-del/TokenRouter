@@ -7,6 +7,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestAppendRawJSON_EmptyObjectPlaceholder supplies a whitespace-formatted empty
+// object and a nonempty object as existing argument bytes. The placeholder is
+// replaced, while the nonempty object's literal bytes precede the new fragment.
 func TestAppendRawJSON_EmptyObjectPlaceholder(t *testing.T) {
 	t.Parallel()
 

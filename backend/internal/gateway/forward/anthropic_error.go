@@ -8,17 +8,43 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// AnthropicError records diagnostics, applies provider health policy, and writes an error when failover is not selected.
+// Anthropic HTTP errors retain their source status and body for provider policy
+// even when the client receives a different error envelope. Direct handling
+// records activity and diagnostics, then selects generic output, failover, or
+// display rules in that order. Retry-exhausted handling first gives retry policy
+// the captured body through a replacement reader.
+//
+// Display rules can override status or extracted message after recovery has
+// been decided. Unmatched direct HTTP 400 responses retain their raw body;
+// other unmatched errors use protocol summaries, while exhausted retries use
+// their separate generic summary. Additional body logging does not select
+// those client display paths. Error results retain the source status in their
+// diagnostic text even when a rule supplies another client-facing status.
+
+// AnthropicError records direct HTTP failure observations and handles the
+// selected recovery or client-output path. It can classify partial bytes after
+// a body read error. Generic policy writes a 500 response, failover returns its
+// signal before commitment, and remaining paths commit before applying display.
+//
+// A matching display rule supplies status and message fields independently.
+// Without one, HTTP 400 writes raw captured bytes and other statuses choose
+// built-in summaries. The returned error describes the source status and usable
+// summary, while response-resource closure stays with the exchange owner.
 func AnthropicError(ctx context.Context, p ErrorPorts, in ErrorInput) (*Result, error) {
-	// Failed HTTP responses still count as provider activity.
+	// A completed unsuccessful HTTP exchange still used this provider. Record
+	// that activity before parsing the response so body-read failure does not
+	// prevent the direct error path's activity observation.
 	p.ScheduleActivity()
 	body, readErr := p.ReadBody()
 	if readErr != nil {
-		// A failed read may leave a partial body; log the read error alongside classification diagnostics.
+		// A read failure can leave partial body evidence for later classification.
+		// Record the read error separately while retaining whatever bytes the
+		// adapter supplied for diagnostics and policy.
 		p.Log(fmt.Sprintf("[Forward] Failed to fully read upstream error body: Provider=%d(%s) Status=%d err=%v",
 			in.ProviderID, in.ProviderName, in.Status, readErr))
 	}
 
+	// Keep a bounded routine excerpt even when optional body detail is disabled.
 	p.Log(fmt.Sprintf("[Forward] Upstream error (non-retryable): Provider=%d(%s) Status=%d RequestID=%s Body=%s",
 		in.ProviderID, in.ProviderName, in.Status, in.RequestID, p.Truncate(string(body), 1000)))
 
@@ -33,6 +59,7 @@ func AnthropicError(ctx context.Context, p ErrorPorts, in ErrorInput) (*Result, 
 		if maxBytes <= 0 {
 			maxBytes = 2048
 		}
+		// Bound stored body detail independently of the extracted error summary.
 		upstreamDetail = p.Truncate(string(body), maxBytes)
 	}
 	p.SetError(in.Status, upstreamMsg, upstreamDetail)
@@ -46,7 +73,9 @@ func AnthropicError(ctx context.Context, p ErrorPorts, in ErrorInput) (*Result, 
 		Detail:             upstreamDetail,
 	})
 
-	// Provider health policy chooses generic output or failover before display rules run.
+	// Health policy can terminate output or request provider recovery before a
+	// display rule runs. A display override therefore cannot undo a chosen
+	// failover or replace the generic policy rejection.
 	decision := p.Health(ctx, in.Status, in.RequestedModels)
 	if decision.Generic {
 		p.Commit()
@@ -59,7 +88,9 @@ func AnthropicError(ctx context.Context, p ErrorPorts, in ErrorInput) (*Result, 
 
 	p.Commit()
 
-	// Optional body diagnostics stay in logs rather than the client error message.
+	// Additional body logging follows its diagnostic flag and byte budget.
+	// Client display below independently chooses a structured summary, matched
+	// rule message, or the direct 400 raw-body path.
 	if in.LogBody {
 		p.Log(fmt.Sprintf(
 			"Upstream error %d (provider=%d platform=%s type=%s): %s",
@@ -71,7 +102,8 @@ func AnthropicError(ctx context.Context, p ErrorPorts, in ErrorInput) (*Result, 
 		))
 	}
 
-	// Display rules also apply when the error cannot fail over.
+	// Match display rules against the source status and body, even though the
+	// committed client envelope can use another status or message after matching.
 	if status, errType, errMsg, matched := applyAnthropicDisplayRule(
 		p,
 		in.Platform,
@@ -93,7 +125,9 @@ func AnthropicError(ctx context.Context, p ErrorPorts, in ErrorInput) (*Result, 
 		return nil, fmt.Errorf("upstream error: %d (passthrough rule matched) message=%s", in.Status, summary)
 	}
 
-	// Pass through HTTP 400 bodies; use safe built-in messages for other unmatched errors.
+	// An unmatched 400 retains the upstream's request-validation body. Other
+	// statuses use built-in summaries and translate upstream authentication or
+	// server failure into gateway errors for the client's protocol.
 	var errType, errMsg string
 	var statusCode int
 
@@ -102,6 +136,9 @@ func AnthropicError(ctx context.Context, p ErrorPorts, in ErrorInput) (*Result, 
 		p.Raw(400, body)
 		summary := upstreamMsg
 		if summary == "" {
+			// A missing extracted message leaves the returned diagnostic error with
+			// a bounded raw-body excerpt; the separate upstream 400 body has
+			// already been submitted through the raw-output path.
 			summary = p.TruncateBytes(body, 512)
 		}
 		if summary == "" {
@@ -142,8 +179,20 @@ func AnthropicError(ctx context.Context, p ErrorPorts, in ErrorInput) (*Result, 
 	return nil, fmt.Errorf("upstream error: %d message=%s", in.Status, upstreamMsg)
 }
 
-// AnthropicRetryError applies health and display policy after upstream retries fail.
+// AnthropicRetryError handles an HTTP response after upstream retries are
+// exhausted. It captures available bytes despite a read error and resets the
+// reader before retry health policy, which can select failover or delegate
+// generic handling to AnthropicError.
+//
+// Remaining paths commit and record retry-exhausted diagnostics before applying
+// display rules. A missing rule writes the exhausted-retry 502 summary, including
+// for source HTTP 400; direct handling has its own raw-400 behavior. The
+// exchange adapter owns reader consumption and closure, and this method returns
+// the source-status error after selecting the client response.
 func AnthropicRetryError(ctx context.Context, p ErrorPorts, in ErrorInput) (*Result, error) {
+	// Keep the available error bytes even when the read fails, then reset the
+	// consumed reader so retry health policy can inspect that captured response.
+	// Later delegated handlers use whichever bytes their adapter reader supplies.
 	respBody, _ := p.ReadBody()
 	p.ResetBody(respBody)
 
@@ -167,6 +216,7 @@ func AnthropicRetryError(ctx context.Context, p ErrorPorts, in ErrorInput) (*Res
 		if maxBytes <= 0 {
 			maxBytes = 2048
 		}
+		// Retry diagnostics use bounded body evidence beside the extracted summary.
 		upstreamDetail = p.Truncate(string(respBody), maxBytes)
 	}
 	p.SetError(in.Status, upstreamMsg, upstreamDetail)

@@ -11,12 +11,37 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream"
 )
 
-// APIKeyPassthrough handles a selected provider response and partial usage; upstream performs the exchange and stream reading.
+// API-key passthrough forwards a filtered request through one selected provider
+// while retaining the input model for the returned result. Empty text blocks
+// and unsupported search history are removed before the shared parsed body is
+// replaced. Credential kind is checked independently of the caller's forwarding
+// flags, so a successful acquisition still needs to identify an apikey credential.
+//
+// Response hooks decide error policy before upstream output continues. They
+// retain response metadata and the latest wire body for final usage evidence.
+// Stream errors can return positive observed usage with the error when no
+// failover signal is requested; the exchange executor owns response reading and
+// closure, while this wrapper releases its attempt activity after all handling.
+
+// APIKeyPassthrough executes a filtered request with an exact apikey credential
+// and returns its usage observations or early error outcome. Successful Begin
+// supplies a usable release function, and ExecutePassthrough invokes response
+// and stream hooks serially before returning.
+//
+// Body rewrites update an optional shared parsed request before exchange.
+// Status-qualified failure paths classify available error bytes and either
+// delegate generic display or return a failover signal. Other stream errors
+// can retain partial positive usage, headers, and timing alongside the error;
+// that result requires captured response metadata and shares its header and
+// timing pointers with the producer.
 func APIKeyPassthrough(ctx context.Context, p PassthroughPorts, in MessageInput, input APIKeyInput) (*Result, error) {
 	done, err := p.Begin()
 	if err != nil {
 		return nil, err
 	}
+	// Keep the attempt active through credential acquisition and response
+	// handling. The deferred release also runs when an early policy or
+	// preparation error returns before the exchange completes.
 	defer done()
 	err = p.Credential(ctx)
 	if err != nil {
@@ -34,10 +59,14 @@ func APIKeyPassthrough(ctx context.Context, p PassthroughPorts, in MessageInput,
 	p.MarkPassthrough()
 
 	input.Body = protocolanthropic.StripEmptyTextBlocks(input.Body)
-	// Filter search history using the already mapped model to avoid unsupported server-tool blocks.
+	// Search history eligibility follows the already mapped provider model.
+	// Remove unsupported server-tool blocks before the parsed body is republished
+	// so subsequent request views use this forwarding representation.
 	input.Body = p.FilterSearchHistory(input.Body, input.RequestModel)
 	if input.Parsed != nil {
-		// Keep the parsed request synchronized with wire changes so successful usage hashes use the current body.
+		// Reparse the filtered body in the shared request state. Later body views
+		// and usage-hash extraction then read these bytes rather than the input
+		// representation retained before filtering.
 		if err := input.Parsed.ReplaceBody(input.Body); err != nil {
 			return nil, err
 		}
@@ -54,9 +83,13 @@ func APIKeyPassthrough(ctx context.Context, p PassthroughPorts, in MessageInput,
 		early := func(result *Result, err error) (bool, error) { earlyResult = result; return true, err }
 		if resp.StatusCode >= 400 && ShouldRetry(in.OAuth, resp.StatusCode) {
 			if ShouldFailover(resp.StatusCode) {
+				// Retain available error bytes even after a read failure, then reset
+				// the consumed reader for retry health policy. The captured slice
+				// stays available for this branch's observations and retry signal.
 				respBody, _ := p.ReadErrorBody()
 				p.ResetErrorBody(respBody)
 
+				// Keep the routine error excerpt bounded independently of optional detail.
 				p.Log(fmt.Sprintf("[Anthropic Passthrough] Upstream error (retry exhausted, failover): Provider=%d(%s) Status=%d RequestID=%s Body=%s",
 					in.ProviderID, in.ProviderName, resp.StatusCode, resp.RequestID, p.Truncate(string(respBody), 1000)))
 
@@ -86,9 +119,13 @@ func APIKeyPassthrough(ctx context.Context, p PassthroughPorts, in MessageInput,
 		}
 
 		if resp.StatusCode >= 400 && ShouldFailover(resp.StatusCode) {
+			// Classification can use partial response evidence. Reset the reader
+			// before policy rereads it, retaining the captured slice separately
+			// for the resulting failover observation and signal.
 			respBody, _ := p.ReadErrorBody()
 			p.ResetErrorBody(respBody)
 
+			// Keep the routine error excerpt bounded independently of optional detail.
 			p.Log(fmt.Sprintf("[Anthropic Passthrough] Upstream error (failover): Provider=%d(%s) Status=%d RequestID=%s Body=%s",
 				in.ProviderID, in.ProviderName, resp.StatusCode, resp.RequestID, p.Truncate(string(respBody), 1000)))
 
@@ -141,6 +178,9 @@ func APIKeyPassthrough(ctx context.Context, p PassthroughPorts, in MessageInput,
 	if err != nil {
 		if input.RequestStream {
 			requestSpeed := gjson.GetBytes(lastWireBody, "speed").String()
+			// A non-failover stream error can still carry positive observed usage.
+			// Preserve that outcome alongside its error; failover signals leave
+			// completion to the later provider attempt.
 			if partial := PartialUsage(resp, streamResult, input.OriginalModel, input.RequestModel, input.StartTime, requestSpeed, p.IsFailover(err)); partial != nil {
 				return partial, err
 			}

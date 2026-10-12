@@ -1,7 +1,5 @@
 package forward
 
-// These scenarios check failure values with the gateway/failover state machine and telemetry observers.
-
 import (
 	"context"
 	"testing"
@@ -16,24 +14,45 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// mockTempUnscheduler records temporary-exclusion calls.
+// Same-provider retries and provider switching use separate counters in the
+// request's failover state. These scenarios connect failure.go's RetryFailure
+// view to gateway/failover/state.go and its request-state handlers. They inspect
+// actions, retained failures,
+// exclusions, and cache-billing flags. A mock records temporary-exclusion
+// requests, while the production telemetry observer can receive the state events;
+// these assertions establish state behavior rather than telemetry delivery.
+//
+// Synthetic-clock bubbles let waits complete or receive scheduled cancellation
+// without real-time sleeping. Cancellation before entry leaves checked state
+// untouched, while cancellation during retry waiting follows the counter update.
+// The fixtures also distinguish deadline-only allowance from a positive
+// error-specific cap, and retry eligibility from the budget for provider switches.
+
+// mockTempUnscheduler records exclusion requests for sequential failover scenario assertions.
 type mockTempUnscheduler struct {
+	// calls retains entries in callback order, including shared failure pointers.
+	// Assertions read it after synchronous handling; the mock provides no locking.
 	calls []tempUnscheduleCall
 }
 
+// tempUnscheduleCall pairs a selected provider with its recorded failure argument.
 type tempUnscheduleCall struct {
-	providerID  int64
+	providerID int64 // excluded upstream provider
+	// failoverErr retains the supplied pointer for argument checks. Later
+	// mutation remains visible because the mock does not clone that failure.
 	failoverErr *UpstreamFailoverError
 }
 
-// TestSameProviderRetryDelayFor checks transient-capacity backoff and fixed waits for other failures.
+// TestSameProviderRetryDelayFor checks request-transient delays from the first
+// retry through the eight-second cap. Ordinary and nil failures retain the
+// fixed delay, while a positive explicit delay overrides backoff.
 func TestSameProviderRetryDelayFor(t *testing.T) {
 	capacityErr := &UpstreamFailoverError{RequestScopedTransient: true}
 
 	for _, tt := range []struct {
-		name       string
-		retryCount int
-		want       time.Duration
+		name       string        // retry-delay case label
+		retryCount int           // selected retry ordinal
+		want       time.Duration // expected synthetic wait
 	}{
 		{name: "first retry", retryCount: 1, want: 500 * time.Millisecond},
 		{name: "second retry", retryCount: 2, want: time.Second},
@@ -68,6 +87,10 @@ func TestSameProviderRetryDelayFor(t *testing.T) {
 	})
 }
 
+// TestSameProviderRetryAllowedUsesDeadlineInsteadOfPoolCount supplies a future
+// deadline without an error-specific count cap. Retries remain eligible beyond
+// ordinary pool counts, while an expired deadline rejects the otherwise
+// retryable failure.
 func TestSameProviderRetryAllowedUsesDeadlineInsteadOfPoolCount(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		err := &UpstreamFailoverError{
@@ -81,6 +104,10 @@ func TestSameProviderRetryAllowedUsesDeadlineInsteadOfPoolCount(t *testing.T) {
 	})
 }
 
+// TestSameProviderRetryAllowedRequiresOptInAndDefaultsToCountLimit checks retry
+// permission before ordinary count eligibility. A future deadline without
+// opt-in is rejected, and the opted-in no-deadline fixture stops when its count
+// reaches the supplied limit.
 func TestSameProviderRetryAllowedRequiresOptInAndDefaultsToCountLimit(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		err := &UpstreamFailoverError{SameProviderRetryDeadline: time.Now().Add(time.Minute)}
@@ -93,6 +120,10 @@ func TestSameProviderRetryAllowedRequiresOptInAndDefaultsToCountLimit(t *testing
 	})
 }
 
+// TestSameProviderRetryAllowedHonorsErrorMaxBeforeDeadline combines a future
+// deadline with an error-specific one-retry cap. The first retry is eligible,
+// reaching that cap stops retries, and a zero caller allowance remains
+// disabled.
 func TestSameProviderRetryAllowedHonorsErrorMaxBeforeDeadline(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		err := &UpstreamFailoverError{
@@ -106,6 +137,9 @@ func TestSameProviderRetryAllowedHonorsErrorMaxBeforeDeadline(t *testing.T) {
 	})
 }
 
+// TestSameProviderRetryDeadlineAllows covers absent, future, and expired retry
+// deadlines inside a synthetic clock. Absent and future deadlines permit
+// continuation, while the supplied past deadline fails the eligibility check.
 func TestSameProviderRetryDeadlineAllows(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		require.True(t, failover.SameProviderRetryDeadlineAllows((&UpstreamFailoverError{}).RetryFailure()))
@@ -118,6 +152,9 @@ func TestSameProviderRetryDeadlineAllows(t *testing.T) {
 	})
 }
 
+// TestEffectiveSameProviderRetryLimitHonorsErrorCapAndDisabledProvider uses an
+// API-key pool with a configured count and a smaller error cap. The effective
+// limit shrinks to one, while an explicitly zero pool count stays zero.
 func TestEffectiveSameProviderRetryLimitHonorsErrorCapAndDisabledProvider(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		provider := &providercore.Record{Type: capability.ProviderTypeAPIKey, Credentials: map[string]any{"pool_mode": true, "pool_mode_retry_count": float64(3)}}
@@ -127,6 +164,9 @@ func TestEffectiveSameProviderRetryLimitHonorsErrorCapAndDisabledProvider(t *tes
 	})
 }
 
+// TestNewFailoverState constructs bound, unbound, and zero-switch-budget state
+// fixtures. Counts and maps start empty, the last error and forced billing are
+// unset, and supplied session/budget settings remain in the asserted fields.
 func TestNewFailoverState(t *testing.T) {
 	t.Run("初始化字段正确", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
@@ -159,6 +199,10 @@ func TestNewFailoverState(t *testing.T) {
 	})
 }
 
+// TestHandleFailoverError_BasicSwitch covers explicit stop, legacy permission,
+// cancellation, and switch-budget exhaustion. It checks retained
+// errors/exclusions and separates an immediate first Antigravity switch from
+// the later delayed switch.
 func TestHandleFailoverError_BasicSwitch(t *testing.T) {
 	t.Run("显式停止不切换提供商且旧错误默认仍切换", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
@@ -227,7 +271,8 @@ func TestHandleFailoverError_BasicSwitch(t *testing.T) {
 
 	t.Run("非重试错误_Antigravity_第一次切换无延迟", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
-			// The first Antigravity switch has no delay.
+			// Check the first Antigravity switch against a short elapsed-time
+			// bound, separating it from the later second-switch delay.
 			mock := &mockTempUnscheduler{}
 			fs := failover.NewFailoverState[*UpstreamFailoverError](3, false, gatewaytelemetry.Failover)
 			err := newTestFailoverErr(500, false, false)
@@ -244,10 +289,11 @@ func TestHandleFailoverError_BasicSwitch(t *testing.T) {
 
 	t.Run("非重试错误_Antigravity_第二次切换有1秒延迟", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
-			// The second Antigravity switch waits one second.
+			// Seed one prior switch before measuring the next Antigravity switch.
+			// The assertions bracket its expected one-second wait with elapsed-time bounds.
 			mock := &mockTempUnscheduler{}
 			fs := failover.NewFailoverState[*UpstreamFailoverError](3, false, gatewaytelemetry.Failover)
-			fs.SwitchCount = 1 // One previous switch.
+			fs.SwitchCount = 1 // prior completed provider switch
 
 			err := newTestFailoverErr(500, false, false)
 			start := time.Now()
@@ -307,6 +353,11 @@ func TestHandleFailoverError_BasicSwitch(t *testing.T) {
 	})
 }
 
+// TestHandleFailoverError_CacheBilling combines bound sessions, same-provider
+// retries, deadline eligibility, and explicit billing flags. Ordinary retries
+// avoid session-derived forcing, a bound-session switch or explicit flag
+// enables it, and
+// later failures retain the enabled state.
 func TestHandleFailoverError_CacheBilling(t *testing.T) {
 	t.Run("hasBoundSession为true且实际切换时设置ForceCacheBilling", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
@@ -340,6 +391,9 @@ func TestHandleFailoverError_CacheBilling(t *testing.T) {
 
 			err := newTestFailoverErr(429, true, false)
 			err.SameProviderRetryDeadline = time.Now().Add(time.Minute)
+			// A tiny explicit wait isolates deadline eligibility from ordinary backoff.
+			// The future window stays open while this fixture exceeds the pool count
+			// and verifies that no provider switch or exclusion is selected.
 			err.SameProviderRetryDelay = time.Nanosecond
 
 			fs.HandleFailoverError(context.Background(), mock, 100, "openai", failover.MaxSameProviderRetries, err)
@@ -421,6 +475,10 @@ func TestHandleFailoverError_CacheBilling(t *testing.T) {
 	})
 }
 
+// TestHandleFailoverError_SameProviderRetry exercises independent provider
+// counts, ordinary delay, and caller allowances of three, one, or zero. Retry
+// exhaustion records temporary exclusion and switching, while an eligible retry
+// leaves switch/exclusion state unchanged.
 func TestHandleFailoverError_SameProviderRetry(t *testing.T) {
 	t.Run("第一次重试返回FailoverContinue", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
@@ -437,7 +495,7 @@ func TestHandleFailoverError_SameProviderRetry(t *testing.T) {
 			require.Equal(t, 0, fs.SwitchCount, "同提供商重试不应增加切换计数")
 			require.NotContains(t, fs.FailedProviderIDs, int64(100), "同提供商重试不应加入失败列表")
 			require.Empty(t, mock.calls, "同提供商重试期间不应调用 TempUnschedule")
-			// Check the default 500 ms same-provider delay.
+			// Bound elapsed time around the configured 500 ms ordinary retry wait.
 			require.GreaterOrEqual(t, elapsed, 400*time.Millisecond)
 			require.Less(t, elapsed, 2*time.Second)
 		})
@@ -508,7 +566,9 @@ func TestHandleFailoverError_SameProviderRetry(t *testing.T) {
 			fs := failover.NewFailoverState[*UpstreamFailoverError](5, false, gatewaytelemetry.Failover)
 			err := newTestFailoverErr(400, true, false)
 
-			// Exhaust provider 100 retries.
+			// Spend provider 100's ordinary retry allowance before revisiting it.
+			// Its count remains in request state after the switch, so returning to
+			// the same ID cannot reopen that already exhausted allowance.
 			for range failover.MaxSameProviderRetries {
 				fs.HandleFailoverError(context.Background(), mock, 100, "openai", failover.MaxSameProviderRetries, err)
 			}
@@ -564,6 +624,10 @@ func TestHandleFailoverError_SameProviderRetry(t *testing.T) {
 	})
 }
 
+// TestHandleFailoverError_TempUnschedule contrasts nonretryable failures with
+// exhausted retryable failures. Only the latter invokes the mock exclusion
+// callback, which retains the supplied provider ID, source status, and retry
+// permission.
 func TestHandleFailoverError_TempUnschedule(t *testing.T) {
 	t.Run("非重试错误不调用TempUnschedule", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
@@ -585,7 +649,9 @@ func TestHandleFailoverError_TempUnschedule(t *testing.T) {
 			for range failover.MaxSameProviderRetries {
 				fs.HandleFailoverError(context.Background(), mock, 42, "openai", failover.MaxSameProviderRetries, err)
 			}
-			// The next failure excludes and switches after the retry budget is spent.
+			// The recorded error remains retryable even after count exhaustion.
+			// The next call passes that same pointer to temporary exclusion before
+			// the provider is added to the request's failed-ID set.
 			fs.HandleFailoverError(context.Background(), mock, 42, "openai", failover.MaxSameProviderRetries, err)
 
 			require.Len(t, mock.calls, 1)
@@ -596,6 +662,10 @@ func TestHandleFailoverError_TempUnschedule(t *testing.T) {
 	})
 }
 
+// TestHandleFailoverError_ContextCanceled compares cancellation before entry
+// with cancellation during the ordinary retry wait. Entry cancellation leaves
+// checked state unchanged; wait cancellation follows counter increment, and the
+// Antigravity fixture also cancels before invocation.
 func TestHandleFailoverError_ContextCanceled(t *testing.T) {
 	t.Run("同提供商重试sleep期间context取消", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
@@ -604,6 +674,9 @@ func TestHandleFailoverError_ContextCanceled(t *testing.T) {
 			err := newTestFailoverErr(400, true, false)
 
 			ctx, cancel := context.WithCancel(context.Background())
+			// Schedule cancellation inside the synthetic clock after entry but before
+			// the ordinary retry timer expires. This exercises interruption after
+			// state increments the retry count, distinct from the entry guard below.
 			go func() {
 				time.Sleep(30 * time.Millisecond)
 				cancel() // Cancel during the wait, after the entry check.
@@ -615,7 +688,7 @@ func TestHandleFailoverError_ContextCanceled(t *testing.T) {
 
 			require.Equal(t, failover.FailoverCanceled, action)
 			require.Less(t, elapsed, 400*time.Millisecond, "sleep 应被取消打断")
-			// Cancellation during retry waiting occurs after the retry counter increments.
+			// The increment remains when cancellation interrupts the subsequent retry wait.
 			require.Equal(t, 1, fs.SameProviderRetryCount[100])
 		})
 	})
@@ -635,7 +708,7 @@ func TestHandleFailoverError_ContextCanceled(t *testing.T) {
 
 			require.Equal(t, failover.FailoverCanceled, action)
 			require.Less(t, elapsed, 100*time.Millisecond, "应立即返回")
-			// Cancellation at entry leaves failover state unchanged.
+			// The entry guard precedes error retention, exclusions, and retry/switch counters.
 			require.Equal(t, 0, fs.SwitchCount, "取消的请求不应计入切换")
 			require.Equal(t, 0, fs.SameProviderRetryCount[100], "取消的请求不应改动重试计数")
 			require.NotContains(t, fs.FailedProviderIDs, int64(100))
@@ -648,9 +721,12 @@ func TestHandleFailoverError_ContextCanceled(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			mock := &mockTempUnscheduler{}
 			fs := failover.NewFailoverState[*UpstreamFailoverError](3, false, gatewaytelemetry.Failover)
-			fs.SwitchCount = 1 // The next switch would wait one second.
+			fs.SwitchCount = 1 // next eligible switch would wait one second
 			err := newTestFailoverErr(500, false, false)
 
+			// This fixture cancels before invocation, so the entry guard prevents
+			// the otherwise one-second Antigravity wait. It does not cancel a timer
+			// after that platform-specific delay has already begun.
 			ctx, cancel := context.WithCancel(context.Background())
 			cancel()
 
@@ -664,6 +740,10 @@ func TestHandleFailoverError_ContextCanceled(t *testing.T) {
 	})
 }
 
+// TestHandleFailoverError_FailedProviderIDs covers switches, exhausted switch
+// budgets, same-provider retries, and repeated provider failures.
+// Switching/exhaustion retain provider IDs, eligible retries omit them, and
+// repeated IDs occupy one map entry.
 func TestHandleFailoverError_FailedProviderIDs(t *testing.T) {
 	t.Run("切换时添加到失败列表", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
@@ -713,6 +793,10 @@ func TestHandleFailoverError_FailedProviderIDs(t *testing.T) {
 	})
 }
 
+// TestHandleFailoverError_LastFailoverErr supplies consecutive switches and a
+// separate same-provider retry fixture. Each handled failure becomes the
+// asserted retained error, including the error whose same-provider retry is
+// still permitted.
 func TestHandleFailoverError_LastFailoverErr(t *testing.T) {
 	t.Run("每次调用都更新LastFailoverErr", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
@@ -741,6 +825,10 @@ func TestHandleFailoverError_LastFailoverErr(t *testing.T) {
 	})
 }
 
+// TestHandleFailoverError_IntegrationScenario combines real state handling
+// across multiple provider IDs inside a synthetic clock. Assertions cover retry
+// exhaustion, switch-count exhaustion, Antigravity delays, one
+// temporary-exclusion call, and forced billing that remains enabled.
 func TestHandleFailoverError_IntegrationScenario(t *testing.T) {
 	t.Run("模拟完整failover流程_多提供商混合重试与切换", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
@@ -791,21 +879,23 @@ func TestHandleFailoverError_IntegrationScenario(t *testing.T) {
 
 			err := newTestFailoverErr(500, false, false)
 
-			// The first switch has no delay.
+			// Check the initial switch against a short elapsed-time bound before
+			// measuring the delay expected after its switch count increases.
 			start := time.Now()
 			action := fs.HandleFailoverError(context.Background(), mock, 100, capability.PlatformAntigravity, failover.MaxSameProviderRetries, err)
 			elapsed := time.Since(start)
 			require.Equal(t, failover.FailoverContinue, action)
 			require.Less(t, elapsed, 200*time.Millisecond, "第一次切换延迟为 0")
 
-			// The second switch waits one second.
+			// The prior switch selects the delayed Antigravity path. Check its
+			// elapsed time against the lower bound for the expected one-second wait.
 			start = time.Now()
 			action = fs.HandleFailoverError(context.Background(), mock, 200, capability.PlatformAntigravity, failover.MaxSameProviderRetries, err)
 			elapsed = time.Since(start)
 			require.Equal(t, failover.FailoverContinue, action)
 			require.GreaterOrEqual(t, elapsed, 800*time.Millisecond, "第二次切换延迟约 1s")
 
-			// Exhaustion returns before the delay branch.
+			// Exhaustion returns before the Antigravity wait can advance synthetic time.
 			start = time.Now()
 			action = fs.HandleFailoverError(context.Background(), mock, 300, capability.PlatformAntigravity, failover.MaxSameProviderRetries, err)
 			elapsed = time.Since(start)
@@ -837,6 +927,9 @@ func TestHandleFailoverError_IntegrationScenario(t *testing.T) {
 	})
 }
 
+// TestHandleFailoverError_EdgeCases supplies zero source status, zero/negative
+// provider IDs, and an empty platform name. The state continues or tracks the
+// supplied IDs, and the empty platform avoids Antigravity delay.
 func TestHandleFailoverError_EdgeCases(t *testing.T) {
 	t.Run("StatusCode为0的错误也能正常处理", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
@@ -890,6 +983,10 @@ func TestHandleFailoverError_EdgeCases(t *testing.T) {
 	})
 }
 
+// TestHandleSelectionExhausted covers missing/non-503 failures, switch-budget
+// boundaries, and pre-canceled selection. Eligible 503 recovery waits and
+// clears exclusions, equality still permits recovery, and cancellation wins
+// even without an eligible prior failure.
 func TestHandleSelectionExhausted(t *testing.T) {
 	t.Run("无LastFailoverErr时返回Exhausted", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
@@ -924,6 +1021,7 @@ func TestHandleSelectionExhausted(t *testing.T) {
 
 			require.Equal(t, failover.FailoverContinue, action)
 			require.Empty(t, fs.FailedProviderIDs, "应清除失败提供商列表")
+			// Bracket the two-second selection wait separately from immediate exhaustion.
 			require.GreaterOrEqual(t, elapsed, 1500*time.Millisecond, "应等待约 2s")
 			require.Less(t, elapsed, 5*time.Second)
 		})
@@ -933,7 +1031,7 @@ func TestHandleSelectionExhausted(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			fs := failover.NewFailoverState[*UpstreamFailoverError](2, false, gatewaytelemetry.Failover)
 			fs.LastFailoverErr = newTestFailoverErr(503, false, false)
-			fs.SwitchCount = 3 // > MaxSwitches(2)
+			fs.SwitchCount = 3 // count beyond the configured switch budget
 
 			start := time.Now()
 			action := fs.HandleSelectionExhausted(context.Background())
@@ -963,7 +1061,9 @@ func TestHandleSelectionExhausted(t *testing.T) {
 
 	t.Run("context已取消_非503也返回Canceled而非Exhausted", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
-			// Canceled selection ends as cancellation rather than provider exhaustion (#4257).
+			// Pre-canceling selection takes precedence over the ineligible 520 failure.
+			// This fixture checks the entry guard, so it does not start the separate
+			// 503 backoff or represent cancellation during that recovery wait.
 			fs := failover.NewFailoverState[*UpstreamFailoverError](3, false, gatewaytelemetry.Failover)
 			fs.LastFailoverErr = newTestFailoverErr(520, false, false)
 
@@ -991,7 +1091,7 @@ func TestHandleSelectionExhausted(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			fs := failover.NewFailoverState[*UpstreamFailoverError](2, false, gatewaytelemetry.Failover)
 			fs.LastFailoverErr = newTestFailoverErr(503, false, false)
-			fs.SwitchCount = 2 // Equality is allowed by the selection-retry budget.
+			fs.SwitchCount = 2 // equality retains 503 selection-retry eligibility
 
 			action := fs.HandleSelectionExhausted(context.Background())
 			require.Equal(t, failover.FailoverContinue, action)
@@ -999,10 +1099,18 @@ func TestHandleSelectionExhausted(t *testing.T) {
 	})
 }
 
+// TempUnscheduleRetryableError appends the supplied provider and failure
+// pointer for later scenario assertions. Calls must be serialized with reads of
+// the mock; retaining the pointer makes later failure mutation visible in
+// recorded entries.
 func (m *mockTempUnscheduler) TempUnscheduleRetryableError(_ context.Context, providerID int64, failoverErr *UpstreamFailoverError) {
 	m.calls = append(m.calls, tempUnscheduleCall{providerID: providerID, failoverErr: failoverErr})
 }
 
+// newTestFailoverErr builds a failure fixture with source status, same-provider
+// eligibility, and optional forced billing. Remaining fields keep their zero
+// values, so RetryFailure uses the legacy default permitting provider
+// switching.
 func newTestFailoverErr(statusCode int, retryable, forceBilling bool) *UpstreamFailoverError {
 	return &UpstreamFailoverError{
 		StatusCode:              statusCode,

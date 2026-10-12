@@ -8,6 +8,10 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
+// TestUpstreamResponseModelObserverServiceTier supplies Responses progress and
+// terminal tiers, conflicting Chat tiers, and Anthropic speed changes. It
+// protects terminal precedence, unresolved-conflict emptiness, recognized speed
+// evidence, and empty results for absent usable observations.
 func TestUpstreamResponseModelObserverServiceTier(t *testing.T) {
 	t.Run("Responses 终止事件覆盖请求档位回显", func(t *testing.T) {
 		observer := &ResponseObserver{}
@@ -51,6 +55,10 @@ func TestUpstreamResponseModelObserverServiceTier(t *testing.T) {
 	})
 }
 
+// TestUpstreamResponseModelObserver_ObservesServiceTier contrasts typed progress,
+// terminal, untyped Chat, and model-free payloads. Tier evidence requires a
+// usable model and excludes nonterminal Responses echoes while retaining
+// terminal or untyped declarations.
 func TestUpstreamResponseModelObserver_ObservesServiceTier(t *testing.T) {
 	t.Parallel()
 

@@ -7,11 +7,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestOpenAIForwardResultSucceededForScheduling_TerminalEvents supplies legacy,
+// local-warmup, and declared WebSocket outcomes. It protects the scheduling
+// success defaults, completed/done success, and rejection of unsuccessful terminal events.
 func TestOpenAIForwardResultSucceededForScheduling_TerminalEvents(t *testing.T) {
 	tests := []struct {
-		name     string
-		result   *OpenAIResult
-		expected bool
+		name     string        // test outcome scenario
+		result   *OpenAIResult // supplied forwarding result
+		expected bool          // expected scheduling success
 	}{
 		{name: "nil legacy result", result: nil, expected: true},
 		{name: "non websocket zero value", result: &OpenAIResult{}, expected: true},
@@ -31,7 +34,9 @@ func TestOpenAIForwardResultSucceededForScheduling_TerminalEvents(t *testing.T) 
 	}
 }
 
-// TestOpenAIResultReplayStaysOutsideJSON checks that replay setters do not expose input in result JSON.
+// TestOpenAIResultReplayStaysOutsideJSON stores turn and provider-failover replay
+// items and retrieves their presence and lengths. JSON serialization contains
+// the public model while excluding replay prompt text and the local-warmup marker.
 func TestOpenAIResultReplayStaysOutsideJSON(t *testing.T) {
 	result := &OpenAIResult{Model: "model-visible", LocalWarmup: true}
 	result.SetWSReplayInput([]json.RawMessage{json.RawMessage(`{"prompt":"replay-private"}`)}, true)
@@ -48,6 +53,9 @@ func TestOpenAIResultReplayStaysOutsideJSON(t *testing.T) {
 	require.NotContains(t, string(raw), "LocalWarmup")
 }
 
+// TestOpenAIForwardSucceededForScheduling invokes the delegation helper with
+// nil, ordinary, completed, and failed results. The helper returns the result
+// method's scheduling classification for each supplied outcome.
 func TestOpenAIForwardSucceededForScheduling(t *testing.T) {
 	require.True(t, schedulingSucceeded(nil))
 	require.True(t, schedulingSucceeded(&OpenAIResult{}))
@@ -61,7 +69,9 @@ func TestOpenAIForwardSucceededForScheduling(t *testing.T) {
 	}))
 }
 
-// schedulingSucceeded returns the result's scheduling success classification.
+// schedulingSucceeded delegates a test result to its scheduling classifier.
+// Nil and ordinary zero-value results follow that method's legacy success path,
+// while a declared failed WebSocket terminal returns false.
 func schedulingSucceeded(result *OpenAIResult) bool {
 	return result.SucceededForScheduling()
 }

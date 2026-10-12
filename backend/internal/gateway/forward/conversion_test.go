@@ -16,17 +16,28 @@ import (
 	testassert "github.com/TokenFlux/TokenRouter/internal/testutil/assertion"
 )
 
+// Protocol bridge fixtures preserve content and tool identity across request
+// representations while selecting protocol-specific defaults. These tests
+// compare converted structures or serialized fields, including effort, media,
+// tool-history pairing, and option presence before execution resolves a provider.
+
+// Shared conversion fixtures supply an unsigned thinking/tool turn and the
+// output-token floor used by request-budget assertions across both bridge paths.
 const (
+	// anthropicThinkingToolTurn supplies assistant thinking, text, and a weather call.
 	anthropicThinkingToolTurn = `[
 	{"type":"thinking","thinking":"user wants weather, call the tool"},
 	{"type":"text","text":"checking"},
 	{"type":"tool_use","id":"toolu_1","name":"get_weather","input":{"city":"SF"}}
 ]`
 
-	// minMaxOutputTokens is the minimum output budget expected by protocol tests.
+	// minMaxOutputTokens is the expected 128-token floor used by protocol bridge assertions.
 	minMaxOutputTokens = 128
 )
 
+// TestExtractCCReasoningEffortFromBody checks nested and flat Chat effort with
+// casing and x-high aliases. The fixtures also retain max for DeepSeek or
+// mapped Kimi and return nil when effort is absent.
 func TestExtractCCReasoningEffortFromBody(t *testing.T) {
 	t.Parallel()
 
@@ -63,6 +74,10 @@ func TestExtractCCReasoningEffortFromBody(t *testing.T) {
 	})
 }
 
+// TestAdaptResponsesClientToolsForAnthropic_FlattensNamespace supplies a
+// namespaced declaration and historical function call. Both use the flattened
+// function name, the history loses its namespace field, and the restoration
+// mapping retains the namespace/name pair.
 func TestAdaptResponsesClientToolsForAnthropic_FlattensNamespace(t *testing.T) {
 	t.Parallel()
 
@@ -90,6 +105,10 @@ func TestAdaptResponsesClientToolsForAnthropic_FlattensNamespace(t *testing.T) {
 	require.NotContains(t, call, "namespace")
 }
 
+// TestAdaptResponsesClientToolsForAnthropic_LiftsAdditionalTools supplies
+// custom and namespace tools inside an additional_tools input item. Conversion
+// promotes two function declarations, records both restoration identities, and
+// leaves only the user message in input.
 func TestAdaptResponsesClientToolsForAnthropic_LiftsAdditionalTools(t *testing.T) {
 	body := []byte(`{
 		"model":"claude-fable-5",
@@ -121,6 +140,9 @@ func TestAdaptResponsesClientToolsForAnthropic_LiftsAdditionalTools(t *testing.T
 	require.Equal(t, "message", testassert.MustType[map[string]any](input[0])["type"])
 }
 
+// TestExtractResponsesReasoningEffortFromBody checks nested effort for Claude,
+// DeepSeek, and a mapped GLM alias. Casing normalizes, eligible max survives
+// model selection, and a request without effort returns nil.
 func TestExtractResponsesReasoningEffortFromBody(t *testing.T) {
 	t.Parallel()
 
@@ -143,6 +165,10 @@ func TestExtractResponsesReasoningEffortFromBody(t *testing.T) {
 	require.Nil(t, responsesEffortFixture([]byte(`{"model":"claude-sonnet-4.5"}`)))
 }
 
+// TestAnthropicToResponses_BasicText converts an Anthropic request with user
+// text, streaming enabled, and an output budget. Model, stream, budget, disabled
+// storage, role, and the
+// resulting input_text content match the supplied fixture.
 func TestAnthropicToResponses_BasicText(t *testing.T) {
 	req := &protocolanthropic.AnthropicRequest{
 		Model:     "gpt-5.2",
@@ -172,6 +198,9 @@ func TestAnthropicToResponses_BasicText(t *testing.T) {
 	assert.Equal(t, "Hello", parts[0].Text)
 }
 
+// TestAnthropicToResponses_SystemPrompt covers string and array system prompts
+// plus a billing-header block. Prompt text becomes developer content in order,
+// while the billing block is excluded from the asserted prompt parts.
 func TestAnthropicToResponses_SystemPrompt(t *testing.T) {
 	t.Run("string", func(t *testing.T) {
 		req := &protocolanthropic.AnthropicRequest{
@@ -237,6 +266,9 @@ func TestAnthropicToResponses_SystemPrompt(t *testing.T) {
 	})
 }
 
+// TestAnthropicToResponses_ToolUse converts an assistant tool call and matching
+// user result. The function declaration has explicit false strictness, and
+// historical call/result items share call_1 with no fabricated item ID.
 func TestAnthropicToResponses_ToolUse(t *testing.T) {
 	req := &protocolanthropic.AnthropicRequest{
 		Model:     "gpt-5.2",
@@ -275,6 +307,9 @@ func TestAnthropicToResponses_ToolUse(t *testing.T) {
 	assert.Equal(t, "Sunny, 72°F", items[3].Output)
 }
 
+// TestAnthropicToResponses_ThinkingWithoutSignatureIgnored places unsigned
+// thinking beside assistant text between user turns. Conversion retains three
+// messages and emits only the asserted text part in the assistant content.
 func TestAnthropicToResponses_ThinkingWithoutSignatureIgnored(t *testing.T) {
 	req := &protocolanthropic.AnthropicRequest{
 		Model:     "gpt-5.2",
@@ -302,6 +337,10 @@ func TestAnthropicToResponses_ThinkingWithoutSignatureIgnored(t *testing.T) {
 	assert.Equal(t, "Hi!", parts[0].Text)
 }
 
+// TestAnthropicToResponses_ThinkingSignatureBecomesReasoning supplies signed
+// thinking before text and a tool call. The supplied signature becomes the
+// encrypted-content field in a preceding reasoning item, with assistant and
+// function-call items occupying the asserted following positions.
 func TestAnthropicToResponses_ThinkingSignatureBecomesReasoning(t *testing.T) {
 	req := &protocolanthropic.AnthropicRequest{
 		Model:     "grok-4.5",
@@ -326,10 +365,13 @@ func TestAnthropicToResponses_ThinkingSignatureBecomesReasoning(t *testing.T) {
 	assert.Equal(t, "function_call", items[3].Type)
 }
 
+// TestAnthropicToResponses_MaxTokensFloor uses an output budget below the
+// bridge minimum. The converted Responses request raises that supplied budget
+// to the asserted 128-token floor for this fixture.
 func TestAnthropicToResponses_MaxTokensFloor(t *testing.T) {
 	req := &protocolanthropic.AnthropicRequest{
 		Model:     "gpt-5.2",
-		MaxTokens: 10, // below minMaxOutputTokens (128)
+		MaxTokens: 10, // supplied budget below the enforced 128-token floor
 		Messages:  []protocolanthropic.AnthropicMessage{{Role: "user", Content: json.RawMessage(`"Hi"`)}},
 	}
 
@@ -338,6 +380,10 @@ func TestAnthropicToResponses_MaxTokensFloor(t *testing.T) {
 	assert.Equal(t, 128, *resp.MaxOutputTokens)
 }
 
+// TestAnthropicToResponses_ThinkingEnabled supplies enabled thinking and a
+// token budget without output effort. Recorded effort is medium with auto
+// summary, encrypted-content inclusion, and no reasoning.summary inclusion in
+// this fixture.
 func TestAnthropicToResponses_ThinkingEnabled(t *testing.T) {
 	req := &protocolanthropic.AnthropicRequest{
 		Model:     "gpt-5.2",
@@ -356,6 +402,9 @@ func TestAnthropicToResponses_ThinkingEnabled(t *testing.T) {
 	assert.NotContains(t, resp.Include, "reasoning.summary")
 }
 
+// TestAnthropicToResponses_ThinkingAdaptive supplies adaptive thinking without
+// a separate output effort. The converted request records medium and auto
+// summary while omitting reasoning.summary from its inclusion list.
 func TestAnthropicToResponses_ThinkingAdaptive(t *testing.T) {
 	req := &protocolanthropic.AnthropicRequest{
 		Model:     "gpt-5.2",
@@ -373,6 +422,9 @@ func TestAnthropicToResponses_ThinkingAdaptive(t *testing.T) {
 	assert.NotContains(t, resp.Include, "reasoning.summary")
 }
 
+// TestAnthropicToResponses_ThinkingDisabled supplies disabled thinking without
+// output effort for the GPT fixture. A nonnil reasoning configuration still
+// uses the bridge default of medium in the converted request.
 func TestAnthropicToResponses_ThinkingDisabled(t *testing.T) {
 	req := &protocolanthropic.AnthropicRequest{
 		Model:     "gpt-5.2",
@@ -388,6 +440,9 @@ func TestAnthropicToResponses_ThinkingDisabled(t *testing.T) {
 	assert.Equal(t, "medium", resp.Reasoning.Effort)
 }
 
+// TestAnthropicToResponses_NoThinking omits both thinking and output
+// configuration from the GPT fixture. The resulting reasoning configuration
+// remains present and records medium effort after successful conversion.
 func TestAnthropicToResponses_NoThinking(t *testing.T) {
 	req := &protocolanthropic.AnthropicRequest{
 		Model:     "gpt-5.2",
@@ -402,6 +457,9 @@ func TestAnthropicToResponses_NoThinking(t *testing.T) {
 	assert.Equal(t, "medium", resp.Reasoning.Effort)
 }
 
+// TestAnthropicToResponses_OutputConfigOverridesDefault combines enabled
+// thinking with low output effort. Conversion uses low rather than the medium
+// default and retains auto summary in the resulting reasoning configuration.
 func TestAnthropicToResponses_OutputConfigOverridesDefault(t *testing.T) {
 	// output_config.effort="low" overrides the default medium effort.
 	req := &protocolanthropic.AnthropicRequest{
@@ -419,6 +477,9 @@ func TestAnthropicToResponses_OutputConfigOverridesDefault(t *testing.T) {
 	assert.Equal(t, "auto", resp.Reasoning.Summary)
 }
 
+// TestAnthropicToResponses_OutputConfigWithoutThinking provides medium output
+// effort with no thinking configuration. Conversion still creates reasoning,
+// retaining medium effort and auto summary for the supplied GPT request.
 func TestAnthropicToResponses_OutputConfigWithoutThinking(t *testing.T) {
 	// output_config.effort creates reasoning even when thinking is absent.
 	// The medium value passes through unchanged.
@@ -436,6 +497,9 @@ func TestAnthropicToResponses_OutputConfigWithoutThinking(t *testing.T) {
 	assert.Equal(t, "auto", resp.Reasoning.Summary)
 }
 
+// TestAnthropicToResponses_OutputConfigHigh provides high Anthropic output
+// effort without thinking configuration. The converted Responses request
+// retains high and auto summary after conversion succeeds for the GPT fixture.
 func TestAnthropicToResponses_OutputConfigHigh(t *testing.T) {
 	// The high effort value passes through unchanged.
 	req := &protocolanthropic.AnthropicRequest{
@@ -452,6 +516,9 @@ func TestAnthropicToResponses_OutputConfigHigh(t *testing.T) {
 	assert.Equal(t, "auto", resp.Reasoning.Summary)
 }
 
+// TestAnthropicToResponses_OutputConfigMax supplies max output effort on the
+// GPT-5.2 input. Intermediate conversion retains max and auto summary, without
+// exercising later execution-time target capability filtering.
 func TestAnthropicToResponses_OutputConfigMax(t *testing.T) {
 	// Retain client effort until final route capabilities are available.
 	req := &protocolanthropic.AnthropicRequest{
@@ -468,6 +535,9 @@ func TestAnthropicToResponses_OutputConfigMax(t *testing.T) {
 	assert.Equal(t, "auto", resp.Reasoning.Summary)
 }
 
+// TestAnthropicToResponses_OutputConfigMaxForGPT56 supplies max effort on the
+// GPT-5.6-sol input. The converted Responses reasoning retains max and auto
+// summary at this intermediate conversion stage.
 func TestAnthropicToResponses_OutputConfigMaxForGPT56(t *testing.T) {
 	// Retain max effort for GPT-5.6.
 	req := &protocolanthropic.AnthropicRequest{
@@ -484,6 +554,9 @@ func TestAnthropicToResponses_OutputConfigMaxForGPT56(t *testing.T) {
 	assert.Equal(t, "auto", resp.Reasoning.Summary)
 }
 
+// TestAnthropicToResponses_RejectsUltraReasoningEffort uses ultra output effort
+// with four selected GPT model strings. Every fixture returns an
+// unsupported-effort error and a nil converted Responses request.
 func TestAnthropicToResponses_RejectsUltraReasoningEffort(t *testing.T) {
 	for _, model := range []string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5"} {
 		t.Run(model, func(t *testing.T) {
@@ -501,8 +574,11 @@ func TestAnthropicToResponses_RejectsUltraReasoningEffort(t *testing.T) {
 	}
 }
 
+// TestAnthropicToResponses_NoOutputConfig uses enabled thinking while omitting
+// output_config entirely. The resulting nonnil reasoning configuration records
+// medium, isolating the default used by that supplied fixture.
 func TestAnthropicToResponses_NoOutputConfig(t *testing.T) {
-	// Without output_config, effort defaults to medium regardless of thinking.type.
+	// Enabled thinking without output_config selects medium in this fixture.
 	req := &protocolanthropic.AnthropicRequest{
 		Model:     "gpt-5.2",
 		MaxTokens: 1024,
@@ -516,6 +592,9 @@ func TestAnthropicToResponses_NoOutputConfig(t *testing.T) {
 	assert.Equal(t, "medium", resp.Reasoning.Effort)
 }
 
+// TestAnthropicToResponses_OutputConfigWithoutEffort supplies an empty
+// Anthropic output configuration. The converted request still has reasoning and
+// selects medium for the omitted effort in this GPT fixture.
 func TestAnthropicToResponses_OutputConfigWithoutEffort(t *testing.T) {
 	// An empty output_config effort uses the medium default.
 	req := &protocolanthropic.AnthropicRequest{
@@ -531,6 +610,9 @@ func TestAnthropicToResponses_OutputConfigWithoutEffort(t *testing.T) {
 	assert.Equal(t, "medium", resp.Reasoning.Effort)
 }
 
+// TestAnthropicToResponses_ToolChoiceAuto converts an automatic Anthropic tool
+// selector for Responses. The encoded selection decodes as the string auto,
+// establishing the target selector shape for this input.
 func TestAnthropicToResponses_ToolChoiceAuto(t *testing.T) {
 	req := &protocolanthropic.AnthropicRequest{
 		Model:      "gpt-5.2",
@@ -547,6 +629,9 @@ func TestAnthropicToResponses_ToolChoiceAuto(t *testing.T) {
 	assert.Equal(t, "auto", tc)
 }
 
+// TestAnthropicToResponses_ToolChoiceAny converts the Anthropic any tool
+// selector. The encoded Responses selector decodes as required, retaining
+// mandatory tool selection through the protocol name change.
 func TestAnthropicToResponses_ToolChoiceAny(t *testing.T) {
 	req := &protocolanthropic.AnthropicRequest{
 		Model:      "gpt-5.2",
@@ -563,6 +648,9 @@ func TestAnthropicToResponses_ToolChoiceAny(t *testing.T) {
 	assert.Equal(t, "required", tc)
 }
 
+// TestAnthropicToResponses_ToolChoiceSpecific supplies a named Anthropic tool
+// selector. Responses uses a function/name object with the selected weather
+// name and no nested function wrapper in the asserted result.
 func TestAnthropicToResponses_ToolChoiceSpecific(t *testing.T) {
 	req := &protocolanthropic.AnthropicRequest{
 		Model:      "gpt-5.2",
@@ -581,6 +669,9 @@ func TestAnthropicToResponses_ToolChoiceSpecific(t *testing.T) {
 	assert.NotContains(t, tc, "function")
 }
 
+// TestAnthropicToResponses_UserImageBlock combines user text with a base64 PNG
+// block. Conversion retains both parts in order and constructs the expected
+// data URL for the image content.
 func TestAnthropicToResponses_UserImageBlock(t *testing.T) {
 	req := &protocolanthropic.AnthropicRequest{
 		Model:     "gpt-5.2",
@@ -610,6 +701,9 @@ func TestAnthropicToResponses_UserImageBlock(t *testing.T) {
 	assert.Equal(t, "data:image/png;base64,iVBOR", parts[1].ImageURL)
 }
 
+// TestAnthropicToResponses_ImageOnlyUserMessage supplies one base64 JPEG
+// without user text. Conversion keeps a single user input image with its
+// expected JPEG data URL and does not add a text part.
 func TestAnthropicToResponses_ImageOnlyUserMessage(t *testing.T) {
 	req := &protocolanthropic.AnthropicRequest{
 		Model:     "gpt-5.2",
@@ -635,6 +729,10 @@ func TestAnthropicToResponses_ImageOnlyUserMessage(t *testing.T) {
 	assert.Equal(t, "data:image/jpeg;base64,/9j/4AAQ", parts[0].ImageURL)
 }
 
+// TestAnthropicToResponses_ToolResultWithImage supplies an image-only result
+// matching an assistant tool call. The function result uses the empty
+// placeholder, and a following user message carries the asserted PNG
+// input_image.
 func TestAnthropicToResponses_ToolResultWithImage(t *testing.T) {
 	req := &protocolanthropic.AnthropicRequest{
 		Model:     "gpt-5.2",
@@ -658,12 +756,12 @@ func TestAnthropicToResponses_ToolResultWithImage(t *testing.T) {
 	// user + function_call + function_call_output + user(image) = 4
 	require.Len(t, items, 4)
 
-	// function_call_output should have text-only output (no image).
+	// The image-only result uses a string placeholder before the separate user image.
 	assert.Equal(t, "function_call_output", items[2].Type)
 	assert.Equal(t, "toolu_1", items[2].CallID)
 	assert.Equal(t, "(empty)", items[2].Output)
 
-	// Image should be in a separate user message.
+	// The following user message carries the extracted input image.
 	assert.Equal(t, "user", items[3].Role)
 	var parts []protocolopenai.ResponsesContentPart
 	require.NoError(t, json.Unmarshal(items[3].Content, &parts))
@@ -672,6 +770,9 @@ func TestAnthropicToResponses_ToolResultWithImage(t *testing.T) {
 	assert.Equal(t, "data:image/png;base64,iVBOR", parts[0].ImageURL)
 }
 
+// TestAnthropicToResponses_ToolResultMixed combines metadata text and a PNG
+// inside one tool result. Converted function output retains the text while a
+// following user image part carries the expected data URL.
 func TestAnthropicToResponses_ToolResultMixed(t *testing.T) {
 	req := &protocolanthropic.AnthropicRequest{
 		Model:     "gpt-5.2",
@@ -696,11 +797,11 @@ func TestAnthropicToResponses_ToolResultMixed(t *testing.T) {
 	// user + function_call + function_call_output + user(image) = 4
 	require.Len(t, items, 4)
 
-	// function_call_output should have text-only output.
+	// The function result retains its text before the separate user image.
 	assert.Equal(t, "function_call_output", items[2].Type)
 	assert.Equal(t, "File metadata: 800x600 PNG", items[2].Output)
 
-	// Image should be in a separate user message.
+	// The following user message carries the extracted input image.
 	assert.Equal(t, "user", items[3].Role)
 	var parts []protocolopenai.ResponsesContentPart
 	require.NoError(t, json.Unmarshal(items[3].Content, &parts))
@@ -709,6 +810,10 @@ func TestAnthropicToResponses_ToolResultMixed(t *testing.T) {
 	assert.Equal(t, "data:image/png;base64,AAAA", parts[0].ImageURL)
 }
 
+// TestAnthropicToResponses_TextOnlyToolResultBackwardCompat uses an
+// array-valued tool result containing one text block. Conversion retains three
+// history items and produces the expected plain string as the matching function
+// output.
 func TestAnthropicToResponses_TextOnlyToolResultBackwardCompat(t *testing.T) {
 	req := &protocolanthropic.AnthropicRequest{
 		Model:     "gpt-5.2",
@@ -736,6 +841,9 @@ func TestAnthropicToResponses_TextOnlyToolResultBackwardCompat(t *testing.T) {
 	assert.Equal(t, "Sunny, 72°F", items[2].Output)
 }
 
+// TestAnthropicToResponses_ImageEmptyMediaType supplies base64 image bytes with
+// an empty media type. The single converted input_image uses the asserted
+// image/png data-URL default for this source block.
 func TestAnthropicToResponses_ImageEmptyMediaType(t *testing.T) {
 	req := &protocolanthropic.AnthropicRequest{
 		Model:     "gpt-5.2",
@@ -758,10 +866,13 @@ func TestAnthropicToResponses_ImageEmptyMediaType(t *testing.T) {
 	require.NoError(t, json.Unmarshal(items[0].Content, &parts))
 	require.Len(t, parts, 1)
 	assert.Equal(t, "input_image", parts[0].Type)
-	// Should default to image/png when media_type is empty.
+	// Missing media type selects PNG for the generated data URL.
 	assert.Equal(t, "data:image/png;base64,iVBOR", parts[0].ImageURL)
 }
 
+// TestAnthropicToResponses_ToolWithoutProperties declares an object-schema
+// function without a properties member. Conversion retains its function/name
+// identity and adds the properties field checked in the encoded parameters.
 func TestAnthropicToResponses_ToolWithoutProperties(t *testing.T) {
 	req := &protocolanthropic.AnthropicRequest{
 		Model:     "gpt-5.2",
@@ -787,6 +898,9 @@ func TestAnthropicToResponses_ToolWithoutProperties(t *testing.T) {
 	assert.Contains(t, params, "properties")
 }
 
+// TestAnthropicToResponses_ToolWithNilSchema declares a tool without an input
+// schema. The converted function has an object parameter type and empty
+// properties, establishing the shape used for this missing-schema fixture.
 func TestAnthropicToResponses_ToolWithNilSchema(t *testing.T) {
 	req := &protocolanthropic.AnthropicRequest{
 		Model:     "gpt-5.2",
@@ -809,6 +923,10 @@ func TestAnthropicToResponses_ToolWithNilSchema(t *testing.T) {
 	assert.JSONEq(t, `{}`, string(params["properties"]))
 }
 
+// TestAnthropicToResponses_SamplingPreservedBeforeResolution supplies
+// temperature and top_p for a GPT request. Both values remain in the converted
+// structure and serialized JSON, before any later route-specific parameter
+// filtering.
 func TestAnthropicToResponses_SamplingPreservedBeforeResolution(t *testing.T) {
 	temp := 0.7
 	req := &protocolanthropic.AnthropicRequest{
@@ -831,6 +949,10 @@ func TestAnthropicToResponses_SamplingPreservedBeforeResolution(t *testing.T) {
 	assert.Contains(t, string(b), `"top_p"`)
 }
 
+// TestAnthropicToResponses_SamplingDoesNotGuessModelFamily runs sampling inputs
+// across five selected GPT model strings. Conversion retains the supplied
+// temperature and top_p for every fixture without testing execution-time model
+// attributes.
 func TestAnthropicToResponses_SamplingDoesNotGuessModelFamily(t *testing.T) {
 	temp := 1.0
 	models := []string{"gpt-5.2", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex", "gpt-5.5"}
@@ -851,6 +973,9 @@ func TestAnthropicToResponses_SamplingDoesNotGuessModelFamily(t *testing.T) {
 	}
 }
 
+// TestAnthropicToChatCompletionsRequest_BasicText converts a single Anthropic
+// user string into Chat. The supplied model, user role/content, and 1024-token
+// completion budget remain in the asserted request fields.
 func TestAnthropicToChatCompletionsRequest_BasicText(t *testing.T) {
 	req := &protocolanthropic.AnthropicRequest{
 		Model:     "claude-sonnet-4-20250514",
@@ -870,6 +995,9 @@ func TestAnthropicToChatCompletionsRequest_BasicText(t *testing.T) {
 	require.Equal(t, 1024, *out.MaxCompletionTokens)
 }
 
+// TestAnthropicToChatCompletionsRequest_SystemPrompt supplies an Anthropic
+// system string before a user turn. The Chat request contains two messages and
+// retains that string in the leading system-role message.
 func TestAnthropicToChatCompletionsRequest_SystemPrompt(t *testing.T) {
 	req := &protocolanthropic.AnthropicRequest{
 		Model:     "claude-sonnet-4-20250514",
@@ -887,6 +1015,9 @@ func TestAnthropicToChatCompletionsRequest_SystemPrompt(t *testing.T) {
 	require.Equal(t, `"You are helpful"`, string(out.Messages[0].Content))
 }
 
+// TestAnthropicToChatCompletionsRequest_ToolUseInAssistant supplies assistant
+// text and a weather tool call with its result. The surviving assistant tool
+// call retains its ID, function type, name, and encoded city argument.
 func TestAnthropicToChatCompletionsRequest_ToolUseInAssistant(t *testing.T) {
 	req := &protocolanthropic.AnthropicRequest{
 		Model:     "claude-sonnet-4-20250514",
@@ -900,7 +1031,7 @@ func TestAnthropicToChatCompletionsRequest_ToolUseInAssistant(t *testing.T) {
 
 	out, err := AnthropicToChatCompletionsRequest(req)
 	require.NoError(t, err)
-	// Expect user, assistant tool calls, and a tool reply in order.
+	// Locate the assistant call; this length assertion alone does not establish all message positions.
 	require.GreaterOrEqual(t, len(out.Messages), 2)
 
 	var assistant *protocolopenai.ChatMessage
@@ -917,6 +1048,9 @@ func TestAnthropicToChatCompletionsRequest_ToolUseInAssistant(t *testing.T) {
 	require.Equal(t, `{"city":"SF"}`, assistant.ToolCalls[0].Function.Arguments)
 }
 
+// TestAnthropicToChatCompletionsRequest_ToolResultBecomesToolMessage supplies a
+// weather call followed by its Anthropic result. The converted Chat tool-role
+// message retains the matching tool-call ID and expected quoted result text.
 func TestAnthropicToChatCompletionsRequest_ToolResultBecomesToolMessage(t *testing.T) {
 	req := &protocolanthropic.AnthropicRequest{
 		Model:     "claude-sonnet-4-20250514",
@@ -942,6 +1076,9 @@ func TestAnthropicToChatCompletionsRequest_ToolResultBecomesToolMessage(t *testi
 	require.Equal(t, `"sunny, 72F"`, string(toolMsg.Content))
 }
 
+// TestAnthropicToChatCompletionsRequest_ThinkingDropped uses an assistant turn
+// containing thinking and text but no tool call. The single Chat message
+// retains answer text and has empty reasoning_content in this fixture.
 func TestAnthropicToChatCompletionsRequest_ThinkingDropped(t *testing.T) {
 	req := &protocolanthropic.AnthropicRequest{
 		Model:     "claude-sonnet-4-20250514",
@@ -959,6 +1096,9 @@ func TestAnthropicToChatCompletionsRequest_ThinkingDropped(t *testing.T) {
 	require.Empty(t, out.Messages[0].ReasoningContent)
 }
 
+// TestAnthropicToChatCompletionsRequest_ToolChoiceAuto declares a weather
+// function with automatic Anthropic selection. The Chat request retains one
+// tool, emits the auto selector string, and enables parallel tool calls.
 func TestAnthropicToChatCompletionsRequest_ToolChoiceAuto(t *testing.T) {
 	req := &protocolanthropic.AnthropicRequest{
 		Model:     "claude-sonnet-4-20250514",
@@ -978,11 +1118,15 @@ func TestAnthropicToChatCompletionsRequest_ToolChoiceAuto(t *testing.T) {
 	require.True(t, *out.ParallelToolCalls)
 }
 
+// TestAnthropicToChatCompletionsRequest_ParallelToolChoiceMapping checks
+// omitted, false, and true disable_parallel_tool_use inputs. Every Chat result
+// supplies a nonnil parallel flag, with the disable input inverted for the
+// explicit cases.
 func TestAnthropicToChatCompletionsRequest_ParallelToolChoiceMapping(t *testing.T) {
 	tests := []struct {
-		name       string
-		toolChoice json.RawMessage
-		want       bool
+		name       string          // parallel-flag case label
+		toolChoice json.RawMessage // source disable-parallel selector
+		want       bool            // expected Chat parallelism
 	}{
 		{name: "省略时默认启用", want: true},
 		{name: "显式 false 时启用", toolChoice: json.RawMessage(`{"type":"auto","disable_parallel_tool_use":false}`), want: true},
@@ -1009,6 +1153,9 @@ func TestAnthropicToChatCompletionsRequest_ParallelToolChoiceMapping(t *testing.
 	}
 }
 
+// TestAnthropicToChatCompletionsRequest_ToolChoiceAny supplies any selection
+// with a declared weather tool. The Chat request emits the required selector
+// string after conversion succeeds for that declaration and user history.
 func TestAnthropicToChatCompletionsRequest_ToolChoiceAny(t *testing.T) {
 	req := &protocolanthropic.AnthropicRequest{
 		Model:     "claude-sonnet-4-20250514",
@@ -1025,6 +1172,9 @@ func TestAnthropicToChatCompletionsRequest_ToolChoiceAny(t *testing.T) {
 	require.Equal(t, `"required"`, string(out.ToolChoice))
 }
 
+// TestAnthropicToChatCompletionsRequest_ToolChoiceSpecificTool selects a
+// declared weather tool by name. The Chat selector is a function object whose
+// nested function member retains that name after successful conversion.
 func TestAnthropicToChatCompletionsRequest_ToolChoiceSpecificTool(t *testing.T) {
 	req := &protocolanthropic.AnthropicRequest{
 		Model:     "claude-sonnet-4-20250514",
@@ -1046,6 +1196,10 @@ func TestAnthropicToChatCompletionsRequest_ToolChoiceSpecificTool(t *testing.T) 
 	require.Equal(t, "get_weather", fn["name"])
 }
 
+// TestAnthropicToChatCompletionsRequest_SamplingPreservedBeforeResolution
+// supplies distinct temperature and top_p values on a GPT fixture. Both
+// pointed-to values remain in the converted Chat request before later target
+// attribute resolution.
 func TestAnthropicToChatCompletionsRequest_SamplingPreservedBeforeResolution(t *testing.T) {
 	temp := 0.7
 	topP := 0.9
@@ -1063,6 +1217,10 @@ func TestAnthropicToChatCompletionsRequest_SamplingPreservedBeforeResolution(t *
 	require.Equal(t, req.TopP, out.TopP)
 }
 
+// TestAnthropicToChatCompletionsRequest_TemperaturePreservedForNonReasoningModel
+// uses the DeepSeek model string with temperature and top_p. The assertions
+// retain both supplied values and nonnil pointers without establishing that
+// model string's reasoning capabilities.
 func TestAnthropicToChatCompletionsRequest_TemperaturePreservedForNonReasoningModel(t *testing.T) {
 	temp := 0.7
 	topP := 0.9
@@ -1082,10 +1240,13 @@ func TestAnthropicToChatCompletionsRequest_TemperaturePreservedForNonReasoningMo
 	require.Equal(t, 0.9, *out.TopP)
 }
 
+// TestAnthropicToChatCompletionsRequest_MaxTokensFloor supplies a ten-token
+// Anthropic budget for Chat conversion. The resulting nonnil completion budget
+// is the shared 128-token floor asserted by the protocol fixtures.
 func TestAnthropicToChatCompletionsRequest_MaxTokensFloor(t *testing.T) {
 	req := &protocolanthropic.AnthropicRequest{
 		Model:     "claude-sonnet-4-20250514",
-		MaxTokens: 10, // Below minMaxOutputTokens (128).
+		MaxTokens: 10, // supplied budget below the enforced 128-token floor
 		Messages:  []protocolanthropic.AnthropicMessage{{Role: "user", Content: json.RawMessage(`"hi"`)}},
 	}
 
@@ -1095,6 +1256,10 @@ func TestAnthropicToChatCompletionsRequest_MaxTokensFloor(t *testing.T) {
 	require.Equal(t, minMaxOutputTokens, *out.MaxCompletionTokens)
 }
 
+// TestAnthropicToChatCompletionsRequest_ReasoningEffortMapping supplies max
+// output effort on a GPT-5.4 request. The Chat request records max after
+// intermediate conversion, without exercising final provider capability
+// resolution.
 func TestAnthropicToChatCompletionsRequest_ReasoningEffortMapping(t *testing.T) {
 	req := &protocolanthropic.AnthropicRequest{
 		Model:        "gpt-5.4",
@@ -1108,6 +1273,9 @@ func TestAnthropicToChatCompletionsRequest_ReasoningEffortMapping(t *testing.T) 
 	require.Equal(t, "max", out.ReasoningEffort)
 }
 
+// TestAnthropicToChatCompletionsRequest_ReasoningEffortMaxForGPT56 provides max
+// effort on the GPT-5.6 input. The resulting Chat reasoning_effort remains max
+// after the bridge succeeds with the supplied user history.
 func TestAnthropicToChatCompletionsRequest_ReasoningEffortMaxForGPT56(t *testing.T) {
 	req := &protocolanthropic.AnthropicRequest{
 		Model:        "gpt-5.6",
@@ -1121,6 +1289,10 @@ func TestAnthropicToChatCompletionsRequest_ReasoningEffortMaxForGPT56(t *testing
 	require.Equal(t, "max", out.ReasoningEffort)
 }
 
+// TestAnthropicToChatCompletionsRequest_ReasoningEffortUltraRejected supplies
+// whitespace-padded ultra on a GPT-5.6 fixture. Conversion returns the specific
+// unsupported-effort diagnostic and a nil Chat request rather than a usable
+// converted result.
 func TestAnthropicToChatCompletionsRequest_ReasoningEffortUltraRejected(t *testing.T) {
 	req := &protocolanthropic.AnthropicRequest{
 		Model:        "gpt-5.6",
@@ -1134,6 +1306,9 @@ func TestAnthropicToChatCompletionsRequest_ReasoningEffortUltraRejected(t *testi
 	require.Nil(t, out)
 }
 
+// TestAnthropicToChatCompletionsRequest_ReasoningEffortDefaultMedium omits
+// output effort in the GPT-5.4 request. The successful Chat conversion supplies
+// medium reasoning_effort for that otherwise ordinary user-message fixture.
 func TestAnthropicToChatCompletionsRequest_ReasoningEffortDefaultMedium(t *testing.T) {
 	req := &protocolanthropic.AnthropicRequest{
 		Model:     "gpt-5.4",
@@ -1146,6 +1321,9 @@ func TestAnthropicToChatCompletionsRequest_ReasoningEffortDefaultMedium(t *testi
 	require.Equal(t, "medium", out.ReasoningEffort)
 }
 
+// TestAnthropicToChatCompletionsRequest_ServerToolDropped mixes an Anthropic
+// web-search server tool with a weather function. The converted Chat request
+// contains only the weather function in the asserted tool list.
 func TestAnthropicToChatCompletionsRequest_ServerToolDropped(t *testing.T) {
 	req := &protocolanthropic.AnthropicRequest{
 		Model:     "claude-sonnet-4-20250514",
@@ -1163,7 +1341,10 @@ func TestAnthropicToChatCompletionsRequest_ServerToolDropped(t *testing.T) {
 	require.Equal(t, "get_weather", out.Tools[0].Function.Name)
 }
 
-// TestDirectBridge_RequestMatchesDoubleConversion compares direct conversion with the Responses intermediate path.
+// TestDirectBridge_RequestMatchesDoubleConversion compares a tool-history
+// fixture through direct Chat conversion and a Responses intermediate. Selected
+// request fields and per-message roles, decoded content, call IDs, names, and
+// arguments agree between those paths.
 func TestDirectBridge_RequestMatchesDoubleConversion(t *testing.T) {
 	temp := 0.5
 	req := &protocolanthropic.AnthropicRequest{
@@ -1203,7 +1384,9 @@ func TestDirectBridge_RequestMatchesDoubleConversion(t *testing.T) {
 	require.Len(t, direct.Messages, len(double.Messages), "message count mismatch")
 	for i := range direct.Messages {
 		require.Equal(t, double.Messages[i].Role, direct.Messages[i].Role, "msg %d role mismatch", i)
-		// Compare decoded JSON content to ignore encoding differences.
+		// Compare decoded values while discarding unmarshal errors here.
+		// Two invalid contents could both decode to nil, so this assertion
+		// establishes value agreement rather than independent JSON validity.
 		var dContent, dblContent any
 		_ = json.Unmarshal(double.Messages[i].Content, &dblContent)
 		_ = json.Unmarshal(direct.Messages[i].Content, &dContent)
@@ -1218,6 +1401,10 @@ func TestDirectBridge_RequestMatchesDoubleConversion(t *testing.T) {
 	}
 }
 
+// TestChatCompletionsChunkToAnthropicEvents_ImageInToolResult uses request
+// conversion with an image-bearing Anthropic tool result. It asserts that
+// converted user content contains a PNG data URL; this fixture does not invoke
+// chunk-to-event conversion.
 func TestChatCompletionsChunkToAnthropicEvents_ImageInToolResult(t *testing.T) {
 	// Promote images in tool_result into image_url parts of a following user message.
 	req := &protocolanthropic.AnthropicRequest{
@@ -1232,7 +1419,8 @@ func TestChatCompletionsChunkToAnthropicEvents_ImageInToolResult(t *testing.T) {
 
 	out, err := AnthropicToChatCompletionsRequest(req)
 	require.NoError(t, err)
-	// Expect user, assistant tool call, tool reply, then user image content.
+	// Require a nontrivial history before looking for user image content. The
+	// scan below checks image presence independently of a fixed message order.
 	require.GreaterOrEqual(t, len(out.Messages), 3)
 
 	var foundImage bool
@@ -1253,8 +1441,11 @@ func TestChatCompletionsChunkToAnthropicEvents_ImageInToolResult(t *testing.T) {
 	require.True(t, foundImage, "image from tool_result should appear in user message")
 }
 
+// TestAnthropicToChatCompletionsRequest_UserArrayContentFoldsToString supplies
+// two text blocks in one user message. Conversion joins them with two newline
+// characters into the asserted Chat string content for this fixture.
 func TestAnthropicToChatCompletionsRequest_UserArrayContentFoldsToString(t *testing.T) {
-	// Join text-only arrays with blank lines because some Chat upstreams reject arrays without images.
+	// Text-only blocks become the asserted string with blank-line separators.
 	req := &protocolanthropic.AnthropicRequest{
 		Model:     "deepseek-v4-pro",
 		MaxTokens: 100,
@@ -1269,8 +1460,13 @@ func TestAnthropicToChatCompletionsRequest_UserArrayContentFoldsToString(t *test
 	require.Equal(t, `"first\n\nsecond"`, string(out.Messages[0].Content))
 }
 
+// TestDirectBridge_RequestMatchesDoubleConversion_ArrayUserContent compares
+// histories containing text-only arrays and text plus image. Direct and
+// intermediate Chat paths produce equal message counts, roles, and successfully
+// decoded JSON content for those messages.
 func TestDirectBridge_RequestMatchesDoubleConversion_ArrayUserContent(t *testing.T) {
-	// Both conversion paths collapse text-only content and retain arrays containing images.
+	// Compare both paths on text-only and image-bearing history. Decoding
+	// success is asserted separately before comparing the converted values.
 	req := &protocolanthropic.AnthropicRequest{
 		Model:     "deepseek-v4-pro",
 		MaxTokens: 100,
@@ -1299,8 +1495,12 @@ func TestDirectBridge_RequestMatchesDoubleConversion_ArrayUserContent(t *testing
 	}
 }
 
+// TestAnthropicToChatCompletionsRequest_ToolChoiceUndeclaredDropped selects
+// missing, removed-server, unknown-type, and declared function tools. Invalid
+// selections disappear, while the declared weather selection retains the
+// asserted nested Chat function selector.
 func TestAnthropicToChatCompletionsRequest_ToolChoiceUndeclaredDropped(t *testing.T) {
-	// Drop named tool_choice values that refer to removed or unknown tools to avoid upstream rejection.
+	// Keep a named selection only when its declared function survives conversion.
 	base := protocolanthropic.AnthropicRequest{
 		Model:     "deepseek-v4-pro",
 		MaxTokens: 100,
@@ -1338,6 +1538,10 @@ func TestAnthropicToChatCompletionsRequest_ToolChoiceUndeclaredDropped(t *testin
 	require.JSONEq(t, `{"type":"function","function":{"name":"get_weather"}}`, string(out.ToolChoice))
 }
 
+// TestAnthropicToChatCompletionsRequest_ThinkingBecomesReasoningContentOnToolTurn
+// supplies unsigned assistant thinking beside text and a tool call. The
+// surviving Chat assistant retains the thinking in reasoning_content, one call,
+// and the asserted text content.
 func TestAnthropicToChatCompletionsRequest_ThinkingBecomesReasoningContentOnToolTurn(t *testing.T) {
 	out, err := AnthropicToChatCompletionsRequest(anthropicAssistantMsg(t, anthropicThinkingToolTurn))
 	require.NoError(t, err)
@@ -1356,7 +1560,10 @@ func TestAnthropicToChatCompletionsRequest_ThinkingBecomesReasoningContentOnTool
 	require.Equal(t, `"checking"`, string(assistant.Content), "text/tool_use 处理保持不变")
 }
 
-// TestAnthropicToChatCompletionsRequest_ReasoningContentSerializesOnWire checks reasoning_content in the serialized payload.
+// TestAnthropicToChatCompletionsRequest_ReasoningContentSerializesOnWire
+// serializes the thinking/tool-turn Chat fixture after successful conversion.
+// Its encoded request contains the expected reasoning_content field and exact
+// thinking text from that assistant turn.
 func TestAnthropicToChatCompletionsRequest_ReasoningContentSerializesOnWire(t *testing.T) {
 	out, err := AnthropicToChatCompletionsRequest(anthropicAssistantMsg(t, anthropicThinkingToolTurn))
 	require.NoError(t, err)
@@ -1366,8 +1573,10 @@ func TestAnthropicToChatCompletionsRequest_ReasoningContentSerializesOnWire(t *t
 	require.Contains(t, string(payload), `"reasoning_content":"user wants weather, call the tool"`)
 }
 
-// TestAnthropicChatBridge_MatchesResponsesChatBridgeReasoningPlacement compares both bridges for equivalent history.
-// Reasoning belongs on the assistant message containing tool_calls.
+// TestAnthropicChatBridge_MatchesResponsesChatBridgeReasoningPlacement compares
+// equivalent thinking/tool-call histories from two source formats. Both Chat
+// outputs put the same reasoning text on an assistant message containing tool
+// calls.
 func TestAnthropicChatBridge_MatchesResponsesChatBridgeReasoningPlacement(t *testing.T) {
 	responsesReq := &protocolopenai.ResponsesRequest{
 		Model: "deepseek-v4-flash",
@@ -1402,8 +1611,10 @@ func TestAnthropicChatBridge_MatchesResponsesChatBridgeReasoningPlacement(t *tes
 		"两条桥对等价历史必须产出同样的 reasoning_content 位置")
 }
 
-// TestAnthropicToChatCompletionsRequest_ThinkingWithoutToolCallsStaysDropped checks text-only turns omit reasoning_content.
-// Reasoning is passed back with tool calls.
+// TestAnthropicToChatCompletionsRequest_ThinkingWithoutToolCallsStaysDropped
+// supplies DeepSeek thinking alongside assistant text with no tool call.
+// Reasoning content is empty in the structure and absent from serialized JSON
+// while answer text remains.
 func TestAnthropicToChatCompletionsRequest_ThinkingWithoutToolCallsStaysDropped(t *testing.T) {
 	req := &protocolanthropic.AnthropicRequest{
 		Model:     "deepseek-v4-flash",
@@ -1425,7 +1636,9 @@ func TestAnthropicToChatCompletionsRequest_ThinkingWithoutToolCallsStaysDropped(
 	require.NotContains(t, string(payload), "reasoning_content")
 }
 
-// TestChatReasoningAliasRequestConversion checks that historical assistant reasoning aliases survive conversion to Responses.
+// TestChatReasoningAliasRequestConversion supplies the historical assistant
+// reasoning alias together with answer text. The converted Responses text
+// contains the asserted thinking tag followed by a newline and the answer.
 func TestChatReasoningAliasRequestConversion(t *testing.T) {
 	request := &protocolopenai.ChatCompletionsRequest{
 		Model: "reasoning-model",
@@ -1439,6 +1652,9 @@ func TestChatReasoningAliasRequestConversion(t *testing.T) {
 	require.Equal(t, "<thinking>prior plan</thinking>\nanswer", gjson.GetBytes(converted.Input, "0.content.0.text").String())
 }
 
+// TestChatCompletionsToResponses_BasicText converts one Chat user string into
+// Responses input. Model and user role remain, streaming is enabled, and the
+// storage option is explicitly false in the asserted result.
 func TestChatCompletionsToResponses_BasicText(t *testing.T) {
 	req := &protocolopenai.ChatCompletionsRequest{
 		Model: "gpt-4o",
@@ -1459,6 +1675,9 @@ func TestChatCompletionsToResponses_BasicText(t *testing.T) {
 	assert.Equal(t, "user", items[0].Role)
 }
 
+// TestChatCompletionsToResponses_SystemMessage supplies a Chat system message
+// followed by a user string. Converted input contains two messages retaining
+// system and user roles in the supplied order.
 func TestChatCompletionsToResponses_SystemMessage(t *testing.T) {
 	req := &protocolopenai.ChatCompletionsRequest{
 		Model: "gpt-4o",
@@ -1478,6 +1697,9 @@ func TestChatCompletionsToResponses_SystemMessage(t *testing.T) {
 	assert.Equal(t, "user", items[1].Role)
 }
 
+// TestChatCompletionsToResponses_ToolCalls supplies a declared function call
+// and matching tool reply without assistant text. Responses emits three history
+// items, retains call linkage/name/output, and keeps the function declaration.
 func TestChatCompletionsToResponses_ToolCalls(t *testing.T) {
 	req := &protocolopenai.ChatCompletionsRequest{
 		Model: "gpt-4o",
@@ -1537,13 +1759,18 @@ func TestChatCompletionsToResponses_ToolCalls(t *testing.T) {
 	assert.Equal(t, "ping", resp.Tools[0].Name)
 }
 
+// TestChatCompletionsToResponses_ToolStrict checks omitted strictness and
+// explicit true/false on Chat function tools. Converted pointers are nonnil and
+// the encoded Responses tool includes the exact asserted strict value.
 func TestChatCompletionsToResponses_ToolStrict(t *testing.T) {
 	strictTrue := true
 	strictFalse := false
 	tests := []struct {
-		name   string
-		strict *bool
-		want   bool
+		name string // strictness fixture label
+		// strict supplies optional source presence, while want is the explicit
+		// target value; the omitted source case expects a nonnil false result.
+		strict *bool // optional source strictness
+		want   bool  // expected target strictness
 	}{
 		{name: "defaults omitted strict to false", want: false},
 		{name: "preserves explicit true", strict: &strictTrue, want: true},
@@ -1574,7 +1801,7 @@ func TestChatCompletionsToResponses_ToolStrict(t *testing.T) {
 			require.NoError(t, err)
 
 			var serialized struct {
-				Tools []map[string]json.RawMessage `json:"tools"`
+				Tools []map[string]json.RawMessage `json:"tools"` // serialized tool fields
 			}
 			require.NoError(t, json.Unmarshal(payload, &serialized))
 			require.Len(t, serialized.Tools, 1)
@@ -1585,6 +1812,10 @@ func TestChatCompletionsToResponses_ToolStrict(t *testing.T) {
 	}
 }
 
+// TestChatCompletionsToResponses_LegacyFunctionDefaultsStrictFalse uses the
+// legacy functions field without a strict value. The converted function
+// supplies a nonnil false strict pointer and serializes strict:false in the
+// request.
 func TestChatCompletionsToResponses_LegacyFunctionDefaultsStrictFalse(t *testing.T) {
 	req := &protocolopenai.ChatCompletionsRequest{
 		Model:    "gpt-4o",
@@ -1605,6 +1836,10 @@ func TestChatCompletionsToResponses_LegacyFunctionDefaultsStrictFalse(t *testing
 	assert.Contains(t, string(payload), `"strict":false`)
 }
 
+// TestChatCompletionsToResponses_MaxTokens checks legacy max_tokens below the
+// output floor and simultaneous completion-token input. The first fixture
+// clamps to 128, while max_completion_tokens takes precedence and retains 500
+// in the second.
 func TestChatCompletionsToResponses_MaxTokens(t *testing.T) {
 	t.Run("max_tokens", func(t *testing.T) {
 		maxTokens := 100
@@ -1616,7 +1851,7 @@ func TestChatCompletionsToResponses_MaxTokens(t *testing.T) {
 		resp, err := ChatCompletionsToResponses(req)
 		require.NoError(t, err)
 		require.NotNil(t, resp.MaxOutputTokens)
-		// Below minMaxOutputTokens (128), should be clamped
+		// The supplied budget exercises the bridge output-token floor.
 		assert.Equal(t, minMaxOutputTokens, *resp.MaxOutputTokens)
 	})
 
@@ -1636,6 +1871,9 @@ func TestChatCompletionsToResponses_MaxTokens(t *testing.T) {
 	})
 }
 
+// TestChatCompletionsToResponses_ReasoningEffort supplies high Chat effort with
+// ordinary user input. Conversion produces nonnil reasoning with high effort
+// and auto summary in the asserted Responses request.
 func TestChatCompletionsToResponses_ReasoningEffort(t *testing.T) {
 	req := &protocolopenai.ChatCompletionsRequest{
 		Model:           "gpt-4o",
@@ -1649,6 +1887,9 @@ func TestChatCompletionsToResponses_ReasoningEffort(t *testing.T) {
 	assert.Equal(t, "auto", resp.Reasoning.Summary)
 }
 
+// TestChatCompletionsToResponses_ResponseFormatJsonObject converts a Chat
+// json_object response format. The Responses text format matches that object
+// both in the converted structure and after serialization followed by decoding.
 func TestChatCompletionsToResponses_ResponseFormatJsonObject(t *testing.T) {
 	req := &protocolopenai.ChatCompletionsRequest{
 		Model:          "gpt-4o",
@@ -1664,12 +1905,16 @@ func TestChatCompletionsToResponses_ResponseFormatJsonObject(t *testing.T) {
 	payload, err := json.Marshal(resp)
 	require.NoError(t, err)
 	var serialized struct {
-		Text protocolopenai.ResponsesText `json:"text"`
+		Text protocolopenai.ResponsesText `json:"text"` // serialized Responses formatting
 	}
 	require.NoError(t, json.Unmarshal(payload, &serialized))
 	assert.JSONEq(t, `{"type":"json_object"}`, string(serialized.Text.Format))
 }
 
+// TestChatCompletionsToResponses_ResponseFormatJsonSchema supplies a nested
+// named JSON schema with strictness and required fields. The Responses text
+// format flattens its wrapper while retaining the asserted schema contents and
+// strict flag.
 func TestChatCompletionsToResponses_ResponseFormatJsonSchema(t *testing.T) {
 	req := &protocolopenai.ChatCompletionsRequest{
 		Model:    "gpt-4o",
@@ -1705,6 +1950,9 @@ func TestChatCompletionsToResponses_ResponseFormatJsonSchema(t *testing.T) {
 	}`, string(resp.Text.Format))
 }
 
+// TestChatCompletionsToResponses_RejectsUltraReasoningEffort provides ultra
+// effort for a GPT-5.6-sol request. The bridge returns an unsupported-effort
+// error and no usable Responses request for that supplied fixture.
 func TestChatCompletionsToResponses_RejectsUltraReasoningEffort(t *testing.T) {
 	req := &protocolopenai.ChatCompletionsRequest{
 		Model:           "gpt-5.6-sol",
@@ -1717,6 +1965,9 @@ func TestChatCompletionsToResponses_RejectsUltraReasoningEffort(t *testing.T) {
 	require.Nil(t, resp)
 }
 
+// TestChatCompletionsToResponses_ImageURL combines text and a base64 image URL
+// in Chat user content. Responses retains both ordered parts with their
+// asserted text/image types and unchanged image URL.
 func TestChatCompletionsToResponses_ImageURL(t *testing.T) {
 	content := `[{"type":"text","text":"Describe this"},{"type":"image_url","image_url":{"url":"data:image/png;base64,abc123"}}]`
 	req := &protocolopenai.ChatCompletionsRequest{
@@ -1741,6 +1992,9 @@ func TestChatCompletionsToResponses_ImageURL(t *testing.T) {
 	assert.Equal(t, "data:image/png;base64,abc123", parts[1].ImageURL)
 }
 
+// TestChatCompletionsToResponses_EmptyBase64ImageURLSkipped supplies an image
+// data URL with no payload beside text. Converted user content contains only
+// the retained text part after the empty image is discarded.
 func TestChatCompletionsToResponses_EmptyBase64ImageURLSkipped(t *testing.T) {
 	content := `[{"type":"text","text":"Describe this"},{"type":"image_url","image_url":{"url":"data:image/png;base64,"}}]`
 	req := &protocolopenai.ChatCompletionsRequest{
@@ -1763,6 +2017,9 @@ func TestChatCompletionsToResponses_EmptyBase64ImageURLSkipped(t *testing.T) {
 	assert.Equal(t, "Describe this", parts[0].Text)
 }
 
+// TestChatCompletionsToResponses_WhitespaceOnlyBase64ImageURLSkipped supplies a
+// whitespace-only base64 payload beside user text. Responses retains just the
+// text part, excluding the unusable image from the asserted content array.
 func TestChatCompletionsToResponses_WhitespaceOnlyBase64ImageURLSkipped(t *testing.T) {
 	content := `[{"type":"text","text":"Describe this"},{"type":"image_url","image_url":{"url":"data:image/png;base64,   "}}]`
 	req := &protocolopenai.ChatCompletionsRequest{
@@ -1785,6 +2042,9 @@ func TestChatCompletionsToResponses_WhitespaceOnlyBase64ImageURLSkipped(t *testi
 	assert.Equal(t, "Describe this", parts[0].Text)
 }
 
+// TestChatCompletionsToResponses_FilePartFileData supplies text and an inline
+// PDF file part. The converted input_file retains filename and file_data, has
+// no file_id, and follows the retained text in order.
 func TestChatCompletionsToResponses_FilePartFileData(t *testing.T) {
 	content := `[{"type":"text","text":"Summarize the attached document"},{"type":"file","file":{"filename":"document.pdf","file_data":"data:application/pdf;base64,JVBERi0xLjQ="}}]`
 	req := &protocolopenai.ChatCompletionsRequest{
@@ -1811,6 +2071,9 @@ func TestChatCompletionsToResponses_FilePartFileData(t *testing.T) {
 	assert.Empty(t, parts[1].FileID)
 }
 
+// TestChatCompletionsToResponses_FilePartFileID supplies a Chat file reference
+// with a file_id. The single Responses input_file retains that identifier and
+// has no inline file_data in the asserted result.
 func TestChatCompletionsToResponses_FilePartFileID(t *testing.T) {
 	content := `[{"type":"file","file":{"file_id":"file-abc123"}}]`
 	req := &protocolopenai.ChatCompletionsRequest{
@@ -1834,8 +2097,11 @@ func TestChatCompletionsToResponses_FilePartFileID(t *testing.T) {
 	assert.Empty(t, parts[0].FileData)
 }
 
+// TestChatCompletionsToResponses_EmptyFilePartSkipped provides a filename-only
+// file part beside user text. The converted content contains only input_text,
+// excluding that file without testing image handling in this fixture.
 func TestChatCompletionsToResponses_EmptyFilePartSkipped(t *testing.T) {
-	// Drop file parts lacking file_data and file_id, and images with empty URLs, to avoid invalid upstream items.
+	// This filename-only fixture has neither inline file bytes nor an uploaded file ID.
 	content := `[{"type":"text","text":"Describe this"},{"type":"file","file":{"filename":"empty.pdf"}}]`
 	req := &protocolopenai.ChatCompletionsRequest{
 		Model: "gpt-4o",
@@ -1856,13 +2122,17 @@ func TestChatCompletionsToResponses_EmptyFilePartSkipped(t *testing.T) {
 	assert.Equal(t, "input_text", parts[0].Type)
 }
 
+// TestChatCompletionsToResponses_EmptyContentNeverNull covers null,
+// empty-array, empty-text, and empty-image Chat content. Every converted
+// request contains one input item with an empty JSON string and no content:null
+// field.
 func TestChatCompletionsToResponses_EmptyContentNeverNull(t *testing.T) {
-	// Regression #2515: Responses rejects input-item content serialized as JSON null.
-	// When a Chat message produces no usable content parts,
-	// serialize its content as a string.
+	// When these fixtures produce no usable parts, encoded input content is an
+	// empty string. The assertions inspect both the complete serialized input
+	// and the decoded item so a null value cannot satisfy either expectation.
 	cases := []struct {
-		name    string
-		content json.RawMessage
+		name    string          // empty-content fixture label
+		content json.RawMessage // source Chat content
 	}{
 		{"null content", json.RawMessage(`null`)},
 		{"empty array content", json.RawMessage(`[]`)},
@@ -1891,6 +2161,9 @@ func TestChatCompletionsToResponses_EmptyContentNeverNull(t *testing.T) {
 	}
 }
 
+// TestChatCompletionsToResponses_SystemArrayContent supplies array-valued
+// system text and user text plus image. Responses retains two messages, the
+// asserted system text part, and the user image type/data URL.
 func TestChatCompletionsToResponses_SystemArrayContent(t *testing.T) {
 	req := &protocolopenai.ChatCompletionsRequest{
 		Model: "gpt-4o",
@@ -1920,6 +2193,10 @@ func TestChatCompletionsToResponses_SystemArrayContent(t *testing.T) {
 	assert.Equal(t, "data:image/png;base64,abc123", userParts[1].ImageURL)
 }
 
+// TestChatCompletionsToResponses_LegacyFunctions uses legacy functions and
+// function_call fields for a weather function. The converted declaration
+// remains a function, and the selector uses a flat Responses function/name
+// object.
 func TestChatCompletionsToResponses_LegacyFunctions(t *testing.T) {
 	req := &protocolopenai.ChatCompletionsRequest{
 		Model: "gpt-4o",
@@ -1950,6 +2227,9 @@ func TestChatCompletionsToResponses_LegacyFunctions(t *testing.T) {
 	assert.NotContains(t, tc, "function")
 }
 
+// TestChatCompletionsToResponses_ServiceTier supplies the flex tier on an
+// ordinary Chat request. The converted Responses request retains flex exactly
+// in the asserted service-tier field after conversion succeeds.
 func TestChatCompletionsToResponses_ServiceTier(t *testing.T) {
 	req := &protocolopenai.ChatCompletionsRequest{
 		Model:       "gpt-4o",
@@ -1961,6 +2241,9 @@ func TestChatCompletionsToResponses_ServiceTier(t *testing.T) {
 	assert.Equal(t, "flex", resp.ServiceTier)
 }
 
+// TestChatCompletionsToResponses_ParallelToolCalls supplies explicit false and
+// true parallel-tool flags. Each converted pointer is nonnil, retains the
+// supplied value, and serializes that same boolean in the request.
 func TestChatCompletionsToResponses_ParallelToolCalls(t *testing.T) {
 	for _, value := range []bool{false, true} {
 		req := &protocolopenai.ChatCompletionsRequest{
@@ -1980,6 +2263,10 @@ func TestChatCompletionsToResponses_ParallelToolCalls(t *testing.T) {
 	}
 }
 
+// TestChatCompletionsToResponses_SamplingPreservedBeforeResolution supplies
+// temperature and top_p on a GPT-5.2 fixture. Both remain in the converted
+// fields and serialized JSON before any later route-specific attribute
+// filtering.
 func TestChatCompletionsToResponses_SamplingPreservedBeforeResolution(t *testing.T) {
 	temp := 0.7
 	req := &protocolopenai.ChatCompletionsRequest{
@@ -2001,6 +2288,10 @@ func TestChatCompletionsToResponses_SamplingPreservedBeforeResolution(t *testing
 	assert.Contains(t, string(b), `"top_p"`)
 }
 
+// TestChatCompletionsToResponses_TemperaturePreservedForNonReasoningModel uses
+// the GPT-4o string with sampling parameters. Conversion retains nonnil
+// temperature and top_p pointers whose values match 0.7 within the asserted
+// floating-point tolerance.
 func TestChatCompletionsToResponses_TemperaturePreservedForNonReasoningModel(t *testing.T) {
 	temp := 0.7
 	req := &protocolopenai.ChatCompletionsRequest{
@@ -2013,11 +2304,16 @@ func TestChatCompletionsToResponses_TemperaturePreservedForNonReasoningModel(t *
 	resp, err := ChatCompletionsToResponses(req)
 	require.NoError(t, err)
 	require.NotNil(t, resp.Temperature, "non-reasoning model: temperature must be preserved")
+	// Compare retained sampling values with a small floating-point tolerance.
 	assert.InDelta(t, 0.7, *resp.Temperature, 1e-9)
 	require.NotNil(t, resp.TopP, "non-reasoning model: top_p must be preserved")
 	assert.InDelta(t, 0.7, *resp.TopP, 1e-9)
 }
 
+// TestChatCompletionsToResponses_AssistantWithTextAndToolCalls combines
+// assistant text and a function call after user input. Responses emits separate
+// assistant and function-call items in order, with no fabricated item ID on the
+// call.
 func TestChatCompletionsToResponses_AssistantWithTextAndToolCalls(t *testing.T) {
 	req := &protocolopenai.ChatCompletionsRequest{
 		Model: "gpt-4o",
@@ -2053,6 +2349,9 @@ func TestChatCompletionsToResponses_AssistantWithTextAndToolCalls(t *testing.T) 
 	assert.Empty(t, items[2].ID)
 }
 
+// TestChatCompletionsToResponses_AssistantArrayContentPreserved supplies two
+// assistant text blocks after user input. The converted assistant has one
+// output_text part containing their concatenated AB value in this fixture.
 func TestChatCompletionsToResponses_AssistantArrayContentPreserved(t *testing.T) {
 	req := &protocolopenai.ChatCompletionsRequest{
 		Model: "gpt-4o",
@@ -2077,6 +2376,9 @@ func TestChatCompletionsToResponses_AssistantArrayContentPreserved(t *testing.T)
 	assert.Equal(t, "AB", parts[0].Text)
 }
 
+// TestChatCompletionsToResponses_AssistantThinkingTagPreserved combines
+// assistant thinking and final text in array content. The converted single
+// output_text contains both the asserted thinking tag and final answer text.
 func TestChatCompletionsToResponses_AssistantThinkingTagPreserved(t *testing.T) {
 	req := &protocolopenai.ChatCompletionsRequest{
 		Model: "gpt-4o",
@@ -2101,6 +2403,10 @@ func TestChatCompletionsToResponses_AssistantThinkingTagPreserved(t *testing.T) 
 	assert.Contains(t, parts[0].Text, "final answer")
 }
 
+// TestChatCompletionsToResponses_AssistantReasoningContentPreserved supplies
+// reasoning_content separately from the assistant answer string. The converted
+// output_text contains the asserted thinking tag and answer in the same
+// assistant content part.
 func TestChatCompletionsToResponses_AssistantReasoningContentPreserved(t *testing.T) {
 	req := &protocolopenai.ChatCompletionsRequest{
 		Model: "gpt-4o",
@@ -2129,6 +2435,9 @@ func TestChatCompletionsToResponses_AssistantReasoningContentPreserved(t *testin
 	assert.Contains(t, parts[0].Text, "final answer")
 }
 
+// TestChatCompletionsToResponses_ToolArrayContent supplies a matching Chat tool
+// result containing text and image parts. Responses retains the call ID and
+// concatenates the two text values into the asserted function output.
 func TestChatCompletionsToResponses_ToolArrayContent(t *testing.T) {
 	req := &protocolopenai.ChatCompletionsRequest{
 		Model: "gpt-4o",
@@ -2168,6 +2477,9 @@ func TestChatCompletionsToResponses_ToolArrayContent(t *testing.T) {
 	assert.Equal(t, "image width: 100; image height: 200", items[2].Output)
 }
 
+// TestChatCompletionsToResponsesPreservesXSearchTool supplies x_search filters,
+// dates, media-understanding flags, and tool choice. The converted declaration
+// retains each asserted option and its selected x_search tool-choice object.
 func TestChatCompletionsToResponsesPreservesXSearchTool(t *testing.T) {
 	enabled := true
 	req := &protocolopenai.ChatCompletionsRequest{
@@ -2202,6 +2514,10 @@ func TestChatCompletionsToResponsesPreservesXSearchTool(t *testing.T) {
 	require.JSONEq(t, `{"type":"x_search"}`, string(resp.ToolChoice))
 }
 
+// TestChatCompletionsToResponsesPreservesSupportedBuiltInTools mixes a valid
+// function, supported built-ins, an unknown built-in, and a missing function
+// body. Exactly the function, web_search, and code_execution declarations
+// remain in order.
 func TestChatCompletionsToResponsesPreservesSupportedBuiltInTools(t *testing.T) {
 	req := &protocolopenai.ChatCompletionsRequest{
 		Model:    "claude-opus-4-6-thinking",
@@ -2224,6 +2540,9 @@ func TestChatCompletionsToResponsesPreservesSupportedBuiltInTools(t *testing.T) 
 	require.Equal(t, "code_execution", resp.Tools[2].Type)
 }
 
+// TestAnthropicFastConvertsToOpenAIPriority provides fast Anthropic speed on a
+// Claude fixture. The converted Responses request records priority service tier
+// after successfully converting the supplied user string.
 func TestAnthropicFastConvertsToOpenAIPriority(t *testing.T) {
 	content, err := json.Marshal("hello")
 	require.NoError(t, err)
@@ -2237,15 +2556,10 @@ func TestAnthropicFastConvertsToOpenAIPriority(t *testing.T) {
 	require.Equal(t, "priority", converted.ServiceTier)
 }
 
-// TestCCChain_OrphanToolResultFromTrimmedHistory covers this upstream HTTP 400:
-//
-//	unexpected ...content.0: tool_use_id found in tool_result blocks:
-//	call_00_TgfbRvKlnD7oK6Dg00sL1661. Each tool_result block must have a
-//	corresponding tool_use block in the previous message.
-//
-// Sliding-window history may retain a tool result after dropping the assistant call declaration.
-// The orphan result has no matching tool_use, which Anthropic rejects.
-// Conversion removes the orphan to restore valid pairing.
+// TestCCChain_OrphanToolResultFromTrimmedHistory supplies history retaining a
+// tool reply after its assistant call was removed. The forwarding conversion
+// chain passes adjacency checks and no decoded output block retains that orphan
+// result ID.
 func TestCCChain_OrphanToolResultFromTrimmedHistory(t *testing.T) {
 	orphanID := "call_00_TgfbRvKlnD7oK6Dg00sL1661"
 	msgs := ccChainToAnthropic(t, &protocolopenai.ChatCompletionsRequest{
@@ -2264,8 +2578,9 @@ func TestCCChain_OrphanToolResultFromTrimmedHistory(t *testing.T) {
 	}
 }
 
-// TestCCChain_ParallelToolOneResultMissing covers a parallel tool call whose result was omitted.
-// Conversion drops the unanswered tool_use so Anthropic receives complete pairs.
+// TestCCChain_ParallelToolOneResultMissing supplies two parallel calls with
+// only call_a answered. The conversion chain passes pairing checks, and the
+// asserted decoded history contains no tool_use for unanswered call_b.
 func TestCCChain_ParallelToolOneResultMissing(t *testing.T) {
 	msgs := ccChainToAnthropic(t, &protocolopenai.ChatCompletionsRequest{
 		Model: "deepseek-v4-pro",
@@ -2285,7 +2600,9 @@ func TestCCChain_ParallelToolOneResultMissing(t *testing.T) {
 	}
 }
 
-// TestCCChain_WellFormedMultiRound checks complete pairing across valid multi-round tool history.
+// TestCCChain_WellFormedMultiRound supplies two sequential calls with matching
+// results and intervening assistant text. The conversion chain passes adjacency
+// checks and the asserted history retains both call_a and call_b declarations.
 func TestCCChain_WellFormedMultiRound(t *testing.T) {
 	msgs := ccChainToAnthropic(t, &protocolopenai.ChatCompletionsRequest{
 		Model: "deepseek-v4-pro",
@@ -2312,7 +2629,10 @@ func TestCCChain_WellFormedMultiRound(t *testing.T) {
 	require.True(t, sawA && sawB, "both well-formed calls should be preserved")
 }
 
-// TestAnthropicReasoningBridgePreservesEffort checks that neither OpenAI ingress format raises xhigh to max.
+// TestAnthropicReasoningBridgePreservesEffort runs low through max effort via
+// Responses and Chat ingress conversion. Each resulting Anthropic output
+// configuration retains its input value, including distinct xhigh and max
+// levels.
 func TestAnthropicReasoningBridgePreservesEffort(t *testing.T) {
 	for _, effort := range []string{"low", "medium", "high", "xhigh", "max"} {
 		t.Run(effort, func(t *testing.T) {
@@ -2332,28 +2652,47 @@ func TestAnthropicReasoningBridgePreservesEffort(t *testing.T) {
 	}
 }
 
-// chatEffortFixture reads Chat effort and normalizes it with model capability rules.
+// chatEffortFixture reads Chat effort through capability-sensitive
+// normalization for supplied model candidates. Missing usable effort returns
+// nil; candidate precedence and the flat Chat alias follow ExtractEffort rather
+// than separate fixture logic.
 func chatEffortFixture(body []byte, models ...string) *string {
 	return ExtractEffort(body, true, capability.NormalizeRecordedOpenAIEffortForModel, models...)
 }
 
+// responsesEffortFixture reads nested Responses effort with
+// capability-sensitive model normalization. Supplied candidates follow
+// ExtractEffort precedence, and absent or rejected effort returns nil without
+// enabling the flat Chat alias.
 func responsesEffortFixture(body []byte, models ...string) *string {
 	return ExtractEffort(body, false, capability.NormalizeRecordedOpenAIEffortForModel, models...)
 }
 
-// AnthropicToResponses supplies model options to the protocol converter for tests.
+// AnthropicToResponses delegates fixture conversion using options that retain
+// max through the intermediate request. A nonnil request is required for its
+// Model lookup, and protocol conversion errors are returned to the test.
 func AnthropicToResponses(req *protocolanthropic.AnthropicRequest) (*protocolopenai.ResponsesRequest, error) {
 	return protocolbridge.AnthropicToResponses(req, ConversionOptionsForModel(req.Model))
 }
 
+// AnthropicToChatCompletionsRequest delegates Anthropic fixture conversion with
+// intermediate max-effort retention options. The request must be nonnil because
+// its Model is read before delegation, and bridge errors remain available to
+// assertions.
 func AnthropicToChatCompletionsRequest(req *protocolanthropic.AnthropicRequest) (*protocolopenai.ChatCompletionsRequest, error) {
 	return protocolbridge.AnthropicToChatCompletionsRequest(req, ConversionOptionsForModel(req.Model))
 }
 
+// ChatCompletionsToResponses delegates Chat fixture conversion with
+// intermediate max-effort retention options. It requires a nonnil request for
+// Model lookup and returns protocol errors directly for each test to assert.
 func ChatCompletionsToResponses(req *protocolopenai.ChatCompletionsRequest) (*protocolopenai.ResponsesRequest, error) {
 	return protocolbridge.ChatCompletionsToResponses(req, ConversionOptionsForModel(req.Model))
 }
 
+// anthropicAssistantMsg builds a DeepSeek user/assistant/tool-result fixture
+// from raw assistant block bytes. The supplied JSON is not validated here, and
+// the trailing result names toolu_1 for conversion pairing scenarios.
 func anthropicAssistantMsg(t *testing.T, blocks string) *protocolanthropic.AnthropicRequest {
 	t.Helper()
 	return &protocolanthropic.AnthropicRequest{
@@ -2367,6 +2706,9 @@ func anthropicAssistantMsg(t *testing.T, blocks string) *protocolanthropic.Anthr
 	}
 }
 
+// mustMarshalJSON encodes a fixture value and fails the current test when
+// serialization reports an error. Successful calls return encoded bytes used to
+// compare literal JSON boolean fields in converted requests.
 func mustMarshalJSON(t *testing.T, value any) []byte {
 	t.Helper()
 	data, err := json.Marshal(value)
@@ -2374,7 +2716,15 @@ func mustMarshalJSON(t *testing.T, value any) []byte {
 	return data
 }
 
-// assertAnthropicPairing checks adjacent tool-call/result pairs required by Anthropic.
+// assertAnthropicPairing checks alternating message roles and bidirectional
+// adjacent tool linkage. Every decoded tool_result needs a same-ID tool_use in
+// the preceding message, and each tool_use needs a result in the following
+// message; assertion failure stops the test.
+//
+// Empty history passes. Block parsing uses parseContentBlocks, so malformed or
+// nonarray content may supply no tool blocks and escape linkage checks. These
+// assertions establish the checked decoded relationships, not independent JSON
+// validity or uniqueness of all IDs.
 func assertAnthropicPairing(t *testing.T, messages []protocolanthropic.AnthropicMessage) {
 	t.Helper()
 	for i, m := range messages {
@@ -2404,6 +2754,9 @@ func assertAnthropicPairing(t *testing.T, messages []protocolanthropic.Anthropic
 	}
 }
 
+// hasToolUse reports whether decoded blocks contain a tool_use with the
+// supplied exact ID. Other block kinds and unmatched IDs contribute no match to
+// the pairing assertions.
 func hasToolUse(blocks []protocolanthropic.AnthropicContentBlock, id string) bool {
 	for _, b := range blocks {
 		if b.Type == "tool_use" && b.ID == id {
@@ -2413,6 +2766,9 @@ func hasToolUse(blocks []protocolanthropic.AnthropicContentBlock, id string) boo
 	return false
 }
 
+// hasToolResult reports whether decoded blocks contain a tool_result with the
+// supplied exact tool-use ID. The pairing checker uses that boolean for its
+// immediately adjacent message assertion.
 func hasToolResult(blocks []protocolanthropic.AnthropicContentBlock, toolUseID string) bool {
 	for _, b := range blocks {
 		if b.Type == "tool_result" && b.ToolUseID == toolUseID {
@@ -2422,15 +2778,22 @@ func hasToolResult(blocks []protocolanthropic.AnthropicContentBlock, toolUseID s
 	return false
 }
 
-// parseContentBlocks decodes blocks for tool-pairing assertions.
+// parseContentBlocks returns content decoded as Anthropic blocks while
+// discarding the JSON error. String or malformed input can return nil or
+// partial blocks, so absence checks alone do not establish input validity.
 func parseContentBlocks(raw json.RawMessage) []protocolanthropic.AnthropicContentBlock {
 	var blocks []protocolanthropic.AnthropicContentBlock
+	// Pairing helpers intentionally ignore decoding failures and inspect whatever
+	// blocks remain. A failed decode can therefore hide a tool ID from an
+	// absence assertion; callers use this helper for decoded-shape comparisons.
 	_ = json.Unmarshal(raw, &blocks)
 	return blocks
 }
 
-// ccChainToAnthropic follows the Chat forwarding sequence for an Anthropic group:
-// ChatCompletionsToResponses, then ResponsesToAnthropicRequest. Tests check pairing after both conversions.
+// ccChainToAnthropic runs Chat fixture conversion through Responses into an
+// Anthropic request. It requires successful conversions, checks the resulting
+// role/tool adjacency, and returns those messages for scenario-specific
+// assertions in the calling test.
 func ccChainToAnthropic(t *testing.T, ccReq *protocolopenai.ChatCompletionsRequest) []protocolanthropic.AnthropicMessage {
 	t.Helper()
 	respReq, err := ChatCompletionsToResponses(ccReq)
