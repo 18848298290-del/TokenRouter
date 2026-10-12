@@ -91,78 +91,104 @@
       </template>
     </TablePageLayout>
 
-    <BaseDialog :show="showEditor" :title="t(form.id ? 'admin.modelAttributes.edit' : 'admin.modelAttributes.create')" width="extra-wide" @close="showEditor = false">
-      <form id="attribute-form" class="space-y-4" @submit.prevent="save">
-        <p v-if="formError" role="alert" class="text-sm text-red-600">{{ formError }}</p>
-        <div class="grid gap-4 sm:grid-cols-2">
-          <label><span class="input-label">{{ t('common.name') }}</span><input v-model="form.name" required maxlength="100" class="input" /></label>
-          <div><label class="input-label">{{ t('common.status') }}</label><Select v-model="form.status" :options="editStatusOptions" /></div>
-          <label class="sm:col-span-2"><span class="input-label">{{ t('admin.modelAttributes.configDescription') }}</span><textarea v-model="form.description" class="input" rows="2" /></label>
-        </div>
-        <div>
-          <label class="input-label text-xs">
-            {{ t('admin.modelAttributes.groups') }}
-            <span v-if="form.group_ids.length" class="ml-1 font-normal text-gray-400">
-              ({{ t('admin.pricing.form.selectedCount', { count: form.group_ids.length }) }})
-            </span>
-          </label>
-          <!-- 分组选择沿用价格配置的徽章和选中底色，保留属性配置自身的关联关系。 -->
-          <div class="max-h-40 overflow-auto rounded-control border border-gray-200 p-3 dark:border-dark-600">
-            <p v-if="groupsLoading" class="py-2 text-center text-xs text-gray-500">{{ t('common.loading') }}</p>
-            <p v-else-if="!groups.length" class="py-2 text-center text-xs text-gray-500">{{ t('admin.pricing.form.noGroupsAvailable') }}</p>
-            <div v-else class="flex flex-wrap gap-2">
-              <label
-                v-for="group in groups"
-                :key="group.id"
-                class="inline-flex max-w-full cursor-pointer items-center gap-2 rounded-control p-1.5 transition-colors hover:bg-gray-50 dark:hover:bg-dark-700"
-                :class="form.group_ids.includes(group.id) ? 'bg-primary-50 dark:bg-primary-500/8 dark:text-primary-500' : ''"
-              >
-                <input v-model="form.group_ids" type="checkbox" :value="group.id" class="h-4 w-4 shrink-0 rounded-compact border-gray-300 text-primary-600 focus:ring-primary-500" />
-                <GroupBadge :name="group.name" :display-brand="group.display_brand" :rate-multiplier="group.rate_multiplier" class="min-w-0" />
-              </label>
-            </div>
-          </div>
-        </div>
-        <RuleListEditor :items="form.rules" :title="t('admin.modelAttributes.rules')" :empty-text="t('admin.modelAttributes.emptyRules')" variant="card" @add="addRule()" @remove="form.rules.splice($event, 1)" @move="moveRule">
-          <template #row="{ item }">
+    <BaseDialog :show="showEditor" :title="t(form.id ? 'admin.modelAttributes.edit' : 'admin.modelAttributes.create')" width="extra-wide" :body-scroll="false" @close="showEditor = false">
+      <form id="attribute-form" class="flex min-h-0 flex-1 flex-col" novalidate @submit.prevent="save">
+        <p v-if="formError" role="alert" class="mb-4 text-sm text-red-600 dark:text-red-400">{{ formError }}</p>
+        <SettingsTabs ref="tabsRef" id-prefix="model-attribute-editor" :label="t(form.id ? 'admin.modelAttributes.edit' : 'admin.modelAttributes.create')" :tabs="editorTabs">
+          <template #basic>
             <div class="space-y-4">
-              <div>
-                <label class="input-label">{{ t('admin.modelAttributes.models') }}</label>
-                <ModelTagInput
-                  :models="item.models"
-                  :aria-label="t('admin.modelAttributes.models')"
-                  :placeholder="t('admin.modelAttributes.modelHint')"
-                  @update:models="onModelsUpdate(item, $event)"
-                />
+              <div class="grid gap-4 sm:grid-cols-2">
+                <label><span class="input-label">{{ t('common.name') }}</span><input v-model="form.name" required maxlength="100" class="input" /></label>
+                <div><label class="input-label">{{ t('common.status') }}</label><Select v-model="form.status" :aria-label="t('common.status')" :options="editStatusOptions" /></div>
+                <label class="sm:col-span-2"><span class="input-label">{{ t('admin.modelAttributes.configDescription') }}</span><textarea v-model="form.description" class="input" rows="2" /></label>
               </div>
-              <ModelAttributeRouteFields v-model="item.match" />
-              <ModelAttributesFields v-model="item.attributes" :inherited="ruleDefaults[item.id || item.models[0] || '']" />
-              <details v-if="ruleDefaults[item.id || item.models[0] || '']" class="text-sm">
-                <summary class="cursor-pointer text-gray-500 dark:text-dark-400">{{ t('admin.modelAttributes.defaultReference') }}</summary>
-                <ModelAttributesSummary class="mt-4" :attributes="ruleDefaults[item.id || item.models[0] || '']!" />
-              </details>
+              <div>
+                <label class="input-label">
+                  {{ t('admin.modelAttributes.groups') }}
+                  <span v-if="form.group_ids.length" class="ml-1 font-normal text-gray-400">
+                    ({{ t('admin.pricing.form.selectedCount', { count: form.group_ids.length }) }})
+                  </span>
+                </label>
+                <!-- 分组选择和价格配置使用同样的徽章和选中底色。 -->
+                <div class="max-h-menu overflow-auto rounded-control border border-gray-200 p-3 dark:border-dark-600">
+                  <p v-if="groupsLoading" class="py-2 text-center text-xs text-gray-500">{{ t('common.loading') }}</p>
+                  <p v-else-if="!groups.length" class="py-2 text-center text-xs text-gray-500">{{ t('admin.pricing.form.noGroupsAvailable') }}</p>
+                  <div v-else class="flex flex-wrap gap-2">
+                    <label
+                      v-for="group in groups"
+                      :key="group.id"
+                      class="inline-flex max-w-full cursor-pointer items-center gap-2 rounded-control p-1.5 transition-colors hover:bg-gray-50 dark:hover:bg-dark-700"
+                      :class="form.group_ids.includes(group.id) ? 'bg-primary-50 dark:bg-primary-500/8 dark:text-primary-500' : ''"
+                    >
+                      <input v-model="form.group_ids" type="checkbox" :value="group.id" class="h-4 w-4 shrink-0 rounded-compact border-gray-300 text-primary-600 focus:ring-primary-500" />
+                      <GroupBadge :name="group.name" :display-brand="group.display_brand" :rate-multiplier="group.rate_multiplier" class="min-w-0" />
+                    </label>
+                  </div>
+                </div>
+              </div>
             </div>
           </template>
-        </RuleListEditor>
-        <fieldset class="space-y-4 rounded-control border border-gray-200 p-4 dark:border-dark-600">
-          <legend class="px-1 text-sm font-medium">{{ t('admin.modelAttributes.preview') }}</legend>
-          <p class="text-xs text-gray-500 dark:text-dark-400">{{ t('admin.modelAttributes.previewHint') }}</p>
-          <div class="grid gap-4 sm:grid-cols-2">
-            <div><label class="input-label">{{ t('admin.modelAttributes.groups') }}</label><Select v-model="previewGroup" :options="previewGroups" /></div>
-            <label><span class="input-label">{{ t('admin.modelAttributes.previewModel') }}</span><input v-model="previewModel" class="input" /></label>
-          </div>
-          <button type="button" class="btn btn-secondary" :disabled="previewLoading || !previewGroup || !previewModel.trim()" @click="preview">{{ t('admin.modelAttributes.preview') }}</button>
-          <p v-if="previewError" role="alert" class="text-sm text-red-600">{{ previewError }}</p>
-          <p v-else-if="previewLoaded && !previewRoutes.length" class="text-sm text-gray-500 dark:text-dark-400">{{ t('admin.modelAttributes.previewEmpty') }}</p>
-          <div v-for="(route, index) in previewRoutes" :key="index" class="space-y-4 rounded-control border border-gray-200 p-4 dark:border-dark-600">
-            <p class="break-words text-sm">{{ route.target.model }} · {{ route.target.platform }} · {{ route.target.provider_type }} · {{ route.target.provider_mode }} · {{ route.target.site }} · {{ route.target.catalog_provider }} · {{ route.target.client_protocol }} / {{ route.target.upstream_protocol }}</p>
-            <ModelAttributesSummary :attributes="route.attributes" />
-            <details class="text-sm">
-              <summary class="cursor-pointer text-gray-500 dark:text-dark-400">{{ t('admin.modelAttributes.fieldSource') }}</summary>
-              <dl class="mt-4 space-y-2"><div v-for="(source, field) in route.sources" :key="field" class="flex flex-wrap justify-between gap-2"><dt>{{ attributeFieldLabel(field) }}</dt><dd>{{ source === 'models.dev' ? 'models.dev' : t(`admin.modelAttributes.sources.${source}`) }}</dd></div></dl>
-            </details>
-          </div>
-        </fieldset>
+          <template #rules>
+            <RuleListEditor
+              :items="form.rules"
+              :title="t('admin.modelAttributes.rules')"
+              :empty-text="t('admin.modelAttributes.emptyRules')"
+              :item-label="(index) => t('common.ruleIndex', { index: index + 1 })"
+              variant="card"
+              @add="addRule()"
+              @remove="form.rules.splice($event, 1)"
+              @move="moveRule"
+            >
+              <template #row="{ item }">
+                <div class="space-y-4">
+                  <div>
+                    <label class="input-label">{{ t('admin.modelAttributes.models') }}</label>
+                    <ModelTagInput
+                      :models="item.models"
+                      :aria-label="t('admin.modelAttributes.models')"
+                      :placeholder="t('admin.modelAttributes.modelHint')"
+                      @update:models="onModelsUpdate(item, $event)"
+                    />
+                  </div>
+                  <ModelAttributesFields v-model="item.attributes" :inherited="ruleDefaults.get(item)?.attributes" />
+                  <ModelAttributeRouteFields v-model="item.match" />
+                  <ModelAttributeDisclosure v-if="ruleDefaults.get(item)?.attributes" :title="t('admin.modelAttributes.defaultReference')" :meta="ruleDefaults.get(item)?.model">
+                    <ModelAttributesSummary :attributes="ruleDefaults.get(item)!.attributes!" />
+                  </ModelAttributeDisclosure>
+                </div>
+              </template>
+            </RuleListEditor>
+          </template>
+          <template #preview>
+            <div class="space-y-4">
+              <p class="input-hint">{{ t('admin.modelAttributes.previewHint') }}</p>
+              <div class="grid items-end gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+                <div><label class="input-label">{{ t('admin.modelAttributes.groups') }}</label><Select v-model="previewGroup" :aria-label="t('admin.modelAttributes.groups')" :options="previewGroups" /></div>
+                <label><span class="input-label">{{ t('admin.modelAttributes.previewModel') }}</span><input v-model="previewModel" class="input" /></label>
+                <button type="button" class="btn btn-secondary" :disabled="previewLoading || !previewGroup || !previewModel.trim()" @click="preview">
+                  <Icon name="eye" size="sm" class="mr-2" />{{ t('admin.modelAttributes.preview') }}
+                </button>
+              </div>
+              <p v-if="previewError" role="alert" class="text-sm text-red-600 dark:text-red-400">{{ previewError }}</p>
+              <p v-else-if="previewRoutes?.length === 0" class="rounded-control border border-dashed border-gray-200 px-3 py-4 text-center text-sm text-gray-500 dark:border-dark-600 dark:text-dark-400">{{ t('admin.modelAttributes.previewEmpty') }}</p>
+              <div v-for="(route, index) in previewRoutes ?? []" :key="index" class="space-y-4 rounded-surface border border-gray-200 p-4 dark:border-dark-600">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="break-all font-mono text-sm font-medium text-gray-900 dark:text-dark-50">{{ route.target.model }}</span>
+                  <span v-for="tag in routeTags(route)" :key="tag" class="rounded-compact bg-gray-100 px-2 py-0.5 text-xs text-gray-600 dark:bg-dark-700 dark:text-dark-200">{{ tag }}</span>
+                </div>
+                <ModelAttributesSummary :attributes="route.attributes" />
+                <ModelAttributeDisclosure :title="t('admin.modelAttributes.fieldSource')">
+                  <dl class="space-y-2 text-sm">
+                    <div v-for="(source, field) in route.sources" :key="field" class="flex flex-wrap justify-between gap-2">
+                      <dt class="text-gray-500 dark:text-dark-400">{{ attributeFieldLabel(field) }}</dt>
+                      <dd class="text-gray-900 dark:text-dark-50">{{ sourceLabel(source) }}</dd>
+                    </div>
+                  </dl>
+                </ModelAttributeDisclosure>
+              </div>
+            </div>
+          </template>
+        </SettingsTabs>
       </form>
       <template #footer><div class="flex justify-end gap-2"><button class="btn btn-secondary" @click="showEditor = false">{{ t('common.cancel') }}</button><button form="attribute-form" type="submit" class="btn btn-primary" :disabled="saving || groupsLoading">{{ t('common.save') }}</button></div></template>
     </BaseDialog>
@@ -180,7 +206,7 @@
 
 <script setup lang="ts">
 import { newContentID } from '@/i18n/content'
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
@@ -195,6 +221,8 @@ import FilterField from '@/components/common/FilterField.vue'
 import GroupBadge from '@/components/common/GroupBadge.vue'
 import Toggle from '@/components/common/Toggle.vue'
 import Icon from '@/components/icons/Icon.vue'
+import SettingsTabs from '@/components/common/settings/SettingsTabs.vue'
+import ModelAttributeDisclosure from '@/components/admin/ModelAttributeDisclosure.vue'
 import ModelAttributesFields from '@/components/admin/ModelAttributesFields.vue'
 import ModelAttributeRouteFields from '@/components/admin/ModelAttributeRouteFields.vue'
 import ModelCatalogInfo from '@/components/admin/ModelCatalogInfo.vue'
@@ -205,6 +233,7 @@ import { adminAPI } from '@/api/admin'
 import type { AdminGroup } from '@/types'
 import { attributeCapabilities, type ModelAttributes } from '@/types/modelAttributes'
 import { extractApiErrorMessage } from '@/utils/apiError'
+import { CONCRETE_PLATFORM_OPTIONS } from '@/constants/platforms'
 import { SEARCH_DEBOUNCE_MS } from '@/constants/ui'
 
 const { t, te } = useI18n()
@@ -222,10 +251,13 @@ const groups = ref<AdminGroup[]>([])
 const detail = ref<DefaultAttributes | null>(null), deleting = ref<AttributeConfig | null>(null)
 const blank = (): AttributeConfig => ({ name: '', description: '', status: 'active', group_ids: [], rules: [] })
 const form = ref<AttributeConfig>(blank())
-const ruleDefaults = ref<Record<string, ModelAttributes>>({})
-const previewGroup = ref(''), previewModel = ref(''), previewError = ref('')
-const previewLoading = ref(false), previewLoaded = ref(false)
-const previewRoutes = ref<ResolvedAttributes[]>([])
+const tabsRef = ref<InstanceType<typeof SettingsTabs> | null>(null)
+const editorTabs = computed(() => (['basic', 'rules', 'preview'] as const).map(key => ({ key, label: t(`admin.modelAttributes.editorTabs.${key}`) })))
+// 每条规则按第一个非通配模型查询目录默认值，只用于占位提示和参考展示。
+const ruleDefaults = reactive(new WeakMap<AttributeRule, { model: string; attributes?: ModelAttributes }>())
+const previewGroup = ref(''), previewModel = ref(''), previewError = ref(''), previewLoading = ref(false)
+// null 表示还没有预览结果，空数组表示没有匹配的路线。
+const previewRoutes = ref<ResolvedAttributes[] | null>(null)
 const previewGroups = computed(() => groups.value.map(group => ({ value: String(group.id), label: group.name })))
 let previewSequence = 0
 const editStatusOptions = computed(() => [{ value: 'active', label: t('common.active') }, { value: 'disabled', label: t('common.disabled') }])
@@ -266,16 +298,12 @@ async function load() {
 }
 async function edit(config?: AttributeConfig) {
   form.value = config ? JSON.parse(JSON.stringify(config)) : blank()
-  ruleDefaults.value = {}
   previewGroup.value = config?.group_ids[0] ? String(config.group_ids[0]) : ''
   previewModel.value = config?.rules.flatMap(rule => rule.models).find(model => !model.includes('*')) ?? ''
-  previewRoutes.value = []
-  previewLoaded.value = false
-  previewError.value = ''
-  previewSequence++
-  previewLoading.value = false
   formError.value = ''
   showEditor.value = true
+  void tabsRef.value?.selectTab('basic')
+  for (const rule of form.value.rules) void loadRuleDefaults(rule)
   groupsLoading.value = true
   try { groups.value = await adminAPI.groups.getAll() }
   catch (cause) { formError.value = extractApiErrorMessage(cause, t('common.error')) }
@@ -286,50 +314,68 @@ function moveRule(from: number, to: number) {
   if (item) form.value.rules.splice(to, 0, item)
 }
 
-// 默认查询作为参考展示，保存值来自管理员填写的覆盖字段。
-async function onModelsUpdate(rule: AttributeRule, models: string[]) {
-  const addedModels = models.filter(model => !rule.models.includes(model))
+function onModelsUpdate(rule: AttributeRule, models: string[]) {
   rule.models = models
-  const model = addedModels[0]
-  if (!model || model.includes('*') || Object.keys(rule.attributes).length > 0) return
+  void loadRuleDefaults(rule)
+}
 
-  const requestedModels = rule.models
-  const attributes = rule.attributes
-  try {
-    const defaults = await modelAttributesAPI.getModelDefaultAttributes(model)
-    // 慢请求不能覆盖后续输入、手动编辑或已经移除的规则。
-    if (
-      !showEditor.value || saving.value || !form.value.rules.includes(rule)
-      || rule.models !== requestedModels || rule.attributes !== attributes
-    ) return
-    ruleDefaults.value[rule.id || model] = defaults
-  } catch {
-    // 目录查询失败时保留表单，用户仍可手动填写。
+async function loadRuleDefaults(rule: AttributeRule) {
+  const model = rule.models.find(item => !item.includes('*'))
+  if (model === ruleDefaults.get(rule)?.model) return
+  if (!model) {
+    ruleDefaults.delete(rule)
+    return
   }
+  ruleDefaults.set(rule, { model })
+  try {
+    const attributes = await modelAttributesAPI.getModelDefaultAttributes(model)
+    // 等待期间关闭弹窗或换了参考模型时，丢弃这次结果。
+    if (!showEditor.value || ruleDefaults.get(rule)?.model !== model) return
+    ruleDefaults.set(rule, { model, attributes })
+  } catch {
+    // 查询失败时没有参考值，字段仍可手动填写。
+  }
+}
+
+// 草稿、分组或模型变化后，旧结果和进行中的请求都作废。
+function resetPreview() {
+  previewSequence++
+  previewRoutes.value = null
+  previewError.value = ''
+  previewLoading.value = false
 }
 
 async function preview() {
   if (!previewGroup.value || !previewModel.value.trim() || previewLoading.value) return
   const sequence = ++previewSequence
-  const groupID = Number(previewGroup.value), model = previewModel.value.trim()
-  const draft = JSON.stringify(form.value)
   previewLoading.value = true
   previewError.value = ''
   try {
-    const result = await modelAttributesAPI.preview(groupID, model, JSON.parse(draft))
-    if (sequence !== previewSequence || !showEditor.value || draft !== JSON.stringify(form.value) || groupID !== Number(previewGroup.value) || model !== previewModel.value.trim()) return
-    previewRoutes.value = result.routes
-    previewLoaded.value = true
+    const result = await modelAttributesAPI.preview(Number(previewGroup.value), previewModel.value.trim(), form.value)
+    if (sequence === previewSequence) previewRoutes.value = result.routes
   } catch (cause) {
-    if (sequence === previewSequence && showEditor.value) previewError.value = extractApiErrorMessage(cause, t('common.error'))
+    if (sequence === previewSequence) previewError.value = extractApiErrorMessage(cause, t('common.error'))
   } finally {
     if (sequence === previewSequence) previewLoading.value = false
   }
 }
 
+function routeTags(route: ResolvedAttributes) {
+  const { platform, provider_type, provider_mode, site, catalog_provider, client_protocol, upstream_protocol } = route.target
+  const platformLabel = CONCRETE_PLATFORM_OPTIONS.find(option => option.value === platform)?.label ?? platform
+  const protocols = [client_protocol, upstream_protocol].filter(Boolean).join(' → ')
+  return [platformLabel, provider_type, provider_mode, site, catalog_provider, protocols].filter((tag): tag is string => !!tag)
+}
+
+// 来源字段名和表单字段共用文案，没有文案的字段直接显示字段名。
 function attributeFieldLabel(field: string) {
   const key = field.startsWith('media.') ? `admin.modelAttributes.mediaFields.${field.slice(6)}` : `admin.modelAttributes.fields.${field}`
   return te(key) ? t(key) : field
+}
+
+function sourceLabel(source: string) {
+  const key = `admin.modelAttributes.sources.${source}`
+  return te(key) ? t(key) : source
 }
 
 function addRule() {
@@ -339,9 +385,11 @@ function addRule() {
 async function save() {
   if (saving.value) return
   formError.value = ''
-  // 标签输入不依赖原生 required，提交前仍需阻止没有模型的规则。
+  if (tabsRef.value && !(await tabsRef.value.validate())) return
+  // 标签输入不参与原生校验，没有模型的规则在这里拦截。
   if (form.value.rules.some(rule => rule.models.length === 0)) {
     formError.value = t('admin.modelAttributes.modelsRequired')
+    void tabsRef.value?.selectTab('rules')
     return
   }
   saving.value = true
@@ -369,6 +417,7 @@ async function updateCatalog() {
   finally { updating.value = false }
 }
 watch([activeTab, status, provider, capability], () => { page.value = 1; load() })
+watch([form, previewGroup, previewModel], resetPreview, { deep: true })
 watch(search, () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { page.value = 1; load() }, SEARCH_DEBOUNCE_MS) })
 onMounted(load)
 onUnmounted(() => { sequence++; showEditor.value = false; clearTimeout(searchTimer) })

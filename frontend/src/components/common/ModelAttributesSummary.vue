@@ -48,30 +48,19 @@
           :stroke-width="2.5"
           :animate-on-hover="false"
           class="h-3.5 w-3.5"
-          :class="attributes[field] ? checkClass : mutedClass"
+          :class="stateClass(capabilityState(attributes[field], field))"
           role="img"
           :aria-label="capabilityText(attributes[field], field)"
         />
       </li>
     </ul>
-    <div v-if="attributes.reasoning_options !== undefined" class="space-y-2 border-t pt-3" :class="dividerClass">
-      <p :class="labelClass">{{ t('admin.modelAttributes.reasoningOptions') }}</p>
-      <p v-if="!attributes.reasoning_options.length" :class="mutedClass">{{ t('admin.modelAttributes.notAdjustable') }}</p>
-      <p v-for="option in attributes.reasoning_options" :key="option.type" :class="valueClass">
-        <template v-if="option.type === 'toggle'">{{ t('admin.modelAttributes.thinkingToggle') }}</template>
-        <template v-else-if="option.type === 'effort'">{{ t('admin.modelAttributes.efforts') }}: {{ option.values?.map(value => value ?? 'default').join(', ') || t('admin.modelAttributes.none') }}</template>
-        <template v-else>{{ t('admin.modelAttributes.tokenBudget') }}: {{ option.min ?? t('admin.modelAttributes.unknown') }} ~ {{ option.max ?? t('admin.modelAttributes.unknown') }}</template>
-      </p>
-    </div>
-    <dl v-if="attributes.conditions && Object.keys(attributes.conditions).length" class="space-y-2 border-t pt-3" :class="dividerClass">
-      <div v-for="(condition, field) in attributes.conditions" :key="field">
-        <dt :class="labelClass">{{ t(`admin.modelAttributes.fields.${field}`) }} · {{ t('admin.modelAttributes.conditions') }}</dt>
-        <dd :class="valueClass">{{ conditionText(condition) }}</dd>
+    <!-- 推理、参数条件和媒体参数只列出已知的项。 -->
+    <dl v-if="detailRows.length" class="border-t pt-3" :class="[dividerClass, isTooltip ? 'space-y-1.5' : 'space-y-2']" data-testid="model-attributes-details">
+      <div v-for="row in detailRows" :key="row.key" class="flex items-baseline justify-between gap-4">
+        <dt class="shrink-0" :class="labelClass">{{ row.label }}</dt>
+        <dd class="min-w-0 break-words text-right" :class="row.muted ? mutedClass : valueClass">{{ row.value }}</dd>
       </div>
     </dl>
-    <p v-if="attributes.media?.video_operations?.length" :class="valueClass">{{ t('admin.modelAttributes.mediaFields.video_operations') }}: {{ attributes.media.video_operations.join(', ') }}</p>
-    <p v-if="attributes.media?.video_parameters?.length" :class="valueClass">{{ t('admin.modelAttributes.mediaFields.video_parameters') }}: {{ attributes.media.video_parameters.join(', ') }}</p>
-    <p v-if="attributes.media?.image_sizes?.length" :class="valueClass">{{ t('admin.modelAttributes.media') }}: {{ attributes.media.image_sizes.join(', ') }}</p>
   </div>
 </template>
 
@@ -83,7 +72,7 @@ import Icon from '@/components/icons/Icon.vue'
 import ModalityIcon from '@/components/common/ModalityIcon.vue'
 import type { IconName } from '@/components/icons/registry'
 import type { ModelModality } from '@/utils/modelCapabilities'
-import { attributeCapabilities, attributeLimits, attributeModalities, type ModelAttributes, type ParameterCondition } from '@/types/modelAttributes'
+import { attributeCapabilities, attributeLimits, attributeModalities, conditionalCapabilities, mediaLimitFields, mediaListFields, type ConditionalCapability, type ModelAttributes, type ParameterCondition, type ReasoningOption } from '@/types/modelAttributes'
 
 const props = withDefaults(defineProps<{
   attributes: ModelAttributes
@@ -101,7 +90,7 @@ const CAPABILITY_ICONS: Record<typeof attributeCapabilities[number], IconName> =
   tool_call: 'toolCall',
   structured_output: 'structuredOutput',
   temperature: 'temperature',
-  top_p: 'temperature',
+  top_p: 'sliders',
   attachment: 'attachment',
 }
 
@@ -109,7 +98,7 @@ const STATE_ICONS: Record<CapabilityState, IconName> = {
   supported: 'check',
   unsupported: 'x',
   unknown: 'minus',
-  conditional: 'minus',
+  conditional: 'exclamationCircle',
 }
 
 const isTooltip = computed(() => props.variant === 'tooltip')
@@ -125,6 +114,7 @@ const mutedClass = computed(() => isTooltip.value ? 'text-gray-500 dark:text-dar
 const dividerClass = computed(() => isTooltip.value ? 'border-white/10 dark:border-dark-700' : 'border-gray-100 dark:border-dark-700')
 const chipClass = computed(() => isTooltip.value ? 'bg-white/5 dark:bg-dark-800' : 'bg-gray-50 dark:bg-dark-800')
 const checkClass = computed(() => isTooltip.value ? 'text-emerald-400' : 'text-emerald-600 dark:text-emerald-400')
+const conditionalClass = computed(() => isTooltip.value ? 'text-amber-300' : 'text-amber-600 dark:text-amber-300')
 const modalityTone = computed(() => isTooltip.value ? 'inverse' : 'auto')
 
 // 按已知模态渲染图标，未知取值跳过。
@@ -145,17 +135,79 @@ function emptyModalityText(value: string[] | undefined) {
   return t(value === undefined ? 'admin.modelAttributes.unknown' : 'admin.modelAttributes.none')
 }
 
-function capabilityState(value: boolean | undefined, field?: typeof attributeCapabilities[number]): CapabilityState {
+type CapabilityField = typeof attributeCapabilities[number]
+
+function isConditional(field: CapabilityField): field is ConditionalCapability {
+  return (conditionalCapabilities as readonly string[]).includes(field)
+}
+
+function capabilityState(value: boolean | undefined, field: CapabilityField): CapabilityState {
   if (value === undefined || value === null) return 'unknown'
-  if (value && (field === 'temperature' || field === 'top_p' || field === 'tool_call') && props.attributes.conditions?.[field]) return 'conditional'
+  if (value && isConditional(field) && props.attributes.conditions?.[field]) return 'conditional'
   return value ? 'supported' : 'unsupported'
 }
 
-function capabilityText(value: boolean | undefined, field?: typeof attributeCapabilities[number]) {
+function capabilityText(value: boolean | undefined, field: CapabilityField) {
   return t(`admin.modelAttributes.${capabilityState(value, field)}`)
 }
-function conditionText(condition: ParameterCondition | undefined) {
-  if (!condition) return ''
-  return [condition.efforts?.length ? `${t('admin.modelAttributes.efforts')}: ${condition.efforts.join(', ')}` : '', condition.thinking === undefined ? '' : t(`admin.modelAttributes.${condition.thinking ? 'thinkingOn' : 'thinkingOff'}`)].filter(Boolean).join(' · ')
+
+function stateClass(state: CapabilityState) {
+  if (state === 'supported') return checkClass.value
+  return state === 'conditional' ? conditionalClass.value : mutedClass.value
+}
+
+interface DetailRow { key: string; label: string; value: string; muted?: boolean }
+
+const detailRows = computed<DetailRow[]>(() => [
+  ...reasoningRows(props.attributes.reasoning_options),
+  ...interleavedRows(props.attributes.interleaved),
+  ...conditionalCapabilities.flatMap(field => conditionRows(field, props.attributes.conditions?.[field])),
+  ...mediaRows(props.attributes.media),
+])
+
+// 空数组表示推理强度不可调节，和未知区分显示。
+function reasoningRows(options: ReasoningOption[] | undefined): DetailRow[] {
+  if (options === undefined) return []
+  if (!options.length) return [{ key: 'reasoning_options', label: t('admin.modelAttributes.fields.reasoning_options'), value: t('admin.modelAttributes.notAdjustable'), muted: true }]
+  return options.map(option => {
+    const key = `reasoning.${option.type}`
+    if (option.type === 'toggle') return { key, label: t('admin.modelAttributes.thinkingToggle'), value: t('admin.modelAttributes.supported') }
+    if (option.type === 'effort') {
+      const values = option.values?.map(value => value ?? t('admin.modelAttributes.vendorDefault')).join(', ')
+      return { key, label: t('admin.modelAttributes.efforts'), value: values || t('admin.modelAttributes.none') }
+    }
+    return { key, label: t('admin.modelAttributes.tokenBudget'), value: `${formatValue(option.min)} ~ ${formatValue(option.max)}` }
+  })
+}
+
+function interleavedRows(value: ModelAttributes['interleaved']): DetailRow[] {
+  if (value === undefined) return []
+  return [{ key: 'interleaved', label: t('admin.modelAttributes.fields.interleaved'), value: value === true ? t('admin.modelAttributes.supported') : value.field }]
+}
+
+function conditionRows(field: ConditionalCapability, condition: ParameterCondition | undefined): DetailRow[] {
+  const parts = [
+    condition?.efforts?.length ? `${t('admin.modelAttributes.efforts')} ${condition.efforts.join(', ')}` : '',
+    condition?.thinking === undefined ? '' : t(`admin.modelAttributes.${condition.thinking ? 'thinkingOn' : 'thinkingOff'}`),
+  ].filter(Boolean)
+  if (!parts.length) return []
+  return [{ key: `conditions.${field}`, label: `${t(`admin.modelAttributes.fields.${field}`)} · ${t('admin.modelAttributes.fields.conditions')}`, value: parts.join(' · ') }]
+}
+
+function mediaRows(media: ModelAttributes['media']): DetailRow[] {
+  if (!media) return []
+  const rows: DetailRow[] = []
+  for (const field of mediaListFields) {
+    const values = media[field]
+    if (values?.length) rows.push({ key: `media.${field}`, label: t(`admin.modelAttributes.mediaFields.${field}`), value: values.join(', ') })
+  }
+  for (const field of mediaLimitFields) {
+    const value = media[field]
+    if (value !== undefined) rows.push({ key: `media.${field}`, label: t(`admin.modelAttributes.mediaFields.${field}`), value: formatValue(value) })
+  }
+  if (media.input_fidelity !== undefined) {
+    rows.push({ key: 'media.input_fidelity', label: t('admin.modelAttributes.mediaFields.input_fidelity'), value: t(`admin.modelAttributes.${media.input_fidelity ? 'supported' : 'unsupported'}`) })
+  }
+  return rows
 }
 </script>

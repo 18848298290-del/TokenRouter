@@ -52,7 +52,10 @@ export default {
       "structured_output": "Structured output",
       "temperature": "Temperature",
       "attachment": "Attachments",
-      "top_p": "Top-p sampling"
+      "top_p": "Top-p sampling",
+      "reasoning_options": "Reasoning controls",
+      "interleaved": "Reasoning history field",
+      "conditions": "Parameter conditions"
     },
     "modalities": {
       "text": "Text",
@@ -72,36 +75,43 @@ export default {
       "execution_default": "Execution default"
     },
     "configDescription": "Description",
+    "editorTabs": {
+      "basic": "Basics",
+      "rules": "Model rules",
+      "preview": "Preview"
+    },
+    "inheritValue": "Inherit defaults ({value})",
     "custom": "Custom",
     "notAdjustable": "Not adjustable",
-    "reasoningOptions": "Reasoning controls",
-    "thinkingToggle": "Allow thinking toggle",
-    "efforts": "Allowed reasoning efforts",
-    "tokenBudget": "Allow reasoning token budget",
+    "configuredCount": "{count} configured",
+    "reasoningSection": "Reasoning and parameter conditions",
+    "thinkingToggle": "Thinking toggle",
+    "efforts": "Reasoning efforts",
+    "vendorDefault": "Vendor default",
+    "tokenBudget": "Reasoning token budget",
     "budget": {
       "min": "Minimum budget",
       "max": "Maximum budget"
     },
-    "conditions": "Parameter conditions",
-    "conditionsHint": "Parameters left blank have no additional conditions. Clear all conditions to override the platform defaults.",
+    "conditionsHint": "Parameters with no effort or state selected have no conditions. Choosing Custom and leaving everything blank also clears the platform default conditions.",
     "thinkingState": "Thinking state",
     "anyState": "Any state",
     "thinkingOn": "While thinking is enabled",
     "thinkingOff": "While thinking is disabled",
-    "interleaved": "Reasoning history field",
     "media": "Media parameters",
     "mediaFields": {
       "video_operations": "Video operations",
       "video_parameters": "Video parameters",
       "input_fidelity": "Input fidelity parameter",
-      "image_sizes": "Image sizes, comma separated",
-      "aspect_ratios": "Aspect ratios, comma separated",
-      "qualities": "Quality levels, comma separated",
-      "background_options": "Background options, comma separated",
-      "output_formats": "Output formats, comma separated",
+      "image_sizes": "Image sizes",
+      "aspect_ratios": "Aspect ratios",
+      "qualities": "Quality levels",
+      "background_options": "Background options",
+      "output_formats": "Output formats",
       "max_reference_images": "Maximum reference images",
       "max_output_count": "Maximum outputs"
     },
+    "listHint": "Press Enter or comma to add. Paste to add several at once.",
     "routeMatch": "Matching routes",
     "allRoutes": "All routes",
     "routeFields": {
@@ -112,6 +122,7 @@ export default {
       "client_protocol": "Client protocol",
       "upstream_protocol": "Upstream protocol"
     },
+    "protocolsUnavailable": "The protocol list failed to load. Only saved protocols can be selected.",
     "preview": "Preview effective attributes",
     "previewModel": "Requested model",
     "previewEmpty": "No matching requestable routes.",

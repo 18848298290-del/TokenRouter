@@ -52,7 +52,10 @@ export default {
       "structured_output": "结构化输出",
       "temperature": "温度参数",
       "attachment": "附件支持",
-      "top_p": "核采样参数"
+      "top_p": "核采样参数",
+      "reasoning_options": "推理调节方式",
+      "interleaved": "推理历史字段",
+      "conditions": "参数使用条件"
     },
     "modalities": {
       "text": "文本",
@@ -72,36 +75,43 @@ export default {
       "execution_default": "执行默认值"
     },
     "configDescription": "描述",
+    "editorTabs": {
+      "basic": "基本信息",
+      "rules": "模型规则",
+      "preview": "效果预览"
+    },
+    "inheritValue": "继承默认值（{value}）",
     "custom": "自定义",
     "notAdjustable": "不可调节",
-    "reasoningOptions": "推理调节方式",
-    "thinkingToggle": "允许开关推理",
-    "efforts": "可用推理档位",
-    "tokenBudget": "允许设置推理 Token 预算",
+    "configuredCount": "已配置 {count} 项",
+    "reasoningSection": "推理与参数条件",
+    "thinkingToggle": "推理开关",
+    "efforts": "推理档位",
+    "vendorDefault": "供应商默认",
+    "tokenBudget": "推理 Token 预算",
     "budget": {
       "min": "最小预算",
       "max": "最大预算"
     },
-    "conditions": "参数使用条件",
-    "conditionsHint": "自定义条件中留空的参数不附加条件。清空全部条件可以覆盖平台的默认条件。",
+    "conditionsHint": "没有选择档位和状态的参数不附加条件。选择自定义并全部留空时，平台默认的条件也会清除。",
     "thinkingState": "推理状态",
     "anyState": "任意状态",
     "thinkingOn": "推理开启时",
     "thinkingOff": "推理关闭时",
-    "interleaved": "推理历史字段",
     "media": "媒体参数",
     "mediaFields": {
       "video_operations": "视频操作",
       "video_parameters": "视频可调参数",
       "input_fidelity": "输入保真度参数",
-      "image_sizes": "图片尺寸，逗号分隔",
-      "aspect_ratios": "宽高比，逗号分隔",
-      "qualities": "质量档位，逗号分隔",
-      "background_options": "背景选项，逗号分隔",
-      "output_formats": "输出格式，逗号分隔",
+      "image_sizes": "图片尺寸",
+      "aspect_ratios": "宽高比",
+      "qualities": "质量档位",
+      "background_options": "背景选项",
+      "output_formats": "输出格式",
       "max_reference_images": "最多参考图数量",
       "max_output_count": "最多输出数量"
     },
+    "listHint": "按回车或逗号添加，支持粘贴多项",
     "routeMatch": "适用路线",
     "allRoutes": "全部路线",
     "routeFields": {
@@ -112,6 +122,7 @@ export default {
       "client_protocol": "客户端协议",
       "upstream_protocol": "上游协议"
     },
+    "protocolsUnavailable": "协议列表加载失败，只能选择已保存的协议。",
     "preview": "预览有效属性",
     "previewModel": "请求模型",
     "previewEmpty": "没有匹配的可请求路线。",

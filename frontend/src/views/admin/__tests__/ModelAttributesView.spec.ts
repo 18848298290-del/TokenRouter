@@ -9,7 +9,7 @@ import type { ModelAttributes } from '@/types/modelAttributes'
 
 vi.mock('@/api/admin/modelAttributes', () => ({ modelAttributesAPI: { list: vi.fn(), defaults: vi.fn(), getModelDefaultAttributes: vi.fn(), preview: vi.fn(), update: vi.fn(), save: vi.fn(), remove: vi.fn() } }))
 vi.mock('@/api/admin', () => ({ adminAPI: { groups: { getAll: vi.fn().mockResolvedValue([{ id: 7, name: 'Group' }]) } } }))
-vi.mock('vue-i18n', async () => ({ ...(await vi.importActual<typeof import('vue-i18n')>('vue-i18n')), useI18n: () => ({ t: (key: string) => key, te: () => false }) }))
+vi.mock('vue-i18n', async () => ({ ...(await vi.importActual<typeof import('vue-i18n')>('vue-i18n')), useI18n: () => ({ t: (key: string) => key, te: () => true }) }))
 
 const stubs = {
   AppLayout: { template: '<div><slot /></div>' },
@@ -40,7 +40,7 @@ describe('属性管理页面', () => {
 
   it('默认属性作为参考，保存时采用手动覆盖的 false 和空模态', async () => {
     const attributes = { display_name: 'Known', context: 128000, output_limit: 8192, reasoning: false, tool_call: true, input_modalities: ['text'], output_modalities: [] }
-    vi.mocked(modelAttributesAPI.getModelDefaultAttributes).mockResolvedValueOnce(attributes)
+    vi.mocked(modelAttributesAPI.getModelDefaultAttributes).mockImplementation(async model => model === 'vendor/known' ? attributes : {})
     const wrapper = await openEmptyRule()
     const input = wrapper.findAll('input[aria-label="admin.modelAttributes.models"]')[1]!
     await input.setValue('vendor/known')
@@ -61,76 +61,82 @@ describe('属性管理页面', () => {
     wrapper.unmount()
   })
 
-  it('批量粘贴只查询第一个新增模型，已有显式属性不覆盖', async () => {
+  it('打开编辑时为已有规则查询参考，之后只在第一个非通配模型变化时重新查询', async () => {
     vi.mocked(modelAttributesAPI.getModelDefaultAttributes).mockResolvedValue({ reasoning: false })
     const wrapper = await openEmptyRule()
+    expect(modelAttributesAPI.getModelDefaultAttributes).toHaveBeenCalledExactlyOnceWith('upstream')
+    expect(wrapper.findAllComponents(ModelAttributesFields)[0]!.props('inherited')).toEqual({ reasoning: false })
+    vi.mocked(modelAttributesAPI.getModelDefaultAttributes).mockClear()
+
     const inputs = wrapper.findAll('input[aria-label="admin.modelAttributes.models"]')
     await inputs[0]!.setValue('another')
     await inputs[0]!.trigger('keydown', { key: 'Enter' })
     expect(modelAttributesAPI.getModelDefaultAttributes).not.toHaveBeenCalled()
 
-    await inputs[1]!.trigger('paste', { clipboardData: { getData: () => 'first,second\nfirst' } })
+    await inputs[1]!.trigger('paste', { clipboardData: { getData: () => 'claude-*,first,second\nfirst' } })
     await flushPromises()
-    expect(modelAttributesAPI.getModelDefaultAttributes).toHaveBeenCalledTimes(1)
-    expect(modelAttributesAPI.getModelDefaultAttributes).toHaveBeenCalledWith('first')
+    expect(modelAttributesAPI.getModelDefaultAttributes).toHaveBeenCalledExactlyOnceWith('first')
     expect(wrapper.findAllComponents(ModelAttributesFields)[1]!.props('modelValue')).toEqual({})
     expect(wrapper.findAllComponents(ModelAttributesFields)[1]!.props('inherited')).toEqual({ reasoning: false })
     wrapper.unmount()
   })
 
-  it('通配符跳过查询，未知模型和失败查询仍可手动填写', async () => {
+  it('通配符跳过查询，查询失败时仍可手动填写', async () => {
+    vi.mocked(modelAttributesAPI.getModelDefaultAttributes).mockImplementation(async model => {
+      if (model === 'offline') throw new Error('offline')
+      return {}
+    })
     const wrapper = await openEmptyRule()
     const input = wrapper.findAll('input[aria-label="admin.modelAttributes.models"]')[1]!
-    for (const model of ['claude-*', 'unknown', 'offline']) {
-      if (model === 'offline') vi.mocked(modelAttributesAPI.getModelDefaultAttributes).mockRejectedValueOnce(new Error('offline'))
+    for (const model of ['claude-*', 'offline']) {
       await input.setValue(model)
       await input.trigger('keydown', { key: 'Enter' })
       await flushPromises()
-      expect(wrapper.findAllComponents(ModelAttributesFields)[1]!.props('modelValue')).toEqual({})
     }
-    expect(modelAttributesAPI.getModelDefaultAttributes).toHaveBeenCalledTimes(2)
+    expect(modelAttributesAPI.getModelDefaultAttributes).not.toHaveBeenCalledWith('claude-*')
+    expect(modelAttributesAPI.getModelDefaultAttributes).toHaveBeenCalledWith('offline')
     const fields = wrapper.findAllComponents(ModelAttributesFields)[1]!
+    expect(fields.props('inherited')).toBeUndefined()
     await fields.get('input').setValue('Manual')
     expect(fields.props('modelValue')).toMatchObject({ display_name: 'Manual', display_name_localization: { source: 'Manual' } })
     wrapper.unmount()
   })
 
-  it.each(['手动编辑', '删除模型', '删除规则', '重新打开', '关闭弹窗'])(
-    '%s 后丢弃仍在等待的查询结果', async (action) => {
+  it.each(['删除模型', '删除规则', '重新打开'])(
+    '%s 后丢弃仍在等待的参考属性', async (action) => {
       let resolve!: (attributes: ModelAttributes) => void
-      vi.mocked(modelAttributesAPI.getModelDefaultAttributes).mockReturnValueOnce(new Promise(done => { resolve = done }))
+      const stale = { display_name: 'Stale', tool_call: true }
+      vi.mocked(modelAttributesAPI.getModelDefaultAttributes).mockImplementation(model => model === 'pending' ? new Promise(done => { resolve = done }) : Promise.resolve({}))
       const wrapper = await openEmptyRule()
       const input = wrapper.findAll('input[aria-label="admin.modelAttributes.models"]')[1]!
       await input.setValue('pending')
       await input.trigger('keydown', { key: 'Enter' })
-      const fields = wrapper.findAllComponents(ModelAttributesFields)[1]!
-      const rule = wrapper.getComponent(RuleListEditor).props('items')[1]
 
-      if (action === '手动编辑') await fields.get('input').setValue('Manual')
       if (action === '删除模型') await wrapper.get('button[aria-label="common.delete pending"]').trigger('click')
       if (action === '删除规则') wrapper.getComponent(RuleListEditor).vm.$emit('remove', 1)
       if (action === '重新打开') await wrapper.get('button[aria-label="common.edit"]').trigger('click')
-      if (action === '关闭弹窗') await wrapper.findAll('button').find(button => button.text() === 'common.cancel')!.trigger('click')
       await flushPromises()
-      resolve({ display_name: 'Stale', tool_call: true })
+      resolve(stale)
       await flushPromises()
 
-      expect(rule.attributes).toMatchObject(action === '手动编辑' ? { display_name: 'Manual', display_name_localization: { source: 'Manual' } } : {})
+      expect(wrapper.findAllComponents(ModelAttributesFields).map(fields => fields.props('inherited'))).not.toContainEqual(stale)
       wrapper.unmount()
     },
   )
 
-  it('连续添加模型时，先发后到的结果不覆盖最新属性', async () => {
+  it('参考模型被删除后，先发后到的结果不覆盖新的参考', async () => {
     let resolve!: (attributes: ModelAttributes) => void
-    vi.mocked(modelAttributesAPI.getModelDefaultAttributes)
-      .mockReturnValueOnce(new Promise(done => { resolve = done }))
-      .mockResolvedValueOnce({ display_name: 'Latest' })
+    vi.mocked(modelAttributesAPI.getModelDefaultAttributes).mockImplementation(model => {
+      if (model === 'slow') return new Promise(done => { resolve = done })
+      return Promise.resolve(model === 'latest' ? { display_name: 'Latest' } : {})
+    })
     const wrapper = await openEmptyRule()
     const input = wrapper.findAll('input[aria-label="admin.modelAttributes.models"]')[1]!
     for (const model of ['slow', 'latest']) {
       await input.setValue(model)
       await input.trigger('keydown', { key: 'Enter' })
     }
+    await wrapper.get('button[aria-label="common.delete slow"]').trigger('click')
     await flushPromises()
     resolve({ display_name: 'Stale' })
     await flushPromises()
@@ -255,6 +261,22 @@ describe('属性管理页面', () => {
     await wrapper.get('#attribute-form').trigger('submit')
     await flushPromises()
     expect(modelAttributesAPI.save).toHaveBeenCalledWith(expect.objectContaining({ rules: [expect.objectContaining({ match: { platform: 'openai', provider_type: 'apikey' } })] }))
+    wrapper.unmount()
+  })
+
+  it('草稿修改后清除旧的预览结果', async () => {
+    vi.mocked(modelAttributesAPI.preview).mockResolvedValue({ routes: [{ target: { model: 'gpt-5.4', platform: 'openai' }, attributes: {}, sources: {}, rules: {}, version: 'fixed' }] })
+    const wrapper = mount(ModelAttributesView, { global: { stubs } })
+    await flushPromises()
+    await wrapper.get('button[aria-label="common.edit"]').trigger('click')
+    await flushPromises()
+    await wrapper.findAll('button').find(button => button.text() === 'admin.modelAttributes.preview')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('gpt-5.4')
+
+    wrapper.getComponent(ModelAttributeRouteFields).vm.$emit('update:modelValue', { platform: 'gemini' })
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('gpt-5.4')
     wrapper.unmount()
   })
 

@@ -41,7 +41,7 @@ export interface ModelAttributes {
   top_p?: boolean
   reasoning_options?: ReasoningOption[]
   interleaved?: true | { field: 'reasoning_content' | 'reasoning_details' }
-  conditions?: Partial<Record<'temperature' | 'top_p' | 'tool_call', ParameterCondition>>
+  conditions?: Partial<Record<ConditionalCapability, ParameterCondition>>
   media?: MediaCapabilities
   attachment?: boolean
   route_differences?: boolean
@@ -50,3 +50,9 @@ export interface ModelAttributes {
 export const attributeCapabilities = ['reasoning', 'tool_call', 'structured_output', 'temperature', 'top_p', 'attachment'] as const
 export const attributeLimits = ['context', 'input_limit', 'output_limit'] as const
 export const attributeModalities = ['text', 'image', 'audio', 'video', 'pdf'] as const
+// 推理档位与后端校验的取值一致。effort 选项里的 null 表示请求不带档位，由供应商决定。
+export const reasoningEfforts = ['default', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
+export const conditionalCapabilities = ['temperature', 'top_p', 'tool_call'] as const
+export type ConditionalCapability = typeof conditionalCapabilities[number]
+export const mediaListFields = ['image_sizes', 'aspect_ratios', 'qualities', 'background_options', 'output_formats', 'video_operations', 'video_parameters'] as const
+export const mediaLimitFields = ['max_reference_images', 'max_output_count'] as const
