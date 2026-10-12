@@ -8,7 +8,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestRedeemCode_CodeLength checks code-point limits and rejects empty codes.
+// TestRedeemCode_CodeLength exercises the Ent code field's 32-code-point limit.
+// It checks empty input, ASCII, Chinese, mixed text, and supplementary-plane
+// characters, requiring boundary values to pass and longer values to fail.
 func TestRedeemCode_CodeLength(t *testing.T) {
 	var codeField *field.Descriptor
 	for _, schemaField := range (RedeemCode{}).Fields() {
@@ -21,10 +23,13 @@ func TestRedeemCode_CodeLength(t *testing.T) {
 	require.Equal(t, 32, codeField.Size)
 	require.NotEmpty(t, codeField.Validators)
 
+	// name labels the character scenario; code enters validators in order
+	// until one rejects it. invalid distinguishes expected rejection from
+	// successful validation across the schema's configured string validators.
 	tests := []struct {
-		name    string
-		code    string
-		invalid bool
+		name    string // Unicode scenario label
+		code    string // submitted code text
+		invalid bool   // expected validation rejection
 	}{
 		{name: "空兑换码", invalid: true},
 		{name: "中文达到上限", code: strings.Repeat("兑", 32)},

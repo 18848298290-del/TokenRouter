@@ -1,4 +1,8 @@
 // Package schema defines TokenRouter's Ent entity fields, relationships, and indexes.
+// Ent generation turns these declarations into typed queries and mutations used
+// by handwritten repositories. Database initialization applies the numbered SQL
+// migrations, so schema declarations and migration changes need to be maintained
+// together as the persistence model evolves.
 //
 // Reading entry points:
 //   - user.go: user identity, balance, access limits, and entity relationships.

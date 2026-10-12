@@ -1,8 +1,5 @@
 package schema
 
-// Identity foundation scenarios cover fields, unique indexes, and signup-source validation in
-// auth_identity.go, auth_identity_channel.go, pending_auth_session.go, identity_adoption_decision.go, and user.go.
-
 import (
 	"testing"
 
@@ -12,7 +9,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestAuthIdentityFoundationSchemas checks login identity fields, indexes, and user signup sources.
+// Login identity schemas describe external subjects, temporary completion state,
+// and session-scoped profile choices. The foundation scenario loads Ent metadata
+// for those entities and checks field and index declarations, then invokes the
+// user signup-source validator directly.
+
+// TestAuthIdentityFoundationSchemas loads identity, channel, pending, adoption,
+// and user schema declarations. It checks required field names and selected
+// unique indexes, then requires the email signup default and seven accepted
+// source values while rejecting twitter.
 func TestAuthIdentityFoundationSchemas(t *testing.T) {
 	spec, err := (&load.Config{Path: "."}).Load()
 	require.NoError(t, err)
@@ -93,7 +98,9 @@ func TestAuthIdentityFoundationSchemas(t *testing.T) {
 	require.Error(t, validator("twitter"))
 }
 
-// requireSchema finds a loaded Ent schema by entity name.
+// requireSchema returns the loaded schema entry with the requested entity name.
+// A missing map entry stops the calling test through require.True. The
+// returned pointer is the entry already held in the loaded schema map.
 func requireSchema(t *testing.T, schemas map[string]*load.Schema, name string) *load.Schema {
 	t.Helper()
 
@@ -102,7 +109,9 @@ func requireSchema(t *testing.T, schemas map[string]*load.Schema, name string) *
 	return schema
 }
 
-// requireSchemaFields checks that the entity contains the named fields.
+// requireSchemaFields requires the loaded entity to contain every requested field.
+// The comparison uses field names and permits additional declarations in the
+// schema. Missing requested names stop the calling test.
 func requireSchemaFields(t *testing.T, schema *load.Schema, names ...string) {
 	t.Helper()
 
@@ -117,7 +126,9 @@ func requireSchemaFields(t *testing.T, schema *load.Schema, names ...string) {
 	}
 }
 
-// requireSchemaField returns the loaded descriptor for a field.
+// requireSchemaField returns the loaded field descriptor with the requested name.
+// It returns the first matching declaration from schema.Fields. A missing
+// field stops the calling test through require.Failf.
 func requireSchemaField(t *testing.T, schema *load.Schema, name string) *load.Field {
 	t.Helper()
 
@@ -131,7 +142,9 @@ func requireSchemaField(t *testing.T, schema *load.Schema, name string) *load.Fi
 	return nil
 }
 
-// requireStringFieldValidator returns the first validator of a string field.
+// requireStringFieldValidator returns the first validator on the named Ent field.
+// The field must expose at least one validator of func(string) error at that
+// position; missing fields, validators, or incompatible types stop the test.
 func requireStringFieldValidator(t *testing.T, fields []ent.Field, name string) func(string) error {
 	t.Helper()
 
@@ -150,7 +163,9 @@ func requireStringFieldValidator(t *testing.T, fields []ent.Field, name string) 
 	return nil
 }
 
-// requireHasUniqueIndex checks for a unique index with the given field order.
+// requireHasUniqueIndex requires a unique index with the supplied field sequence.
+// Both field count and order must match the loaded index declaration; other
+// indexes are skipped, and no matching declaration stops the calling test.
 func requireHasUniqueIndex(t *testing.T, schema *load.Schema, fields ...string) {
 	t.Helper()
 

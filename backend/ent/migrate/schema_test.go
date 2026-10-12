@@ -8,6 +8,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestAuthIdentityFoundationForeignKeyOnDeleteActions inspects generated identity
+// relationship metadata. It requires three cascade and two set-null actions
+// for the named user, channel, pending-session, and adoption relationships.
 func TestAuthIdentityFoundationForeignKeyOnDeleteActions(t *testing.T) {
 	require.Equal(
 		t,
@@ -37,6 +40,9 @@ func TestAuthIdentityFoundationForeignKeyOnDeleteActions(t *testing.T) {
 	)
 }
 
+// TestPaymentOrdersOutTradeNoPartialUniqueIndex inspects the generated merchant
+// order-number index. It requires uniqueness on that single column and the
+// predicate excluding empty merchant numbers from the index.
 func TestPaymentOrdersOutTradeNoPartialUniqueIndex(t *testing.T) {
 	idx := findIndexByName(t, PaymentOrdersTable, "paymentorder_out_trade_no")
 	require.True(t, idx.Unique)
@@ -46,6 +52,10 @@ func TestPaymentOrdersOutTradeNoPartialUniqueIndex(t *testing.T) {
 	require.Equal(t, (&entsql.IndexAnnotation{Where: "out_trade_no <> ''"}).Where, idx.Annotation.Where)
 }
 
+// TestProvidersParentProviderForeignKey inspects the generated parent-provider
+// relationship. It requires one nonunique child column, one referenced ID
+// column, and restrictive parent deletion, checking the foreign key independently
+// of partial shadow-index enforcement.
 func TestProvidersParentProviderForeignKey(t *testing.T) {
 	fk := findForeignKeyByColumn(t, ProvidersTable, "parent_provider_id")
 	require.Len(t, fk.Columns, 1)
@@ -56,6 +66,9 @@ func TestProvidersParentProviderForeignKey(t *testing.T) {
 	require.Equal(t, entschema.Restrict, fk.OnDelete)
 }
 
+// findForeignKeyBySymbol returns the generated table foreign key with symbol.
+// A missing symbol stops the calling test through require.Failf. The returned
+// pointer belongs to the table's shared metadata.
 func findForeignKeyBySymbol(t *testing.T, table *entschema.Table, symbol string) *entschema.ForeignKey {
 	t.Helper()
 
@@ -69,6 +82,9 @@ func findForeignKeyBySymbol(t *testing.T, table *entschema.Table, symbol string)
 	return nil
 }
 
+// findIndexByName returns the generated table index with the supplied name.
+// A missing name stops the calling test through require.Failf. The returned
+// pointer references the index held by the table metadata.
 func findIndexByName(t *testing.T, table *entschema.Table, name string) *entschema.Index {
 	t.Helper()
 
@@ -82,6 +98,9 @@ func findIndexByName(t *testing.T, table *entschema.Table, name string) *entsche
 	return nil
 }
 
+// findForeignKeyByColumn returns the first generated foreign key containing column.
+// It searches every column in each key and stops the calling test when none
+// matches. The result remains part of the table's shared metadata.
 func findForeignKeyByColumn(t *testing.T, table *entschema.Table, column string) *entschema.ForeignKey {
 	t.Helper()
 
