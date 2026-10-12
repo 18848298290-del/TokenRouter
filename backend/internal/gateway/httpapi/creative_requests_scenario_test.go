@@ -1,7 +1,5 @@
 package httpapi
 
-// These scenarios cover creative request construction and execution through OpenAIRequests and CreativeTargets.
-
 import (
 	"context"
 	"encoding/base64"
@@ -22,6 +20,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/grok"
 )
 
+// Grok creative editing sends source data through its JSON image endpoint,
+// while Gemini rejects the unsupported inpaint operation before transport work.
+// These scenarios inspect returned image bytes, outbound parameters, operation
+// paths, and the recorder state on local rejection.
+
+// TestExecuteCreativeGrokEditUsesJSONEditEndpoint supplies an edit source and
+// a subsequent generation request. Editing must use the asserted JSON fields
+// and data URL, return decoded image bytes, and choose the edit path while
+// generation chooses its own endpoint.
 func TestExecuteCreativeGrokEditUsesJSONEditEndpoint(t *testing.T) {
 	encoded := base64.StdEncoding.EncodeToString([]byte("edited-image"))
 	upstream := &auxiliaryHTTPRecorder{responses: []*http.Response{
@@ -67,7 +74,9 @@ func TestExecuteCreativeGrokEditUsesJSONEditEndpoint(t *testing.T) {
 	require.Equal(t, "https://xai.test/v1/images/generations", upstream.lastReq.URL.String())
 }
 
-// TestCreativeGeminiInpaintIsRejectedBeforeUpstream checks that unsupported inpainting fails before network execution.
+// TestCreativeGeminiInpaintIsRejectedBeforeUpstream supplies an inpaint operation
+// to Gemini execution. The returned failure must be nonretryable and leave
+// the recording transport empty, locating rejection before an upstream request.
 func TestCreativeGeminiInpaintIsRejectedBeforeUpstream(t *testing.T) {
 	upstream := &auxiliaryHTTPRecorder{}
 	requests := newAuxiliaryFixture(auxiliaryFixtureInputs{transport: upstream}).Requests

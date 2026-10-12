@@ -12,13 +12,20 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/ops"
 )
 
-// TestEmptyCompletionKeepsOneObservationAndFailure checks distinct Chat and Responses messages with stable failure
-// codes and request IDs.
+// Empty Chat and Responses constructors retain different explanations while
+// sharing silent-refusal classification and upstream correlation. This fixture
+// checks the constructed failure and the single appended Ops event, including
+// selected provider identity and the defaults used when no provider is supplied.
+
+// TestEmptyCompletionKeepsOneObservationAndFailure constructs both failures with
+// selected or absent providers. Each must return the asserted status, trimmed
+// ID, and silent-refusal body, and append one event with the corresponding
+// explanation and provider facts.
 func TestEmptyCompletionKeepsOneObservationAndFailure(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		create  func(*gin.Context, *UpstreamErrorProvider, string) *forward.UpstreamFailoverError
-		message string
+		name    string                                                                            // response shape scenario
+		create  func(*gin.Context, *UpstreamErrorProvider, string) *forward.UpstreamFailoverError // matching failure constructor
+		message string                                                                            // expected Ops explanation
 	}{
 		{"chat", NewOpenAISilentRefusalFailoverError, openAISilentRefusalUpstreamMessage},
 		{"responses", NewOpenAIResponsesEmptyCompletedFailoverError, openAIResponsesEmptyCompletedMessage},

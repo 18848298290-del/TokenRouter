@@ -18,8 +18,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/provider"
 )
 
-// TestSelectedCountDispatchPreservesLocalAndUnsupportedPaths checks local estimates and unsupported providers without
-// network execution.
+// Selected count dispatch exposes a Messages count shape across local estimates
+// and native Gemini counting, while incompatible auxiliary providers produce
+// unsupported output. Recorder fixtures check the chosen HTTP request, returned
+// count fields, and absence of network work in the exercised local paths.
+
+// TestSelectedCountDispatchPreservesLocalAndUnsupportedPaths exercises Grok,
+// Kimi, Qoder, and Antigravity with a recording transport. The asserted result
+// must be a positive local count or unsupported status, and the transport must
+// retain no request for those fixtures.
 func TestSelectedCountDispatchPreservesLocalAndUnsupportedPaths(t *testing.T) {
 	for _, platform := range []string{"grok", "qoder", "antigravity", "kimi"} {
 		t.Run(platform, func(t *testing.T) {
@@ -46,6 +53,9 @@ func TestSelectedCountDispatchPreservesLocalAndUnsupportedPaths(t *testing.T) {
 
 // TestSelectedGeminiCountUsesNativeCountProtocol checks model mapping, system and tool input, and Anthropic-shaped
 // counts.
+// The request URL and generateContentRequest model must use the provider target;
+// converted system and tool fields must exist, and totalTokens must return as
+// the asserted input_tokens value.
 func TestSelectedGeminiCountUsesNativeCountProtocol(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -65,6 +75,9 @@ func TestSelectedGeminiCountUsesNativeCountProtocol(t *testing.T) {
 	require.True(t, gjson.GetBytes(transport.lastBody, "generateContentRequest.tools").Exists())
 }
 
+// TestResponsesInputTokensRejectsUnsupportedActualProvider chooses four incompatible
+// provider platforms for Responses preflight. Each must receive unsupported
+// HTTP output with no recorded transport request and no propagated execution error.
 func TestResponsesInputTokensRejectsUnsupportedActualProvider(t *testing.T) {
 	for _, platform := range []string{"anthropic", "gemini", "antigravity", "qoder"} {
 		t.Run(platform, func(t *testing.T) {

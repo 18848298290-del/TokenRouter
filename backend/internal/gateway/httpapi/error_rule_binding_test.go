@@ -13,6 +13,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// Error response selection falls back to caller defaults when no matcher is
+// bound and otherwise applies the matching rule's request observation flag.
+// These cases inspect the returned tuple and the presence and boolean value
+// of skip-monitoring state after a matching error.
+
+// TestApplyErrorPassthroughRule_NoBoundService supplies upstream error bytes with
+// no request matcher. The returned status, type, and message must remain
+// the provided defaults, with a false match flag despite the upstream payload.
 func TestApplyErrorPassthroughRule_NoBoundService(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -33,6 +41,9 @@ func TestApplyErrorPassthroughRule_NoBoundService(t *testing.T) {
 	assert.Equal(t, "Upstream request failed", errMsg)
 }
 
+// TestApplyErrorPassthroughRule_SkipMonitoringSetsContextKey binds a matching rule
+// with observation suppression enabled. The match flag must be true and
+// request context must contain a boolean true skip marker for ordinary Ops processing.
 func TestApplyErrorPassthroughRule_SkipMonitoringSetsContextKey(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -61,6 +72,9 @@ func TestApplyErrorPassthroughRule_SkipMonitoringSetsContextKey(t *testing.T) {
 	assert.True(t, boolVal)
 }
 
+// TestApplyErrorPassthroughRule_NoSkipMonitoringDoesNotSetContextKey matches the
+// same error with suppression disabled. Matching must succeed while the
+// previously empty context remains without a skip marker, protecting normal observation on that path.
 func TestApplyErrorPassthroughRule_NoSkipMonitoringDoesNotSetContextKey(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)

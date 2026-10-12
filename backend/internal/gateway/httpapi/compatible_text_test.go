@@ -11,6 +11,14 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/scheduler"
 )
 
+// Responses and Chat use different local error envelopes while sharing prompt,
+// policy, and moderation preparation. These fixtures record that sequence and
+// the model, route mapping, and user lease carried into execution when preparation
+// succeeds beyond its early rejection checks.
+
+// TestCompatiblePrefaceOrderingAndEnvelope blocks moderation after recording
+// each entry's preparation sequence. The asserted callback order and protocol
+// error field must match Responses or Chat, and the response must be unsuccessful.
 func TestCompatiblePrefaceOrderingAndEnvelope(t *testing.T) {
 	for _, responses := range []bool{true, false} {
 		name, protocol, field := "chat", "chat_completions", "type"
@@ -43,11 +51,16 @@ func TestCompatiblePrefaceOrderingAndEnvelope(t *testing.T) {
 	}
 }
 
+// TestCompatiblePrefaceValidationBeforeScheduling supplies malformed, missing,
+// oversized, and policy-rejected requests to both entries. Each response must
+// contain its expected validation message, and the callback trace must omit route planning.
 func TestCompatiblePrefaceValidationBeforeScheduling(t *testing.T) {
 	for _, tc := range []struct {
-		name, body, message string
-		limit               int64
-		policy              bool
+		// name labels the case, body supplies input, and message identifies the
+		// rejection expected before planning. The same values exercise both compatible entry envelopes.
+		name, body, message string // name: scenario label; body: request JSON; message: rejection text
+		limit               int64  // normalized body bytes
+		policy              bool   // inject reasoning-policy rejection
 	}{
 		{"empty", "", "Request body is empty", 1024, false},
 		{"json", "{", "Failed to parse request body", 1024, false},
@@ -76,6 +89,9 @@ func TestCompatiblePrefaceValidationBeforeScheduling(t *testing.T) {
 	}
 }
 
+// TestCompatiblePrefacePassesRequestLeaseAndOriginalModel allows both entries to
+// reach execution after admission. The recorded call must retain the client
+// model, mapped route model, and a request lease, with eligibility preceding execution.
 func TestCompatiblePrefacePassesRequestLeaseAndOriginalModel(t *testing.T) {
 	for _, responses := range []bool{true, false} {
 		p := &prefaceBackend{key: prefaceKey()}

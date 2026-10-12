@@ -10,10 +10,20 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
 )
 
+// Cyber handling separates early session writes, warning scope, and deduplicated
+// completion dispatch. The recording fixture exposes callback order and delayed
+// Ops input so these cases can observe which effects occur before scope
+// rejection and which request values survive later caller mutation.
+
+// newCyberTest binds one recording fixture across cyber policy and runtime operations.
 func newCyberTest(p *cyberTestPorts) *CyberHandler {
 	return NewCyberHandler(p, p, p, moderationflow.Runtime{Tasks: p, Blocks: p, Ops: p})
 }
 
+// TestCyberPolicyScopeDedupAndBackgroundOrder records in-scope evidence twice
+// before executing its captured task. Immediate callback order must include
+// repeated early block work while warning and dispatch remain deduplicated;
+// delayed Ops output must retain the first model and body observations.
 func TestCyberPolicyScopeDedupAndBackgroundOrder(t *testing.T) {
 	p := &cyberTestPorts{scope: true, mark: moderationflow.Mark{Message: "warning", Body: "original", UpstreamStatus: 403}}
 	h := newCyberTest(p)
@@ -33,6 +43,9 @@ func TestCyberPolicyScopeDedupAndBackgroundOrder(t *testing.T) {
 	require.Equal(t, []string{"block", "ops"}, p.events[len(p.events)-2:])
 }
 
+// TestCyberPolicyOutOfScopeRetainsOnlyEarlySessionWrite supplies absent scope
+// or a scope-read error after a block plan. Both cases must retain the
+// early block and scope callbacks, leave the handled flag false, and submit no task.
 func TestCyberPolicyOutOfScopeRetainsOnlyEarlySessionWrite(t *testing.T) {
 	for _, scopeErr := range []error{nil, errors.New("scope unavailable")} {
 		p := &cyberTestPorts{scopeErr: scopeErr}
@@ -45,6 +58,10 @@ func TestCyberPolicyOutOfScopeRetainsOnlyEarlySessionWrite(t *testing.T) {
 	}
 }
 
+// TestCyberSessionBlockPreservesScopeAndDedicatedOps finds a blocked session
+// after enablement and group scope. The response must be forbidden with
+// the stable block code and dedicated Ops marker; an out-of-scope case
+// must stop its trace before lookup or Ops submission.
 func TestCyberSessionBlockPreservesScopeAndDedicatedOps(t *testing.T) {
 	p := &cyberTestPorts{enabled: true, scope: true, found: "blocked"}
 	c, w := prefaceContext("body")
@@ -59,6 +76,9 @@ func TestCyberSessionBlockPreservesScopeAndDedicatedOps(t *testing.T) {
 	require.Equal(t, []string{"enabled", "group"}, p.events)
 }
 
+// TestOrdinaryModerationFailureRemainsFailOpen supplies a moderation Check
+// error through the fixture. The wrapper must return no decision and leave
+// its callback trace empty for this request, allowing the caller to continue preparation.
 func TestOrdinaryModerationFailureRemainsFailOpen(t *testing.T) {
 	p := &cyberTestPorts{}
 	c, _ := prefaceContext("body")

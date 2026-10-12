@@ -12,8 +12,15 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/openai"
 )
 
-// TestCyberPolicyMarkerFirstEventAndTurnReset checks that the first evidence remains until reset allows the next turn
-// to record a marker.
+// Policy marker lookup exposes the current turn's first saved evidence and
+// treats a typed nil reset as absence. This scenario checks normalized text,
+// copied input counts, reset behavior, and the distinction between event
+// recognition and whether an HTTP context can store that evidence.
+
+// TestCyberPolicyMarkerFirstEventAndTurnReset records competing markers and then
+// clears the turn. Saved text and input counts must remain from the first
+// marker, fresh parsed usage must remain after caller mutation, and recognition
+// must still return true for a nil context.
 func TestCyberPolicyMarkerFirstEventAndTurnReset(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	mark := moderationflow.Mark{Message: " first ", Body: " body ", UpstreamStatus: 403, UpstreamInTok: 3}

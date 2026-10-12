@@ -11,10 +11,18 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
+// Endpoint observations keep Compact and count-token identity across aliases,
+// while runtime-selected upstream paths can differ from inbound labels. These
+// fixtures compare normalization, platform inference, stored overrides, and
+// actual URL handling on Gin wildcard routes with and without middleware.
+
+// TestNormalizeInboundEndpoint compares canonical, prefixed, bare, and Codex paths.
+// The asserted labels must retain auxiliary and Compact identities, trim the
+// exercised whitespace, and leave the tested unrelated aliases and unknown paths unchanged.
 func TestNormalizeInboundEndpoint(t *testing.T) {
 	tests := []struct {
-		path string
-		want string
+		path string // input request path
+		want string // expected canonical label
 	}{
 		// Direct canonical paths.
 		{"/v1/messages", EndpointMessages},
@@ -62,7 +70,7 @@ func TestNormalizeInboundEndpoint(t *testing.T) {
 		{"/foo/responses", "/foo/responses"},
 		{"/foo/responses/compact", "/foo/responses/compact"},
 
-		// Unknown path is returned as-is.
+		// The canonical Embeddings label is unchanged by normalization.
 		{"/v1/embeddings", "/v1/embeddings"},
 		{"", ""},
 		{"  /v1/messages  ", EndpointMessages},
@@ -74,13 +82,16 @@ func TestNormalizeInboundEndpoint(t *testing.T) {
 	}
 }
 
+// TestDeriveUpstreamEndpoint combines inbound labels, raw paths, and provider platforms.
+// Inference must return each asserted protocol path, retain the supplied Compact
+// suffixes, and use the tested platform defaults when no runtime override is available.
 func TestDeriveUpstreamEndpoint(t *testing.T) {
 	tests := []struct {
-		name     string
-		inbound  string
-		rawPath  string
-		platform string
-		want     string
+		name     string // endpoint inference scenario
+		inbound  string // canonical inbound label
+		rawPath  string // actual request path
+		platform string // selected provider platform
+		want     string // expected inferred upstream path
 	}{
 		// Anthropic.
 		{"anthropic messages", EndpointMessages, "/v1/messages", capability.PlatformAnthropic, EndpointMessages},
@@ -134,6 +145,9 @@ func TestDeriveUpstreamEndpoint(t *testing.T) {
 	}
 }
 
+// TestGetUpstreamEndpointPrefersRuntimeOverride installs an Antigravity attempt path
+// after a Chat inbound label. A nonempty override must win, while clearing
+// it must restore the asserted Messages inference for that platform.
 func TestGetUpstreamEndpointPrefersRuntimeOverride(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -147,6 +161,9 @@ func TestGetUpstreamEndpointPrefersRuntimeOverride(t *testing.T) {
 	require.Equal(t, EndpointMessages, GetUpstreamEndpoint(c, capability.PlatformAntigravity))
 }
 
+// TestGetUpstreamEndpointUsesOpenAIRuntimeOverride saves a Chat attempt endpoint
+// beneath a Responses inbound label. The OpenAI observation getter must use
+// that explicit execution path rather than infer the Responses default.
 func TestGetUpstreamEndpointUsesOpenAIRuntimeOverride(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -156,10 +173,13 @@ func TestGetUpstreamEndpointUsesOpenAIRuntimeOverride(t *testing.T) {
 	require.Equal(t, EndpointChatCompletions, GetUpstreamEndpoint(c, capability.PlatformOpenAI))
 }
 
+// TestResponsesSubpathSuffix exercises versioned, bare, and Codex raw path suffixes.
+// Root paths must return empty, the asserted Compact descendants must keep
+// their suffixes, and unrelated or empty paths must yield no Responses detail.
 func TestResponsesSubpathSuffix(t *testing.T) {
 	tests := []struct {
-		raw  string
-		want string
+		raw  string // source request path
+		want string // expected Responses suffix
 	}{
 		{"/v1/responses", ""},
 		{"/v1/responses/", ""},
@@ -181,6 +201,9 @@ func TestResponsesSubpathSuffix(t *testing.T) {
 	}
 }
 
+// TestInboundEndpointMiddleware registers normalization before a Messages handler.
+// The handler must observe the canonical Messages label from request context,
+// protecting publication before later route processing reads endpoint metadata.
 func TestInboundEndpointMiddleware(t *testing.T) {
 	router := gin.New()
 	router.Use(InboundEndpointMiddleware())
@@ -198,6 +221,9 @@ func TestInboundEndpointMiddleware(t *testing.T) {
 	require.Equal(t, EndpointMessages, captured)
 }
 
+// TestGetInboundEndpoint_FallbackWithoutMiddleware supplies a prefixed Messages URL
+// without a saved label. The getter must return the canonical Messages
+// endpoint from that URL, retaining on-demand observation for unbound contexts.
 func TestGetInboundEndpoint_FallbackWithoutMiddleware(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -208,14 +234,15 @@ func TestGetInboundEndpoint_FallbackWithoutMiddleware(t *testing.T) {
 	require.Equal(t, EndpointMessages, got)
 }
 
-// TestInboundEndpointMiddleware_WildcardRoutes checks normalization using the actual request URL.
-// FullPath returns the route pattern, which would misclassify compact requests as the Responses root.
+// TestInboundEndpointMiddleware_WildcardRoutes sends Compact and ordinary
+// Responses subpaths through wildcard routes. The captured label must match
+// the actual URL for each alias, and every request must return successful status.
 func TestInboundEndpointMiddleware_WildcardRoutes(t *testing.T) {
 	tests := []struct {
-		name        string
-		routePath   string
-		requestPath string
-		want        string
+		name        string // wildcard normalization scenario
+		routePath   string // registered Gin route pattern
+		requestPath string // actual request URL path
+		want        string // expected inbound observation
 	}{
 		{
 			name:        "v1 responses wildcard route, compact request",
@@ -276,7 +303,9 @@ func TestInboundEndpointMiddleware_WildcardRoutes(t *testing.T) {
 }
 
 // TestInboundEndpointMiddleware_GeminiWildcardRoute checks that the request URL
-// on a Gemini wildcard route normalizes to EndpointGeminiModels.
+// on a Gemini wildcard route normalizes to EndpointGeminiModels. The request
+// must succeed and the handler must observe that canonical model-family label,
+// despite the model and action carried in the actual URL.
 func TestInboundEndpointMiddleware_GeminiWildcardRoute(t *testing.T) {
 	router := gin.New()
 	router.Use(InboundEndpointMiddleware())
@@ -297,6 +326,8 @@ func TestInboundEndpointMiddleware_GeminiWildcardRoute(t *testing.T) {
 
 // TestGetInboundEndpoint_FallbackWildcardRouteWithoutMiddleware checks request-URL
 // normalization for compact requests when middleware has not saved an endpoint.
+// The handler also asserts Gin's wildcard FullPath; its captured label must
+// nevertheless reflect the actual Compact URL and accompany successful request handling.
 func TestGetInboundEndpoint_FallbackWildcardRouteWithoutMiddleware(t *testing.T) {
 	router := gin.New()
 	// Leave InboundEndpointMiddleware unregistered to exercise on-demand normalization.
@@ -317,6 +348,9 @@ func TestGetInboundEndpoint_FallbackWildcardRouteWithoutMiddleware(t *testing.T)
 	require.Equal(t, EndpointResponsesCompact, captured)
 }
 
+// TestGetUpstreamEndpoint_FullFlow saves the normalized label for a prefixed Compact URL.
+// The OpenAI getter must retain its Compact suffix in the inferred upstream
+// endpoint, connecting stored canonical identity to raw request detail.
 func TestGetUpstreamEndpoint_FullFlow(t *testing.T) {
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -330,13 +364,14 @@ func TestGetUpstreamEndpoint_FullFlow(t *testing.T) {
 }
 
 // TestOpenAIUpstreamEndpoint_ViaGetUpstreamEndpoint checks endpoint derivation
-// for OpenAI requests through the shared context helper.
-
+// for OpenAI requests through the shared context helper. Each fixture must
+// produce its asserted Responses root, retained Compact suffix, or platform
+// default from a context containing the supplied raw request URL.
 func TestOpenAIUpstreamEndpoint_ViaGetUpstreamEndpoint(t *testing.T) {
 	tests := []struct {
-		name string
-		path string
-		want string
+		name string // getter inference scenario
+		path string // raw request URL
+		want string // expected upstream endpoint
 	}{
 		{
 			name: "responses root maps to responses upstream",

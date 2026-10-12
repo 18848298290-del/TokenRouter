@@ -21,44 +21,85 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/clientip"
 )
 
-// CountTokensBackend provides admission, observation, and count execution without generation concurrency slots.
+// Messages counting performs request parsing and funding preflight before
+// provider selection, while auxiliary execution owns its own count result and
+// failure handling. Parsed client identity and group fallback are established
+// before the route is built, so model mapping and observations use the selected
+// request group even though this handler acquires no generation slot.
+
+// CountTokensBackend provides admission, observation, and auxiliary count execution to HTTP preparation.
 type CountTokensBackend interface {
+	// Access returns the request key view and its authentication lookup flag.
+	// A successful result supplies a usable key for logging and group preparation;
+	// failed lookup ends the request before any body or funding work.
 	Access(*gin.Context) (*apikey.APIKey, bool)
+	// CompatibilityMetrics samples session-compatibility observations after count request handling finishes.
 	CompatibilityMetrics(*zap.Logger)
+	// ObserveRequest records the current model and stream fields for request diagnostics.
 	ObserveRequest(*gin.Context, string, bool)
+	// ObserveEndpoint records the parsed count request's streaming type for HTTP diagnostics.
 	ObserveEndpoint(*gin.Context, bool)
+	// BindClient publishes client recognition for group fallback and execution preparation.
+	// Detection runs on the parsed Messages body. Implementations choose version
+	// publication behavior, including whether an empty detection leaves earlier context data intact.
 	BindClient(*gin.Context, ClientDetection)
+	// BindThinking records the parsed thinking flag for later model resolution consumers.
 	BindThinking(*gin.Context, bool)
+	// Eligibility checks the key and selected subscription before count execution begins.
+	// Failures supply the HTTP billing classification and optional retry header,
+	// so the caller stops before building its provider-attempt state.
 	Eligibility(context.Context, *apikey.APIKey, *billing.UserSubscription) error
+	// Execution builds request-specific count attempts from parsed input and session identity.
+	// Callers establish the selected group and funding first, then pass the
+	// returned operations to RunCountTokens for selection, forwarding, and failure cleanup.
 	Execution(*gin.Context, *apikey.APIKey, *requeststate.ParsedRequest, string, *zap.Logger) textflow.CountPorts
+	// FailoverObservation records the count loop's event and supplied diagnostic values.
 	FailoverObservation(context.Context, string, map[string]any)
 }
+
+// CountTokensHandler prepares Messages token-count requests for the bounded count loop.
 type CountTokensHandler struct {
+	// RequestLifetime optionally holds application activity across preparation and
+	// the count loop; a bound shutdown barrier can reject before those phases begin.
 	RequestLifetime
 
-	maxBodyBytes int64
-	maxSwitches  int
-	backend      CountTokensBackend
-	prompt       MessagesPrompt
+	maxBodyBytes int64              // normalized request bytes
+	maxSwitches  int                // provider-switch budget input
+	backend      CountTokensBackend // admission and count operations
+	prompt       MessagesPrompt     // user prompt replacement
 }
 
+// NewCountTokensHandler binds the body limit, switch budget, and count preparation dependencies.
+// It passes limits unchanged to body reading and RunCountTokens. Assembly provides
+// usable backend and prompt operations and can bind an activity barrier before serving requests.
 func NewCountTokensHandler(limit int64, switches int, backend CountTokensBackend, prompt MessagesPrompt) *CountTokensHandler {
 	return &CountTokensHandler{maxBodyBytes: limit, maxSwitches: switches, backend: backend, prompt: prompt}
 }
 
+// errorResponse writes the local failure in the Messages count endpoint's error shape.
 func (h *CountTokensHandler) errorResponse(c *gin.Context, status int, kind, message string) {
 	WriteAnthropicError(c, status, kind, "", message)
 }
 
+// countMaxBytesError extracts an HTTP body-size error for count rejection messages.
+// Its flag reports errors.As matching, including typed nil values. Body readers
+// supply concrete size failures when their configured normalized limit is exceeded.
 func countMaxBytesError(err error) (*http.MaxBytesError, bool) {
 	var exceeded *http.MaxBytesError
 	ok := errors.As(err, &exceeded)
 	return exceeded, ok
 }
 
-// CountTokens handles POST /v1/messages/count_tokens.
-
-// It checks subscription and balance eligibility without acquiring generation slots or recording usage.
+// CountTokens handles POST /v1/messages/count_tokens with funding preflight and bounded attempts.
+// Callers arrive with authenticated key and subject data. The handler replaces
+// prompts, parses input, records client and thinking state, and checks the
+// selected group's funding before starting auxiliary execution.
+//
+// Client-group fallback runs after client detection but before route planning.
+// Session hashing uses the prepared body with request-source metadata, and the
+// backend publishes the route when creating attempt operations. RunCountTokens
+// rebuilds mapped input per attempt and owns failure-session release; this HTTP
+// entry itself obtains no generation slot or usage submission.
 func (h *CountTokensHandler) CountTokens(c *gin.Context) {
 	done, accepted := h.BeginRequest(c, "anthropic")
 	if !accepted {
@@ -102,7 +143,8 @@ func (h *CountTokensHandler) CountTokens(c *gin.Context) {
 
 	h.backend.ObserveRequest(c, "", false)
 
-	// Apply prompt replacement before parsing so the session hash and upstream request use the same body.
+	// Apply prompt replacement before parsing so count forwarding and session
+	// hashing receive the same prepared bytes, rather than mixing client and replaced input.
 	body = h.prompt.ApplyUserPromptReplacementToBody(c.Request.Context(), body, "anthropic_messages")
 
 	bodyRef := requeststate.NewRequestBodyRef(body)
@@ -113,7 +155,8 @@ func (h *CountTokensHandler) CountTokens(c *gin.Context) {
 		return
 	}
 	body = parsedReq.Body.Bytes()
-	// Reuse the parsed Messages body for strict Claude Code detection.
+	// Counting can omit ordinary generation fields. Reuse the parsed body for
+	// the validator's count-path rules before deciding whether client-group fallback is needed.
 	h.backend.BindClient(c, DetectClaudeCodeRequest(c, body, parsedReq, false))
 	apiKey, err = resolveClientGroupForRequest(c, h.backend, apiKey, protocol.ProtocolAnthropicMessages)
 	if err != nil {

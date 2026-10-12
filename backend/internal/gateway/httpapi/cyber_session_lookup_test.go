@@ -17,6 +17,12 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/settings"
 )
 
+// Explicit session blocks are isolated by API key, while transcript matching
+// additionally requires an active source scope. These fixtures check identity
+// stability, model-generated history, bounded prefix retention, scope activation,
+// and the deliberate rejection result for scoped transcript overflow.
+
+// newCyberBlockTestCtx returns a Responses HTTP context and its supplied body bytes.
 func newCyberBlockTestCtx(headers map[string]string, body string) (*gin.Context, []byte) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	req := httptest.NewRequest(http.MethodPost, "/openai/v1/responses", strings.NewReader(body))
@@ -27,6 +33,9 @@ func newCyberBlockTestCtx(headers map[string]string, body string) (*gin.Context,
 	return c, []byte(body)
 }
 
+// TestCyberSessionExplicitBlockKey compares repeated and distinct key-session pairs.
+// Matching pairs must produce stable keys, different API keys must isolate
+// them, and supported header or body identity must differ from missing explicit identity.
 func TestCyberSessionExplicitBlockKey(t *testing.T) {
 	c1, b1 := newCyberBlockTestCtx(map[string]string{"session_id": "sess-abc"}, `{}`)
 	k1 := CyberSessionExplicitBlockKey(101, c1, b1)
@@ -56,6 +65,9 @@ func TestCyberSessionExplicitBlockKey(t *testing.T) {
 	require.Equal(t, k6, CyberSessionExplicitBlockKey(101, c6b, b6b), "conversation_id key must be stable")
 }
 
+// TestCyberTranscriptBlockKeysRequireModelGeneratedHistory compares user-only input
+// with an assistant-bearing transcript. User-only requests must keep distinct
+// full keys, while the continuation lookup must include the asserted generated-history prefix.
 func TestCyberTranscriptBlockKeysRequireModelGeneratedHistory(t *testing.T) {
 	first := []byte(`{"instructions":"shared","input":[{"role":"user","content":"fixed environment"},{"role":"user","content":"question one"}]}`)
 	second := []byte(`{"instructions":"shared","input":[{"role":"user","content":"fixed environment"},{"role":"user","content":"question two"}]}`)
@@ -72,6 +84,9 @@ func TestCyberTranscriptBlockKeysRequireModelGeneratedHistory(t *testing.T) {
 	require.Contains(t, session.CyberSessionTranscriptLookupKeys(77, continuation), hitKeys[1])
 }
 
+// TestCyberTranscriptBlockKeysWebSocketResponseCreate places session and history
+// inside a WS response.create object. Explicit identity must remain available,
+// and transcript derivation must produce both asserted block keys from the nested input.
 func TestCyberTranscriptBlockKeysWebSocketResponseCreate(t *testing.T) {
 	body := []byte(`{"type":"response.create","response":{"prompt_cache_key":"ws-session","input":[{"role":"user","content":"setup"},{"role":"assistant","content":"ready"},{"role":"user","content":"trigger"}]}}`)
 	c, _ := newCyberBlockTestCtx(nil, string(body))
@@ -79,7 +94,11 @@ func TestCyberTranscriptBlockKeysWebSocketResponseCreate(t *testing.T) {
 	require.Len(t, session.CyberSessionTranscriptBlockKeys(88, body), 2)
 }
 
+// TestCyberTranscriptLookupKeysAreBoundedAndKeepNewestOrder creates three hundred
+// user messages before prefix lookup. The result must retain 256 candidates,
+// beginning at the asserted 45-message prefix and ending with the full transcript key.
 func TestCyberTranscriptLookupKeysAreBoundedAndKeepNewestOrder(t *testing.T) {
+	// Exceed the 256-candidate cap by 44 prefixes to identify the oldest retained boundary.
 	messages := make([]map[string]string, 256+44)
 	for i := range messages {
 		messages[i] = map[string]string{"role": "user", "content": "message-" + strconv.Itoa(i)}
@@ -99,8 +118,9 @@ func TestCyberTranscriptLookupKeysAreBoundedAndKeepNewestOrder(t *testing.T) {
 	require.Equal(t, fullKey, keys[len(keys)-1])
 }
 
-// TestFindCyberSessionBlocked_EmptyAndNilService checks that missing lookup dependencies fail open.
-// Nil services and missing stores return no block key and tolerate an empty mark request.
+// TestFindCyberSessionBlocked_EmptyAndNilService queries a nil core and one built
+// without settings or storage. Both lookups must return empty, and the nil
+// receiver must tolerate a block-write call containing a supplied key.
 func TestFindCyberSessionBlocked_EmptyAndNilService(t *testing.T) {
 	var nilSvc *session.CyberBlocks
 	require.Empty(t, FindCyberSessionForRequest(context.Background(), nilSvc, 1, nil, nil, "", ""))
@@ -110,9 +130,9 @@ func TestFindCyberSessionBlocked_EmptyAndNilService(t *testing.T) {
 	require.Empty(t, FindCyberSessionForRequest(context.Background(), svc, 1, nil, nil, "", ""))
 }
 
-// TestCyberSessionBlock_RoundTrip records a block through the cache/store adapter
-// and checks lookup of the blocked session and an unrelated session.
-
+// TestCyberSessionBlock_RoundTrip looks up an explicit identity before and
+// after storing its block through the combined fixture. Lookup must change
+// from empty to the expected key derived from the same API key and session header.
 func TestCyberSessionBlock_RoundTrip(t *testing.T) {
 	// The fixture supplies settings read by GetCyberSessionBlockRuntime.
 	settingSvc := moderation.NewRuntimeSettings(&fakeSettingRepo{
@@ -137,6 +157,9 @@ func TestCyberSessionBlock_RoundTrip(t *testing.T) {
 	require.Equal(t, explicitKey, FindCyberSessionForRequest(ctx, svc, 1, c, body, "203.0.113.1", "client/1.0"))
 }
 
+// TestFindCyberSessionBlockedForRequestUsesScopeForTranscript supplies continuation
+// input with no explicit session. Lookup must miss before source scope
+// activation, then find the stored history prefix despite the asserted client-version change.
 func TestFindCyberSessionBlockedForRequestUsesScopeForTranscript(t *testing.T) {
 	settingSvc := moderation.NewRuntimeSettings(&fakeSettingRepo{vals: map[string]string{
 		moderation.SettingKeyCyberSessionBlockEnabled:    "true",
@@ -160,6 +183,10 @@ func TestFindCyberSessionBlockedForRequestUsesScopeForTranscript(t *testing.T) {
 	require.Equal(t, blockKey, FindCyberSessionForRequest(ctx, svc, 9, nextCtx, nextBody, clientIP, "Codex CLI 1.2.4"))
 }
 
+// TestFindCyberSessionBlockedForRequestFailsClosedOnScopedTranscriptOverflow exceeds
+// the transcript candidate limit under inactive and active source scope.
+// The inactive case must remain unclaimed; the active case must return the
+// overflow block marker and make no bounded-store find call.
 func TestFindCyberSessionBlockedForRequestFailsClosedOnScopedTranscriptOverflow(t *testing.T) {
 	settingSvc := moderation.NewRuntimeSettings(&fakeSettingRepo{vals: map[string]string{
 		moderation.SettingKeyCyberSessionBlockEnabled:    "true",
@@ -172,6 +199,7 @@ func TestFindCyberSessionBlockedForRequestFailsClosedOnScopedTranscriptOverflow(
 	const clientIP = "203.0.113.20"
 	const userAgent = "Codex CLI 1.2.3"
 
+	// One excess candidate distinguishes scoped overflow from ordinary bounded lookup.
 	messages := make([]map[string]string, 256+1)
 	for i := range messages {
 		messages[i] = map[string]string{"role": "user", "content": "message-" + strconv.Itoa(i)}
@@ -186,6 +214,9 @@ func TestFindCyberSessionBlockedForRequestFailsClosedOnScopedTranscriptOverflow(
 	require.Zero(t, combo.store.findCalls, "overflow must not issue an unbounded Redis lookup")
 }
 
+// TestCyberSessionScopeKeyNormalizesUserAgentVersion compares one source across
+// client patch versions and distinct key or IP values. Patch changes must
+// retain the asserted scope key, while the key and address changes must produce different scopes.
 func TestCyberSessionScopeKeyNormalizesUserAgentVersion(t *testing.T) {
 	base := session.CyberSessionScopeKey(7, "203.0.113.10", "Codex CLI 1.2.3")
 	require.NotEmpty(t, base)
