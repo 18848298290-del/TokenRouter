@@ -17,43 +17,93 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// Image generation and editing share request options but receive reference
+// images in different encodings. JSON editing uses image_url entries, while
+// multipart editing retains named file parts and their byte content. Both
+// paths record whether model and size were supplied before defaults, giving
+// gateway capability selection evidence that a defaulted model alone cannot
+// provide.
+//
+// The normalized request retains its original body storage for forwarding and
+// builds separate prompt/image JSON for moderation. JSON numeric options use
+// integer conversion after a number-type check; multipart text uses integer
+// parsing and caps each named part at twenty MiB, returning its prefix when
+// larger. Parsing collects request evidence and defaults, while model-family
+// validation, billing size tiers, and provider capability selection are
+// performed by gateway consumers.
+
+// These endpoint paths and the per-part read bound select supported image
+// request forms and limit retained multipart payload storage.
 const (
-	OpenAIImagesGenerationsEndpoint = "/v1/images/generations"
-	OpenAIImagesEditsEndpoint       = "/v1/images/edits"
-	OpenAIImageMaxUploadPartSize    = 20 << 20 // 20 MiB per multipart upload part
+	OpenAIImagesGenerationsEndpoint = "/v1/images/generations" // image generation endpoint path
+	OpenAIImagesEditsEndpoint       = "/v1/images/edits"       // image editing endpoint path
+	OpenAIImageMaxUploadPartSize    = 20 << 20                 // 20 MiB per named multipart part
 )
 
+// ImageRequest retains parsed image options and shared input storage for
+// gateway consumers.
 type ImageRequest struct {
-	Endpoint          string
-	ContentType       string
-	Multipart         bool
-	Model             string
-	ExplicitModel     bool
-	Prompt            string
-	Stream            bool
-	N                 int
-	Size              string
-	ExplicitSize      bool
-	SizeTier          string
-	ResponseFormat    string
-	Quality           string
-	Background        string
-	OutputFormat      string
-	Moderation        string
-	InputFidelity     string
-	Style             string
-	OutputCompression *int
-	PartialImages     *int
-	HasMask           bool
-	HasNativeOptions  bool
-	InputImageURLs    []string
-	MaskImageURL      string
-	Uploads           []ImageUpload
-	MaskUpload        *ImageUpload
-	Body              []byte
-	BodyHash          string
+	Endpoint    string // normalized image endpoint path
+	ContentType string // trimmed input content type
+	Multipart   bool   // multipart input encoding indicator
+	// Model carries the selected or defaulted name, while ExplicitModel records
+	// whether the parser-selected input was nonblank. Later multipart model
+	// fields replace earlier values. Gateway capability checks consume that
+	// supplied-value distinction.
+	Model         string // parsed or supplied model
+	ExplicitModel bool   // nonblank model selection observed
+	Prompt        string // trimmed supplied image prompt
+	Stream        bool   // requested image streaming mode
+	N             int    // requested image output count
+	// Size and ExplicitSize retain the supplied size spelling and its nonblank
+	// presence. Gateway capability selection uses ExplicitSize independently of
+	// billing tier normalization and the chosen image model.
+	Size         string // supplied image size spelling
+	ExplicitSize bool   // nonblank size selection observed
+	// SizeTier is assigned by gateway/media using billing size normalization.
+	// Native parsing leaves it empty while retaining Size for capability selection.
+	SizeTier       string // normalized image billing tier
+	ResponseFormat string // lowercase response encoding selection
+	Quality        string // supplied image quality setting
+	Background     string // supplied image background setting
+	OutputFormat   string // supplied output image format
+	Moderation     string // supplied image moderation setting
+	InputFidelity  string // supplied input fidelity setting
+	Style          string // supplied image style setting
+	// OutputCompression and PartialImages retain optional integer settings, with
+	// nil representing absence. Gateway request conversion shares both pointers;
+	// copy their values before independent mutation. Their ranges are not validated here.
+	OutputCompression *int // requested output compression percentage
+	PartialImages     *int // requested partial image count
+	// HasMask records mask-field presence in JSON, including null, or a nonempty
+	// multipart mask upload. Gateway capability selection consumes this presence flag.
+	HasMask bool // input mask presence evidence
+	// HasNativeOptions records option presence for gateway capability selection.
+	// JSON considers field existence. Multipart accepts empty string-option
+	// values as present; integer options require successful parsing, and
+	// case-normalized unhandled names count only with nonblank values.
+	HasNativeOptions bool // native image option evidence
+	// InputImageURLs appends nonblank JSON edit references in source order. Gateway
+	// request conversion shares this slice, so keep elements stable during reads.
+	InputImageURLs []string // shared edit reference URLs
+	MaskImageURL   string   // supplied edit mask URL
+	// Uploads retains multipart image parts and their separately read byte payloads.
+	// Gateway request conversion shares the slice and each upload's Data storage.
+	Uploads []ImageUpload // retained multipart image uploads
+	// MaskUpload retains the last nonempty multipart mask file. Gateway request
+	// conversion shares this pointer and its Data bytes, so copy before
+	// independent mutation.
+	MaskUpload *ImageUpload // retained multipart mask upload
+	// Body borrows the original input slice supplied to ParseImageRequest.
+	// Keep its bytes stable while forwarding or retained request consumers use it.
+	Body     []byte // shared original request bytes
+	BodyHash string // hexadecimal truncated body SHA-256
 }
 
+// ModerationBody returns new JSON bytes containing a trimmed prompt, nonblank
+// URL references, and encoded image uploads. Nil requests, empty moderation
+// content, or marshaling errors return nil; upload data URLs come from
+// ModerationDataURL.
 func (r *ImageRequest) ModerationBody() []byte {
 	if r == nil {
 		return nil
@@ -71,11 +121,18 @@ func (r *ImageRequest) ModerationBody() []byte {
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
+		// Moderation callers interpret nil as absent extracted content. Keep the
+		// same result on encoding failure rather than returning a partial
+		// moderation payload.
 		return nil
 	}
 	return body
 }
 
+// moderationImages collects URL references, upload data URLs, and mask inputs
+// in that order. Nil requests return nil; blank URLs and uploads producing an
+// empty ModerationDataURL are omitted from the list. URL syntax is not
+// validated here.
 func (r *ImageRequest) moderationImages() []map[string]string {
 	if r == nil {
 		return nil
@@ -87,6 +144,9 @@ func (r *ImageRequest) moderationImages() []map[string]string {
 			images = append(images, map[string]string{"image_url": imageURL})
 		}
 	}
+	// Upload and mask data URLs use the image-only moderation encoder. Omit
+	// an empty encoder result while keeping nonblank URL references in the
+	// collected list.
 	for _, upload := range r.Uploads {
 		if dataURL := upload.ModerationDataURL(); dataURL != "" {
 			images = append(images, map[string]string{"image_url": dataURL})
@@ -103,10 +163,22 @@ func (r *ImageRequest) moderationImages() []map[string]string {
 	return images
 }
 
+// IsEdits reports whether Endpoint exactly equals the normalized image-edit
+// path. Nil requests return false; callers normalize the endpoint before using
+// this predicate to choose reference-image parsing or capability selection.
 func (r *ImageRequest) IsEdits() bool {
 	return r != nil && r.Endpoint == OpenAIImagesEditsEndpoint
 }
 
+// StickySessionSeed joins trimmed endpoint, model, size, and prompt values
+// with an image-domain prefix for routing affinity. Nil requests return empty;
+// the fields are joined with unescaped delimiters.
+//
+// When prompt is blank and BodyHash is nonempty, its truncated body digest is
+// appended so promptless payload differences can affect the seed. Other
+// request options enter this seed only through that condition. Consumers treat
+// the value as a routing hint because unescaped components and finite digest
+// size permit collisions.
 func (r *ImageRequest) StickySessionSeed() string {
 	if r == nil {
 		return ""
@@ -119,13 +191,29 @@ func (r *ImageRequest) StickySessionSeed() string {
 		strings.TrimSpace(r.Prompt),
 	}
 	seed := strings.Join(parts, "|")
+	// A promptless request still needs payload-sensitive routing input. Append
+	// the retained body digest in that case; prompt-bearing requests use their
+	// selected endpoint, model, size, and prompt fields as the routing input.
 	if strings.TrimSpace(r.Prompt) == "" && r.BodyHash != "" {
 		seed += "|body=" + r.BodyHash
 	}
 	return seed
 }
 
+// ParseOpenAIImagesJSONRequest fills a nonnil request from JSON paths after
+// the caller has selected its endpoint. It records supplied model and size
+// presence before defaults, appends edit image references, and can leave
+// partial updates when validation fails.
+//
+// Stream requires a JSON boolean, while n and the two optional integer
+// controls require numbers and then use gjson integer conversion, including
+// fractional truncation. Editing requires an image_url reference; file_id-only
+// images and any mask.file_id are rejected. This helper performs path
+// extraction, leaving whole-document validation and defaults to
+// ParseImageRequest.
 func ParseOpenAIImagesJSONRequest(body []byte, req *ImageRequest) error {
+	// Model and size presence is recorded before defaults so gateway capability
+	// selection can distinguish a client-selected value from the parser's default model.
 	if modelResult := gjson.GetBytes(body, "model"); modelResult.Exists() {
 		req.Model = strings.TrimSpace(modelResult.String())
 		req.ExplicitModel = req.Model != ""
@@ -143,6 +231,9 @@ func ParseOpenAIImagesJSONRequest(body []byte, req *ImageRequest) error {
 		if nResult.Type != gjson.Number {
 			return fmt.Errorf("invalid n field type")
 		}
+		// Numeric JSON counts use integer conversion, which truncates fractions
+		// before the positive-count check; multipart counts instead use integer
+		// text parsing.
 		req.N = int(nResult.Int())
 		if req.N <= 0 {
 			return fmt.Errorf("n must be greater than 0")
@@ -161,6 +252,9 @@ func ParseOpenAIImagesJSONRequest(body []byte, req *ImageRequest) error {
 	req.InputFidelity = strings.TrimSpace(gjson.GetBytes(body, "input_fidelity").String())
 	req.Style = strings.TrimSpace(gjson.GetBytes(body, "style").String())
 	req.HasMask = gjson.GetBytes(body, "mask").Exists()
+	// Compression and partial-image controls retain integer-converted JSON numbers.
+	// Their ranges remain for upstream validation, and nil distinguishes
+	// omitted controls.
 	if outputCompression := gjson.GetBytes(body, "output_compression"); outputCompression.Exists() {
 		if outputCompression.Type != gjson.Number {
 			return fmt.Errorf("invalid output_compression field type")
@@ -181,6 +275,9 @@ func ParseOpenAIImagesJSONRequest(body []byte, req *ImageRequest) error {
 			if !images.IsArray() {
 				return fmt.Errorf("invalid images field type")
 			}
+			// Editing references use URLs in this representation. A nonblank image_url
+			// takes precedence over file_id, whose unsupported form is checked only
+			// when no nonblank URL was appended for that item.
 			for _, item := range images.Array() {
 				if imageURL := strings.TrimSpace(item.Get("image_url").String()); imageURL != "" {
 					req.InputImageURLs = append(req.InputImageURLs, imageURL)
@@ -195,6 +292,8 @@ func ParseOpenAIImagesJSONRequest(body []byte, req *ImageRequest) error {
 			req.MaskImageURL = maskImageURL
 			req.HasMask = true
 		}
+		// A mask file_id cannot be resolved by this URL-based editing path.
+		// Reject its presence even when a mask image_url also appears in the request.
 		if gjson.GetBytes(body, "mask.file_id").Exists() {
 			return fmt.Errorf("mask.file_id is not supported (use mask.image_url instead)")
 		}
@@ -208,6 +307,17 @@ func ParseOpenAIImagesJSONRequest(body []byte, req *ImageRequest) error {
 	return nil
 }
 
+// ParseOpenAIImagesMultipartRequest fills a nonnil request from named
+// multipart parts using the supplied boundary. It leaves partial updates on
+// error, appends image uploads, and lets the last recognized scalar field or
+// nonempty mask upload replace its earlier value.
+//
+// Each named part retains at most twenty MiB; oversized files and scalar
+// fields can therefore be truncated without an oversize error. Unknown fields
+// are ignored, option presence is retained for capability selection, and
+// editing requires at least one image upload. Multipart transfer decoding
+// precedes part reads, and upload dimensions remain zero through
+// ParseOpenAIImageDimensions.
 func ParseOpenAIImagesMultipartRequest(body []byte, contentType string, req *ImageRequest) error {
 	_, params, err := mime.ParseMediaType(contentType)
 	if err != nil {
@@ -229,10 +339,15 @@ func ParseOpenAIImagesMultipartRequest(body []byte, contentType string, req *Ima
 		}
 		name := strings.TrimSpace(part.FormName())
 		if name == "" {
+			// Unnamed parts supply no request field. Close them so their unread
+			// payload is drained before advancing to the next named form part.
 			_ = part.Close()
 			continue
 		}
 
+		// Retain a bounded prefix of every named part, including scalar fields.
+		// Closing the part drains its unread suffix before the next part; this
+		// cap does not report oversize and close errors do not replace read errors.
 		data, err := io.ReadAll(io.LimitReader(part, OpenAIImageMaxUploadPartSize))
 		_ = part.Close()
 		if err != nil {
@@ -240,6 +355,9 @@ func ParseOpenAIImagesMultipartRequest(body []byte, contentType string, req *Ima
 		}
 
 		fileName := strings.TrimSpace(part.FileName())
+		// File parts carry edit references or a nonempty mask. Preserve their
+		// decoded bytes with filename and content type metadata. Text parts use
+		// scalar parsing after the file-part path has been handled.
 		if fileName != "" {
 			partContentType := strings.TrimSpace(part.Header.Get("Content-Type"))
 			if name == "mask" && len(data) > 0 {
@@ -326,6 +444,8 @@ func ParseOpenAIImagesMultipartRequest(body []byte, contentType string, req *Ima
 			req.PartialImages = &n
 			req.HasNativeOptions = true
 		default:
+			// A case-normalized native option can still require native execution
+			// even when its exact spelling had no dedicated scalar assignment above.
 			if IsOpenAINativeImageOption(name) && value != "" {
 				req.HasNativeOptions = true
 			}
@@ -338,10 +458,16 @@ func ParseOpenAIImagesMultipartRequest(body []byte, contentType string, req *Ima
 	return nil
 }
 
+// ParseOpenAIImageDimensions returns zero width and height for the multipart
+// upload parser. The header argument is unused; consumers needing dimensions
+// inspect the retained image bytes through their own decoding path.
 func ParseOpenAIImageDimensions(_ textproto.MIMEHeader) (int, int) {
 	return 0, 0
 }
 
+// ApplyOpenAIImagesDefaults sets a nonpositive output count to one and a blank
+// model to gpt-image-2. Nil requests are ignored; existing nonblank models are
+// trimmed while explicit-selection flags retain parsed evidence.
 func ApplyOpenAIImagesDefaults(req *ImageRequest) {
 	if req == nil {
 		return
@@ -356,6 +482,9 @@ func ApplyOpenAIImagesDefaults(req *ImageRequest) {
 	req.Model = "gpt-image-2"
 }
 
+// NormalizeOpenAIImagesEndpointPath selects a supported endpoint by substring
+// in trimmed, case-sensitive path text. Generations wins when both substrings
+// occur; unrecognized paths return empty for the request parser to reject.
 func NormalizeOpenAIImagesEndpointPath(path string) string {
 	trimmed := strings.TrimSpace(path)
 	switch {
@@ -368,6 +497,9 @@ func NormalizeOpenAIImagesEndpointPath(path string) string {
 	}
 }
 
+// HasOpenAINativeImageOptions reports whether the supplied nonnil predicate
+// finds any recognized native option path. It stops on the first match; the
+// caller decides whether presence, null values, or nonblank content qualifies.
 func HasOpenAINativeImageOptions(exists func(path string) bool) bool {
 	return slices.ContainsFunc([]string{
 		"background",
@@ -381,6 +513,10 @@ func HasOpenAINativeImageOptions(exists func(path string) bool) bool {
 	}, exists)
 }
 
+// IsOpenAINativeImageOption reports whether trimmed, case-insensitive text
+// names a recognized native image option. Multipart parsing uses this for
+// unhandled field names when deciding whether nonblank input requires native
+// capability.
 func IsOpenAINativeImageOption(name string) bool {
 	switch strings.TrimSpace(strings.ToLower(name)) {
 	case "background", "quality", "style", "output_format", "output_compression", "moderation", "input_fidelity", "partial_images":
@@ -390,6 +526,17 @@ func IsOpenAINativeImageOption(name string) bool {
 	}
 }
 
+// ParseImageRequest collects image request evidence from JSON or recognized
+// multipart input and applies count and model defaults. It returns a new
+// request whose Body borrows the caller's bytes; keep that storage stable
+// while the request is retained.
+//
+// Recognized multipart input uses the declared boundary, while every other
+// media type uses complete JSON syntax validation before path extraction. A
+// supported path substring selects generation or editing. Model-family
+// acceptance, provider capability selection, and billing size classification
+// remain with gateway consumers; successful parsing alone does not establish
+// those decisions.
 func ParseImageRequest(path, contentType string, body []byte) (*ImageRequest, error) {
 	endpoint := NormalizeOpenAIImagesEndpointPath(path)
 	if endpoint == "" {
@@ -405,9 +552,12 @@ func ParseImageRequest(path, contentType string, body []byte) (*ImageRequest, er
 	}
 	if len(body) > 0 {
 		sum := sha256.Sum256(body)
+		// Eight digest bytes provide sixteen hex characters for promptless affinity.
 		req.BodyHash = hex.EncodeToString(sum[:8])
 	}
 
+	// Recognized multipart MIME selects file-part parsing. Other MIME values
+	// and MIME parse errors follow JSON syntax validation before request path extraction.
 	mediaType, _, err := mime.ParseMediaType(contentType)
 	if err == nil && strings.EqualFold(mediaType, "multipart/form-data") {
 		req.Multipart = true
@@ -431,5 +581,7 @@ func ParseImageRequest(path, contentType string, body []byte) (*ImageRequest, er
 	return req, nil
 }
 
-// String returns a fixed diagnostic label to keep upload bytes, prompts, and signed URLs out of logs.
+// String returns a fixed label for formatting that uses the Stringer
+// interface. That path omits prompts, upload bytes, and signed image URLs;
+// other formatting modes follow their own representation rules.
 func (*ImageRequest) String() string { return "image wire request" }

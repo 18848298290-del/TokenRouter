@@ -10,6 +10,8 @@ import (
 // URL.Path is already percent-decoded; validate it before constructing an upstream URL.
 // Reject invalid inputs rather than rewriting them to a different request target.
 
+// These bounds limit the size and nesting depth of client-derived URL suffixes
+// before forwarding constructs an upstream endpoint.
 const (
 	// MaxUpstreamPathSegmentLen bounds one segment while allowing normal response IDs
 	// and model names.
@@ -18,8 +20,9 @@ const (
 	MaxUpstreamPathSegments = 8
 )
 
-// IsSafeUpstreamPathSegmentByte accepts ASCII letters, digits, underscore, hyphen,
-// and dot. Control bytes and non-ASCII input are rejected.
+// IsSafeUpstreamPathSegmentByte reports whether b belongs to the URL segment
+// allowlist. Accepted bytes are ASCII letters, digits, underscore, hyphen, and
+// dot; callers check whole-segment dot rules separately.
 func IsSafeUpstreamPathSegmentByte(b byte) bool {
 	switch {
 	case b >= 'a' && b <= 'z', b >= 'A' && b <= 'Z', b >= '0' && b <= '9':
@@ -31,9 +34,9 @@ func IsSafeUpstreamPathSegmentByte(b byte) bool {
 	}
 }
 
-// IsSafeUpstreamPathSegment reports whether segment can be appended as one URL path segment.
-//
-// Dot-only segments are rejected because path normalization can interpret them differently.
+// IsSafeUpstreamPathSegment reports whether a bounded, nonempty segment passes
+// the ASCII allowlist. It rejects every dot-only spelling because downstream
+// path normalization may interpret those spellings as navigation components.
 func IsSafeUpstreamPathSegment(segment string) bool {
 	if segment == "" || len(segment) > MaxUpstreamPathSegmentLen {
 		return false
@@ -47,12 +50,14 @@ func IsSafeUpstreamPathSegment(segment string) bool {
 			dotsOnly = false
 		}
 	}
+	// A sequence made entirely of dots can be interpreted differently by URL
+	// and proxy normalization; reject it before any caller appends the segment.
 	return !dotsOnly
 }
 
-// SanitizedUpstreamPathSuffix validates a suffix shaped like /a/b.
-// Callers must reject ok=false; replacing it with an empty suffix changes the endpoint.
-// An empty suffix is valid and means no subpath.
+// SanitizedUpstreamPathSuffix validates a trimmed suffix shaped like /a/b and
+// returns its spelling. Empty input means no subpath; callers reject ok=false
+// because substituting empty would select a different endpoint.
 func SanitizedUpstreamPathSuffix(raw string) (string, bool) {
 	suffix := strings.TrimSpace(raw)
 	if suffix == "" {
@@ -73,12 +78,15 @@ func SanitizedUpstreamPathSuffix(raw string) (string, bool) {
 	return suffix, true
 }
 
-// ValidateUpstreamPathSegment returns an error for an unsafe trimmed path segment.
-// Callers must stop URL construction and reject the request on error.
+// ValidateUpstreamPathSegment validates the trimmed segment before upstream
+// URL construction. It returns an error containing the supplied kind when
+// invalid; callers retain responsibility for using the validated trimmed
+// spelling.
 func ValidateUpstreamPathSegment(kind, segment string) error {
 	if IsSafeUpstreamPathSegment(strings.TrimSpace(segment)) {
 		return nil
 	}
-	// Omit the raw input to keep it out of logs and error responses.
+	// Error text can reach logs or client responses. Report the caller-supplied
+	// field kind while keeping the rejected segment out of that diagnostic text.
 	return fmt.Errorf("invalid %s for upstream url path", kind)
 }

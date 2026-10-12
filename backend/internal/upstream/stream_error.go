@@ -8,10 +8,18 @@ import (
 	"syscall"
 )
 
-// SanitizeStreamError returns an error category suitable for client responses.
-// net.OpError.Error includes source and destination addresses, so return the
-// recognized cause or operation name instead of its formatted network details.
-// Callers can log the original error separately for diagnosis.
+// Network error strings can include the local address and the upstream
+// destination in a client-facing disconnect message. Known causes are reduced
+// to stable labels, and unrecognized errors receive a generic category while
+// callers retain the original error for diagnostics.
+
+// SanitizeStreamError returns a client-facing category for a stream failure,
+// or empty for nil. Known causes are matched through wrapping before
+// net.OpError timeout or operation labels; other errors receive a generic
+// connection label. Callers can log the original error separately. A
+// net.OpError operation string is carried through verbatim, so callers
+// constructing such errors supply an operation label suitable for client
+// output.
 func SanitizeStreamError(err error) string {
 	if err == nil {
 		return ""
@@ -47,5 +55,7 @@ func SanitizeStreamError(err error) string {
 			return netErr.Op + " network error"
 		}
 	}
+	// Arbitrary error strings can expose connection details. Use one generic
+	// client label when neither a known cause nor a usable network operation applies.
 	return "upstream connection error"
 }

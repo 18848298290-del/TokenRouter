@@ -16,13 +16,17 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/upstream/usageview"
 )
 
-// usageResponseBody counts response-body closes.
+// usageResponseBody supplies fixture bytes and counts client response-body
+// cleanup calls.
 type usageResponseBody struct {
-	io.Reader
-	closed int
+	io.Reader     // configured fixture payload reader
+	closed    int // observed response close calls
 }
 
-// Usage endpoints share forwarding rules for already-versioned base URLs.
+// TestUpstreamUsageEndpointUsesExistingVersionedBaseURLRules supplies
+// versioned and prefixed bases to the endpoint builders. It checks
+// forwarding-path reuse, root management paths, and the token endpoint
+// trailing slash.
 func TestUpstreamUsageEndpointUsesExistingVersionedBaseURLRules(t *testing.T) {
 	tests := map[string]string{
 		"https://gateway.example/v1":     "https://gateway.example/v1/usage",
@@ -60,22 +64,27 @@ func TestUpstreamUsageEndpointUsesExistingVersionedBaseURLRules(t *testing.T) {
 	require.Equal(t, "https://gateway.example/api/user/self", selfEndpoint)
 }
 
+// Close records one cleanup call for the response-body assertions.
 func (b *usageResponseBody) Close() error {
 	b.closed++
 	return nil
 }
 
+// TestUsageClientResponseLimitsAndClose exercises fixed-header and bearer
+// queries against bounded, oversized, failed, and missing responses. It checks
+// credential precedence, raw status results, body closure counts, and
+// original-context deadline classification.
 func TestUsageClientResponseLimitsAndClose(t *testing.T) {
 	entries := []string{"headers", "bearer"}
 	cases := []struct {
-		name           string
-		size           int
-		readError      bool
-		nilResponse    bool
-		nilBody        bool
-		doError        error
-		expiredContext bool
-		wantError      error
+		name           string // named response handling scenario
+		size           int    // fixture response body bytes
+		readError      bool   // inject fixture read failure
+		nilResponse    bool   // return absent transport response
+		nilBody        bool   // return absent response body
+		doError        error  // inject transport callback failure
+		expiredContext bool   // expire original query context
+		wantError      error  // expected usage query error
 	}{
 		{name: "empty"},
 		{name: "at limit", size: MaxBodyBytes},
@@ -90,6 +99,9 @@ func TestUsageClientResponseLimitsAndClose(t *testing.T) {
 		for _, tc := range cases {
 			t.Run(entry+"/"+tc.name, func(t *testing.T) {
 				ctx := context.Background()
+				// The transport receives a fresh Background context below. Expire the
+				// original context to verify error mapping still consults the query
+				// caller.
 				if tc.expiredContext {
 					var cancel context.CancelFunc
 					ctx, cancel = context.WithDeadline(ctx, time.Now().Add(-time.Second))

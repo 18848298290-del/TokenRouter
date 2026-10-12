@@ -5,12 +5,15 @@ import (
 	"testing"
 )
 
+// TestIsUpstreamModelNotFoundError varies 404 message and code spellings
+// against endpoint-only and non-404 errors. It checks that the strict detector
+// requires both status and model-specific wording.
 func TestIsUpstreamModelNotFoundError(t *testing.T) {
 	tests := []struct {
-		name       string
-		statusCode int
-		body       []byte
-		want       bool
+		name       string // named missing-model error scenario
+		statusCode int    // upstream HTTP response status
+		body       []byte // raw upstream error fixture
+		want       bool   // expected strict detector result
 	}{
 		{
 			name:       "404 model not found message",
@@ -59,6 +62,9 @@ func TestIsUpstreamModelNotFoundError(t *testing.T) {
 	}
 }
 
+// TestAntigravityModelNotFoundKeepsBare404Fallback supplies a 404 body
+// describing an endpoint error. It checks that the permissive Antigravity
+// detector still accepts that status as its failure signal.
 func TestAntigravityModelNotFoundKeepsBare404Fallback(t *testing.T) {
 	if !IsModelNotFoundOrBare404(http.StatusNotFound, []byte(`endpoint not found`)) {
 		t.Fatal("antigravity model-not-found helper should keep bare 404 fallback")

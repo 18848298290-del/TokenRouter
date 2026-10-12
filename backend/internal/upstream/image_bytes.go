@@ -5,47 +5,68 @@ import (
 	"io"
 )
 
-// DecodedImage contains decoded image bytes and their detected MIME type.
+// Image responses may encode their bytes with or without base64 padding.
+// Decoding tries both standard forms, then assigns PNG, JPEG, or WebP from a
+// short signature check; unknown bytes retain the PNG default used by image
+// response consumers.
+
+// DecodedImage holds decoded payload bytes and the MIME label selected for
+// them.
 type DecodedImage struct {
-	Bytes []byte
-	Mime  string
+	Bytes []byte // decoded image payload bytes
+	Mime  string // selected image MIME type
 }
 
-// ImageOutput is one image returned by an executor.
+// ImageOutput carries one indexed image payload returned by a platform
+// executor.
 type ImageOutput struct {
-	Index int
-	Bytes []byte
-	Mime  string
+	Index int    // image response output index
+	Bytes []byte // returned image payload bytes
+	Mime  string // returned image MIME type
 }
 
-// ReadLimitedBody reads at most limit bytes, defaulting to 64 MiB for nonpositive limits. It does
-// not report truncation.
+// ReadLimitedBody reads at most limit bytes from a nonnil reader into new
+// storage. Nonpositive limits select sixty-four MiB; reaching the limit
+// returns the prefix successfully, so callers cannot infer truncation from the
+// error result.
 func ReadLimitedBody(body io.Reader, limit int64) ([]byte, error) {
 	if limit <= 0 {
 		limit = 64 << 20
 	}
+	// Reaching this cap returns a prefix successfully. Callers needing oversize
+	// rejection read an additional byte themselves instead of using this bounded helper.
 	return io.ReadAll(io.LimitReader(body, limit))
 }
 
-// DecodeBase64Image decodes image data and detects its MIME type, defaulting unknown types to image/png.
+// DecodeBase64Image decodes standard base64 and assigns a recognized image
+// MIME label. A failed padded decode retries unpadded standard base64; unknown
+// signatures, including empty decoded data, receive image/png for the image
+// consumer.
 func DecodeBase64Image(raw string) (DecodedImage, error) {
 	data, err := base64.StdEncoding.DecodeString(raw)
 	if err != nil {
-		// Some upstreams omit base64 padding.
+		// Image response consumers accept upstream payloads with omitted padding.
+		// Retry the unpadded standard alphabet before returning the final decoding error.
 		data, err = base64.RawStdEncoding.DecodeString(raw)
 		if err != nil {
 			return DecodedImage{}, err
 		}
 	}
 	mime := SniffImageMIME(data)
+	// The image consumer still needs a MIME label for unknown byte signatures.
+	// Assign its PNG default after decoding; this label does not validate the payload.
 	if mime == "" {
 		mime = "image/png"
 	}
 	return DecodedImage{Bytes: data, Mime: mime}, nil
 }
 
-// SniffImageMIME recognizes PNG, JPEG, and WebP signatures or returns an empty string.
+// SniffImageMIME reports PNG, JPEG, or WebP from the recognized leading byte
+// signatures. Unknown or insufficient bytes return empty; this signature check
+// does not decode or validate a complete image.
 func SniffImageMIME(data []byte) string {
+	// These short signature checks supply output labels for the image consumer;
+	// they accept matching prefixes even when the rest of the payload is malformed.
 	if len(data) >= 8 && data[0] == 0x89 && data[1] == 'P' && data[2] == 'N' && data[3] == 'G' {
 		return "image/png"
 	}
