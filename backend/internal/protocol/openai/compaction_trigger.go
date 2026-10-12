@@ -6,8 +6,28 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/protocol/wirejson"
 )
 
-// NormalizeCompactionTriggerInputOrder keeps a single compaction trigger as
-// the final Responses input item, as required by the upstream v2 wire format.
+// Remote compaction detection uses a compaction_trigger in the Responses input
+// array, alongside the caller's path and streaming policy. Request preparation
+// can place one trigger after all conversation items while retaining the order
+// and decoded values of the other history entries.
+//
+// Reordering or collapsing triggers emits a fresh minimal trigger object;
+// attributes on removed trigger objects are therefore discarded. A single
+// already-final trigger keeps its supplied bytes and attributes. Number-preserving
+// object decoding protects unrelated valid numeric literals during full request
+// serialization, while the detection helper uses gjson paths and leaves complete
+// JSON validation to the caller. Failed decoding or serialization returns the
+// supplied body together with the error rather than a partially normalized request.
+
+// NormalizeCompactionTriggerInputOrder emits one minimal trigger after ordered
+// nontrigger input items. Empty bodies, nonarray or empty input, absent triggers,
+// and a single already-final trigger return the supplied bytes and false.
+//
+// Moved or duplicate triggers lose their extra attributes when replaced with
+// the minimal type-only object; other decoded input entries keep their order
+// and values. DecodeUseNumber retains valid numeric literals through serialization.
+// Decoding or encoding errors return the input and false with the error, and
+// successful normalization returns fresh encoded bytes and true.
 func NormalizeCompactionTriggerInputOrder(body []byte) ([]byte, bool, error) {
 	if len(body) == 0 {
 		return body, false, nil
@@ -23,6 +43,9 @@ func NormalizeCompactionTriggerInputOrder(body []byte) ([]byte, bool, error) {
 	triggerCount := 0
 	normalized := make([]any, 0, len(input))
 	for _, raw := range input {
+		// Collect history independently of every trigger position. One minimal
+		// trigger is appended afterward, so repeated triggers cannot interleave
+		// the forwarded conversation entries.
 		item, itemOK := raw.(map[string]any)
 		if itemOK && item["type"] == "compaction_trigger" {
 			triggerCount++
@@ -38,6 +61,9 @@ func NormalizeCompactionTriggerInputOrder(body []byte) ([]byte, bool, error) {
 			return body, false, nil
 		}
 	}
+	// A moved or repeated trigger is replaced by its type-only wire object.
+	// Extra trigger attributes are discarded while ordinary history retains
+	// the decoded values and order.
 	normalized = append(normalized, map[string]any{"type": "compaction_trigger"})
 	payload["input"] = normalized
 	encoded, err := wirejson.Marshal(payload)
@@ -47,9 +73,10 @@ func NormalizeCompactionTriggerInputOrder(body []byte) ([]byte, bool, error) {
 	return encoded, true, nil
 }
 
-// HasCompactionTriggerInInput detects a compaction_trigger item in the input array.
-// Handlers combine this signal with the path and stream flag to distinguish remote
-// compaction v2 from the legacy /responses/compact bridge.
+// HasCompactionTriggerInInput detects a trigger type in an input array.
+// Empty bodies and other input shapes return false. Handlers combine this signal
+// with path and stream policy to select remote compaction; this gjson path
+// inspection does not validate the complete request document.
 func HasCompactionTriggerInInput(body []byte) bool {
 	if len(body) == 0 {
 		return false

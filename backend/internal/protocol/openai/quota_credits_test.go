@@ -7,11 +7,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestParseOpenAIRateLimitResetCreditDetails_CompatibleContainers supplies
+// credit arrays in each supported container spelling and as a direct array.
+// Reduced details must retain the expected expiry text and exclude the fixture
+// credit identifier from their serialized output.
 func TestParseOpenAIRateLimitResetCreditDetails_CompatibleContainers(t *testing.T) {
 	tests := []struct {
-		name string
-		body string
-		want []string
+		name string   // credit container scenario
+		body string   // compatible quota JSON
+		want []string // expected expiry strings
 	}{
 		{
 			name: "credits",
@@ -55,6 +59,10 @@ func TestParseOpenAIRateLimitResetCreditDetails_CompatibleContainers(t *testing.
 	}
 }
 
+// TestParseOpenAIRateLimitResetCreditDetails_PreservesAvailableCreditOrder
+// supplies a string count alongside redeemed, available, and other-scope credits.
+// Parsing must retain the count and the two eligible expiry values in their
+// source order.
 func TestParseOpenAIRateLimitResetCreditDetails_PreservesAvailableCreditOrder(t *testing.T) {
 	body := []byte(`{
 		"availableCount":"2",

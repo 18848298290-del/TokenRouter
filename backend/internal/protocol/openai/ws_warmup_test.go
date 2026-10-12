@@ -7,7 +7,10 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// TestWSWarmupPayloadAndEvents checks that only boolean false selects warmup, and checks the empty event pair.
+// TestWSWarmupPayloadAndEvents distinguishes boolean-false warmup from missing,
+// nonboolean, wrong-type, and trailing-data requests. Its event pair must share
+// ID/model/time, carry ordered sequence numbers and empty output, and finish
+// with completed status and zero total-token usage.
 func TestWSWarmupPayloadAndEvents(t *testing.T) {
 	require.True(t, IsWSWarmupPayload([]byte(`{"type":"response.create","generate":false}`)))
 	for _, body := range []string{`{"type":"response.create"}`, `{"type":"response.create","generate":true}`, `{"type":"response.create","generate":"false"}`, `{"type":"response.create","generate":null}`, `{"type":"session.update","generate":false}`, `{"type":"response.create","generate":false} trailing`} {

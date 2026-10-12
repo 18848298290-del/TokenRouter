@@ -7,6 +7,18 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// HTTP Responses visible-output observation checks content fields so empty
+// lifecycle or item events can remain unobserved. Stream readers also use this
+// classifier when the configured TTFT mode is visible; other timing modes
+// select their own event rules. Streaming inspection validates full JSON,
+// while buffered item inspection reads gjson paths and relies on separate
+// caller validation when complete-document validity matters.
+
+// StreamItemHasVisibleOutput reports whether recognized arguments, input,
+// result, text, or transcript paths have nonempty gjson string forms. JSON
+// containers, numbers, and booleans can qualify alongside strings. Callers
+// validate the enclosing document and field types separately when they need
+// a stricter output schema.
 func StreamItemHasVisibleOutput(item gjson.Result) bool {
 	if item.Get("arguments").String() != "" || item.Get("input").String() != "" || item.Get("result").String() != "" {
 		return true
@@ -21,7 +33,12 @@ func StreamItemHasVisibleOutput(item gjson.Result) bool {
 	return false
 }
 
-// StreamDataStartsVisibleOutput detects client-usable content for TTFT; structural progress alone returns false.
+// StreamDataStartsVisibleOutput reports whether valid SSE data carries
+// recognized content for HTTP visible-output observation and visible TTFT
+// mode. The supplied eventType wins when nonblank; otherwise payload.type is
+// used. Blank data, DONE, and invalid JSON return false. Content tests use
+// gjson string forms, so JSON containers, numbers, and booleans can count as
+// nonempty values; callers validate field types for a stricter output schema.
 func StreamDataStartsVisibleOutput(data, eventType string) bool {
 	trimmed := strings.TrimSpace(data)
 	if trimmed == "" || trimmed == "[DONE]" || !gjson.Valid(trimmed) {
@@ -61,7 +78,10 @@ func StreamDataStartsVisibleOutput(data, eventType string) bool {
 	return false
 }
 
-// ResponseBodyHasVisibleOutput checks output items for text, reasoning, or tool content.
+// ResponseBodyHasVisibleOutput checks top-level output items for the values
+// recognized by StreamItemHasVisibleOutput. Missing output returns false;
+// callers validate complete JSON separately because this path-based buffered
+// check can inspect partially parsed payloads.
 func ResponseBodyHasVisibleOutput(body []byte) bool {
 	return slices.ContainsFunc(gjson.GetBytes(body, "output").Array(), StreamItemHasVisibleOutput)
 }

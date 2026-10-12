@@ -7,6 +7,9 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestHasCompactionTriggerInInput_DetectsCompactSignal places a trigger after
+// a message in a streaming request. Array inspection must recognize the trigger
+// without requiring it to be the sole input item.
 func TestHasCompactionTriggerInInput_DetectsCompactSignal(t *testing.T) {
 	body := []byte(`{
 		"model":"gpt-5.5",
@@ -19,6 +22,9 @@ func TestHasCompactionTriggerInInput_DetectsCompactSignal(t *testing.T) {
 	require.True(t, HasCompactionTriggerInInput(body))
 }
 
+// TestHasCompactionTriggerInInput_NoTrigger supplies an ordinary message array.
+// Detection must return false because the array carries conversation content
+// without an item whose type is compaction_trigger.
 func TestHasCompactionTriggerInInput_NoTrigger(t *testing.T) {
 	body := []byte(`{
 		"model":"gpt-5.5",
@@ -29,31 +35,49 @@ func TestHasCompactionTriggerInInput_NoTrigger(t *testing.T) {
 	require.False(t, HasCompactionTriggerInInput(body))
 }
 
+// TestHasCompactionTriggerInInput_EmptyInput supplies an explicitly empty input
+// array beside a model. Detection must return false because no array item can
+// provide the compaction-trigger signal.
 func TestHasCompactionTriggerInInput_EmptyInput(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.5","input":[]}`)
 	require.False(t, HasCompactionTriggerInInput(body))
 }
 
+// TestHasCompactionTriggerInInput_NoInputField supplies a request with a model
+// and no input field. Detection must return false when the request has no input
+// array to inspect for a trigger.
 func TestHasCompactionTriggerInInput_NoInputField(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.5"}`)
 	require.False(t, HasCompactionTriggerInInput(body))
 }
 
+// TestHasCompactionTriggerInInput_EmptyBody supplies nil and allocated empty
+// body slices. Both inputs must return false so empty requests cannot supply
+// the compaction-trigger signal to the caller.
 func TestHasCompactionTriggerInInput_EmptyBody(t *testing.T) {
 	require.False(t, HasCompactionTriggerInInput(nil))
 	require.False(t, HasCompactionTriggerInInput([]byte{}))
 }
 
+// TestHasCompactionTriggerInInput_StringInput places the trigger label in a
+// plain input string. Detection must return false because the signal requires
+// a typed item inside an input array.
 func TestHasCompactionTriggerInInput_StringInput(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.5","input":"compaction_trigger"}`)
 	require.False(t, HasCompactionTriggerInInput(body))
 }
 
+// TestHasCompactionTriggerInInput_CompactTriggerOnly supplies an array containing
+// just the trigger object. Detection must return true even when no conversation
+// message accompanies the compaction signal.
 func TestHasCompactionTriggerInInput_CompactTriggerOnly(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.5","input":[{"type":"compaction_trigger"}]}`)
 	require.True(t, HasCompactionTriggerInInput(body))
 }
 
+// TestNormalizeCompactionTriggerInputOrder_MovesAndCollapsesTriggers surrounds
+// a message with two triggers. Normalization must report a change and retain
+// one message followed by one final trigger in the asserted two-item output.
 func TestNormalizeCompactionTriggerInputOrder_MovesAndCollapsesTriggers(t *testing.T) {
 	body := []byte(`{"model":"gpt-5.5","input":[{"type":"compaction_trigger"},{"type":"message","role":"user","content":"tail"},{"type":"compaction_trigger"}]}`)
 	normalized, changed, err := NormalizeCompactionTriggerInputOrder(body)
@@ -65,6 +89,9 @@ func TestNormalizeCompactionTriggerInputOrder_MovesAndCollapsesTriggers(t *testi
 	require.Equal(t, "compaction_trigger", items[1].Get("type").String())
 }
 
+// TestNormalizeCompactionTriggerInputOrder_AlreadyFinalPreservesBytes supplies
+// one trigger after a message. Normalization must report no change and return
+// the supplied bytes because the input already has the required final position.
 func TestNormalizeCompactionTriggerInputOrder_AlreadyFinalPreservesBytes(t *testing.T) {
 	body := []byte(`{"input":[{"type":"message"},{"type":"compaction_trigger"}]}`)
 	normalized, changed, err := NormalizeCompactionTriggerInputOrder(body)
@@ -73,6 +100,10 @@ func TestNormalizeCompactionTriggerInputOrder_AlreadyFinalPreservesBytes(t *test
 	require.Equal(t, string(body), string(normalized))
 }
 
+// TestNormalizeCompactionTriggerInputOrder_PreservesHistoryAndLargeNumbers moves
+// a trigger before message and tool-result history with a large integer field.
+// The item types must retain their order, the integer spelling must remain exact,
+// and a second pass must return unchanged bytes.
 func TestNormalizeCompactionTriggerInputOrder_PreservesHistoryAndLargeNumbers(t *testing.T) {
 	body := []byte(`{"input":[{"type":"compaction_trigger"},{"type":"message","id":"msg_1","content":"visible"},{"type":"function_call_output","call_id":"call_1","output":"result","sequence":9007199254740993}]}`)
 

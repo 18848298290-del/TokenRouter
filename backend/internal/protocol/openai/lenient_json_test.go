@@ -8,7 +8,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestLenientJSONLimitAndOriginalBytes checks the expanded size limit, input ownership, and error wrapping.
+// TestLenientJSONLimitAndOriginalBytes expands a raw newline inside a quoted
+// value at and beyond the configured normalized-size limit. Repaired bytes must
+// leave input unchanged, and a wrapped limit error must expose the asserted
+// threshold through errors.As.
 func TestLenientJSONLimitAndOriginalBytes(t *testing.T) {
 	original := []byte{'{', '"', 'v', '"', ':', '"', '\n', '"', '}'}
 	saved := append([]byte(nil), original...)

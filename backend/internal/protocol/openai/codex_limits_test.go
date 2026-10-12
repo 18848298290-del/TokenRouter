@@ -4,6 +4,10 @@ import (
 	"testing"
 )
 
+// TestNormalizedCodexLimits supplies primary seven-day and secondary five-hour
+// durations with different utilization and reset observations. Normalization must
+// associate the asserted usage percentages and reset seconds with their duration-selected
+// categories.
 func TestNormalizedCodexLimits(t *testing.T) {
 	pUsed := 100.0
 	pReset := 384607
@@ -41,6 +45,9 @@ func TestNormalizedCodexLimits(t *testing.T) {
 	}
 }
 
+// TestNormalizedCodexLimits_OnlyPrimaryData supplies primary usage and reset
+// without either duration. The legacy category must receive those observations
+// as seven-day values while five-hour usage and reset pointers remain absent.
 func TestNormalizedCodexLimits_OnlyPrimaryData(t *testing.T) {
 	// Only primary usage exists; both window durations are absent.
 	pUsed := 80.0
@@ -71,6 +78,9 @@ func TestNormalizedCodexLimits_OnlyPrimaryData(t *testing.T) {
 	}
 }
 
+// TestNormalizedCodexLimits_OnlySecondaryData supplies secondary usage and reset
+// without duration evidence. The legacy mapping must retain them as five-hour
+// observations while the seven-day utilization pointer remains absent.
 func TestNormalizedCodexLimits_OnlySecondaryData(t *testing.T) {
 	// Only secondary usage exists; both window durations are absent.
 	sUsed := 60.0
@@ -98,6 +108,9 @@ func TestNormalizedCodexLimits_OnlySecondaryData(t *testing.T) {
 	}
 }
 
+// TestNormalizedCodexLimits_BothDataNoWindowMinutes supplies both usage/reset
+// sets with absent durations. Normalization must use primary for seven-day values
+// and secondary for five-hour values, preserving the asserted pairings.
 func TestNormalizedCodexLimits_BothDataNoWindowMinutes(t *testing.T) {
 	// Both usage records are present but their window durations are absent.
 	pUsed := 100.0

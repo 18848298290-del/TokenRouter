@@ -8,6 +8,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestValidateOpenAIServiceTierField supplies supported, aliased, absent, null,
+// empty, nonstring, and oversized tier fields. Validation must return canonical
+// labels or typed errors whose descriptions contain the bounded value or the
+// nonstring placeholder asserted by each case.
 func TestValidateOpenAIServiceTierField(t *testing.T) {
 	t.Parallel()
 
@@ -114,6 +118,9 @@ func TestValidateOpenAIServiceTierField(t *testing.T) {
 	})
 }
 
+// TestNormalizeOpenAIServiceTier checks the fast alias, supported local labels,
+// and unknown strings. The alias must return priority, supported labels retain
+// their canonical value, and unknown labels return nil.
 func TestNormalizeOpenAIServiceTier(t *testing.T) {
 	t.Run("fast maps to priority", func(t *testing.T) {
 		got := NormalizeServiceTier(" fast ")
@@ -122,7 +129,7 @@ func TestNormalizeOpenAIServiceTier(t *testing.T) {
 	})
 
 	t.Run("openai official tiers preserved", func(t *testing.T) {
-		// Supported tiers include the priority, flex, and ultrafast values sent by Codex.
+		// The local label vocabulary includes priority, flex, and ultrafast.
 		for _, tier := range []string{"priority", "flex", "auto", "default", "scale", "ultrafast"} {
 			got := NormalizeServiceTier(tier)
 			require.NotNil(t, got, "tier %q should not be normalized to nil", tier)

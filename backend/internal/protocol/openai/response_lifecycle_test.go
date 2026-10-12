@@ -7,11 +7,14 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// TestResponseLifecycleNormalizer checks content retention and that compatibility repair does not invent success.
+// TestResponseLifecycleNormalizer supplies bare, wrapped, legacy, invalid, and
+// unidentified lifecycle payloads. Supported repairs must retain vendor detail
+// and provide the expected type/status/sequence, while unchanged cases retain
+// their supplied bytes and avoid a duplicate flag.
 func TestResponseLifecycleNormalizer(t *testing.T) {
 	tests := []struct {
-		name, header, payload, wantType, wantStatus string
-		unchanged                                   bool
+		name, header, payload, wantType, wantStatus string // case name, SSE header, payload, expected label/status
+		unchanged                                   bool   // supplied bytes retained
 	}{
 		{"bare created", "response.created", `{"object":"response","id":"resp_1","status":"in_progress","output":[],"vendor":{"opaque":"keep"}}`, "response.created", "in_progress", false},
 		{"bare completed", "response.completed", `{"object":"response","id":"resp_1","status":"completed","output":[],"vendor":{"opaque":"keep"}}`, "response.completed", "completed", false},
@@ -47,6 +50,10 @@ func TestResponseLifecycleNormalizer(t *testing.T) {
 	}
 }
 
+// TestResponseLifecycleNormalizerDuplicateKeepsUsage observes a numbered delta
+// before repeated completed response identities. Repaired sequence must follow
+// the delta, the repeated ID must be flagged, its revised usage must remain, and
+// another completed ID must be accepted.
 func TestResponseLifecycleNormalizerDuplicateKeepsUsage(t *testing.T) {
 	var normalizer ResponseLifecycleNormalizer
 	normalizer.Normalize([]byte(`{"type":"response.output_text.delta","sequence_number":20,"delta":"hi"}`), "")

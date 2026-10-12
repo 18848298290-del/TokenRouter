@@ -7,11 +7,14 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TestClassifyOpenAIPreviousResponseIDKind supplies blank, response, message,
+// item, and unknown identifiers. The classifier must return the asserted format
+// label for each input without treating every history ID as a response ID.
 func TestClassifyOpenAIPreviousResponseIDKind(t *testing.T) {
 	tests := []struct {
-		name string
-		id   string
-		want string
+		name string // identifier classification scenario
+		id   string // supplied continuation identifier
+		want string // expected format label
 	}{
 		{name: "empty", id: " ", want: OpenAIPreviousResponseIDKindEmpty},
 		{name: "response_id", id: "resp_0906a621bc423a8d0169a108637ef88197b74b0e2f37ba358f", want: OpenAIPreviousResponseIDKindResponseID},
@@ -29,6 +32,9 @@ func TestClassifyOpenAIPreviousResponseIDKind(t *testing.T) {
 	}
 }
 
+// TestIsOpenAIPreviousResponseIDLikelyMessageID compares one message prefix
+// with one response prefix. The former must receive the message label while the
+// response identifier must not receive that label.
 func TestIsOpenAIPreviousResponseIDLikelyMessageID(t *testing.T) {
 	if ClassifyOpenAIPreviousResponseIDKind("msg_123") != OpenAIPreviousResponseIDKindMessageID {
 		t.Fatal("expected msg_123 to be identified as message id")
@@ -38,6 +44,10 @@ func TestIsOpenAIPreviousResponseIDLikelyMessageID(t *testing.T) {
 	}
 }
 
+// TestRemovePreviousResponseIDFromBody covers empty bodies, missing fields,
+// and populated or empty continuation references. Removal must delete a present
+// field and retain the asserted model/input values, while untouched cases retain
+// their supplied bytes.
 func TestRemovePreviousResponseIDFromBody(t *testing.T) {
 	t.Run("empty body returned as-is", func(t *testing.T) {
 		require.Equal(t, []byte{}, RemovePreviousResponseIDFromBody([]byte{}))

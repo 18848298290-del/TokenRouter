@@ -8,16 +8,22 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// These sinks retain event labels and terminal decisions produced by both
+// benchmark parsing paths, exposing their results after each timed iteration.
 var (
 	benchmarkOpenAIResponseSSEEventTypeSink string
 	benchmarkOpenAIResponseSSETerminalSink  bool
 )
 
+// TestOpenAIStreamEventIsTerminalWithTypeMatchesExistingSemantics supplies
+// empty, sentinel, terminal, nonterminal, and trailing-garbage payloads. Classification
+// with a preextracted type must match the data-reading helper for every asserted
+// input, including its partial-JSON extraction behavior.
 func TestOpenAIStreamEventIsTerminalWithTypeMatchesExistingSemantics(t *testing.T) {
 	tests := []struct {
-		name string
-		data string
-		want bool
+		name string // terminal classification scenario
+		data string // supplied SSE payload
+		want bool   // expected terminal classification
 	}{
 		{name: "empty", data: "", want: false},
 		{name: "whitespace", data: " \t ", want: false},
@@ -47,6 +53,9 @@ func TestOpenAIStreamEventIsTerminalWithTypeMatchesExistingSemantics(t *testing.
 	}
 }
 
+// BenchmarkOpenAIResponseSSETypeExtraction compares repeated type extraction
+// with reuse of an extracted event label. Both benchmark paths retain their label
+// and terminal decision in package-level sinks while reporting allocations and bytes.
 func BenchmarkOpenAIResponseSSETypeExtraction(b *testing.B) {
 	data := `{"type":"response.output_text.delta","sequence_number":42,"delta":"streaming response benchmark payload"}`
 	dataBytes := []byte(data)

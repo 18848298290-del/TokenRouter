@@ -1,4 +1,16 @@
-// Package openai parses and generates OpenAI Responses, Chat Completions, and WebSocket messages.
+// Package openai reads Responses and Chat payloads whose usage, terminal state,
+// and output items can arrive separately in buffered JSON or stream events.
+// Its codecs retain response identifiers and tool history while adapting the
+// lifecycle and field variants accepted by the gateway's HTTP and WebSocket
+// readers.
+//
+// Protocol parsing and repair stay separate from upstream exchanges. Callers
+// select credentials, request limits, timing sources, and retry policy before
+// passing payloads to these helpers. Some helpers validate complete JSON; others
+// inspect paths or literal byte patterns, so their declarations specify the
+// input and recovery rules. HTTP readers create lifecycle state for one attempt;
+// callers choose the scope of usage accumulation and control update ordering
+// and synchronization.
 //
 // Starting points:
 //   - types.go: request, response, and stream event types and JSON codecs.
