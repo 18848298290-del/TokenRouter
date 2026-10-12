@@ -10,6 +10,9 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/server/httpx"
 )
 
+// TestDataManagementService_GetAgentHealth_Deprecated supplies a socket path
+// with no agent behind it. Health must remain disabled, identify deprecation,
+// and report the configured path even though no socket has been created there.
 func TestDataManagementService_GetAgentHealth_Deprecated(t *testing.T) {
 	t.Parallel()
 
@@ -22,6 +25,9 @@ func TestDataManagementService_GetAgentHealth_Deprecated(t *testing.T) {
 	require.Equal(t, socketPath, health.SocketPath)
 }
 
+// TestDataManagementService_EnsureAgentEnabled_Deprecated calls the retired agent
+// command guard with a chosen diagnostic path. Its HTTP mapping must report
+// service unavailable, the deprecation reason, and that path in structured metadata.
 func TestDataManagementService_EnsureAgentEnabled_Deprecated(t *testing.T) {
 	t.Parallel()
 

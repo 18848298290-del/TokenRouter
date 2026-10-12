@@ -11,7 +11,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestLocalRoots checks internal and external symlinks using isolated temporary directories.
+// TestLocalRoots routes archive operations through internal and external directory
+// symlinks in isolated roots. External access must fail and retain the outside
+// fixture, while in-root aliases must support upload, download, and deletion.
 func TestLocalRoots(t *testing.T) {
 	root, outside := t.TempDir(), t.TempDir()
 	s := NewLocalBackupStore(root)
@@ -38,7 +40,9 @@ func TestLocalRoots(t *testing.T) {
 	require.NoError(t, s.Delete(context.Background(), "alias/new"))
 }
 
-// TestPathReplacement checks that the directory handle rejects an escape after path validation.
+// TestPathReplacement replaces a validated target's parent with an outside symlink
+// after obtaining its root handle. Root-based creation must reject that changed
+// path, and the outside directory must remain without the requested file.
 func TestPathReplacement(t *testing.T) {
 	base, outside := t.TempDir(), t.TempDir()
 	s := NewLocalBackupStore(base)
@@ -46,10 +50,14 @@ func TestPathReplacement(t *testing.T) {
 	root, relative, err := s.rooted("dir/new")
 	require.NoError(t, err)
 	defer func() { _ = root.Close() }()
+	// Change the directory after validation but keep using the original root handle,
+	// exercising the gap between metadata checks and the filesystem operation itself.
 	require.NoError(t, os.Rename(filepath.Join(base, "dir"), filepath.Join(base, "original")))
 	require.NoError(t, os.Symlink(outside, filepath.Join(base, "dir")))
 	file, err := root.Create(relative)
 	if file != nil {
+		// Close any unexpectedly returned handle before checking the rejection assertion,
+		// so a regression that creates a file still leaves the test's resource lifetime bounded.
 		_ = file.Close()
 	}
 	require.Error(t, err)
@@ -57,7 +65,9 @@ func TestPathReplacement(t *testing.T) {
 	require.True(t, os.IsNotExist(err))
 }
 
-// TestDeleteInnerLinkPreservesTarget checks that deleting a final symlink keeps its target file.
+// TestDeleteInnerLinkPreservesTarget deletes an accepted final symlink to an
+// in-root archive file. The named link must disappear while the target retains
+// its original contents, protecting entry-based deletion after confinement checks.
 func TestDeleteInnerLinkPreservesTarget(t *testing.T) {
 	base := t.TempDir()
 	s := NewLocalBackupStore(base)
@@ -71,6 +81,9 @@ func TestDeleteInnerLinkPreservesTarget(t *testing.T) {
 	require.True(t, os.IsNotExist(err))
 }
 
+// TestLocalMissingReadDoesNotCreateRoot points the store at an absent root and
+// requests a missing archive. Download must fail and deletion must succeed while
+// both operations leave the configured root directory uncreated.
 func TestLocalMissingReadDoesNotCreateRoot(t *testing.T) {
 	base := filepath.Join(t.TempDir(), "missing")
 	s := NewLocalBackupStore(base)

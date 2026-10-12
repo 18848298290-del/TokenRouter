@@ -20,7 +20,22 @@ import (
 	servertiming "github.com/TokenFlux/TokenRouter/internal/infra/telemetry/timing"
 )
 
+// Unknown-length gzip streams and already sized archive files need different
+// upload preparation. Streaming multipart uses fixed small parts with one worker;
+// spooled PutObject first measures a temporary file, and known-length segment
+// upload sends the supplied reader directly. File transfer settings choose bounded
+// part sizes and worker counts separately from the unknown-length streaming limits.
+//
+// Transfer progress comes from SDK callbacks that can run on concurrent part
+// workers. The listener atomically stores each callback's cumulative total, which
+// can be observed out of order; it does not enforce monotonic updates. Successful
+// transfer returns the larger of the latest observation and SDK content length,
+// then file upload emits a final callback. Error results report observed progress,
+// which describes successful transfers inside an attempt rather than a completed object.
+
 const (
+	// File transfer defaults and bounds limit configured worker counts and part sizes,
+	// while the SDK part cap and failure timeout govern multipart completion and cleanup.
 	s3UploadPartSizeMB     = 64
 	s3UploadConcurrency    = 4
 	s3MinUploadPartSizeMB  = 5
@@ -30,35 +45,53 @@ const (
 	s3MaxUploadParts       = 10000
 	s3UploadFailTimeout    = 30 * time.Second
 
+	// Unknown-length backup streams use a separate part budget and one worker so
+	// normal file-upload concurrency does not multiply buffers on the gzip pipe path.
 	backupStreamPartSizeBytes = 16 * 1024 * 1024
 	backupStreamConcurrency   = 1
 )
 
 // S3BackupStore implements backup.BackupObjectStore using AWS S3 compatible storage.
 type S3BackupStore struct {
-	client            *s3.Client
-	bucket            string
-	uploadConcurrency int
-	uploadPartSizeMB  int
-	uploadMode        string
+	client *s3.Client // configured object-storage API client
+	bucket string     // archive destination bucket name
+	// uploadConcurrency and uploadPartSizeMB configure file transfer workers and MiB
+	// part sizes. Unknown-length multipart streams use their separate fixed limits instead.
+	uploadConcurrency int // parallel file upload workers
+	uploadPartSizeMB  int // MiB
+	// uploadMode selects multipart or spooled PutObject for Upload. UploadFile uses
+	// transfermanager independently, while UploadSized always sends a known-length PutObject request.
+	uploadMode string
 }
 
+// contextAwareReader polls cancellation before reading an S3 upload spool source.
 type contextAwareReader struct {
-	ctx    context.Context
-	reader io.Reader
+	// ctx is checked before invoking reader. Once a source read begins, reader's
+	// own cancellation or closing behavior determines whether blocked I/O can stop promptly.
+	ctx    context.Context // spool read admission context
+	reader io.Reader       // underlying upload byte source
 }
 
+// s3UploadProgressListener retains the latest cumulative total emitted by transfermanager.
 type s3UploadProgressListener struct {
-	uploaded   atomic.Int64
+	// uploaded stores callback totals atomically, making reads safe during part work.
+	// Concurrent callbacks can arrive out of cumulative order, so this value can move backward.
+	uploaded atomic.Int64
+	// onProgress executes synchronously in the SDK callback's worker when supplied.
+	// Callers handle concurrent updates to shared output and let the callback return;
+	// waiting for its enclosing upload here prevents that worker from completing.
 	onProgress func(uploadedBytes int64)
 }
 
-// NewS3BackupStoreFactory returns a BackupObjectStoreFactory that creates S3-backed stores.
+// NewS3BackupStoreFactory returns a factory for configured object-storage clients.
+// Factory calls require nonnil configuration, default empty regions to "auto",
+// and normalize transfer limits and upload mode. A configured endpoint is retained
+// through its field pointer, so callers keep cfg.Endpoint stable while the client is used.
 func NewS3BackupStoreFactory() backup.BackupObjectStoreFactory {
 	return func(ctx context.Context, cfg *backup.BackupS3Config) (backup.BackupObjectStore, error) {
 		region := cfg.Region
 		if region == "" {
-			region = "auto" // Default region for Cloudflare R2
+			region = "auto"
 		}
 
 		awsCfg, err := awsconfig.LoadDefaultConfig(ctx,
@@ -78,6 +111,8 @@ func NewS3BackupStoreFactory() backup.BackupObjectStoreFactory {
 			if cfg.ForcePathStyle {
 				o.UsePathStyle = true
 			}
+			// Archive inputs can be nonseekable streams. Use unsigned-payload signing and
+			// request automatic checksums only when required, keeping client preparation compatible with those readers.
 			o.APIOptions = append(o.APIOptions, v4.SwapComputePayloadSHA256ForUnsignedPayloadMiddleware)
 			o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
 		})
@@ -92,6 +127,10 @@ func NewS3BackupStoreFactory() backup.BackupObjectStoreFactory {
 	}
 }
 
+// Upload sends archive bytes using the store's selected stream upload mode.
+// Multipart mode delegates to fixed streaming transfer limits; other modes spool
+// the source before known-length PutObject. The caller supplies a readable source
+// and handles its lifetime around the upload operation.
 func (s *S3BackupStore) Upload(ctx context.Context, key string, body io.Reader, contentType string) (int64, error) {
 	if s.uploadMode == backup.BackupS3UploadModeMultipart {
 		return s.uploadBackupMultipart(ctx, key, body, contentType)
@@ -99,7 +138,15 @@ func (s *S3BackupStore) Upload(ctx context.Context, key string, body io.Reader, 
 	return s.uploadBackupSpooledPut(ctx, key, body, contentType)
 }
 
-// uploadBackupMultipart bounds buffering with small parts and one concurrent upload for unknown-length streams.
+// uploadBackupMultipart uploads an unknown-length stream with sixteen-MiB parts
+// and one transfer worker, returning its observed byte count and operation error.
+// Source lifetime belongs to the archive caller, and SDK cancellation governs the transfer.
+//
+// Progress tracks cumulative SDK transfer events. On success, content length
+// can supply a larger final size than the listener's latest observed value;
+// on failure, that latest value is returned for diagnostics and does not establish
+// a completed object. The separate stream limits keep configured file concurrency
+// from changing how many multipart workers consume this gzip upload path.
 func (s *S3BackupStore) uploadBackupMultipart(ctx context.Context, key string, body io.Reader, contentType string) (int64, error) {
 	progress := &s3UploadProgressListener{}
 	uploader := transfermanager.New(s.client, func(o *transfermanager.Options) {
@@ -123,18 +170,25 @@ func (s *S3BackupStore) uploadBackupMultipart(ctx context.Context, key string, b
 	}
 	uploaded := progress.UploadedBytes()
 	if out.ContentLength != nil && *out.ContentLength > uploaded {
+		// A returned content length can cover callbacks observed out of order or
+		// an incomplete latest sample; use that larger successful result when reporting archive size.
 		uploaded = *out.ContentLength
 	}
 	return uploaded, nil
 }
 
-// uploadBackupSpooledPut stages input in a private temporary file for a known-length PutObject request.
+// uploadBackupSpooledPut copies the source into a temporary file, rewinds it,
+// and sends its measured length through PutObject. Failures return zero even after
+// partial spooling; the original source remains the caller's resource, and temporary
+// close and removal are attempted on every return while their errors are suppressed.
 func (s *S3BackupStore) uploadBackupSpooledPut(ctx context.Context, key string, body io.Reader, contentType string) (sizeBytes int64, err error) {
 	tmp, err := os.CreateTemp("", "tokenrouter-backup-upload-*.tmp")
 	if err != nil {
 		return 0, fmt.Errorf("create backup upload temp file: %w", err)
 	}
 	tmpPath := tmp.Name()
+	// Dispose of the spool after either upload or input failure. Cleanup is best
+	// effort so the primary transfer result remains visible even if temporary-file removal fails.
 	defer func() {
 		_ = tmp.Close()
 		_ = os.Remove(tmpPath)
@@ -153,7 +207,9 @@ func (s *S3BackupStore) uploadBackupSpooledPut(ctx context.Context, key string, 
 	return written, nil
 }
 
-// Read checks cancellation before each read so disk spooling observes task deadlines.
+// Read returns the context error when cancellation is observed before a source
+// read, otherwise delegating unchanged to reader. This polling cannot interrupt
+// a call already blocked inside reader, whose own cancellation behavior remains required.
 func (r *contextAwareReader) Read(p []byte) (int, error) {
 	select {
 	case <-r.ctx.Done():
@@ -163,12 +219,16 @@ func (r *contextAwareReader) Read(p []byte) (int, error) {
 	}
 }
 
-// UploadFile streams large files using the configured multipart buffer sizes.
+// UploadFile sends a file reader through configured transfermanager limits without
+// a progress callback. It shares UploadFileWithProgress's returned size and partial
+// progress errors, and uses that path independently of the store's stream upload mode.
 func (s *S3BackupStore) UploadFile(ctx context.Context, key string, body io.Reader, contentType string) (int64, error) {
 	return s.UploadFileWithProgress(ctx, key, body, contentType, nil)
 }
 
-// UploadSized sends a known-length part with PutObject, avoiding a second temporary copy.
+// UploadSized sends a caller-measured segment through PutObject and returns that
+// supplied size after success. Negative sizes are rejected and zero is allowed;
+// callers provide a reader matching sizeBytes because this path performs no independent spool or measurement.
 func (s *S3BackupStore) UploadSized(ctx context.Context, key string, body io.Reader, contentType string, sizeBytes int64) (int64, error) {
 	if sizeBytes < 0 {
 		return 0, fmt.Errorf("backup upload size must not be negative")
@@ -179,8 +239,18 @@ func (s *S3BackupStore) UploadSized(ctx context.Context, key string, body io.Rea
 	return sizeBytes, nil
 }
 
-// UploadFileWithProgress uploads parts concurrently through transfermanager and reports uploaded bytes.
+// UploadFileWithProgress transfers a reader with normalized file part sizes and
+// concurrency, reporting cumulative SDK totals through an optional callback. Callbacks
+// can run on multiple part workers, so their captured shared state needs synchronization.
+//
+// The listener records the latest callback without enforcing event order. Successful
+// completion chooses a larger SDK content length when available and emits the
+// final size synchronously after transfermanager returns. Errors return the latest
+// observation instead of a final object size. The caller owns the source's lifetime
+// and keeps callback state available until the operation returns. Callbacks return
+// before the enclosing upload can finish, so they avoid waiting for that same upload's completion.
 func (s *S3BackupStore) UploadFileWithProgress(ctx context.Context, key string, body io.Reader, contentType string, onProgress func(uploadedBytes int64)) (int64, error) {
+	// Convert configured MiB into the byte-sized part budget consumed by transfermanager.
 	partSizeBytes := int64(normalizeS3UploadPartSizeMB(s.uploadPartSizeMB)) * 1024 * 1024
 	progress := &s3UploadProgressListener{onProgress: onProgress}
 	uploader := transfermanager.New(s.client, func(o *transfermanager.Options) {
@@ -204,6 +274,8 @@ func (s *S3BackupStore) UploadFileWithProgress(ctx context.Context, key string, 
 	}
 	uploaded := progress.UploadedBytes()
 	if out.ContentLength != nil && *out.ContentLength > uploaded {
+		// Concurrent workers may deliver a lower cumulative sample last. Prefer the
+		// successful SDK object's larger content length before emitting the caller's final progress update.
 		uploaded = *out.ContentLength
 	}
 	if onProgress != nil {
@@ -212,6 +284,9 @@ func (s *S3BackupStore) UploadFileWithProgress(ctx context.Context, key string, 
 	return uploaded, nil
 }
 
+// putObject sends one S3 request with the supplied body length and content type.
+// It observes request timing and wraps API failures, while body preparation and
+// measurement belong to the sized or spooled caller choosing this helper.
 func (s *S3BackupStore) putObject(ctx context.Context, key string, body io.Reader, contentType string, contentLength int64) error {
 	finish := servertiming.ObserveDependency(ctx, "s3")
 	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
@@ -228,6 +303,9 @@ func (s *S3BackupStore) putObject(ctx context.Context, key string, body io.Reade
 	return nil
 }
 
+// Download opens the requested object and returns the SDK response body for its
+// caller to close after reading. Request timing ends when GetObject returns;
+// subsequent archive byte consumption retains the response body's own transport and context behavior.
 func (s *S3BackupStore) Download(ctx context.Context, key string) (io.ReadCloser, error) {
 	finish := servertiming.ObserveDependency(ctx, "s3")
 	result, err := s.client.GetObject(ctx, &s3.GetObjectInput{
@@ -241,6 +319,9 @@ func (s *S3BackupStore) Download(ctx context.Context, key string) (io.ReadCloser
 	return result.Body, nil
 }
 
+// Delete requests object removal under the supplied context and records request timing.
+// It returns the SDK error directly, allowing archive cleanup to retain the key
+// and report storage failure when deletion cannot be confirmed.
 func (s *S3BackupStore) Delete(ctx context.Context, key string) error {
 	finish := servertiming.ObserveDependency(ctx, "s3")
 	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
@@ -251,10 +332,13 @@ func (s *S3BackupStore) Delete(ctx context.Context, key string) error {
 	return err
 }
 
+// PresignURL returns a signed object download URL with the requested lifetime
+// and attachment disposition using the key's basename. Signing errors are wrapped;
+// URL generation delegates endpoint and expiry behavior to the configured SDK presigner.
 func (s *S3BackupStore) PresignURL(ctx context.Context, key string, expiry time.Duration) (string, error) {
 	presignClient := s3.NewPresignClient(s.client)
-	// Attachment disposition makes navigation to the URL start a download.
-	// The frontend can use the current tab and avoid popup blocking.
+	// Sign an attachment response disposition with the basename rather than its
+	// object prefix, so clients receive the archive filename when navigating to the download URL.
 	disposition := fmt.Sprintf("attachment; filename=%q", path.Base(key))
 	result, err := presignClient.PresignGetObject(ctx, &s3.GetObjectInput{
 		Bucket:                     &s.bucket,
@@ -267,6 +351,9 @@ func (s *S3BackupStore) PresignURL(ctx context.Context, key string, expiry time.
 	return result.URL, nil
 }
 
+// HeadBucket asks the configured endpoint to validate bucket access and records
+// request timing. A successful request returns nil; API failures are wrapped for
+// the administrator's storage-connection test response.
 func (s *S3BackupStore) HeadBucket(ctx context.Context) error {
 	finish := servertiming.ObserveDependency(ctx, "s3")
 	_, err := s.client.HeadBucket(ctx, &s3.HeadBucketInput{
@@ -279,17 +366,25 @@ func (s *S3BackupStore) HeadBucket(ctx context.Context) error {
 	return nil
 }
 
+// OnObjectBytesTransferred stores the cumulative SDK event total and invokes the
+// optional callback on that event's worker. Nil listeners or events are ignored;
+// atomic storage protects the sample, while callbacks may overlap and observe totals out of order.
 func (l *s3UploadProgressListener) OnObjectBytesTransferred(_ context.Context, event *transfermanager.ObjectBytesTransferredEvent) {
 	if l == nil || event == nil {
 		return
 	}
 	uploaded := event.BytesTransferred
+	// Store the event's cumulative total rather than adding it again; the SDK
+	// emitter already aggregates completed transfer bytes before dispatching potentially concurrent callback events.
 	l.uploaded.Store(uploaded)
 	if l.onProgress != nil {
 		l.onProgress(uploaded)
 	}
 }
 
+// UploadedBytes returns the latest atomically stored transfer sample, or zero
+// for a nil listener. The sample can regress when concurrent SDK callbacks arrive
+// out of order, so successful callers also compare the SDK's final content length.
 func (l *s3UploadProgressListener) UploadedBytes() int64 {
 	if l == nil {
 		return 0
@@ -297,27 +392,37 @@ func (l *s3UploadProgressListener) UploadedBytes() int64 {
 	return l.uploaded.Load()
 }
 
+// normalizeS3UploadConcurrency selects four workers for nonpositive configuration
+// and bounds positive values to the supported one-to-eight range. File uploads use
+// this setting; unknown-length stream uploads keep their independent single-worker limit.
 func normalizeS3UploadConcurrency(count int) int {
 	if count <= 0 {
 		count = s3UploadConcurrency
 	}
 	if count < s3MinUploadConcurrency {
+		// Keep configured file transfers within the supported minimum worker count.
 		return s3MinUploadConcurrency
 	}
 	if count > s3MaxUploadConcurrency {
+		// Cap file worker fan-out before transfermanager allocates concurrent upload work.
 		return s3MaxUploadConcurrency
 	}
 	return count
 }
 
+// normalizeS3UploadPartSizeMB selects sixty-four MiB for nonpositive configuration
+// and clamps positive values to five through one hundred twenty-eight MiB. The
+// result becomes a file upload byte budget independently of fixed streaming parts.
 func normalizeS3UploadPartSizeMB(sizeMB int) int {
 	if sizeMB <= 0 {
 		sizeMB = s3UploadPartSizeMB
 	}
 	if sizeMB < s3MinUploadPartSizeMB {
+		// Keep configured file parts above the store's supported multipart size minimum.
 		return s3MinUploadPartSizeMB
 	}
 	if sizeMB > s3MaxUploadPartSizeMB {
+		// Bound each configured file part before converting its MiB budget to bytes.
 		return s3MaxUploadPartSizeMB
 	}
 	return sizeMB

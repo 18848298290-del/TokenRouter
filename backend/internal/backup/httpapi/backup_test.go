@@ -15,17 +15,29 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/identity/httpapi/authctx"
 )
 
+// emptyBackupSettings supplies absent settings for direct restore password validation scenarios.
 type emptyBackupSettings struct{}
 
+// GetValue reports missing fixture settings without requiring a persistent repository.
 func (emptyBackupSettings) GetValue(context.Context, string) (string, error) { return "", nil }
-func (emptyBackupSettings) Set(context.Context, string, string) error        { return nil }
 
-// TestRestorePasswordBoundary checks password verification in the handler; router tests cover administrator and step-up checks.
+// Set accepts fixture writes inertly because these scenarios store no real archive.
+func (emptyBackupSettings) Set(context.Context, string, string) error { return nil }
+
+// TestRestorePasswordBoundary calls the handler with missing passwords, absent
+// subjects, and rejected or accepted verification. Status and verifier call counts
+// must reflect each gate; accepted verification must reach the missing-record service error.
 func TestRestorePasswordBoundary(t *testing.T) {
 	for _, tc := range []struct {
-		name, body     string
-		subject, valid bool
-		status, calls  int
+		// name and body select one direct handler scenario. The request text is bound
+		// as supplied so password errors can be observed before service record lookup.
+		name, body string // name: validation scenario label; body: request JSON text
+		// subject and valid control authentication and password verification independently.
+		// An absent subject prevents verification, while valid determines the verifier's returned acceptance result.
+		subject, valid bool // subject: supply authentication data; valid: accept supplied password
+		// status and calls are compared after handler return. Together they distinguish
+		// an early authentication or password rejection from acceptance reaching the missing-record service error.
+		status, calls int // status: expected HTTP response; calls: expected verifier invocations
 	}{
 		{"missing-password", `{}`, true, false, http.StatusBadRequest, 0},
 		{"missing-subject", `{"password":"fixture"}`, false, false, http.StatusUnauthorized, 0},

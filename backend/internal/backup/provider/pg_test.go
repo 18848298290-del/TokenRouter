@@ -14,16 +14,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// failedRestoreReader simulates corruption at the archive tail.
+// failedRestoreReader reports an injected input error after earlier archive bytes are consumed.
 type failedRestoreReader struct{}
 
-// TestRestoreActivityPrefixChecksWholeInput checks that the cleanup prefix and archive share one psql transaction.
+// TestRestoreActivityPrefixChecksWholeInput captures the restore command's flags
+// and prefixed stdin using a shell psql shim. It checks transaction-option requests,
+// empty-input rejection, and propagation of a tail read failure; the shim does
+// not execute SQL or demonstrate a database rollback.
 func TestRestoreActivityPrefixChecksWholeInput(t *testing.T) {
 	dir := t.TempDir()
 	inputPath, argsPath := filepath.Join(dir, "input.sql"), filepath.Join(dir, "args")
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("TR_TEST_RESTORE_INPUT", inputPath)
 	t.Setenv("TR_TEST_RESTORE_ARGS", argsPath)
+	// Substitute a client that records argv and stdin instead of connecting to a
+	// database, keeping these assertions focused on process construction and archive input handling.
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "psql"), []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$TR_TEST_RESTORE_ARGS\"\ncat > \"$TR_TEST_RESTORE_INPUT\"\n"), 0o755))
 	dumper := NewPgDumper(DatabaseOptions{DBName: "test", Port: 5432})
 	const archive = "SELECT 'archive';\n"
@@ -40,6 +45,7 @@ func TestRestoreActivityPrefixChecksWholeInput(t *testing.T) {
 	require.ErrorContains(t, err, "archive read failed")
 }
 
+// Read returns the fixture's tail-input failure without consuming any bytes.
 func (failedRestoreReader) Read([]byte) (int, error) {
 	return 0, errors.New("archive read failed")
 }
