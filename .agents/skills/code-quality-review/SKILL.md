@@ -1,77 +1,77 @@
 ---
 name: code-quality-review
-description: 对后端、指定子系统或代码库开展系统性的代码质量审查与适度优化。按职责安排只读并行审查，由主代理完成全局筛选和实施计划，再在授权范围内实施行为等价改动并验证。用于全局可维护性、代码风格和局部设计优化；普通单点修复、单个 PR 审查和大规模架构重建使用各自的工作流程。
+description: Review and moderately improve code quality across a backend, subsystem, or codebase. Assign read-only parallel reviews by responsibility, consolidate findings and an implementation plan in the main agent, then implement and verify behavior-preserving changes within the authorized scope. Use for broad maintainability, coding style, and local design improvements. Use the appropriate separate workflow for single-issue fixes, individual PR reviews, or major architectural redesigns.
 ---
 
-# 代码质量审查与优化
+# Code quality review and optimization
 
-先取得完整的分区审查结果，再从全局判断哪些改动值得实施。优化目标是减少理解、修改和验证代码的成本，保持现有整体架构与业务行为稳定。
+Collect complete reports for every review area before deciding which changes to implement across the system. Reduce the cost of understanding, changing, and verifying code while preserving the overall architecture and business behavior.
 
-## 确定任务范围
+## Define the scope
 
-先检查仓库规范、目录、分支和工作区状态，再确定以下事项。已有明确答案时直接沿用，需要用户选择的取舍集中询问一次。
+Inspect repository rules, directories, the branch, and working-tree state, then establish the following. Reuse clear answers already available. Ask once for tradeoffs that require the user's choice.
 
-| 事项 | 默认处理 |
+| Item | Default |
 | --- | --- |
-| 范围 | 使用用户指定的后端、模块或目录；未指定时先根据项目结构澄清，避免擅自扩大到全库 |
-| 停止阶段 | “审查、出报告或计划”停在全局报告；“审查并优化”在报告和实施计划形成后继续实施；只调用技能名时先审查和出计划 |
-| 改动尺度 | 保持行为，采纳有明确维护收益的局部改动；行为缺陷单列 |
-| 子代理 | GPT-6 Astra，High；工具支持时用模型标识 `gpt-6-astra`、推理强度 `high` |
-| 并行数量 | 最多 6 个子代理，受可用槽位、测试资源和用户预算限制 |
-| 分支、提交与推送 | 遵守仓库和当次授权；未指定交付方式时保留本地未提交改动 |
-| 验收 | 采用仓库现有验证策略，并为本次风险选择局部、集成及全量检查 |
+| Scope | Use the backend, module, or directory specified by the user. If unspecified, clarify against the project structure before expanding to the entire repository. |
+| Stopping point | For a review, report, or plan, stop at the global report. For "review and optimize," continue after the report and implementation plan are ready. Invoking only the skill name starts with review and planning. |
+| Change size | Preserve behavior and accept local changes with clear maintenance benefits. List behavioral defects separately. |
+| Subagents | GPT-6 Astra, High. Use model ID `gpt-6-astra` and reasoning effort `high` when supported. |
+| Concurrency | At most 6 subagents, subject to available slots, test resources, and the user's budget. |
+| Branch, commits, and push | Follow repository rules and current authorization. Leave local changes uncommitted when delivery requirements are unspecified. |
+| Acceptance | Use the repository's verification strategy and select local, integration, and full checks for the risks of this task. |
 
-用户只要求“先出简短安排”时，完成范围与决策说明即交付。正式审查在用户要求开展后启动。处于计划模式时，遵守该模式的文件写入和实施限制。
+If the user asks only for a brief arrangement first, deliver the scope and decision summary. Begin the formal review when requested. In plan mode, follow its file-writing and implementation restrictions.
 
-## 仓库规范与判断标准
+## Repository rules and evaluation criteria
 
-- 先读取目标仓库 `AGENTS.md`。有 `project-doc` 门禁时按其规则加载技能和文档目录，再按职责和代码锚点读取必要章节。上下文仍完整时复用已读内容。
-- 加载目标仓库或当前会话提供的 `code-complete` 与 `a-philosophy-of-software-design`，先读各自 mini 规范。写报告、注释、文档和提交信息时遵循仓库写作技能。
-- 仓库强制的技能缺失时，按其门禁处理。仓库未配置上述两项设计技能时，说明所用规范，并使用下面的判断标准。无需为本工作流自动安装依赖技能。
-- 看一项改动是否减少重复知识、隐藏依赖、需要同步修改的位置，以及维护者同时需要记住的状态。新函数、类型或文件应有可说清的职责和维护收益。
-- 核对调用方可见行为：错误和首错顺序、nil 与空值、默认值、序列化、字段次序、取时、锁与事务范围、资源关闭、重试和副本归属。
-- 文件长、存在重复或名称含 legacy 都是调查线索。修改决定需要调用关系、规则与测试的证据。对性能改进的量化结论提供前后测量。
+- Read the target repository's `AGENTS.md` first. If it has a `project-doc` gate, load the skill and documentation index as required, then read necessary sections by responsibility and code anchor. Reuse content that remains in context.
+- Load `code-complete` and `a-philosophy-of-software-design` from the repository or current session, starting with their mini specifications. Follow repository writing skills for reports, comments, documentation, and commit messages.
+- Follow the gate when a required skill is missing. If the repository does not configure the two design skills above, state the conventions used and apply the criteria below. Install dependency skills only when requested.
+- Assess whether a change reduces duplicated knowledge, hidden dependencies, locations that must change together, and state maintainers must remember at once. New functions, types, and files need a clear responsibility and maintenance benefit.
+- Check caller-visible behavior: errors and first-error order, nil and empty values, defaults, serialization, field order, time sampling, lock and transaction scope, resource cleanup, retries, and ownership of copies.
+- Long files, duplication, and names containing `legacy` are investigation leads. Base changes on evidence from callers, rules, and tests. Support quantified performance claims with before-and-after measurements.
 
-## 第一阶段：分区只读审查
+## Phase 1: read-only reviews by area
 
-1. 记录基线提交和已有改动，保留用户已有工作，提交时仅暂存本任务拥有的差异。枚举范围内手写源码、测试与构建入口。标识生成代码、历史迁移、第三方和构建产物，用于核对的文件与主要审查文件分别计数。
-2. 按职责分配文件。紧密相关的小包可合并，超大包按主题拆开。每个文件有唯一主要任务，允许其他任务读取它来核对依赖。建立覆盖清单，记录任务、文件、负责人及状态。
-3. 为每项任务创建新子代理。仅传仓库位置、文件清单、规范入口和任务要求；代理按需补读业务文档。派发时使用[子代理任务说明](references/agent-briefs.md)。
-4. 审查代理保持只读，返回结果给主代理，完成后结束。工具有关闭能力时关闭，否则结束后不再分配任务。后续实施和复核使用新代理。子代理自行发现的任务交由主代理协调。
-5. 主代理保存各任务结论，控制并行和上下文消耗。基线测试由主代理协调，避免各代理重复运行全量检查。已知失败和环境条件写入验证记录。
-6. 每个分区报告说明结构扫描、重点阅读、运行验证和未覆盖部分。文件已分配、扫描过声明或测试通过，分别记录为相应证据，不能据此声称完成逐行审计。
+1. Record the baseline commit and existing changes. Preserve the user's work and stage only task-owned differences when committing. Enumerate handwritten source, tests, and build entry points in scope. Identify generated code, historical migrations, third-party code, and build outputs. Count evidence files separately from primary review files.
+2. Assign files by responsibility. Combine closely related small packages and split large packages by topic. Give each file one primary task; other tasks may read it to verify dependencies. Maintain a coverage manifest with tasks, files, owners, and status.
+3. Create a new subagent for each task. Supply only the repository location, file list, instruction entry points, and task requirements. Let the agent read business documentation as needed. Use the [subagent briefs](references/agent-briefs.md).
+4. Keep review agents read-only. They return findings to the main agent and finish. Close them when the tool supports it; otherwise, give them no further assignments after completion. Use new agents for implementation and later reviews. Route tasks discovered by subagents through the main agent.
+5. The main agent saves task findings and controls concurrency and context use. It coordinates baseline tests so agents do not repeat full checks. Record known failures and environment requirements with verification results.
+6. Each area report states its structural scan, focused reading, executed checks, and uncovered scope. Record file assignment, declaration scans, and passing tests as distinct evidence. None establishes a line-by-line audit.
 
-指定模型或多代理能力不可用时，说明限制并与用户确定替代方式。等待期间可继续目录和依赖调查。任务失败或结果不完整时，用新的有明确范围的代理补齐，覆盖清单保持实际状态。
+If the requested model or multi-agent capability is unavailable, explain the limitation and agree on an alternative with the user. Continue directory and dependency investigation while waiting. Replace failed or incomplete tasks with new, narrowly scoped agents and keep the coverage manifest accurate.
 
-## 第二阶段：主代理全局分析
+## Phase 2: global analysis by the main agent
 
-收齐所有分区报告后，核对覆盖缺口及重复归属。未完成区域补齐或经用户缩小范围后，才能形成该范围的完整实施计划。
+After collecting every area report, check coverage gaps and duplicate ownership. Complete missing areas, or have the user narrow the scope, before producing a complete implementation plan for that scope.
 
-对候选逐项判断必要性、维护收益、风险、调用方和验证成本：
+Assess each candidate's necessity, maintenance benefit, risk, callers, and verification cost:
 
-- 合并同一问题的重复报告，核实相邻包有相似代码是否因为规则相同。
-- 检查局部提取是否把复杂度转给调用方，或导致新的薄封装、模式开关和跨包耦合。
-- 区分“采纳”“暂缓”“保持现状”。给出理由，允许某些包没有改动。
-- 行为缺陷及兼容性待决策项单列，标注静态证据、复现情况和影响范围。除非当次任务另有授权，这些项目留给独立修复。
-- 为采纳项确定依赖顺序、具体范围、要保持的行为、验证命令及提交单位。共用接口和跨包设计由主代理决定。
+- Merge duplicate reports of the same issue. Verify whether similar code in adjacent packages follows the same rules.
+- Check whether a local extraction shifts complexity to callers or creates thin wrappers, mode switches, or cross-package coupling.
+- Classify candidates as accepted, deferred, or unchanged, with reasons. Some packages may need no changes.
+- List behavioral defects and unresolved compatibility decisions separately. Record static evidence, reproduction status, and impact. Leave these for separate fixes unless the current task authorizes them.
+- Define dependency order, scope, behavior to preserve, verification commands, and commit units for accepted items. The main agent decides shared interfaces and cross-package design.
 
-使用[记录与报告格式](references/reporting.md)输出完整审查报告和实施计划，再进入代码修改。用户已授权审查后实施时继续执行；用户要求先确认计划时停在报告处。
+Produce the complete review report and implementation plan using [recording and reporting formats](references/reporting.md) before editing code. Continue when the user has already authorized implementation after review. Stop at the report when the user requires plan confirmation first.
 
-报告和进度保存在仓库约定的本地资料目录，或会话输出/临时目录。遵守用户对只读任务和文件写入的限制。仓库要求计划落盘时，实施前原样保存定稿，再在末尾追加进度。临时审查记录默认排除在代码提交之外。
+Store reports and progress in the repository's designated local-materials directory, conversation output, or a temporary directory. Respect read-only and file-writing restrictions. If the repository requires a saved plan, save the finalized version verbatim before implementation and append progress at the end. Exclude temporary review records from code commits by default.
 
-## 第三阶段：实施与验证
+## Phase 3: implementation and verification
 
-1. 按定稿计划实施。新子代理一次负责一个职责明确的优化项，声明可修改文件。修改范围相交或有依赖的任务顺序执行，独立任务可并行。
-2. 主代理保留全局接口、暂存和提交控制权。子代理运行自身局部测试，报告实际结果。全仓格式化、代码生成及其他可能触碰共享文件的命令由主代理安排在写入任务停止后执行。
-3. 对容易受重构影响的行为，先补输出、调用次数、时序、所有权或数据持久化的测试，条件允许时先在旧实现运行。源码字符串匹配和复制实现的测试不能代替行为证据。
-4. SQL、Lua、字段映射等重复结构合并时，核对前后内容与次序；需要集成测试的资源行为使用项目规定的隔离夹具。
-5. 运行有针对性的局部验证。命令没有匹配测试、测试跳过或检查中断时，记录为未验证并补正范围。遇到环境启动失败，先读日志并定向重试一次；同因持续失败时处理环境依赖，保留未完成验收项，继续可独立完成的工作。
-6. 全部改动完成后，由新的子代理只读复核完整实施差异。重点查行为回归、遗漏的调用方、数据共享、求值时点和范围扩张；已有缺陷保持独立记录。
-7. 主代理执行仓库要求的格式化与检查。获准提交时，逐项核对并暂存明确文件或代码块，形成可独立审查和回退的提交。命名、分支、hooks及文档同步遵守目标仓库规则。
-8. 运行范围要求的最终验收，修正本轮问题并补验。已有通过结果仅在代码和环境条件适用时复用。推送已获授权时再推送，并跟踪对应远端检查到最终状态。
+1. Follow the finalized plan. Each new subagent owns one clearly defined optimization with declared writable files. Run tasks sequentially when their write scopes overlap or they have dependencies; independent tasks may run in parallel.
+2. The main agent retains control of shared interfaces, staging, and commits. Subagents run local tests and report actual results. The main agent schedules repository-wide formatting, code generation, and other commands that touch shared files after writing tasks stop.
+3. For behavior vulnerable to refactoring, first add tests for outputs, call counts, timing, ownership, or persistence. Run them against the old implementation when possible. Source-string matching and tests that copy the implementation do not establish behavioral equivalence.
+4. When merging duplicated SQL, Lua, or field mappings, compare contents and order before and after. Use the project's isolated fixtures for resource behavior requiring integration tests.
+5. Run targeted local verification. Record unmatched tests, skips, and interrupted checks as unverified and correct the scope. For environment startup failures, read the logs and retry the affected check once. If the same cause persists, address the environment dependency, retain incomplete acceptance items, and continue independent work.
+6. After all changes, use new subagents for a read-only review of the complete implementation diff. Focus on regressions, missed callers, shared data, evaluation timing, and scope expansion. Keep existing defects in a separate record.
+7. The main agent runs repository-required formatting and checks. When commits are authorized, verify and stage exact files or hunks and create independently reviewable, reversible commits. Follow repository naming, branch, hook, and documentation rules.
+8. Run the required final acceptance checks, fix issues introduced by this work, and reverify. Reuse passing results only while code and environment conditions still apply. Push when authorized and track the corresponding remote checks to a terminal state.
 
-## 交付
+## Delivery
 
-交付覆盖清单、完整审查报告、定稿计划、改动总结和验证结果。报告各项实施状态，附提交记录（如有）、检查结果、失败与重跑证据、未验证部分及工作区状态。
+Deliver the coverage manifest, complete review report, finalized plan, change summary, and verification results. State each item's implementation status, commits if any, check results, failure and retry evidence, unverified scope, and working-tree state.
 
-对暂缓项和行为问题保留可追踪编号。需要说明工作耗时时，记录任务起止时间并注明是否包含等待与测试；Token 用量从可用统计读取。不要用文件数、改动行数或代理数推算消耗。
+Give deferred items and behavioral issues traceable identifiers. When reporting elapsed time, record start and end times and say whether waiting and tests are included. Read token usage from available statistics. File counts, changed lines, and agent counts cannot establish usage.

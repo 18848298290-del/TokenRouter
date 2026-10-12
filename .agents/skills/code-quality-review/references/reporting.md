@@ -1,65 +1,68 @@
-# 记录与报告格式
+# Recording and reporting formats
 
-使用仓库已有的报告和计划约定。没有约定时，可在允许的本地输出目录使用 `coverage.json`、分区报告、`report.md`、`implementation-plan.md`、`results.md` 和验证日志。小范围任务可合并文档，保留相同信息即可。此处文件名是示例。
+Use the repository's report and plan conventions. If none exist, an authorized local output directory may contain `coverage.json`, area reports, `report.md`, `implementation-plan.md`, `results.md`, and validation logs. These filenames are examples. Combine documents for small tasks while retaining the same information.
 
-## 覆盖清单
+## Coverage manifest
 
-记录基线、任务范围、生成/第三方排除规则，每个任务的职责、文件清单、负责人、状态和报告位置。源码与对应测试尽量在同一任务，跨组件场景测试按主要行为归属。
+Record the baseline, task scope, generated/third-party exclusions, and each task's responsibility, file list, owner, status, and report location. Assign source and corresponding tests together where possible. Assign cross-component scenario tests by their primary behavior.
 
-核对两个条件：主要文件没有遗漏，每个主要文件恰好归属一个任务。跨包证据阅读允许重叠。
+Check that every primary file is covered and belongs to exactly one task. Cross-package evidence reads may overlap.
 
-状态可使用待分配、审查中、已返回待核对、完成、需补查。任务清单分配完成不能标为审查完成。中断后从实际状态续做。
+Possible statuses are unassigned, reviewing, returned for verification, complete, and follow-up needed. File assignment alone does not complete a review. Resume after interruption from the actual state.
 
-## 分区报告
+## Area report
 
-- 覆盖：文件数、结构扫描方法、重点阅读路径、实际运行验证、未确认部分。
-- 候选：位置及基线、问题证据、最小方案、维护收益、风险、调用方与验证方法。
-- 行为问题：触发条件、影响、静态证据或复现结果、仍需确认的条件。区分“当前行为已确认”和“是否属于缺陷待决策”。
-- 保持现状：现有设计的理由及支持证据。
+- Coverage: file count, structural scan method, paths read in depth, checks actually run, and unconfirmed areas.
+- Candidates: location and baseline, evidence of the problem, smallest solution, maintenance benefit, risk, callers, and verification method.
+- Behavioral issues: triggers, impact, static evidence or reproduction results, and conditions still requiring confirmation. Distinguish confirmed current behavior from an unresolved decision about whether it is a defect.
+- Unchanged designs: reasons and evidence for preserving the existing design.
 
-行号对应指定基线。代码改变后用符号或提交关联定位，不把旧行号当作当前行号。
+Line numbers refer to the specified baseline. After code changes, locate findings through symbols or commits instead of treating old line numbers as current.
 
-## 全局审查报告
+## Global review report
 
-1. 范围、基线和覆盖深度。说明哪些是结构扫描、重点阅读和运行验证。
-2. 全局判断：跨包关系、共用规则、应保留的差异，以及为什么选择本次规模。
-3. 采纳表：稳定编号、原因、涉及范围、方案、收益、风险和验证。
-4. 暂缓与保持现状：关联候选，说明收益不足、行为差异、缺少证据或验证成本等具体理由。
-5. 行为问题与兼容项：独立编号、去重后的影响范围、证据程度及后续验证。严重问题可以建议优先验证，不能把静态分析写成运行复现。
+1. Scope, baseline, and coverage depth. Distinguish structural scans, focused reading, and executed checks.
+2. Global assessment: cross-package relationships, shared rules, differences to preserve, and reasons for the chosen change size.
+3. Acceptance table: stable ID, reason, affected scope, solution, benefit, risk, and verification.
+4. Deferred and unchanged items: link candidates and give concrete reasons such as insufficient benefit, behavioral differences, missing evidence, or verification cost.
+5. Behavioral and compatibility issues: separate IDs, deduplicated impact, evidence strength, and follow-up verification. Recommend priority checks for serious issues while distinguishing static analysis from runtime reproduction.
 
-主代理需要复核并筛选，分区报告用于提供证据。不同包提出相同抽象时，先看调用方是否真的共享规则；一个包没有采纳项也是有效结论。
+The main agent verifies and filters candidates using area reports as evidence. When several packages propose the same abstraction, first check whether their callers share the same rules. A package with no accepted changes is a valid result.
 
-## 定稿实施计划
+## Finalized implementation plan
 
-列出本次采纳项、实施顺序与依赖、可修改范围、要保持的行为、必要测试、文档/生成文件影响及提交单位。需要用户决定的行为变化移出实施项。
+List accepted items, order and dependencies, writable scope, behavior to preserve, required tests, documentation/generated-file impact, and commit units. Remove behavior changes requiring user decisions from implementation items.
 
-计划形成并向用户展示后再修改代码。已有实施授权时直接继续；另有“先确认”要求时等待。进度追加在定稿之后，说明新增证据引起的调整和未完成工作。
+Prepare and show the plan before editing code. Continue when implementation is already authorized; wait when confirmation was requested. Append progress after the finalized plan and explain adjustments based on new evidence and remaining work.
 
-## 验证与结果
+## Verification and results
 
-| 项目 | 应记录的信息 |
+| Item | Information to record |
 | --- | --- |
-| 每项优化 | 修改内容、关联采纳项、状态与提交（如有） |
-| 每次检查 | 命令、工具链、范围、退出结果和日志位置 |
-| 失败 | 失败阶段与原因证据、修正或环境处理、重跑结果 |
-| 跳过或未运行 | 原因及未验证范围；没有匹配测试也按此记录 |
-| 独立复核 | 基线/差异范围、发现与处理结果、复核限制 |
-| 最终状态 | 工作区、提交/推送情况、远端检查结果（如适用） |
+| Each optimization | Changes, related accepted item, status, and commit if any |
+| Each check | Command, toolchain, scope, exit result, and log location |
+| Failure | Failed phase, evidence of cause, correction or environment repair, and retry result |
+| Skipped or unrun check | Reason and unverified scope; include commands that matched no tests |
+| Independent review | Baseline/diff scope, findings and resolutions, review limits |
+| Final state | Working tree, commit/push status, and remote checks when applicable |
 
-需要证明提交内容与验收内容相同时，可以保存内容摘要并在提交后核对；按仓库已有规则选择。性能收益使用有条件说明的前后测量。报告与计划默认是本地工作资料，是否纳入版本控制由当次任务和仓库规定决定。
+When proof that committed content matches accepted content is needed, save content hashes and compare them after committing under the repository's rules. Report performance benefits with before-and-after measurements and their conditions. Reports and plans are local working materials by default; the current task and repository rules determine whether they enter version control.
 
-## 调用示例
+## Invocation examples
 
 ```text
-用 $code-quality-review 审查整个后端，先出报告和优化计划，暂不改代码。
+Use $code-quality-review to review the entire backend. Produce a report and
+optimization plan first, and leave code unchanged for now.
 ```
 
 ```text
-用 $code-quality-review 审查并优化 backend/，保持业务行为；
-先完成全局报告和计划，然后直接实施，分项提交到仓库规定的分支，暂不推送。
+Use $code-quality-review to review and optimize backend/ while preserving business
+behavior. Complete the global report and plan first, then implement directly.
+Commit each item on the repository's required branch and leave the commits local.
 ```
 
 ```text
-用 $code-quality-review 复核并优化缓存子系统及直接调用方。
-只实施收益明确的行为等价改动，完成后保留本地差异供我查看。
+Use $code-quality-review to review and optimize the cache subsystem and its direct
+callers. Implement behavior-preserving changes with clear benefits, then leave the
+local diff for me to inspect.
 ```

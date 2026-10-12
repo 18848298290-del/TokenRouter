@@ -71,7 +71,7 @@ Apple container 的新栈使用 `org.tokenrouter.stack` 标签；已有的 `sub2
 
 - 已经进入任何环境的文件，不能修改、删除或改名；修正需要新建迁移。
 - 文件里不放可执行的 Down 段；runner 不解析 Goose 的 Up 和 Down 标记。
-- 普通迁移尽量写成幂等的，并在 SQL 里用中文注释说明变更原因和兼容窗口。
+- 普通迁移尽量写成幂等的，并在 SQL 里用英文注释说明变更原因和兼容窗口。
 - schema、数据回填、Repository 查询和 Ent schema 的变化，放在同一个兼容序列里设计；确实无法让新旧二进制共存时，在[版本升级说明](upgrade_notes.md)里写明停机升级、备份和回滚的步骤。
 
 ## 新增与同步迁移

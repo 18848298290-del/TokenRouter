@@ -1,61 +1,61 @@
 ---
 name: project-doc
-description: 为代码库建立、读取、维护和审计与代码同步的分层工程文档库，供人和 coding agents 按需读取。用于首次创建或恢复文档库、整理或迁移已有文档、随代码变更更新文档、检查文档与代码是否一致、执行仓库指令要求的 Project Doc 流程、读取 docs/index.md 目录，以及遇到 @project-doc 代码锚点时。
+description: Build, read, maintain, and audit a layered engineering documentation library kept in sync with code for people and coding agents. Use when creating or restoring the library, organizing or migrating existing documentation, updating docs with code changes, checking documentation against code, following a repository's Project Doc workflow, reading docs/index.md, or encountering an @project-doc code anchor.
 ---
 
 # Project Doc
 
-文档库和代码一起维护。它记录需要看多处代码才能理解的长期工程知识，目录、正文、代码锚点和当前实现保持一致。
+Maintain the documentation library alongside the code. Record durable engineering knowledge that requires reading multiple parts of the codebase to understand. Keep indexes, prose, code anchors, and the current implementation consistent.
 
-## 开始任务
+## Starting a task
 
-1. 判断当前请求是只读任务，还是允许修改文件的实施任务。只读任务发现文档与代码不一致时，报告问题，修复留给获得授权的任务。
-2. 确定仓库根目录，遵守仓库里已有的 Agent 指令。
-3. 查找项目指令声明的文档根和根 `index.md`。没有声明时，优先使用仓库里用途明确的现有文档根，其次使用 `docs/`。
-4. 文档库已经建立时，在分析业务代码前，按下面的“读取与上下文复用”规则读取或复用根 `index.md`，再按其中的“读取时机”进入相关分类的 `index.md`。
-5. 遇到 `@project-doc` 时，在理解、审查或修改锚点所在的代码之前，按同一规则读取或复用目标章节。
-6. 存在 `<doc_root>/.project_doc_bootstrap.md` 时，读取它，从记录的下一步继续建库，已完成的工作保持原样。
+1. Determine whether the request is read-only or authorizes file changes. For read-only tasks, report discrepancies between documentation and code; leave repairs for an authorized task.
+2. Identify the repository root and follow its existing agent instructions.
+3. Find the documentation root and root `index.md` declared by project instructions. If none is declared, prefer an existing documentation root with a clear purpose, then `docs/`.
+4. If the library exists, read or reuse the root `index.md` under "Reading and context reuse" below before analyzing business code. Follow its "Read when" guidance to the relevant category's `index.md`.
+5. When encountering `@project-doc`, read or reuse the target section under the same rules before interpreting, reviewing, or changing the code containing the anchor.
+6. If `<doc_root>/.project_doc_bootstrap.md` exists, read it and resume from its recorded next step. Preserve completed work.
 
-项目指令声明了 Project Doc 门禁，但根目录和建库备忘录都不存在时，停止仓库任务并报告接入不完整。整套文档库的首次创建需要用户明确要求。
+If project instructions declare a Project Doc gate but both the root index and bootstrap memo are missing, stop repository work and report the incomplete setup. Creating the whole library for the first time requires an explicit user request.
 
-## 读取与上下文复用
+## Reading and context reuse
 
-- 当前会话第一次在某个仓库执行任务时，完整读取根 `index.md`。之后的任务、子任务、文件修改和任务收尾都复用已读内容，重读只在下面两条列出的情况下发生。技能说明、引用协议、分类目录和正文同样按这条规则复用。
-- 复用的前提是当前上下文或压缩摘要里还保留着需要的内容：路由用的分类、路径和读取时机，以及当前操作涉及的约束。只记得“读过”或只剩文件名时，按内容已遗失处理。内容遗失时补读缺失的索引或章节；根路由整体遗失时，再完整读取根索引。上下文压缩后，按以上条件判断是否补读。
-- 已知相关文件被外部修改、切换了仓库或文档根、路由和实际文件冲突，或者用户要求刷新时，重新获取受影响的内容。本轮自己完成并且还记得的修改，直接据此更新上下文。判断文件是否变化时，依据上面列出的已知事件；每次操作前检查时间戳或哈希只会浪费读取。
-- 任务扩展到未读过的领域时，沿已知路由补读对应分类和必要章节，根索引和其他已读分类继续复用。
-- 复用减少的是重复读取，文档影响判断、同步维护和必要验证照常进行。复用状态留在会话上下文里；写进仓库的缓存、已读清单或“无影响”声明会变成额外的维护负担。
+- Read the entire root `index.md` on the session's first task in a repository. Reuse that content for later tasks, subtasks, file edits, and delivery. Reread only under the conditions in the next two rules. Apply the same reuse rule to skill instructions, reference protocols, category indexes, and document bodies.
+- Reuse requires enough content in the current context or compacted summary: routing categories, paths, reading conditions, and constraints for the current operation. Remembering only that a file was read, or retaining only its name, counts as missing content. Reread missing indexes or sections; reread the entire root index if its routing has been lost. Apply these conditions after context compaction.
+- Refresh affected content when a relevant file is known to have changed externally, the repository or documentation root changes, routing conflicts with actual files, or the user requests a refresh. Use changes made in this turn directly while they remain in context. Determine whether files changed from these known events; checking timestamps or hashes before every operation wastes reads.
+- When the task expands into an unread area, follow the known routing to that category and the necessary sections. Continue reusing the root and other categories already read.
+- Reuse reduces repeated reading. Continue assessing documentation impact, maintaining consistency, and performing necessary verification. Keep reuse state in conversation context. Repository caches, read-file lists, and "no impact" statements create extra maintenance work.
 
-## 选择工作模式
+## Choosing a workflow
 
-- 首次建库或恢复建库时，读取 [references/bootstrap_workflow.md](references/bootstrap_workflow.md)、[references/library_protocol.md](references/library_protocol.md) 和 [references/anchor_protocol.md](references/anchor_protocol.md)，再使用 `assets/` 里的模板。
-- 随代码维护时，读取 [references/library_protocol.md](references/library_protocol.md)。遇到、添加、移动或删除锚点时，再读取 [references/anchor_protocol.md](references/anchor_protocol.md)。
-- 一致性审计时，读取文档库协议和锚点协议，核对目录、正文、代码和引用。用户授权修改时修复问题，未授权时报告问题。
-- 按文档回答问题时，读取或复用根目录、命中的分类目录和必要的章节。
+- For initial creation or recovery, read [references/bootstrap_workflow.md](references/bootstrap_workflow.md), [references/library_protocol.md](references/library_protocol.md), and [references/anchor_protocol.md](references/anchor_protocol.md), then use the templates in `assets/`.
+- For maintenance alongside code, read [references/library_protocol.md](references/library_protocol.md). When encountering, adding, moving, or deleting anchors, also read [references/anchor_protocol.md](references/anchor_protocol.md).
+- For a consistency audit, read the library and anchor protocols, then check indexes, prose, code, and references. Fix issues when authorized; otherwise report them.
+- For answers based on documentation, read or reuse the root index, matching category indexes, and necessary sections.
 
-## 执行同步维护
+## Maintaining consistency
 
-1. 从任务涉及的代码路径、符号、配置、测试和锚点，找出可能受影响的文档。
-2. 按“读取与上下文复用”规则获取目标章节，以及理解它所需的相邻章节。
-3. 结合实现、调用方、测试、配置、历史和用户目标，判断代码实际需要遵守的约定。
-4. 按 [references/library_protocol.md](references/library_protocol.md) 决定创建章节、创建文档、更新、移动、合并、删除或保持现状。
-5. 获得修改授权时，在同一次变更里维护代码、文档正文、各级 `index.md`、锚点和普通链接。
-6. 用仓库现有工具、`rg`、局部读取和 Git diff 检查本次变更影响的文档结构和引用。收尾检查覆盖本次变更涉及的范围，重读各级索引和全库审计留给专门的审计任务。代码变更本身要求的测试照常运行。
-7. 在结果里说明改了哪些文档。没有文档受影响时，说明已经做过影响判断，这个结论写在回复里。
+1. Identify potentially affected documents from the task's code paths, symbols, configuration, tests, and anchors.
+2. Read or reuse the target sections and the adjacent material needed to understand them under "Reading and context reuse."
+3. Determine the conventions the code should follow from the implementation, callers, tests, configuration, history, and user goals.
+4. Use [references/library_protocol.md](references/library_protocol.md) to decide whether to add a section, create a document, update, move, merge, delete, or leave content unchanged.
+5. When changes are authorized, maintain code, document bodies, indexes at every level, anchors, and ordinary links in the same change.
+6. Use existing repository tools, `rg`, focused reads, and Git diff to check the affected documentation structure and references. Limit final checks to the task's scope. Reserve index rereads and whole-library audits for dedicated audit tasks. Run the tests required by code changes as usual.
+7. Report which documents changed. If no documents are affected, state in the response that documentation impact was assessed.
 
-## 保持这些不变量
+## Invariants
 
-- 根 `index.md` 的首次完整读取和后续复用遵循“读取与上下文复用”，分类目录和正文按需获取。
-- 根目录负责分类路由，分类目录列出本分类的每篇文档和读取时机。
-- 代码锚点指向带稳定 ID 的章节。稳定 ID 是手写的 `<a id="..."></a>`；标题自动生成的 slug 会随措辞改变，锚点用它会失效。
-- 普通文档描述当前状态。重要的历史决策写成 ADR，被替代的决策标记为 `superseded` 并保留。
-- 文档记录需要跨越局部代码才能理解的知识。局部实现细节、机械重构、生成代码、临时计划，以及从单个符号就能看出的事实，留在代码和计划文件里。
-- 文档和代码冲突时，先核实意图，再决定改哪一边。高影响的歧义无法消除时，询问用户。
-- 只读请求中报告问题，修复等用户授权。文档同步期间，代码行为的改动限于用户授权的范围。
-- 项目专用校验脚本、CI 和文档影响声明，在用户明确要求时才创建。
+- Follow "Reading and context reuse" for the initial full root-index read and subsequent reuse. Read category indexes and prose as needed.
+- The root index routes readers to categories. Each category index lists every document in that category and when to read it.
+- Code anchors target sections with stable IDs written as `<a id="..."></a>`. Heading-generated slugs change with wording and can break anchors.
+- Ordinary documents describe the current state. Record important historical decisions as ADRs, and preserve superseded decisions with status `superseded`.
+- Document knowledge that requires looking beyond local code. Keep local implementation details, mechanical refactoring, generated code, temporary plans, and facts apparent from a single symbol in code or plan files.
+- When documentation and code disagree, verify intent before deciding which to change. Ask the user if a consequential ambiguity remains unresolved.
+- Report issues in read-only tasks and wait for authorization to repair them. During documentation maintenance, limit behavior changes to the user's authorized scope.
+- Create project-specific validation scripts, CI, and documentation-impact declarations only when explicitly requested.
 
-## 接入要求
+## Integration requirements
 
-首次建库时，按 [references/bootstrap_workflow.md](references/bootstrap_workflow.md) 写入项目级技能门禁。门禁要求 Agent 在进行任何仓库操作前，确认当前会话能调用 `project-doc`，无法调用时立即停止。磁盘上存在同名文件，和当前会话已经加载技能是两回事。
+During initial creation, install the project-level skill gate described in [references/bootstrap_workflow.md](references/bootstrap_workflow.md). It requires agents to confirm that the current session can invoke `project-doc` before any repository operation and to stop immediately if it cannot. A file with that name on disk does not establish that the session has loaded the skill.
 
-建立或审计文档库时，检查门禁是否缺失或过期。写任务中修复门禁，读任务中报告问题。
+When building or auditing the library, check for a missing or outdated gate. Repair it in write tasks and report it in read-only tasks.

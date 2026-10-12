@@ -1,64 +1,66 @@
-# 子代理任务说明
+# Subagent briefs
 
-派发任务前使用对应说明，填入当前仓库和本项范围。每次创建新代理。各代理使用当次约定的模型与推理强度；短上下文派发让它按需读取证据，避免重复携带整个主会话。
+Before dispatch, fill in the appropriate brief with the current repository and task scope. Create a new agent each time. Use the model and reasoning effort agreed for the task. Supply a short context and let the agent read evidence as needed instead of repeatedly forwarding the entire main conversation.
 
-## 只读分区审查
+## Read-only area review
 
-提供：仓库路径、任务编号、文件清单、基线、规范与文档入口、已有验证结论、审查目标。
+Provide the repository path, task ID, file manifest, baseline, instruction and documentation entry points, existing verification results, and review goal.
 
-任务要求：
+Requirements:
 
-- 先遵守仓库 AGENTS 和技能门禁，加载设计、编码与写作规范，按索引和代码锚点读取必要文档。
-- 对清单完成职责和结构检查，重点阅读高维护成本路径、调用方及相应测试。跨包读取用来补充证据，主要审查归属仍按清单。
-- 保持只读，代码生成、格式化、安装、提交与报告写入由主代理控制。通过最终回复交付报告。
-- 聚焦能降低维护成本的行为等价优化。每项建议说明具体问题及最小方案；没有值得实施的建议可以直接写明。通常提炼最有价值的少数项，独立严重问题仍应报告。
-- 返回覆盖方式、重点路径、未确认范围；候选位置、证据、收益、风险与验证方法；行为问题单列；说明值得保持的设计。
-- 自行发现跨区问题时向主代理汇报。任务完成后结束，不自行开启其他模块工作。
+- Follow repository AGENTS instructions and skill gates first. Load design, coding, and writing conventions, then read necessary documents through indexes and code anchors.
+- Inspect responsibilities and structure across the manifest. Read paths with high maintenance cost, their callers, and relevant tests in depth. Use cross-package reads as evidence; retain primary ownership from the manifest.
+- Remain read-only. The main agent controls code generation, formatting, installation, commits, and report files. Deliver the report in the final response.
+- Focus on behavior-preserving changes that reduce maintenance cost. Explain the concrete problem and smallest solution for each proposal. State when no change is worthwhile. Usually return a few valuable candidates, while also reporting independent serious issues.
+- Return coverage method, focus areas, and unconfirmed scope; candidate locations, evidence, benefits, risks, and verification methods; behavioral issues in a separate list; and designs worth preserving.
+- Report cross-area issues to the main agent. Finish after the assigned task and let the main agent coordinate other modules.
 
-示例派发：
-
-```text
-对指定清单执行一次只读代码质量审查。
-仓库：{repo}
-任务：{task_id}
-主要文件：{manifest}
-基线与已有改动：{baseline}
-规范入口：{instructions_and_skills}
-文档路由：{docs}
-主代理已完成的检查：{validation}
-遵循本技能 references/agent-briefs.md 的只读审查要求。
-保持业务行为，返回紧凑但有证据的报告；禁止写文件、提交或自行委派。
-```
-
-## 单项实施
-
-提供：采纳项编号、问题与方案、可写文件、跨包调用约束、要保持的行为、必要测试、其他代理正在写入的区域。
-
-任务要求：
-
-- 读取该项定稿方案及仓库规范。新发现的行为缺陷向主代理报告，留在独立清单。
-- 按声明范围实现。需要修改其他任务的文件时，先向主代理说明依赖，让主代理调整安排。
-- 实施与局部测试都围绕这一项；共享文件的生成、全仓格式化、暂存和提交由主代理执行。
-- 报告修改文件、为何等价、实际测试命令/结果、未验证事项、文档影响和待协调问题。日志给出可访问路径，失败与重试结果一起保留。
-
-示例派发：
+Example dispatch:
 
 ```text
-实施采纳项 {accepted_id}，只处理这一项。
-仓库：{repo}
-定稿计划与证据：{plan_and_finding}
-可修改文件：{write_scope}
-要保持的行为：{invariants}
-验证要求：{checks}
-其他写入任务：{concurrent_scopes}
-遵循仓库规范与本技能的单项实施要求。完成后返回改动和验证结果。
-禁止提交、全仓格式化或自行委派其他任务。
+Perform one read-only code quality review of the supplied manifest.
+Repository: {repo}
+Task: {task_id}
+Primary files: {manifest}
+Baseline and existing changes: {baseline}
+Instruction entry points: {instructions_and_skills}
+Documentation routing: {docs}
+Checks completed by the main agent: {validation}
+Follow the read-only review requirements in this skill's references/agent-briefs.md.
+Preserve business behavior and return a compact report with evidence.
+Do not write files, commit, or delegate work.
 ```
 
-## 实施差异复核
+## Single-item implementation
 
-提供：基线、定稿采纳表、当前差异/新文件、已有缺陷清单和已完成的验证范围。使用新代理，从当前代码重新判断结果。
+Provide the accepted-item ID, problem and solution, writable files, cross-package calling constraints, behavior to preserve, required tests, and areas other agents are editing.
 
-复核范围包括已提交、未提交和新文件中的本轮改动。关注本轮引入的错误、代码归属与计划偏差，核对接口、字段、nil/空、取时、短路顺序、事务、资源和复制责任。
+Requirements:
 
-复核保持只读，返回文件位置、触发条件、影响和最小修正建议。没有发现问题时说明实际复核范围和未执行的验证。主代理决定修正并补验，禁止把已有缺陷自动并入本轮。
+- Read the finalized plan for the item and repository rules. Report newly discovered behavioral defects to the main agent for a separate list.
+- Implement within the declared scope. If another task's files need changes, explain the dependency to the main agent so it can adjust assignments.
+- Keep implementation and local tests focused on this item. The main agent performs shared-file generation, repository-wide formatting, staging, and commits.
+- Report changed files, why behavior is equivalent, actual test commands and results, unverified scope, documentation impact, and coordination needs. Provide accessible log paths and retain both failure and retry results.
+
+Example dispatch:
+
+```text
+Implement accepted item {accepted_id} within the scope below.
+Repository: {repo}
+Finalized plan and evidence: {plan_and_finding}
+Writable files: {write_scope}
+Behavior to preserve: {invariants}
+Verification requirements: {checks}
+Other active write tasks: {concurrent_scopes}
+Follow repository rules and this skill's single-item implementation requirements.
+Return the changes and verification results when finished.
+Do not commit, format the entire repository, or delegate other tasks.
+```
+
+## Review the implementation diff
+
+Provide the baseline, finalized acceptance table, current diff and new files, known-defect list, and completed verification scope. Use a new agent to judge the result from current code.
+
+Include this task's committed changes, uncommitted changes, and new files. Look for introduced errors, code ownership issues, and deviations from the plan. Check interfaces, fields, nil and empty values, time sampling, short-circuit order, transactions, resources, and responsibility for copies.
+
+Keep the review read-only. Return file locations, triggers, impact, and the smallest correction. If no issues are found, state the actual review scope and checks not run. The main agent decides corrections and revalidation. Keep existing defects separate from the current change.

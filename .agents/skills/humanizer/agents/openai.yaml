@@ -1,4 +1,4 @@
 interface:
   display_name: "Humanizer"
-  short_description: "按 TokenRouter 写作规则去掉注释、文档和文案里的 AI 腔"
-  default_prompt: "使用 $humanizer 按本仓库写作规则写作或改写这段文字，保留原有事实。"
+  short_description: "Remove AI writing patterns under TokenRouter's prose rules"
+  default_prompt: "Use $humanizer to write or revise this text under TokenRouter's writing rules while preserving its facts."

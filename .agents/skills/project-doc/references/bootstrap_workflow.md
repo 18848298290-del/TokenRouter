@@ -1,163 +1,163 @@
-# 首次建库与恢复流程
+# Initial setup and recovery
 
-## 导航
+## Navigation
 
-- [前置条件](#前置条件)
-- [盘点仓库](#盘点仓库)
-- [设计完整目录](#设计完整目录)
-- [建立备忘录](#建立备忘录)
-- [安装技能门禁](#安装技能门禁)
-- [分批填充文档](#分批填充文档)
-- [恢复未完成建库](#恢复未完成建库)
-- [完成条件](#完成条件)
+- [Prerequisites](#prerequisites)
+- [Inventory the repository](#inventory-the-repository)
+- [Design the complete index](#design-the-complete-index)
+- [Create the bootstrap memo](#create-the-bootstrap-memo)
+- [Install the skill gate](#install-the-skill-gate)
+- [Write documents in batches](#write-documents-in-batches)
+- [Resume incomplete setup](#resume-incomplete-setup)
+- [Completion criteria](#completion-criteria)
 
-## 前置条件
+## Prerequisites
 
-用户明确要求建立、接入、恢复或重建 Project Doc 文档库时，进入本流程。普通代码任务发现仓库没有文档库时，报告这一情况，是否大规模建库由用户决定。
+Use this workflow when the user explicitly asks to create, integrate, restore, or rebuild a Project Doc library. If an ordinary coding task reveals that no library exists, report that fact and let the user decide whether to create one.
 
-开始前：
+Before starting:
 
-1. 确定仓库根目录，读取已有的项目指令。
-2. 确认用户允许创建文档、重命名纳入的遗留文档、修复引用和更新 Agent 指令入口。
-3. 找出用户指定的文档根。没有指定时，按文档库协议选择现有文档根或 `docs/`。
-4. 读取 [library_protocol.md](library_protocol.md) 和 [anchor_protocol.md](anchor_protocol.md)。
-5. 以 [index.md](../assets/index.md) 和 [project_doc_bootstrap.md](../assets/project_doc_bootstrap.md) 为结构模板，按仓库主语言改写，并替换全部占位符。
+1. Identify the repository root and read existing project instructions.
+2. Confirm that the user authorizes creating documentation, renaming adopted legacy documents, repairing references, and updating agent instruction entry points.
+3. Find the documentation root specified by the user. Otherwise, choose an existing root or `docs/` under the library protocol.
+4. Read [library_protocol.md](library_protocol.md) and [anchor_protocol.md](anchor_protocol.md).
+5. Use [index.md](../assets/index.md) and [project_doc_bootstrap.md](../assets/project_doc_bootstrap.md) as structural templates. Rewrite them in the repository's primary language and replace every placeholder.
 
-## 盘点仓库
+## Inventory the repository
 
-先建立证据清单，再写正文。至少检查：
+Build an evidence inventory before writing prose. Inspect at least:
 
-- 根级和子目录的 Agent 指令，确认适用范围和优先级。
-- 包管理、构建、部署和工作区清单。
-- 应用入口、模块划分、公共接口、配置、schema、迁移和测试。
-- 生成目录、第三方代码、构建产物，以及无需写进文档的临时文件。
-- README、现有文档目录、源码旁的文档，以及仓库内指向它们的链接。
-- 已有的 ADR、设计说明、运维手册，以及可能已经过时的文档。
+- Root and nested agent instructions, including their scope and precedence.
+- Package management, build, deployment, and workspace manifests.
+- Application entry points, modules, public interfaces, configuration, schemas, migrations, and tests.
+- Generated directories, third-party code, build outputs, and temporary files that do not need documentation.
+- READMEs, existing documentation directories, source-adjacent documents, and repository links to them.
+- Existing ADRs, design notes, operational manuals, and potentially outdated documents.
 
-为每份已有文档选择一种处置：
+Choose a disposition for each existing document:
 
-- `adopt`：内容和范围基本正确，列入目录并补齐必要结构。
-- `update`：保留这篇文档，按当前代码修正内容。
-- `merge`：把有效知识并入更合适的现有文档或计划文档。
-- `split`：一个文件混合了不同的主题、读者或更新周期，需要拆分。
-- `exclude`：不属于长期工程知识，留在文档库之外。
+- `adopt`: the content and scope are mostly correct; index it and add any required structure.
+- `update`: keep the document and correct it against current code.
+- `merge`: move valid knowledge into a more suitable existing or planned document.
+- `split`: separate topics, audiences, or update cycles mixed in one file.
+- `exclude`: keep material outside the library when it is not durable engineering knowledge.
 
-纳入的文件或目录不符合小写 `snake_case` 时，重命名。先列出所有仓库内引用，再分批移动并修复链接，让每个引用方随路径一起更新。
+Rename adopted files or directories that do not use lowercase `snake_case`. List every repository reference first, then move files in batches and repair links so each caller changes with its target path.
 
-## 设计完整目录
+## Design the complete index
 
-写正文前，先确定整个文档库的结构：
+Decide the whole library structure before writing document bodies:
 
-1. 列出根级文档和实际需要的分类。
-2. 为每个分类列出计划文档、范围、作为依据的代码来源和读取时机。
-3. 判断哪些主题扩展现有文档，哪些需要新文档，哪些写成 ADR。
-4. 为需要代码锚点的章节规划代码入口和稳定 ID。
-5. 建立根 `index.md` 和所有计划分类的 `index.md` 骨架。
+1. List root-level documents and categories actually needed.
+2. For each category, list planned documents, scopes, supporting code sources, and reading conditions.
+3. Decide which topics extend existing documents, need new documents, or belong in ADRs.
+4. Plan code entry points and stable IDs for sections that need code anchors.
+5. Create skeletons for the root `index.md` and every planned category's `index.md`.
 
-根目录路由分类和根级文档，分类目录列出本分类的每篇文档。计划文件还没创建时，目录里用代码格式写路径，Markdown 链接等文件创建后再加。
+The root index routes to categories and root-level documents. Category indexes list every document in their category. Show paths as code until planned files exist, then add Markdown links.
 
-向用户展示目录结构摘要。领域划分、文档根、遗留文档处置或大规模重命名存在高影响歧义时，暂停并询问用户；其余情况记录假设后继续。
+Show the user a summary of the directory structure. If domain divisions, the documentation root, legacy-document disposition, or extensive renaming present a consequential ambiguity, pause and ask the user. Otherwise, record assumptions and continue.
 
-## 建立备忘录
+## Create the bootstrap memo
 
-从模板创建 `<doc_root>/.project_doc_bootstrap.md`，在开始写第一批正文前填完以下内容：
+Create `<doc_root>/.project_doc_bootstrap.md` from the template. Before writing the first document bodies, fill in:
 
-- 文档根、仓库主语言和最后更新时间。
-- 已经确定的结构决策和命名约束。
-- 每篇计划文档的范围、依据来源、遗留处置和锚点目标。
-- Agent 指令入口的接入状态。
-- 当前阻塞项、下一步动作和交接说明。下一步写一个具体动作。
-- 已经执行的验证及其结果。
+- Documentation root, repository primary language, and last update time.
+- Agreed structural decisions and naming constraints.
+- Each planned document's scope, evidence sources, legacy disposition, and anchor targets.
+- Integration status of agent instruction entry points.
+- Current blockers, next action, and handoff notes. Make the next action concrete.
+- Checks already run and their results.
 
-文档状态取以下四种之一：
+Use one of four document statuses:
 
-- `planned`：范围和来源已经确定，正文尚未开始。
-- `in_progress`：正在核实或撰写。同一时刻最多一项。
-- `verified`：正文、目录、锚点和链接都已核实。
-- `blocked`：存在明确的阻塞条件，备忘录里记录了恢复所需的信息。
+- `planned`: scope and sources are defined; writing has not started.
+- `in_progress`: verification or writing is underway. At most one item may have this status at a time.
+- `verified`: prose, indexes, anchors, and links have been checked.
+- `blocked`: a specific blocker exists, with the information needed to resume recorded in the memo.
 
-每完成一篇文档、一次遗留重命名或一次门禁更新，立即刷新备忘录。主动交接或主动压缩上下文前，也要刷新。建库未完成时，备忘录可以留在仓库里并提交，完成条件全部满足后才能删除。
+Update the memo immediately after each completed document, legacy rename, or gate update. Also update it before an intentional handoff or context compaction. The memo may remain in the repository and be committed while setup is incomplete. Delete it after all completion criteria are met.
 
-## 安装技能门禁
+## Install the skill gate
 
-创建根目录骨架和备忘录后，接入项目级门禁。检查以下根级入口：
+After creating the root-index skeleton and memo, install the project-level gate. Check these root entry points:
 
 - `AGENTS.md`
 - `CLAUDE.md`
 - `GEMINI.md`
 - `.github/copilot-instructions.md`
 
-更新所有已经存在的入口。四个都不存在时，创建根 `AGENTS.md` 这一个文件。用户明确要求文档库只覆盖某个子树时，才修改对应的嵌套入口。
+Update every existing entry point. If none exists, create only the root `AGENTS.md`. Modify a nested entry point only when the user explicitly limits the library to that subtree.
 
-门禁块以唯一的 `## Project Doc 门禁` 二级标题开始，到下一个二级标题或文件结尾结束。门禁块的起止位置由标题确定，额外的 HTML 注释标记会和标题重复。
+The gate block starts with a unique H2 heading, `## Project Doc gate`, and ends at the next H2 heading or end of file. Use these headings to delimit the block; extra HTML comment markers duplicate them.
 
 ```markdown
-## Project Doc 门禁
+## Project Doc gate
 
-- 执行任何仓库任务前，先确认当前 Agent 会话能调用名为 `project-doc` 的技能。
-- 无法调用时立即停止，此后唯一允许的动作是回复：“当前环境未安装或未加载 `project-doc` 技能，按仓库规则无法继续。请安装或启用该技能，并在新会话中重试。”
-- 能够调用时，先使用 `project-doc`。当前会话第一次处理本仓库任务时，完整读取 `<doc_root>/index.md`，再按目录路由完成任务。
-- 同一会话里已经读过、上下文中仍保留足够内容的技能说明、索引和相关章节，直接复用，修改文件、继续子任务和任务收尾时也一样。内容缺失、相关文件变化或路由冲突时，按技能的“读取与上下文复用”规则补读受影响的部分。
+- Before any repository task, confirm that the current agent session can invoke a skill named `project-doc`.
+- If the skill is unavailable, stop immediately. The only permitted next action is to reply: "The current environment has not installed or loaded the `project-doc` skill, so repository rules prevent further work. Please install or enable the skill and retry in a new session."
+- When the skill is available, use `project-doc` first. On the session's first task in this repository, read all of `<doc_root>/index.md`, then follow its routing for the task.
+- Reuse skill instructions, indexes, and sections already read in the same session while enough of their content remains in context. This also applies when editing files, continuing subtasks, and finishing work. If content is missing, relevant files change, or routing conflicts arise, reread the affected material under the skill's "Reading and context reuse" rules.
 ```
 
-按仓库主语言翻译门禁时，门禁的要求和固定的拒绝回复保持原意。把 `<doc_root>` 替换为实际路径。
+When translating the gate into the repository's primary language, preserve the meaning of its requirements and fixed refusal message. Replace `<doc_root>` with the actual path.
 
-门禁更新要幂等，重复执行的结果相同：
+Make gate updates idempotent:
 
-- 没有门禁标题时，追加一个完整的门禁章节，原有内容保持原样。
-- 已有一个门禁标题时，原地更新这一章节。
-- 有多个同名门禁标题时，合并为一个，并报告原来的重复。
-- 判断技能是否加载，依据是当前会话能否调用它；磁盘上存在技能目录是另一回事。
-- 其他 Agent 需要自行安装可调用的同名技能，建库流程负责写门禁。
+- If no gate heading exists, append a complete gate section and preserve existing content.
+- If one gate heading exists, update that section in place.
+- If several identical gate headings exist, merge them and report the prior duplication.
+- Determine whether the skill is loaded from the current session's ability to invoke it. A skill directory on disk is a separate fact.
+- Other agents need their own invocable installation of the same skill. This setup workflow writes the gate.
 
-现有项目指令和门禁直接冲突时，记录证据并询问用户，冲突的规则等用户决定后再改。
+If existing project instructions directly conflict with the gate, record the evidence and ask the user. Change the conflicting rules after the user resolves them.
 
-## 分批填充文档
+## Write documents in batches
 
-按依赖从宽到窄推进，通常的顺序如下：
+Follow dependencies from broad topics to narrow ones. The usual order is:
 
-1. 项目范围、关键术语和整体结构。
-2. 架构、组件关系和跨模块流程。
-3. 领域规则、状态机和不变量。
-4. 接口、配置、事件和数据格式。
-5. 部署、迁移、恢复、观测和安全运行。
-6. 需要保留理由和取舍的 ADR。
+1. Project scope, core terminology, and overall structure.
+2. Architecture, component relationships, and cross-module flows.
+3. Domain rules, state machines, and invariants.
+4. Interfaces, configuration, events, and data formats.
+5. Deployment, migration, recovery, observability, and operational security.
+6. ADRs that preserve reasons and tradeoffs.
 
-每个批次处理一篇明确的文档：
+Handle one defined document per batch:
 
-1. 把这一项的状态改为 `in_progress`，记录下一步。
-2. 阅读列出的依据来源，以及必要的调用方和测试。
-3. 写当前状态的正文。行为从代码核实，文件名和旧文档只当线索。
-4. 为需要代码锚点的章节添加稳定 ID。
-5. 在手写代码入口有选择地添加 `@project-doc` 锚点。
-6. 更新分类目录和相关的普通链接。
-7. 检查正文、链接、锚点和命名，然后改为 `verified`。
-8. 立即更新备忘录，再开始下一项。
+1. Mark the item `in_progress` and record its next step.
+2. Read its listed evidence sources and necessary callers and tests.
+3. Write the current-state content. Verify behavior from code; treat filenames and old documentation as leads.
+4. Add stable IDs to sections that need code anchors.
+5. Add `@project-doc` anchors selectively at handwritten entry points.
+6. Update the category index and relevant ordinary links.
+7. Check prose, links, anchors, and naming, then mark the item `verified`.
+8. Update the memo immediately before starting the next item.
 
-每篇文档写完就核实，核实通过后才能标记完成。占位文档保持 `planned` 或 `in_progress`。
+Verify each document when it is written and mark it complete after verification passes. Placeholder documents remain `planned` or `in_progress`.
 
-## 恢复未完成建库
+## Resume incomplete setup
 
-发现 `.project_doc_bootstrap.md` 时：
+When `.project_doc_bootstrap.md` exists:
 
-1. 读完根 `index.md` 后立即读取备忘录。
-2. 对照当前文件树和 Git diff，确认备忘录仍然有效。
-3. 检查是否有残留的 `in_progress` 项，判断它已经完成、需要继续，还是应该退回 `planned`。
-4. 从备忘录记录的下一步继续，已经验证的领域保持原样。
-5. 新发现会改变整体结构时，更新结构决策，并同步受影响的目录条目。
+1. Read the memo immediately after the root `index.md`.
+2. Check it against the current file tree and Git diff to confirm that it still applies.
+3. Inspect remaining `in_progress` items and decide whether they are complete, need continued work, or should return to `planned`.
+4. Resume from the recorded next step and preserve verified areas.
+5. If new findings change the overall structure, update structural decisions and affected index entries.
 
-恢复依据是备忘录和当前仓库状态，聊天记忆只作参考。
+Resume from the memo and current repository state. Use conversation memory as supporting context.
 
-## 完成条件
+## Completion criteria
 
-以下条件全部满足时，首次建库才能结束：
+Initial setup is complete when all of these hold:
 
-- 所有计划条目都是 `verified`，或者是附有说明的 `blocked`。
-- 根目录和分类目录准确路由全部文档，计划状态和失效链接都已清除。
-- 所有纳入的文件、目录和章节 ID 符合命名规则。
-- 所有 `@project-doc` 锚点都指向存在的具体章节。
-- 遗留文件重命名后，旧路径和旧链接已经清理干净。
-- 每个 Agent 指令入口各有一个有效的门禁块。
-- 文档内容已经和当前代码、测试、配置交叉核实。
+- Every planned item is `verified` or `blocked` with an explanation.
+- The root and category indexes route accurately to all documents, with planned statuses and broken links removed.
+- All adopted files, directories, and section IDs follow naming rules.
+- Every `@project-doc` anchor targets an existing, specific section.
+- Old paths and links have been removed after legacy renames.
+- Each agent instruction entry point has one valid gate block.
+- Document content has been checked against current code, tests, and configuration.
 
-完成最终审计后，删除 `.project_doc_bootstrap.md`，再确认根目录里已经没有指向它的链接。还有未完成项时，保留备忘录，并在回复里列出剩余工作。
+After the final audit, delete `.project_doc_bootstrap.md` and confirm that the root index has no links to it. If work remains, keep the memo and list the remaining work in the response.

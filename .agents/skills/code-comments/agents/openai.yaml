@@ -1,0 +1,5 @@
+interface:
+  display_name: "Code Comments"
+  short_description: "Write accurate comments where readers need them"
+policy:
+  allow_implicit_invocation: true

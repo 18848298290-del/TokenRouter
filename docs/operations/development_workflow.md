@@ -104,7 +104,7 @@ HTTP、用例、存储和后台资源，由 app 装配各模块的实现。业�
 
 ## 编码约定
 
-所有手写代码都写必要的中文注释，生成文件只由生成命令更新。注释写约束、失败时的行为，或者代码里看不出来的原因。注释、文档、提交信息和界面文案按 `.agents/skills/humanizer/` 的规则书写。跨模块的不变量同步到 Project Doc，并在关键的手写入口添加唯一的 `@project-doc` 锚点。
+手写代码按需添加英文注释和 docstring，生成文件只由生成命令更新。注释写约束、失败时的行为，或者代码里看不出来的原因，遵循 `.agents/skills/code-comments/` 的规则。文档、提交信息和界面文案等其他文字遵循 `.agents/skills/humanizer/` 的规则。跨模块的不变量同步到 Project Doc，并在关键的手写入口添加唯一的 `@project-doc` 锚点。
 
 前端使用 Vue 3、TypeScript、Pinia、Vue Router、Vue I18n 和项目自己的组件。修改界面时：
 
@@ -152,16 +152,16 @@ decorder 把初始化表达式里函数字面量内的 `var` 当成顶层声明�
 3. 文件分组：按前缀或主题列出文件分组，每组一句话，写出代表文件。
 
 ```go
-// Package billing 计算请求费用，维护余额、订阅和兑换码。
+// Package billing calculates request costs and manages balances, subscriptions, and redeem codes.
 //
-// 阅读入口：
-//   - calculator.go：按模型价格和用量计算单次请求的费用。
-//   - settlement.go：扣费、退款和任务资金的结算。
+// Start here:
+//   - calculator.go: calculates per-request costs from model prices and usage.
+//   - settlement.go: handles charges, refunds, and task fund settlement.
 //
-// 文件分组：
-//   - subscription*.go：订阅的分配、额度窗口和过期。
-//   - redeem_*.go：兑换码的生成、兑换和后台管理。
-//   - eligibility*.go：请求前的余额和额度准入。
+// File groups:
+//   - subscription*.go: subscription allocation, quota windows, and expiration.
+//   - redeem_*.go: redeem code generation, redemption, and administration.
+//   - eligibility*.go: balance and quota checks before requests.
 package billing
 ```
 
@@ -371,7 +371,7 @@ Vue 的最低版本为 `3.5.42`，该版本修复了 `@vue/server-renderer` 属�
 
 `SYNC.md` 是本地的同步进度，受 `.gitignore` 保护，不要提交。`refactor/` 保存本地的重构计划和验证资料，整个目录不纳入版本控制；需要共享的工程说明维护在 `docs/`。使用 Codex 计划模式时，实施之前按项目指令把完整的计划保存到 `.agents/plans/`，执行进度追加到末尾。工作区里来源不明的修改不要覆盖；提交之前，按文件核对暂存的范围。
 
-每次代码变更，都根据[工程文档目录](../index.md)判断相关的文档；已经读过、上下文里仍然保留足够内容的索引和章节，按 `project-doc` 的"读取与上下文复用"规则复用，每次改文件或收尾时不需要重读。持久的架构、领域不变量、对外接口或运维流程变化时，同步更新正文、分类目录和代码锚点；局部的实现细节，不需要扩写成新的文档。README 保持为简洁的项目入口，工程细节放在 `docs/`。
+每次代码变更，都根据[工程文档目录](../index.md)判断相关的文档；已经读过、上下文里仍然保留足够内容的索引和章节，按 `project-doc` 的“Reading and context reuse”规则复用，每次改文件或收尾时不需要重读。持久的架构、领域不变量、对外接口或运维流程变化时，同步更新正文、分类目录和代码锚点；局部的实现细节，不需要扩写成新的文档。README 保持为简洁的项目入口，工程细节放在 `docs/`。
 
 ## 同步上游
 
@@ -386,7 +386,7 @@ Vue 的最低版本为 `3.5.42`，该版本修复了 `@vue/server-renderer` 属�
 
 ## 发布
 
-项目内置 [tr-release 技能](../../.agents/skills/tr-release/SKILL.md)，用于准备版本范围、核对中文发布说明和发布验收。在仓库根目录运行 `python3 .agents/skills/tr-release/scripts/tr_release.py --prepare` 获取待发布范围。
+项目内置 [tr-release 技能](../../.agents/skills/tr-release/SKILL.md)，用于准备版本范围、核对英文发布说明和发布验收。在仓库根目录运行 `python3 .agents/skills/tr-release/scripts/tr_release.py --prepare` 获取待发布范围。
 
 `.github/workflows/release.yml` 由 `v*` tag 或手动 dispatch 触发。标准发布只构建一次前端，再把 Linux、Windows 和 macOS 的五个 Go 目标，分配到独立的 runner 并行编译；最后的 job 通过 `tools/goreleaser_prebuilt.sh` 把这些二进制导入 GoReleaser，统一生成 Release 归档、校验和、双架构镜像和 manifest。GoReleaser 使用 `tokenrouter` build ID 生成五个平台归档，每个归档包含 `tokenrouter` 可执行文件，镜像复用其中的 Linux 二进制。
 

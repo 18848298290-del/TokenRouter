@@ -1,10 +1,10 @@
-# 变更覆盖与事实核对
+# Change coverage and fact checking
 
-每次编写或修订 Release description 时使用此流程。把覆盖清单和完整命令输出保存在临时目录，避免进入发布提交；它们供核对使用，不作为 Release 正文。
+Use this workflow whenever writing or revising a Release description. Write the published notes in English. Save the coverage manifest and complete command output in a temporary directory outside the release commit. Use them for review and keep them separate from the Release body.
 
-## 收集完整范围
+## Collect the complete range
 
-使用准备阶段固定的基准提交 `base` 和目标提交 `target`，整个分析过程不再用可移动的 `HEAD` 代替目标。至少收集：
+Use the fixed baseline commit `base` and target commit `target` from preparation throughout the analysis. A moving `HEAD` cannot identify the reviewed target reliably. Collect at least:
 
 ```bash
 git log --reverse --topo-order --format='%H %P%n%B' "$base..$target"
@@ -13,42 +13,42 @@ git diff --name-status --find-renames "$base" "$target"
 git rev-list --count "$base..$target"
 ```
 
-完整日志的提交数应与 prepare 输出一致。不要使用 `--no-merges`、仅 `--first-parent`、提交前缀过滤、日期过滤或取最近 N 条来定义范围。完整输出较大时先保存到文件，再按提交批次或模块读取到末尾；截断输出必须补读。
+The complete log's commit count should match preparation output. Define the range from all commits; `--no-merges`, first-parent-only traversal, commit-prefix filters, date filters, and the latest N entries omit part of that range. Save large output to files and read it to the end in commit or module batches. Retrieve every truncated portion.
 
-先按提交识别候选变化，再按最终差异核实它们是否进入发布：
+Identify candidate changes by commit, then verify that they are present in the final diff:
 
-- 普通提交阅读完整 message、改动文件和相关 patch，一个提交可能包含多个独立变化。
-- 合并提交既查看引入的提交，也比较它与第一父提交的差异，核对冲突解决带来的行为。仅标记“已合并”的历史可能没有进入最终代码，不能仅凭可达性写入功能。
-- 同一能力的实现、后续修复、回退和重新实现一起追踪，以基准到目标的净变化为准。整项被回退时记录排除原因，部分保留时只描述保留部分。
-- 最终文件清单用于反查日志分析的遗漏；新文件、删除文件、配置、迁移、依赖、部署资产与前端文案都需要归属。生成文件可随其源文件归组，但不能据此跳过手写 schema 或迁移。
+- For ordinary commits, read the full message, changed files, and relevant patch. One commit may contain several independent changes.
+- For merges, inspect both the introduced commits and the diff against the first parent to check conflict-resolution behavior. History marked as merged may not survive in final code. Reachability alone does not establish a released feature.
+- Track implementation, corrections, reverts, and reimplementation of the same capability together. Describe the net change from baseline to target. Record an exclusion for fully reverted changes and describe the surviving portion of partial reverts.
+- Use the final file manifest to find omissions from log analysis. Account for new and deleted files, configuration, migrations, dependencies, deployment assets, and frontend text. Group generated files with their sources, while still inspecting handwritten schemas and migrations.
 
-## 建立覆盖清单
+## Build the coverage manifest
 
-以可独立说明的行为变化为一行，记录以下字段：
+Use one row per independently describable behavior change:
 
-| 字段 | 要求 |
+| Field | Requirement |
 | --- | --- |
-| 变化与来源 | 涉及的提交 SHA 和改动路径；同一提交含多个功能时拆行 |
-| 基准与目标行为 | 触发条件、受影响对象、原行为、目标行为及仍存在的限制 |
-| 证据 | 目标提交中的实现位置，以及相关测试、调用方、配置或迁移 |
-| 处置 | 对应的发布条目，或排除原因，例如完全回退、重复、仅格式化、无对外影响 |
+| Change and source | Related commit SHAs and changed paths; split multiple features from one commit into separate rows |
+| Baseline and target behavior | Trigger, affected users or objects, prior behavior, target behavior, and remaining limits |
+| Evidence | Implementation location at the target commit and relevant tests, callers, configuration, or migrations |
+| Disposition | Matching release entry or exclusion reason, such as fully reverted, duplicate, formatting only, or no external impact |
 
-每个范围内提交都要有处置，每个最终变化文件都要能归入清单。批量排除只有在已核实属于同一机械操作时才成立，并列明覆盖范围。提交标题中的 `refactor`、`chore`、`test`、`docs` 不能作为无对外影响的证据。
+Assign a disposition to every commit in the range and account for every file in the final diff. Exclude a batch only after verifying that it is one mechanical operation, and list its scope. Commit-title prefixes such as `refactor`, `chore`, `test`, and `docs` do not prove absence of external impact.
 
-同时关注普通用户、管理员、API 调用方和部署维护者。配置删除、默认值变化、兼容策略、价格来源或计费变化、错误码、权限、导入导出、交互与布局改动都可能需要条目。纯内部变化可以排除；影响升级操作的架构或依赖变化需要保留实际影响。
+Consider ordinary users, administrators, API callers, and deployment maintainers. Configuration removal, default changes, compatibility strategies, price sources, billing, error codes, permissions, import/export, interactions, and layouts may each need an entry. Purely internal changes may be excluded. Preserve the practical upgrade impact of architectural or dependency changes.
 
-## 核对准确性
+## Check accuracy
 
-每条说明至少有直接实现证据，跨模块能力需沿入口、调用、配置和结果核对，必要时按 `project-doc` 路由补读。文档和测试辅助理解，最终描述应匹配目标提交的实际实现。已有测试不等于本轮已运行测试。
+Support each entry with direct implementation evidence. For cross-module capabilities, trace entry points, calls, configuration, and results, using `project-doc` routing when needed. Use documentation and tests to aid understanding and match the final description to the target commit's actual implementation. Existing tests are separate from tests run during this task.
 
-特别核对模型/协议/平台范围、启用条件、默认值、权限、计费单位与价格回退、数据迁移和兼容入口。某个平台或路径修复不能扩大成所有请求均支持；“已彻底解决”“显著提速”“无损迁移”等断言必须有对应证据。没有测量结果时可以说明减少了哪种重复操作，不能捏造性能数字。
+Check model/protocol/platform scope, activation conditions, defaults, permissions, billing units, price fallback, data migration, and compatibility entry points. Keep claims scoped to the repaired platform or path. Claims such as "fully resolved," "significantly faster," or "lossless migration" need corresponding evidence. Without measurements, describe the repeated operations removed and leave performance figures out.
 
-例如，同一提交若增加 Key 凭据轮换并调整列表样式，需要分别记录；不能只写“优化 API Key 管理”。迁移文件删除旧字段时，还要核对数据转移及兼容读取，再判断是否应提示升级注意，不能从删除字段直接推断必须停机或数据会丢失。
+For example, record credential rotation and list styling separately when one commit changes both. "Improve API key management" hides that distinction. When a migration removes an old field, inspect data transfer and compatibility reads before deciding whether upgrade notes are needed. Field removal alone does not establish downtime or data loss.
 
-## 双向审查与完成条件
+## Two-way review and completion criteria
 
-先从覆盖清单核对正文：所有对外变化都有明确条目；合并后的条目仍保留独立能力、适用条件及风险。再逐条从正文回查证据：摘要也要检查，不得添加清单中没有的主张。
+First compare the manifest to the body: every external change has an identifiable entry, and combined entries preserve independent capabilities, conditions, and risks. Then trace every sentence back to evidence, including the summary. Keep claims within the reviewed manifest.
 
-最后按最终文件清单再扫一遍模块边界，重点检查容易被长篇重构淹没的小修复、被合并条目吞掉的功能，以及删除配置/API 带来的升级影响。核对后记录提交总数、已审查数、变化项数、已写入项数及排除原因；这些数字用于发现缺口，不能替代语义核对。
+Scan module boundaries once more using the final file manifest. Look for small fixes obscured by large refactors, features lost in combined entries, and upgrade impacts from removed configuration or APIs. Record total commits, reviewed commits, change items, published items, and exclusion reasons. These counts help expose gaps; they supplement review of meaning.
 
-满足以下条件才进入发布：完整提交集合和最终文件清单均已核对；没有待查变化；每条说明有证据；每项对外变化在说明中可辨认。若范围尚不明确或输出尚未读完，继续检查，不能把当前草稿当成最终说明推送。
+Proceed to publication after the full commit set and final file manifest have been checked, no changes remain unresolved, every statement has evidence, and every external change is recognizable in the notes. Continue investigating when scope is unclear or output remains unread. Publish from the completed, reviewed notes.

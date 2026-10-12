@@ -1,4 +1,4 @@
-"""在隔离 Git 仓库中验证发布范围与注解，远端仅使用临时本地仓库。"""
+"""Verify release ranges and annotations in isolated Git repositories with temporary local remotes."""
 
 from __future__ import annotations
 
@@ -31,10 +31,10 @@ class ReleaseRangeTests(unittest.TestCase):
         self.git("config", "commit.gpgsign", "false")
         self.git("config", "tag.gpgsign", "false")
         self.git("remote", "add", "origin", str(self.remote))
-        self.base = self.commit("基准行为")
-        self.git("tag", "-a", "v0.1.9", "-m", "旧版本")
+        self.base = self.commit("Baseline behavior")
+        self.git("tag", "-a", "v0.1.9", "-m", "Previous version")
         self.git("push", "origin", "v0.1.9")
-        self.target = self.commit("目标行为")
+        self.target = self.commit("Target behavior")
 
     def git(self, *args: str) -> str:
         return subprocess.run(
@@ -48,7 +48,7 @@ class ReleaseRangeTests(unittest.TestCase):
         return self.git("rev-parse", "HEAD")
 
     def test_local_upstream_tags_do_not_change_origin_release_range(self) -> None:
-        # 模拟 fetch upstream 后遗留的更高版本，不能影响 origin 的发布范围。
+        # A higher local tag from an upstream fetch must leave the origin release range unchanged.
         self.git("tag", "v9.0.0", self.base)
         tr_release.fetch_origin_tags()
         context = tr_release.build_release_context()
@@ -60,12 +60,12 @@ class ReleaseRangeTests(unittest.TestCase):
 
     def test_fixed_range_and_annotation_keep_reviewed_target(self) -> None:
         context = tr_release.build_release_context()
-        self.commit("审查完成后出现的新提交")
+        self.commit("New commit after review")
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             tr_release.print_context(context, "prepare")
         self.assertIn(f"change_range={self.base}..{self.target}", output.getvalue())
-        notes = "支持凭据轮换。\n\n## 新增功能\n\n- 保留 Key 配置并轮换凭据。"
+        notes = "Support credential rotation.\n\n## New features\n\n- Rotate credentials while retaining key settings."
         tr_release.create_annotated_tag(context, notes)
         self.assertEqual(self.git("rev-parse", f"{context.next_tag}^{{commit}}"), self.target)
         self.assertEqual(
@@ -75,7 +75,7 @@ class ReleaseRangeTests(unittest.TestCase):
 
     def test_moved_head_rejects_stale_notes(self) -> None:
         reviewed = tr_release.build_release_context()
-        self.commit("新功能")
+        self.commit("New feature")
         current = tr_release.build_release_context()
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             tr_release.ensure_expected_context(current, reviewed.head, reviewed.previous.name)
@@ -92,7 +92,7 @@ class ReleaseRangeTests(unittest.TestCase):
 
     def test_non_ancestor_origin_tag_is_rejected(self) -> None:
         self.git("checkout", "-b", "other", self.base)
-        self.commit("另一版本线")
+        self.commit("Another release line")
         self.git("tag", "v0.2.0")
         self.git("push", "origin", "v0.2.0")
         self.git("checkout", "main")
@@ -117,7 +117,7 @@ class ReleaseRangeTests(unittest.TestCase):
         script = Path(tr_release.__file__).resolve()
         result = subprocess.run(
             ["python3", str(script), "--notes-file", "-"],
-            input="摘要\n\n## 新增功能\n\n- 新能力\n",
+            input="Summary\n\n## New features\n\n- New capability\n",
             capture_output=True,
             text=True,
         )

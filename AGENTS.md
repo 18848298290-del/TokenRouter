@@ -1,41 +1,43 @@
-# TokenRouter 协作规范
+# TokenRouter Collaboration Guidelines
 
-## 开始任务
+## Starting a task
 
-处理本仓库任务时，优先使用项目内置的 [project-doc](.agents/skills/project-doc/SKILL.md) 技能。
+Use the repository's [project-doc](.agents/skills/project-doc/SKILL.md) skill first when working on this repository.
 
-- 执行任何仓库任务前，先确认当前 Agent 会话能调用名为 `project-doc` 的技能。Claude Code 直接读取 `.agents/skills` 下的技能文件。
-- 无法调用时立即停止，此后唯一允许的动作是回复：“当前环境未安装或未加载 `project-doc` 技能，按仓库规则无法继续。请安装或启用该技能，并在新会话中重试。”
-- 能够调用时，先使用 `project-doc`。当前会话第一次处理本仓库任务时，完整读取 `docs/index.md`，再按目录路由完成任务。
-- 同一会话里已经读过、上下文中仍保留足够内容的技能说明、索引和相关章节，直接复用，修改文件、继续子任务和任务收尾时也一样。内容缺失、相关文件变化或路由冲突时，按技能的“读取与上下文复用”规则补读受影响的部分。
+- Before any repository task, confirm that the current agent session can invoke a skill named `project-doc`. Claude Code reads skill files directly from `.agents/skills`.
+- If the skill is unavailable, stop immediately. The only permitted next action is to reply: "The current environment has not installed or loaded the `project-doc` skill, so repository rules prevent further work. Please install or enable the skill and retry in a new session."
+- When the skill is available, use `project-doc` first. On the session's first task in this repository, read all of `docs/index.md`, then follow its routing for the task.
+- Reuse skill instructions, indexes, and sections already read in the same session while enough of their content remains in context. This also applies when editing files, continuing subtasks, and finishing work. If content is missing, relevant files change, or routing conflicts arise, reread the affected material under the skill's "Reading and context reuse" rules.
 
-## 编码与写作
+## Coding and writing
 
-- 每次编写或修改代码前，必须先加载并遵循项目级 [code-complete](.agents/skills/code-complete/SKILL.md) Skill，指导具体编码实现。执行前主动参考相关模块的现有实现，保持项目设计与编码风格一致。
-- 涉及方法抽象、接口设计、模块边界或职责划分等设计决策时，额外加载并遵循项目级 [a-philosophy-of-software-design](.agents/skills/a-philosophy-of-software-design/SKILL.md) Skill。两者同时适用时，由后者指导设计与抽象决策，前者指导具体实现。
-- 两个 Skill 默认使用各自的 mini 规范，必要时再查阅完整版，文件入口见各自的 `SKILL.md`。
-- 编写或修改文字前，加载并遵循项目级 [humanizer](.agents/skills/humanizer/SKILL.md)，优先使用本仓库版本。适用范围包括代码注释、文档、提交信息、PR 描述、界面文案、i18n、错误与日志消息、计划、技能说明和 Agent 规范。首次使用时完整读取，内容遗失时补读。
-- 文字表达冲突时，以 Humanizer 的规则为准。提交、交付文档或结束任务前，完成技能要求的“交付前自查”。
+- Before writing or changing code, load and follow the project [code-complete](.agents/skills/code-complete/SKILL.md) skill for implementation guidance. First inspect existing implementations in the relevant module and follow the project's design and coding style.
+- For decisions about method abstractions, interface design, module boundaries, or responsibilities, also load and follow the project [a-philosophy-of-software-design](.agents/skills/a-philosophy-of-software-design/SKILL.md) skill. When both skills apply, use this skill for design and abstraction decisions and `code-complete` for implementation.
+- Use each skill's mini specification by default. Consult the full version when needed; each `SKILL.md` links to both.
+- Before writing or changing code comments or docstrings, load and follow the project [code-comments](.agents/skills/code-comments/SKILL.md) skill. This also applies when reviewing comments affected by code changes.
+- Before writing or changing other prose, load and follow the project [humanizer](.agents/skills/humanizer/SKILL.md) skill. This includes documentation, commit messages, PR descriptions, UI text, i18n entries, error and log messages, plans, skill instructions, and agent guidelines.
+- Choose the writing skill by content type. Apply one of `code-comments` or `humanizer` to each passage. When a task includes both comments and other prose, use the corresponding skill for each. This division takes precedence over conflicting scope statements in the skills.
+- Read each applicable skill in full on first use, and reread it if its content is lost. Before committing, delivering documentation, or finishing the task, perform the corresponding skill's self-review.
 
-## 修改约定
+## Change conventions
 
-- 所有任务直接在当前 `main` 分支上完成。用户明确要求时，才创建或切换 Git 分支。
-- 手写代码按需添加中文注释，说明约束、失败行为和代码中看不出的原因。Go 文档注释遵循 Go 规范。
-- 代码按可读性换行，一行写一件事。修改代码时同步更新注释，删除代码时一起清理失效的注释和空行。
-- 后端 Go 代码的 import 在包名冲突等确有需要时才加别名。Go 文件直接从 `package` 声明或 `//go:build` 约束开始。
-- 新增、拆分、合并、改名后端 Go 文件，或调整文件内声明顺序前，按 Project Doc 规则读取或复用[后端文件组织](docs/operations/development_workflow.md#backend_file_layout)，遵循其中的命名、测试归属、包说明和声明顺序要求。改名或合并文件时，同步更新引用这些文件名的文档、架构许可和注释。
+- Work directly on the current `main` branch. Create or switch branches only when the user explicitly requests it.
+- Write code comments and docstrings in English. Add comments to handwritten code where needed to explain constraints, failure behavior, and reasons the code does not make clear. Follow Go conventions for Go documentation comments.
+- Wrap code for readability and put one operation on each line. Update comments with the code they describe, and remove stale comments and empty lines when deleting code.
+- Add aliases to backend Go imports only when needed, such as to resolve package-name conflicts. Start Go files with the `package` declaration or a `//go:build` constraint.
+- Before adding, splitting, merging, or renaming backend Go files, or changing declaration order, read or reuse [Backend file organization](docs/operations/development_workflow.md#backend_file_layout) under the Project Doc rules. Follow its naming, test ownership, package documentation, and declaration-order requirements. When renaming or merging files, update documentation, architecture allowances, and comments that reference those filenames.
 
-## 验证与交付
+## Verification and delivery
 
-- 开发时运行改动所在包或组件的局部测试。验证范围和命令按[验证策略](docs/operations/development_workflow.md#验证策略)执行。
-- 每个本地检出执行一次 `make hooks`。推送时 hook 在当前工作区运行和 `make check` 相同的快检，按相对远端的改动选择检查项。
-- 提交前检查本次变更中的矛盾和可安全清理的问题，一并处理与本次修改相关的内容。
-- 每次提交前，在仓库根目录运行 `make fmt`，检查 diff，并手动暂存属于本次提交的修改。部分暂存的文件逐块确认。随后运行 `make fmt-check`，确认声明顺序和格式差异已经清零。工具行为、生成文件识别和已提交代码的检查方式见 [Go 格式化](docs/operations/development_workflow.md#go-格式化)。
-- 提交信息遵循 Conventional Commits 规范。
-- 推送后查看 CI 结果。CI 运行全量 lint、单元、集成、前端、构建和脚本检查，集成测试和改动包的下游使用方由 CI 检查。
-- 本地需要完整验收时运行 `make verify`，它执行和 CI 相同的检查，需要 Docker。安全扫描使用 `make security`。
-- 测试失败或检查中断时，修复原因后重新验证。跳过的测试说明原因，并标记为未验证。
+- During development, run local tests for the changed package or component. Select scope and commands under the [Verification strategy](docs/operations/development_workflow.md#验证策略).
+- Run `make hooks` once for each local checkout. On push, the hook runs the same quick checks as `make check` in the current working tree, selecting checks from changes relative to the remote.
+- Before committing, inspect the task's changes for contradictions and safe cleanup opportunities, and address issues related to the change.
+- Before every commit, run `make fmt` from the repository root, inspect the diff, and manually stage the changes belonging to that commit. Review partially staged files hunk by hunk. Then run `make fmt-check` and confirm that declaration-order and formatting differences are resolved. See [Go formatting](docs/operations/development_workflow.md#go-格式化) for tool behavior, generated-file detection, and checks of committed code.
+- Follow Conventional Commits for commit messages.
+- After pushing, check CI results. CI runs full lint, unit, integration, frontend, build, and script checks. CI also checks integration tests and downstream users of changed packages.
+- For full local acceptance, run `make verify`. It runs the same checks as CI and requires Docker. Run `make security` for security scans.
+- If a test fails or a check is interrupted, fix the cause and rerun verification. Explain skipped tests and mark their scope as unverified.
 
-## 计划模式
+## Plan mode
 
-- 使用 Codex 计划模式时，开始实施前把定稿计划原样保存到 `.agents/plans/`。执行期间把任务进度追加到计划文件末尾。计划文件留在本地，提交时排除它们。
+- When using Codex plan mode, save the finalized plan verbatim under `.agents/plans/` before implementation. Append progress to the end of that file during execution. Keep plan files local and exclude them from commits.
