@@ -7,27 +7,74 @@ import (
 	"time"
 )
 
-// RefreshPostActions orders successful refresh cleanup, token invalidation, scheduler sync, and privacy updates.
+// A successful credential exchange can still be followed by an administrator
+// changing health or identity before cleanup. Matching clears update local
+// health before publishing the exchanged record, while an identity or window
+// conflict suppresses scheduler publication and later privacy or
+// reauthentication work. Token invalidation is still attempted after that
+// conflict.
+//
+// Success cleanup also clears Antigravity's one-time request through a
+// conditional writer and applies its patch locally after a match.
+// Temporary-window storage errors allow best-effort runtime cache deletion,
+// keeping that error path distinct from a comparison conflict that protects
+// newer cached state. SyncWithCleanup gives post-commit invalidation and
+// synchronization a separate budget whose context retains parent values but
+// ignores parent cancellation.
+
+// RefreshPostActions binds identity-checked health cleanup and success follow-up
+// services for credential refresh.
 type RefreshPostActions struct {
-	Now                       func() time.Time
-	Info, Warn, Debug         func(string, ...any)
-	Privacy                   *PrivacyService
-	RequestClearer            RefreshRequestClearer
+	// active cooldown observation clock
+	Now func() time.Time
+	// reached outcome logging callbacks
+	Info, Warn, Debug func(string, ...any)
+	// optional post-refresh privacy service
+	Privacy *PrivacyService
+	// conditional Antigravity flag writer
+	RequestClearer RefreshRequestClearer
+	// ClearError and ClearCooldown compare the observed identity and their health
+	// state before writing. A false result suppresses subsequent stale-record
+	// publication; each callback is required when its cleanup branch is reached.
+	// conditional health clear operations
 	ClearError, ClearCooldown func(context.Context, *Record) (bool, error)
-	Invalidate, SyncProvider  func(context.Context, *Record) error
-	DeleteCooldown            func(context.Context, int64) error
-	ClearBlock                func(int64)
-	NeedsReauth               func(*Record) bool
-	ClearReauth               func(context.Context, *Record)
+	// Invalidate and SyncProvider are optional and run in that order. Run can
+	// disable SyncProvider on a health comparison conflict while retaining
+	// Invalidate.
+	// token invalidation and scheduler publication
+	Invalidate, SyncProvider func(context.Context, *Record) error
+	// optional runtime pause deletion
+	DeleteCooldown func(context.Context, int64) error
+	// ClearBlock is callable after a matched health clear. NeedsReauth and
+	// ClearReauth are callable when the Grok follow-up reaches them; the predicate
+	// selects whether the stored reauthentication hint needs clearing.
+	ClearBlock func(int64) // matched recovery runtime unblock
+	// reached Grok reauthentication predicate
+	NeedsReauth func(*Record) bool
+	// reached Grok reauthentication clear
+	ClearReauth func(context.Context, *Record)
 }
 
-// Run performs post-refresh health cleanup, cache invalidation, and follow-up updates.
+// Run performs successful-refresh cleanup and follow-up work using a nonnil
+// caller-owned provider record. Callers synchronize its mutable health and Extra
+// fields and provide each clock or callback whose branch is reached; optional
+// privacy uses PrivacyService's nil-safe methods.
+//
+// The request flag is cleared first, then matching Antigravity missing-project
+// errors and live temporary pauses are cleared before the local record is
+// synchronized. A health comparison conflict keeps token invalidation but
+// removes scheduler publication and later privacy or reauthentication work.
+// Storage errors are logged, and temporary-pause errors still permit runtime
+// cache deletion. These cleanup operations commit independently, so an error
+// leaves earlier completed cleanup in place.
 func (s *RefreshPostActions) Run(ctx context.Context, provider *Record) {
 	syncActions := *s
 	changed := false
 	s.ClearRefreshRequest(ctx, provider, "success")
 
-	// After a successful Antigravity refresh, conditionally clear an earlier missing-project error.
+	// Compare the observed missing-project error before local recovery so an
+	// administrator's newer error or authorization remains authoritative if storage
+	// reports a conflict; a matched clear permits runtime unblocking.
 	if provider.Platform == PlatformAntigravity &&
 		provider.Status == StatusError &&
 		strings.Contains(provider.ErrorMessage, "missing_project_id:") {
@@ -45,7 +92,9 @@ func (s *RefreshPostActions) Run(ctx context.Context, provider *Record) {
 			changed = true
 		}
 	}
-	// Clear a matching temporary block after refresh, including OAuth 401 recovery.
+	// Clear the observed live pause before synchronizing local health so the
+	// scheduler receives the cleared window after a match, including OAuth 401
+	// recovery.
 	if provider.TempUnschedulableUntil != nil && s.Now().Before(*provider.TempUnschedulableUntil) {
 		applied, clearErr := s.ClearCooldown(ctx, provider)
 		if clearErr != nil {
@@ -58,15 +107,18 @@ func (s *RefreshPostActions) Run(ctx context.Context, provider *Record) {
 		} else {
 			changed = true
 		}
-		// A storage error still permits best-effort cache deletion; an identity or cooldown mismatch protects the
-		// newer cache state.
+		// Distinguish a comparison conflict from storage failure: the conflict
+		// protects newer runtime cache state, while a write error still permits
+		// the existing best-effort deletion path for the observed pause.
 		if (applied || clearErr != nil) && s.DeleteCooldown != nil {
 			if err := s.DeleteCooldown(ctx, provider.ID); err != nil {
 				s.Warn("token_refresh.clear_temp_unsched_cache_failed", "provider_id", provider.ID, "error", err)
 			}
 		}
 	}
-	// On an identity or health-window mismatch, invalidate exchanged tokens but skip scheduler sync and later actions.
+	// A comparison conflict means this exchanged record is stale for publication.
+	// Retain token invalidation, then stop follow-up actions that would use its
+	// identity.
 	if changed {
 		syncActions.SyncProvider = nil
 	}
@@ -74,16 +126,24 @@ func (s *RefreshPostActions) Run(ctx context.Context, provider *Record) {
 	if changed {
 		return
 	}
-	// Apply OpenAI privacy settings after refresh when training sharing has not been disabled.
+	// Privacy maintenance runs after health cleanup reports no comparison
+	// conflict. Each platform applies its eligibility and stored-mode rules, then
+	// conditionally writes against its own captured identity.
 	s.Privacy.RefreshOpenAIPrivacy(ctx, provider)
-	// Apply Antigravity privacy settings after refresh when needed.
 	s.Privacy.RefreshAntigravityPrivacy(ctx, provider)
-	// Clear the Grok reauthentication hint after a successful refresh.
+	// A successful eligible Grok refresh can clear the administrator-facing
+	// reauthentication hint after token and health cleanup have been attempted.
 	if provider != nil && provider.Platform == PlatformGrok && s.NeedsReauth(provider) {
 		s.ClearReauth(ctx, provider)
 	}
 }
 
+// SyncWithCleanup supplies a separate two-second deadline context for token
+// and snapshot cleanup after persistence. Nil parent selects context.Background;
+// otherwise values are retained while parent cancellation is ignored. Callback
+// implementations determine I/O cancellation; the production Redis client uses
+// its socket timeouts when ContextTimeoutEnabled is false, so this deadline
+// alone does not bound the call's wall-clock duration.
 func (s *RefreshPostActions) SyncWithCleanup(parent context.Context, provider *Record) {
 	cleanupParent := context.Background()
 	if parent != nil {
@@ -94,8 +154,20 @@ func (s *RefreshPostActions) SyncWithCleanup(parent context.Context, provider *R
 	s.Sync(ctx, provider)
 }
 
+// Sync attempts token invalidation before scheduler synchronization, using each
+// configured callback and the supplied record. OAuth and Qoder COSY records
+// select invalidation; callers provide a usable record and reached loggers.
+//
+// Invalidation errors are logged and still allow the subsequent SyncProvider
+// call, so failure of one cleanup step does not prevent the other from being
+// attempted. Scheduler errors are also logged, and this method returns no
+// failure result. Run can pass a copy with SyncProvider cleared after an
+// identity conflict, while SyncWithCleanup supplies a cancellation-independent
+// context after persistence.
 func (s *RefreshPostActions) Sync(ctx context.Context, provider *Record) {
-	// Invalidate OAuth and Qoder COSY tokens through the platform-aware callback.
+	// Request invalidation for credential kinds with cached rotating tokens.
+	// An error is logged so scheduler publication can still be attempted
+	// afterward.
 	if s.Invalidate != nil && (provider.Type == ProviderTypeOAuth || provider.IsQoderCosy()) {
 		if err := s.Invalidate(ctx, provider); err != nil {
 			s.Warn("token_refresh.invalidate_token_cache_failed",
@@ -106,7 +178,9 @@ func (s *RefreshPostActions) Sync(ctx context.Context, provider *Record) {
 			s.Debug("token_refresh.token_cache_invalidated", "provider_id", provider.ID)
 		}
 	}
-	// Publish refreshed provider credentials to the scheduler cache.
+	// Attempt scheduler publication after token invalidation, including its error
+	// path; callers suppress this callback when their observed identity became
+	// stale.
 	if s.SyncProvider != nil {
 		if err := s.SyncProvider(ctx, provider); err != nil {
 			s.Warn("token_refresh.sync_scheduler_cache_failed",
@@ -119,7 +193,18 @@ func (s *RefreshPostActions) Sync(ctx context.Context, provider *Record) {
 	}
 }
 
-// ClearRefreshRequest conditionally clears the one-time refresh flag after success or permanent failure.
+// ClearRefreshRequest conditionally clears a set one-time Antigravity OAuth flag
+// after success or permanent failure. Nil service, nil provider or an unset
+// supported flag returns immediately; reached callers keep the record stable and
+// synchronize local Extra mutation.
+//
+// The non_retryable outcome changes the expected status to error because
+// permanent failure persistence runs first. A missing writer, write error or
+// comparison miss leaves local request fields intact and logs the outcome. A
+// matched write copies the clearing fields into an existing nonnil Extra map,
+// then logs success; it does not allocate that local map. Each reached logger
+// must be callable, and unsupported mutable credential values retain
+// FailureVersion's copy limits.
 func (s *RefreshPostActions) ClearRefreshRequest(ctx context.Context, provider *Record, outcome string) {
 	if s == nil || provider == nil || !NeedsAntigravityRefreshRequest(provider) {
 		return
@@ -133,6 +218,9 @@ func (s *RefreshPostActions) ClearRefreshRequest(ctx context.Context, provider *
 	}
 	version := FailureVersion(provider).CredentialVersion
 	if outcome == "non_retryable" {
+		// Permanent failure has already changed durable health before this flag
+		// cleanup, so compare the error status rather than the attempted active
+		// status.
 		version.Status = StatusError
 	}
 	applied, err := clearer.ClearAntigravityRefreshRequest(ctx, version)
@@ -148,6 +236,9 @@ func (s *RefreshPostActions) ClearRefreshRequest(ctx context.Context, provider *
 		s.Info("token_refresh.antigravity_force_refresh_clear_skipped_stale_credentials", "provider_id", provider.ID)
 		return
 	}
+	// Apply the matched clearing fields to the caller's existing Extra map so
+	// later in-process checks observe the same request outcome as durable
+	// storage.
 	if provider.Extra != nil {
 		maps.Copy(provider.Extra, updates)
 	}

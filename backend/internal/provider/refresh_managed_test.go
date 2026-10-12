@@ -10,13 +10,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Administrative refresh needs the current credentials while retaining
+// eligibility for an explicitly disabled provider. These fixtures cover its
+// shared stop/lock path, copied callback input, shadow rejection before reading,
+// and omission of internal credential comparisons from JSON serialization.
+
+// managedRefreshReader counts current-row reads and supplies copied
+// administrative fixture records.
 type managedRefreshReader struct {
-	reads   atomic.Int32
+	reads atomic.Int32 // observed current-row read count
+	// current stays stable during each fixture read; the reader uses CloneRecord
+	// so supported mutable values in callback input are detached from this row.
 	current *Record
 }
 
-// TestManagedRefreshSharesLockAndStopWithBackground checks that manual and background refresh share locks and
-// stop cancellation.
+// TestManagedRefreshSharesLockAndStopWithBackground holds the administrative
+// callback while normal refresh queues on the same key. Shutdown joins both
+// canceled results, with no normal exchange call or credential write.
 func TestManagedRefreshSharesLockAndStopWithBackground(t *testing.T) {
 	repo := &lifecycleRefreshRepository{}
 	api := NewOAuthRefreshAPI(repo, nil, RefreshOptions{})
@@ -24,6 +34,9 @@ func TestManagedRefreshSharesLockAndStopWithBackground(t *testing.T) {
 	done := make(chan error, 2)
 	observed := &Record{ID: 1, Platform: PlatformOpenAI, Type: ProviderTypeOAuth, Status: StatusActive}
 	executor := &lifecycleRefreshExecutor{started: make(chan struct{}), release: make(chan struct{})}
+	// Hold the administrator callback after entry so normal refresh queues on its
+	// lock; stop cancellation then releases that owner before both results are
+	// joined.
 	go func() {
 		_, _, err := api.WithManagedRefresh(context.Background(), observed, executor.CacheKey(observed), func(ctx context.Context, _ *Record) (*Record, string, error) {
 			close(entered)
@@ -52,11 +65,18 @@ func TestManagedRefreshSharesLockAndStopWithBackground(t *testing.T) {
 	require.Zero(t, repo.writes.Load())
 }
 
+// GetByID counts a read and returns CloneRecord's copy of the current fixture.
+// The ID and context are ignored, and the test keeps the source record stable
+// during cloning.
 func (r *managedRefreshReader) GetByID(context.Context, int64) (*Record, error) {
 	r.reads.Add(1)
 	return CloneRecord(r.current), nil
 }
 
+// TestManagedRefreshUsesLockTimeCredentialSnapshot changes current credentials
+// after selecting a disabled provider. The callback sees the current token,
+// returned status stays disabled, and the selected record retains its earlier
+// token.
 func TestManagedRefreshUsesLockTimeCredentialSnapshot(t *testing.T) {
 	observed := &Record{ID: 5, Platform: PlatformOpenAI, Type: ProviderTypeOAuth, Status: StatusDisabled, Credentials: map[string]any{"refresh_token": "selected"}}
 	current := CloneRecord(observed)
@@ -74,6 +94,9 @@ func TestManagedRefreshUsesLockTimeCredentialSnapshot(t *testing.T) {
 	require.Equal(t, int32(1), reader.reads.Load())
 }
 
+// TestManagedRefreshRejectsShadowBeforeReading supplies a Spark shadow and a nil
+// administrative callback. Validation returns the dedicated shadow error before
+// any store read or callback access can occur.
 func TestManagedRefreshRejectsShadowBeforeReading(t *testing.T) {
 	parent := int64(1)
 	reader := &managedRefreshReader{}
@@ -84,6 +107,9 @@ func TestManagedRefreshRejectsShadowBeforeReading(t *testing.T) {
 	require.Zero(t, reader.reads.Load())
 }
 
+// TestManagedRefreshConditionIsNotHTTPInput marshals an update carrying the
+// internal expected credential object. The JSON omits both its secret marker and
+// ExpectedCredentials, protecting their omission from serialized update values.
 func TestManagedRefreshConditionIsNotHTTPInput(t *testing.T) {
 	payload, err := json.Marshal(UpdateProviderInput{ExpectedCredentials: &CredentialVersion{Credentials: map[string]any{"refresh_token": "internal-secret"}}})
 	require.NoError(t, err)

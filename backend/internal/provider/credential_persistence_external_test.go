@@ -11,8 +11,13 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/routing/capability"
 )
 
-// TestPersistProviderCredentials_SkipsShadow checks that PersistCredentials
-// returns without mutating or persisting authentication credentials for Spark shadows.
+// Spark shadow authentication belongs to the parent provider, so an ordinary
+// credential write must skip the shadow. The fixture inspects both the passed
+// record and its stored row after trying to supply new authentication values.
+
+// TestPersistProviderCredentials_SkipsShadow attempts an ordinary credential
+// write against a stored Spark shadow. The call succeeds while both the input
+// and stored credential maps remain empty.
 func TestPersistProviderCredentials_SkipsShadow(t *testing.T) {
 	ctx := context.Background()
 	repo := newSparkShadowRepoStub()

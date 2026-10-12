@@ -9,46 +9,134 @@ import (
 	"github.com/TokenFlux/TokenRouter/internal/pkg/logredact"
 )
 
-// RefreshTokenOperation exchanges credentials for the direct refresh path.
+// Background exchange attempts can stop before upstream work, fail permanently,
+// exhaust retries, or commit credentials before cleanup reaches a deadline.
+// Those outcomes need different health and accounting decisions: a reported
+// successful rotation stays successful when only its inner deadline expires,
+// individual credential rejection does not
+// establish a shared platform fault, and uncertain platform state stops the
+// cycle.
+//
+// Capacity admission precedes the attempt context, while rate admission happens
+// at the actual exchange after coordinated locking and rereading. The attempted
+// provider snapshot supports conditional failure writes, and a successful match
+// precedes runtime failure publication or request-flag cleanup. Retryable
+// failures use capped backoff and eventually request a temporary cooldown.
+// Post-commit cleanup receives its own context through the injected callback,
+// whose I/O behavior determines actual completion timing.
+
+// RefreshTokenOperation supplies credential exchange for background work using
+// the direct refresh path.
 type RefreshTokenOperation interface {
+	// Refresh exchanges credentials using the supplied attempt context and
+	// provider. The direct path adds token-version metadata to a nonnil returned
+	// map, so implementations give the caller mutation ownership; actual I/O
+	// cancellation depends on the supplied implementation.
 	Refresh(context.Context, *Record) (map[string]any, error)
 }
+
+// ProviderRefreshAttemptGate separates occupied attempt capacity from rate
+// admission at actual exchange.
 type ProviderRefreshAttemptGate interface {
-	RefreshAttemptGate
+	RefreshAttemptGate // occupied attempt capacity admission
+	// AcquireRate obtains rate permission immediately before upstream exchange
+	// and returns a callable release. Capacity has already been obtained for this
+	// attempt; failure skips exchange while its caller releases that capacity.
 	AcquireRate(context.Context) (func(), error)
 }
 
-// GrokRefreshMutationWriter conditionally records Grok failures against the attempted credentials and proxy.
+// GrokRefreshMutationWriter conditionally records failure against attempted Grok
+// credentials and proxy selection.
 type GrokRefreshMutationWriter interface {
+	// SetGrokOAuthRefreshErrorIfCredentialsUnchanged records permanent rejection
+	// when an active Grok OAuth row matches the attempted credentials and proxy.
+	// False reports a predicate miss, preventing RefreshAttempts from publishing
+	// a runtime block or clearing a request flag.
 	SetGrokOAuthRefreshErrorIfCredentialsUnchanged(context.Context, int64, map[string]any, *int64, string) (bool, error)
+	// SetGrokOAuthRefreshTempUnschedulableIfCredentialsUnchanged extends a pause
+	// for an active Grok OAuth row matching attempted credentials and proxy.
+	// False also reports an equal or longer existing cooldown, while storage
+	// errors cause RefreshAttempts to contain the platform outcome.
 	SetGrokOAuthRefreshTempUnschedulableIfCredentialsUnchanged(context.Context, int64, map[string]any, *int64, time.Time, string) (bool, error)
 }
 
-// RefreshAttempts runs one provider's attempts, budgets, retries, failure handling, and post-refresh actions
-// using the injected API.
+// RefreshAttempts binds admission, exchange budgets and identity-checked failure
+// handling for one provider.
 type RefreshAttempts struct {
-	API                               *OAuthRefreshAPI
-	Tuning                            *RefreshTuning
-	Policy                            BackgroundRefreshPolicy
-	AttemptTimeout                    time.Duration
-	Now                               func() time.Time
-	Info, Warn, Error                 func(string, ...any)
+	// API selects coordinated execution when the caller also supplies an executor.
+	// Otherwise Run uses its direct refresher and Persist callback instead.
+	API *OAuthRefreshAPI
+	// shared retry and backoff settings
+	Tuning *RefreshTuning
+	// unperformed exchange statistics policy
+	Policy BackgroundRefreshPolicy
+	// AttemptTimeout is supplied as a positive context budget by assembly; it
+	// begins after capacity admission and does not force noncooperative I/O to
+	// return.
+	AttemptTimeout time.Duration
+	// direct version and cooldown clock
+	Now func() time.Time
+	// reached attempt outcome loggers
+	Info, Warn, Error func(string, ...any)
+	// reached failure classification callbacks
 	NonRetryable, SharedProviderError func(error) bool
-	AmbiguousEntitlement              func(*Record, error) bool
-	Persist                           func(context.Context, *Record, map[string]any) error
-	FailureWriter                     RefreshFailureWriter
-	GrokMutation                      GrokRefreshMutationWriter
-	Invalidate                        func(context.Context, *Record) error
-	PrepareFailure                    func(*Record) func(time.Time, string)
-	ClearRefreshRequest               func(context.Context, *Record, string)
-	PostActions, SyncCleanup          func(context.Context, *Record)
+	// reached Grok entitlement classifier
+	AmbiguousEntitlement func(*Record, error) bool
+	// Persist is required on a direct successful nonnil map result. Its
+	// implementation needs to honor the passed context, including parent
+	// cancellation that may precede this call.
+	Persist func(context.Context, *Record, map[string]any) error
+	// conditional non-Grok failure writer
+	FailureWriter RefreshFailureWriter
+	// conditional Grok health mutation writer
+	GrokMutation GrokRefreshMutationWriter
+	// optional failed-token invalidation callback
+	Invalidate func(context.Context, *Record) error
+	// PrepareFailure accepts an attempted snapshot, including nil, and returns a
+	// callable publisher. Capturing it before the conditional write lets the
+	// observer reject publication after an interleaved runtime clear.
+	PrepareFailure func(*Record) func(time.Time, string)
+	// matched one-time flag cleanup callback
+	ClearRefreshRequest func(context.Context, *Record, string)
+	// PostActions handles ordinary success, and SyncCleanup handles a detected
+	// successful rotation when an attempt deadline or outer cancellation is
+	// observed. Both are required when their respective result paths are reached.
+	PostActions, SyncCleanup func(context.Context, *Record)
 }
 
+// rateLimitedRefreshExecutor defers rate admission until coordinated exchange
+// actually reaches upstream work.
 type rateLimitedRefreshExecutor struct {
-	OAuthRefreshExecutor
+	OAuthRefreshExecutor // borrowed platform exchange implementation
+	// acquireRate is optional; successful admission returns a callable release
+	// that runs after delegated exchange, including when it returns an error.
 	acquireRate func(context.Context) (func(), error)
 }
 
+// Run attempts background refresh for one provider and returns its classified
+// outcome after success, skip, permanent rejection or retry exhaustion. Callers
+// provide a nonnil context and provider, plus every callback reached by their
+// configured path; positive AttemptTimeout supplies a cooperative attempt
+// deadline.
+//
+// Capacity is obtained before that deadline begins, while rate admission wraps
+// the actual exchange. Coordinated execution captures current attempted state
+// and owns conditional success persistence. The direct path copies its failure
+// observation but mutates the returned credential map's version field; Persist
+// needs to honor the passed cancellation context, since direct parent
+// cancellation is not separately checked before that callback.
+//
+// The persistence marker uses a nonnil coordinated result map or a nil direct
+// persistence error. A permissive shadow executor can return that map despite
+// skipping storage; production OpenAI refresh eligibility excludes shadows.
+// An otherwise successful detected rotation receives SyncCleanup when only its
+// inner deadline expires. Outer cancellation returns its error after cleanup
+// when the success marker was set. Shared configuration, uncertain state and
+// ambiguous Grok entitlement stop the platform; individual permanent failures
+// conditionally change health before runtime publication, and comparison
+// conflicts become skips. Retryable failures use total-attempt counting and
+// context-aware backoff, then request a matching cooldown while retaining the
+// last exchange error.
 func (s RefreshAttempts) Run(
 	ctx context.Context,
 	provider *Record,
@@ -76,7 +164,10 @@ func (s RefreshAttempts) Run(
 				}
 				acquireRate = providerGate.AcquireRate
 			} else {
-				// Legacy gates limit exchange rate; acquire immediately before calling upstream Refresh.
+				// A gate exposing only Acquire supplies
+				// exchange-rate admission. Delay that call
+				// until upstream work so contention or
+				// fresh credentials use no rate slot.
 				acquireRate = gate.Acquire
 			}
 		}
@@ -87,7 +178,8 @@ func (s RefreshAttempts) Run(
 		shortCircuit := false
 		credentialsPersisted := false
 
-		// Prefer the coordinated API for distributed locking and database rereads.
+		// Coordinated locking and rereads own success persistence when both components
+		// exist; wrapping Refresh admits rate only when an actual exchange is required.
 		if s.API != nil && executor != nil {
 			actualExecutor := executor
 			if acquireRate != nil {
@@ -104,19 +196,34 @@ func (s RefreshAttempts) Run(
 			if refreshErr != nil {
 				err = refreshErr
 			} else if result.LockHeld {
-				// Let the caller policy classify lock contention.
+				// Contention performed no exchange. Apply
+				// its accounting policy before retry
+				// classification so this skip supplies no
+				// provider failure evidence.
 				err = s.Policy.HandleLockHeld()
 				shortCircuit = true
 			} else if !result.Refreshed {
-				// Let the caller policy classify an exchange skipped after a reread.
+				// The reread made exchange unnecessary.
+				// Apply the configured accounting policy
+				// before retry classification so this skip
+				// supplies no failure evidence.
 				err = s.Policy.HandleAlreadyRefreshed()
 				shortCircuit = true
 			} else {
 				credentialsPersisted = result.NewCredentials != nil
-				_ = result.NewCredentials // The API has already assigned _token_version and persisted credentials.
+				// Successful nonshadow maps were versioned
+				// and saved by the coordinator. The
+				// production refresher excludes shadows,
+				// whose generic coordinator result can
+				// contain a map even though that branch
+				// skipped persistence.
+				_ = result.NewCredentials
 			}
 		} else {
-			// Call the refresher directly when no coordinator is configured.
+			// Missing coordinated components select direct
+			// exchange. Keep a copied failure observation
+			// while the returned map is versioned in place
+			// before Persist.
 			failureProvider = CloneRecord(provider)
 			releaseRate := func() {}
 			if acquireRate != nil {
@@ -130,6 +237,12 @@ func (s RefreshAttempts) Run(
 			}
 			attemptTimedOut := errors.Is(attemptCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil
 			if err == nil && newCredentials != nil && !attemptTimedOut {
+				// The direct path owns this returned map
+				// and versions it in place. Persist
+				// receives the attempt context so its
+				// implementation decides whether parent
+				// cancellation prevents a write already
+				// reached here.
 				newCredentials["_token_version"] = s.Now().UnixMilli()
 				if saveErr := s.Persist(attemptCtx, provider, newCredentials); saveErr != nil {
 					err = fmt.Errorf("failed to save credentials: %w", saveErr)
@@ -138,10 +251,16 @@ func (s RefreshAttempts) Run(
 				}
 			}
 		}
+		// Read inner-deadline state before canceling its context, then release capacity
+		// before outcome handling so outer cancellation keeps its separate
+		// classification.
 		attemptTimedOut := errors.Is(attemptCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil
 		cancelAttempt()
 		releaseAttempt()
 		persistedAfterAttemptDeadline := attemptTimedOut && credentialsPersisted && err == nil
+		// Count an expired uncommitted attempt while retaining terminal platform and
+		// committed-success outcomes; timing cannot replace their more specific
+		// classification.
 		if attemptTimedOut && !persistedAfterAttemptDeadline && !IsProviderScopedTerminalRefreshError(err) {
 			cause := err
 			if cause == nil {
@@ -165,8 +284,9 @@ func (s RefreshAttempts) Run(
 				return ctxErr
 			}
 			if persistedAfterAttemptDeadline {
-				// The credentials are committed; a deadline reached during bounded cleanup must not turn success into retry or
-				// cooldown evidence.
+				// A successful persistence marker remains set when the deadline is
+				// observed. Finish success cleanup so this timing cannot trigger
+				// another exchange or cooldown.
 				s.SyncCleanup(ctx, provider)
 				return nil
 			}
@@ -189,18 +309,22 @@ func (s RefreshAttempts) Run(
 			return &ProviderCycleContainmentRefreshError{Cause: err}
 		}
 		if s.AmbiguousEntitlement(provider, err) {
-			// Grok token-endpoint 403 errors have ambiguous ownership; contain this platform for the cycle without
-			// changing provider health.
+			// The Grok classifier found insufficient
+			// credential-specific entitlement evidence.
+			// Contain the cycle so ambiguous rejection
+			// cannot permanently change this provider.
 			return &ProviderCycleContainmentRefreshError{Cause: err}
 		}
 
-		// OAuth client or scope failures may affect the whole platform; return a platform error without marking
-		// individual providers invalid.
+		// Client or scope rejection affects shared platform configuration. Classify it
+		// before individual health writes so this outcome cannot reject their
+		// credentials.
 		if s.SharedProviderError(err) {
 			return &ProviderConfigurationRefreshError{Cause: err}
 		}
 
-		// Conditionally record permanent failure for a nonretryable provider error.
+		// Prepare publication before conditional health persistence, then publish only
+		// after a match so replaced credentials cannot receive this failure block.
 		if s.NonRetryable(err) {
 			errorMsg := "Token refresh failed (non-retryable): " + logredact.RedactText(err.Error())
 			isGrokOAuth := provider.IsGrokOAuth()
@@ -252,9 +376,15 @@ func (s RefreshAttempts) Run(
 					}
 				}
 			} else if persistentlyBlocked {
+				// Matched permanent persistence authorizes
+				// request-flag cleanup and runtime
+				// publication; conflicts and write failures
+				// cannot install this credential block.
 				s.ClearRefreshRequest(ctx, failureProvider, "non_retryable")
 				publishFailure(time.Time{}, "token_refresh_non_retryable")
 			}
+			// Keep token invalidation outcome separate from durable blocking so Grok
+			// reconciliation can report a partially completed permanent-failure action.
 			cacheInvalidationFailed := false
 			if provider.Type == ProviderTypeOAuth && (!isGrokOAuth || persistentlyBlocked) {
 				if s.Invalidate == nil {
@@ -282,7 +412,8 @@ func (s RefreshAttempts) Run(
 			"error", logredact.RedactText(err.Error()),
 		)
 
-		// Back off before another attempt, allowing the cycle context to cancel the wait.
+		// Retry after releasing the prior capacity grant, within the cycle budget.
+		// Cancellation stops the wait before another exchange can begin.
 		if attempt < maxRetries {
 			backoff := s.Tuning.RetryBackoff(provider.ID, attempt)
 			if backoff > 0 {
@@ -300,7 +431,9 @@ func (s RefreshAttempts) Run(
 		return err
 	}
 
-	// Exhausted retryable errors trigger a temporary scheduling block.
+	// Keep the last exchange error while attempting an identity-checked pause, so
+	// retry exhaustion can defer scheduling without requiring permanent
+	// reauthorization.
 	s.Warn("token_refresh.retry_exhausted",
 		"provider_id", provider.ID,
 		"platform", provider.Platform,
@@ -308,7 +441,9 @@ func (s RefreshAttempts) Run(
 		"error", logredact.RedactText(lastErr.Error()),
 	)
 
-	// Keep status active during the ten-minute cooldown so a later refresh cycle can try again.
+	// Retain persistent status during this temporary pause so another candidate
+	// cycle can retry after its deadline instead of requiring provider
+	// reauthorization.
 	until := s.Now().Add(TokenRefreshTempUnschedDuration)
 	reason := "token refresh retry exhausted"
 	if lastErr != nil {
@@ -343,6 +478,9 @@ func (s RefreshAttempts) Run(
 			s.Info("token_refresh.grok_temp_unschedulable_skipped_stale_credentials", "provider_id", provider.ID)
 			return ErrRefreshSkipped
 		}
+		// The conditional pause matched before this publication. A competing
+		// credential identity therefore cannot inherit this captured failure
+		// notice.
 		publishFailure(until, "token_refresh_retry_exhausted")
 		s.Info("token_refresh.temp_unschedulable_set",
 			"provider_id", provider.ID,
@@ -351,7 +489,8 @@ func (s RefreshAttempts) Run(
 		return lastErr
 	}
 
-	// Queue or reread failures have no attempted identity to compare; leave provider health unchanged.
+	// Failures before snapshot capture cannot authorize a conditional health write.
+	// Return the outcome while leaving the unidentified provider state unchanged.
 	if failureProvider == nil {
 		return lastErr
 	}
@@ -372,6 +511,9 @@ func (s RefreshAttempts) Run(
 			"error", setErr,
 		)
 	} else {
+		// The conditional pause matched before this publication. A competing
+		// credential identity therefore cannot inherit this captured failure
+		// notice.
 		publishFailure(until, "token_refresh_retry_exhausted")
 		s.Info("token_refresh.temp_unschedulable_set",
 			"provider_id", provider.ID,
@@ -382,6 +524,10 @@ func (s RefreshAttempts) Run(
 	return lastErr
 }
 
+// Refresh obtains rate admission before delegating to the borrowed platform
+// executor. A nil wrapper or executor returns a configuration error; a reached
+// acquireRate callback returns a callable release that is deferred through
+// exchange success or error.
 func (e *rateLimitedRefreshExecutor) Refresh(ctx context.Context, provider *Record) (map[string]any, error) {
 	if e == nil || e.OAuthRefreshExecutor == nil {
 		return nil, errors.New("OAuth refresh executor is not configured")

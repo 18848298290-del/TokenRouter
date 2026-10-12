@@ -5,31 +5,56 @@ import (
 	"time"
 )
 
+// A failed exchange can make credentials unusable or leave a provider eligible
+// for another attempt after a cooldown. FailureVersion captures the attempted
+// identity and scheduling switch so storage can reject late failures after an
+// administrator changes that row. The action and deadline are carried separately
+// from the comparison state.
+
+// Refresh failure actions select durable credential rejection or a temporary
+// scheduling cooldown after background attempts fail.
 const (
+	// RefreshFailurePermanent marks the matching provider errored and
+	// unschedulable.
 	RefreshFailurePermanent RefreshFailureKind = iota
+	// RefreshFailureCooldown extends the matching provider's temporary pause.
 	RefreshFailureCooldown
 )
 
-// RefreshFailureVersion captures the attempted identity and scheduling state for conditional failure writes.
+// RefreshFailureVersion combines the attempted authentication identity with its
+// observed scheduling switch.
 type RefreshFailureVersion struct {
-	CredentialVersion
-	Schedulable bool
+	CredentialVersion      // observed credential comparison state
+	Schedulable       bool // observed scheduling enablement switch
 }
+
+// RefreshFailureKind identifies the persistent action selected for a failed
+// exchange.
 type RefreshFailureKind uint8
 
+// RefreshFailure supplies the health action and diagnostic reason for
+// conditional persistence.
 type RefreshFailure struct {
-	Kind    RefreshFailureKind
-	Message string
-	Until   time.Time
+	Kind    RefreshFailureKind // chosen failure persistence action
+	Message string             // stored failure diagnostic reason
+	// Until is the cooldown deadline when Kind is RefreshFailureCooldown;
+	// permanent failures ignore this value and update persistent health instead.
+	Until time.Time
 }
 
-// RefreshFailureWriter reports whether the expected identity and state match; retaining a longer existing
-// cooldown still counts as a match.
-// A mismatch must not trigger an in-memory block, success invalidation, or another exchange.
+// RefreshFailureWriter conditionally records failure against the attempted
+// identity and scheduling state.
 type RefreshFailureWriter interface {
+	// ApplyOAuthRefreshFailure reports whether the expected identity and scheduling
+	// state match, even when an existing cooldown is already long enough. A false
+	// result tells RefreshAttempts to skip runtime blocking and stale-result cleanup.
 	ApplyOAuthRefreshFailure(context.Context, RefreshFailureVersion, RefreshFailure) (bool, error)
 }
 
+// FailureVersion captures credentials, proxy and scheduling state before a
+// conditional failure write. Nil input yields the zero version, and nil
+// credentials become an empty object; unsupported values retain the sharing
+// behavior of CloneValues.
 func FailureVersion(value *Record) RefreshFailureVersion {
 	if value == nil {
 		return RefreshFailureVersion{}

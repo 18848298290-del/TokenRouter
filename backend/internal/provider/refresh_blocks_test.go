@@ -7,6 +7,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Different attempted credential versions of one provider need independent block
+// expiry times. These observations check extension, expiry, another provider and
+// explicit clearing, while failing callbacks prove that empty or expired maps do
+// not trigger credential hashing.
+
+// TestRefreshFailureBlocksUseIndependentDeadlines installs two credential
+// identities with separate deadlines and attempts to shorten one. It checks
+// expiry, provider isolation, lazy identity evaluation and explicit clearing of
+// all versions.
 func TestRefreshFailureBlocksUseIndependentDeadlines(t *testing.T) {
 	var blocks RefreshFailureBlocks
 	now := time.Date(2026, 9, 13, 0, 0, 0, 0, time.UTC)

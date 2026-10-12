@@ -12,15 +12,35 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// importRefreshStore simulates conditional credential writes for the coordinator shared by import and
-// background refresh.
+// An imported provider can remain disabled or errored while its supplied
+// token-version metadata is refreshed. The import path therefore reuses
+// coordinator locking and stop registration but leaves status qualification to
+// the selected import. These fixtures check retained status and metadata,
+// discarded conflicts after one exchange, and canceled responses that cannot
+// write credentials.
+//
+// The single-row store holds comparison and replacement under one mutex, with
+// exchange callbacks using that mutex to inject administrator changes. Reads
+// copy supported containers, while unsupported credential values retain their
+// references. Write counts distinguish rejected comparisons from applied
+// results; the fixture omits ID comparison and database transaction behavior,
+// so those guarantees remain with production storage.
+
+// importRefreshStore models one provider's reads and conditional credential
+// writes for import fixtures.
 type importRefreshStore struct {
-	mu            sync.Mutex
-	current       *Record
-	reads, writes int
-	failure       error
+	// mu protects current, reads, writes and failure during store calls; fixture
+	// callbacks take the same lock when replacing authentication state during
+	// exchange.
+	mu            sync.Mutex // fixture provider synchronization
+	current       *Record    // current fixture provider row
+	reads, writes int        // observed reads and applied writes
+	failure       error      // injected conditional write failure
 }
 
+// GetByID counts a read and returns a snapshot of the current fixture row under
+// its mutex. The context and ID are ignored, and unsupported values retain
+// snapshotRefreshRecord's copy limits.
 func (s *importRefreshStore) GetByID(context.Context, int64) (*Record, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -28,6 +48,16 @@ func (s *importRefreshStore) GetByID(context.Context, int64) (*Record, error) {
 	return snapshotRefreshRecord(s.current), nil
 }
 
+// UpdateOAuthCredentialsIfUnchanged compares the current fixture's status,
+// platform, type, credentials and proxy before copying replacement credentials.
+// The fixture requires a current row, and a configured failure returns before
+// comparison or mutation.
+//
+// Its mutex keeps comparison and replacement together while interleaving
+// callbacks use the same lock. A mismatch returns false and leaves write count
+// unchanged; a match increments the count and copies supported credential
+// containers. This single-row fixture omits ID validation and models logical
+// identity conflict rather than PostgreSQL transaction behavior.
 func (s *importRefreshStore) UpdateOAuthCredentialsIfUnchanged(_ context.Context, v CredentialVersion, credentials map[string]any) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -38,15 +68,24 @@ func (s *importRefreshStore) UpdateOAuthCredentialsIfUnchanged(_ context.Context
 	if c.Status != v.Status || c.Platform != v.Platform || c.Type != v.Type || !reflect.DeepEqual(c.ProxyID, v.ProxyID) || !reflect.DeepEqual(c.Credentials, v.Credentials) {
 		return false, nil
 	}
+	// Keep the accepted replacement and write count inside the comparison lock
+	// so an administrator callback cannot interleave between the match and
+	// update.
 	s.writes++
 	c.Credentials = CloneValues(credentials)
 	return true, nil
 }
 
+// newImportRefreshStore creates the active OpenAI fixture with an initial
+// refresh token.
 func newImportRefreshStore() *importRefreshStore {
 	return &importRefreshStore{current: &Record{ID: 1, Platform: PlatformOpenAI, Type: ProviderTypeOAuth, Status: StatusActive, Credentials: map[string]any{"refresh_token": "old"}}}
 }
 
+// TestRefreshImportedPreservesExplicitStatusAndTokenVersion refreshes active,
+// inactive and errored imports with supplied token metadata. It checks one
+// write, retained status and version, and isolation of the tested nested
+// credential map.
 func TestRefreshImportedPreservesExplicitStatusAndTokenVersion(t *testing.T) {
 	for _, status := range []string{StatusActive, "inactive", StatusError} {
 		t.Run(status, func(t *testing.T) {
@@ -69,6 +108,10 @@ func TestRefreshImportedPreservesExplicitStatusAndTokenVersion(t *testing.T) {
 	}
 }
 
+// TestRefreshImportedStaleResultRereadsWithoutSecondExchange changes
+// credentials, proxy or status during the exchange callback. Each conflict
+// performs one exchange and zero writes, with the read count showing the final
+// existence reread.
 func TestRefreshImportedStaleResultRereadsWithoutSecondExchange(t *testing.T) {
 	for _, change := range []string{"credentials", "proxy", "status"} {
 		t.Run(change, func(t *testing.T) {
@@ -78,6 +121,10 @@ func TestRefreshImportedStaleResultRereadsWithoutSecondExchange(t *testing.T) {
 			calls := 0
 			require.NoError(t, api.RefreshImported(context.Background(), source, "shared", func(context.Context, *Record) map[string]any {
 				calls++
+				// Mutate the stored identity while the
+				// exchange is still active so its later
+				// conditional write observes a conflict
+				// with this administrator result.
 				s.mu.Lock()
 				defer s.mu.Unlock()
 				switch change {
@@ -98,6 +145,10 @@ func TestRefreshImportedStaleResultRereadsWithoutSecondExchange(t *testing.T) {
 	}
 }
 
+// TestRefreshImportedSharesBackgroundLockAndStopsWaiting holds an import
+// exchange while ordinary refresh queues on its key. A bounded stop reports
+// unfinished work, then joined results show cancellation, no ordinary exchange
+// and no late credential write.
 func TestRefreshImportedSharesBackgroundLockAndStopsWaiting(t *testing.T) {
 	s := newImportRefreshStore()
 	api := NewOAuthRefreshAPI(s, nil, RefreshOptions{})
@@ -105,6 +156,8 @@ func TestRefreshImportedSharesBackgroundLockAndStopsWaiting(t *testing.T) {
 	started, release := make(chan struct{}), make(chan struct{})
 	finished := make(chan error, 2)
 	var calls atomic.Int32
+	// Hold one exchange after signaling entry, leaving the ordinary coordinator
+	// registered on the same key until shutdown cancels its queued lock wait.
 	go func() {
 		finished <- api.RefreshImported(context.Background(), source, "lifecycle:provider", func(context.Context, *Record) map[string]any {
 			calls.Add(1)
@@ -114,7 +167,9 @@ func TestRefreshImportedSharesBackgroundLockAndStopsWaiting(t *testing.T) {
 		})
 	}()
 	<-started
-	// Ordinary refresh waits on the same lock while the import exchange is active.
+	// The import owns this shared key while ordinary refresh registers its wait.
+	// Joining both results later proves that cancellation prevented a second
+	// exchange.
 	executor := &lifecycleRefreshExecutor{started: make(chan struct{}), release: make(chan struct{})}
 	go func() {
 		_, err := api.RefreshIfNeeded(context.Background(), &Record{ID: 1}, executor, time.Minute)
@@ -129,6 +184,9 @@ func TestRefreshImportedSharesBackgroundLockAndStopsWaiting(t *testing.T) {
 	defer cancel()
 	require.ErrorIs(t, api.StopContext(budget), context.DeadlineExceeded)
 	require.Zero(t, executor.calls.Load())
+	// Release the callback that ignored cancellation and join both operations
+	// before inspecting writes, distinguishing actual exits from the stop
+	// timeout.
 	close(release)
 	for range 2 {
 		require.ErrorIs(t, <-finished, context.Canceled)
@@ -138,6 +196,10 @@ func TestRefreshImportedSharesBackgroundLockAndStopsWaiting(t *testing.T) {
 	require.ErrorIs(t, api.RefreshImported(context.Background(), source, "shared", func(context.Context, *Record) map[string]any { t.Fatal("停止后不得交换"); return nil }), ErrRefreshStopped)
 }
 
+// TestRefreshImportedRejectsChangedSourceAndReportsPersistenceFailure supplies a
+// stale selected status before exchange and then an injected write error. The
+// stale case never exchanges, the storage error propagates, and no write is
+// counted.
 func TestRefreshImportedRejectsChangedSourceAndReportsPersistenceFailure(t *testing.T) {
 	s := newImportRefreshStore()
 	api := NewOAuthRefreshAPI(s, nil, RefreshOptions{})
